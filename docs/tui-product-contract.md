@@ -36,10 +36,10 @@ The startup snapshot is delivered progressively under one request generation. On
 
 Marketplace discovery is replaceable and non-authoritative.
 
-- The TUI renders pending local selections first and replaces them with verified inventory as resolution completes. Each configured Marketplace may add a first page of at most 50 results to the existing Available group.
+- The TUI renders pending local selections first and replaces them with verified inventory as resolution completes. Each configured Marketplace may add a first page of at most 50 free-text results to the existing Available group; a single kind query keeps fetching kind pages until every matching resource is included.
 - Search filters loaded rows immediately and starts a remote search after approximately 250 milliseconds without input. A new request cancels and supersedes the prior generation.
 - Clearing search restores the empty-query browse results.
-- Discovery has no pagination and does not change the command-line `search` interface.
+- Free-text discovery has no pagination and does not change the command-line `search` interface; only kind queries paginate.
 
 The cache isolates records by endpoint and query. Records are fresh for five minutes and may remain stale for up to 24 hours. Stale rows stay visible during revalidation and after an endpoint fails. Each endpoint and its diagnostics update independently. Loading, stale data, truncation, and partial failures must not change snapshot health or drift state.
 

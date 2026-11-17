@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -17,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -238,9 +240,26 @@ func effectiveMarketplaceConfig(cfg *config.Config) config.EffectiveConfig {
 	return ec
 }
 
+func marketplaceKindQuery(query string) (ir.ResourceKind, string, bool) {
+	normalized := strings.TrimSpace(query)
+	if normalized == "" || strings.IndexFunc(normalized, unicode.IsSpace) >= 0 || strings.EqualFold(normalized, "all") {
+		return 0, "", false
+	}
+	kind, ok := skill.ParseKind(normalized)
+	if !ok || kind == ir.KindPlugin {
+		return 0, "", false
+	}
+	apiKind := marketplaceProtocolKind(kind)
+	if !mpapi.IsMarketplaceKind(apiKind) {
+		return 0, "", false
+	}
+	return kind, apiKind, true
+}
+
 func loadMarketplaceDiscovery(ctx context.Context, cfg *config.Config, query string, generation requestGeneration) tea.Cmd {
 	return func() tea.Msg {
-		updates, err := marketplace.DiscoverUpdates(ctx, effectiveMarketplaceConfig(cfg), query, marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit})
+		_, includeKind, _ := marketplaceKindQuery(query)
+		updates, err := marketplace.DiscoverUpdates(ctx, effectiveMarketplaceConfig(cfg), query, marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit, IncludeKind: includeKind})
 		if err != nil {
 			return discoveryLoadedMsg{generation: generation, query: query, done: true, err: err}
 		}
@@ -338,10 +357,22 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	}
 	m.cancelMarketplaceDiscovery()
 	if !debounce {
-		if err := config.ValidateMarketplaceURLs(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces); err != nil {
-			m.clearMarketplaceDiscovery(true)
-			m.discoveryErrs = []error{err}
-			return nil
+		allowedMarketplaces := effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces
+		if err := config.ValidateMarketplaceURLs(m.mergedCfg.Marketplaces, allowedMarketplaces); err != nil {
+			var blocked *config.MarketplaceURLBlockedError
+			if errors.As(err, &blocked) {
+				for _, endpoint := range m.mergedCfg.Marketplaces {
+					if config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, allowedMarketplaces) == nil {
+						err = nil
+						break
+					}
+				}
+			}
+			if err != nil {
+				m.clearMarketplaceDiscovery(true)
+				m.discoveryErrs = []error{err}
+				return nil
+			}
 		}
 	}
 	generation := m.beginRequest(requestDiscovery)

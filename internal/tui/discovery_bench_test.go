@@ -77,3 +77,41 @@ func BenchmarkTUIMarketplaceBrowseWarmCacheDiskIONoNetwork(b *testing.B) {
 		_ = m.View().Content
 	}
 }
+
+func BenchmarkMarketplaceKindQuery(b *testing.B) {
+	localRows := buildBenchRows(500)
+	outcomes := make([]marketplace.DiscoveryOutcome, 6)
+	for endpoint := range outcomes {
+		items := make([]mpapi.ResourceListItem, 51)
+		items[0] = mpapi.ResourceListItem{RegistryID: fmt.Sprintf("registry-%02d", endpoint), RegistrySlug: "tools", Kind: "command", Name: "mcp-query-match", Revision: "sha256:" + fmt.Sprintf("%064d", 1), ContentDigest: "sha256:" + fmt.Sprintf("%064d", 1), Availability: mpapi.AvailabilityAvailable}
+		for i := 1; i < len(items); i++ {
+			digest := "sha256:" + fmt.Sprintf("%064d", i)
+			items[i] = mpapi.ResourceListItem{RegistryID: fmt.Sprintf("registry-%02d", endpoint), RegistrySlug: "tools", Kind: "mcpserver", Name: fmt.Sprintf("opaque-%02d", i), Revision: digest, ContentDigest: digest, Description: "opaque resource details", Availability: mpapi.AvailabilityAvailable}
+		}
+		outcomes[endpoint] = marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: fmt.Sprintf("https://market-%02d.example", endpoint), InstanceID: fmt.Sprintf("market-%02d", endpoint), Alias: fmt.Sprintf("market-%02d", endpoint)}, Items: items, Total: len(items), Truncated: true}
+	}
+	newModel := func() Model {
+		m := newTestModel()
+		m.authoritativeRows = append([]row(nil), localRows...)
+		m.rows = append([]row(nil), localRows...)
+		m.filter = "mcp"
+		return m
+	}
+	b.Run("merge_filter_and_render", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			m := newModel()
+			m.applyDiscovery("mcp", outcomes)
+			_ = m.View().Content
+		}
+	})
+	b.Run("per_keystroke_local_and_kind_filter", func(b *testing.B) {
+		m := newModel()
+		m.applyDiscovery("mcp", outcomes)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			_ = m.applyFilter()
+		}
+	})
+}
