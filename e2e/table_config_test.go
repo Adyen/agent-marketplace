@@ -22,6 +22,25 @@ func init() {
 		},
 	})
 
+	// spec: doctor-repair-planning/repair-includes-every-aggregate-capable-target
+	testTable = append(testTable, TestCase{
+		Name:      "config/doctor_repair_native_aggregate_targets",
+		GlobalCfg: v4("harnesses: [claude, codex, cursor, devin, factory, gemini, opencode, windsurf]"),
+		RepoCfg:   v4(),
+		Steps: []Step{
+			ok("doctor", "--repair").
+				out("repair: claude shared-aggregate ownership",
+					"repair: Codex shared-aggregate ownership",
+					"repair: cursor shared-aggregate ownership",
+					"repair: devin shared-aggregate ownership",
+					"repair: factory shared-aggregate ownership",
+					"repair: gemini shared-aggregate ownership",
+					"repair: opencode shared-aggregate ownership",
+					"repair: windsurf shared-aggregate ownership").
+				unchanged("./.agents/config.yaml", "~/.agents/config.yaml"),
+		},
+	})
+
 	testTable = append(testTable, TestCase{
 		Name: "config_layer/global_repo_local_merge",
 		Desc: "Given global config with global-skill, repo config with repo-skill, and local config with local-skill, When sync is run, Then skills materialize at their respective scopes",

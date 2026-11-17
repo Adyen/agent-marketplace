@@ -35,7 +35,7 @@ The first part of a code names the area that reported it.
 | `bundle.*` | Conflicts between resources in one bundle, such as two resources writing the same path. |
 | `json.*` | Malformed or duplicate-key JSON in a harness file. |
 | `materialize.*` | Writing generated files into harness folders. |
-| `ownership.*` | Ownership records and locking for Devin and Codex shared configuration files. |
+| `ownership.*` | Ownership records and locking for shared harness aggregate files. |
 | `doctor.*` | Findings from `agent-marketplace doctor` and `doctor --repair`. |
 | `config.*` | Loading and editing configuration files, such as `config.edit.include-owned`. |
 | `v4.*` | Consumer configuration validation, such as `v4.api-version-required` or `v4.api-version`. |

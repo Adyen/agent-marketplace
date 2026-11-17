@@ -90,7 +90,12 @@ journal and its target bytes unchanged. One terminal confirmation authorizes
 safe steps. Destructive replacements and orphan removals keep their per-entry
 confirmations and never run with --yes. Devin and Codex shared aggregate files
 include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
-and .codex/config.toml. Off a terminal, --repair is preview-only unless --yes
+and .codex/config.toml.
+Repair also inspects the shared aggregates of every other harness target that
+declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
+mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
+mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
+Off a terminal, --repair is preview-only unless --yes
 is set; --yes runs only safe steps. Repair uses the acquisition locks already
 on disk and never rewrites configuration automatically, edits harness lists,
 or edits organization files. Configuration field, YAML, and duplicate-key
@@ -124,7 +129,7 @@ remain deferred.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, Devin and Codex shared-aggregate repairs, and guided configuration fixes")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, shared-aggregate repairs for Devin and Codex, Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode, and guided configuration fixes")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "With --repair, emit the plan and results as JSON")
 	return cmd

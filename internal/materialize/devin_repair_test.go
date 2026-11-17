@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -51,17 +53,38 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 	return nil
 }
 
+// spec: doctor-repair-planning/repair-includes-every-aggregate-capable-target
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
 	previews, err := RepairPreviews(context.Background(), repoRoot, nil, nil)
 	if err != nil {
 		t.Fatalf("repair previews: %v", err)
 	}
-	if len(previews) != 3 {
-		t.Fatalf("repair previews = %d, want one preview per migrated adapter", len(previews))
+	var want []hcc.Target
+	for _, target := range targetmeta.Targets() {
+		layout, ok := targetmeta.LookupNativeLayout(target)
+		if !ok {
+			continue
+		}
+		for _, partition := range layout.Partitions {
+			if len(partition.Aggregates) > 0 {
+				want = append(want, hcc.Target(target))
+				break
+			}
+		}
 	}
-	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin || previews[2].Target != hcc.TargetOpenCode {
-		t.Fatalf("repair targets = %#v, want [codex devin opencode]", []hcc.Target{previews[0].Target, previews[1].Target, previews[2].Target})
+	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
+	got := make([]hcc.Target, len(previews))
+	for i, preview := range previews {
+		got[i] = preview.Target
+	}
+	if len(got) != len(want) {
+		t.Fatalf("repair targets = %#v, want every target with declared native aggregates %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("repair targets = %#v, want %#v", got, want)
+		}
 	}
 }
 
