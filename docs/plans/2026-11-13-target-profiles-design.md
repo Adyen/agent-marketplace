@@ -1711,8 +1711,13 @@ A target write is either creation of a missing target directory or a file
 publication. Create missing package directories only from the intent's
 journaled directory list, after staging completes and immediately before the
 first file publication that needs them, verifying each new directory under
-the captured root. Prune removes a directory only when it is on that list and
-empty; directories that existed before the transaction are never removed.
+the captured root. After each journaled directory creation, capture the
+destination below it again before publishing. The committed ownership
+generation records the directories each place transaction created, so a
+later transaction may list such a directory for removal. Prune removes a
+directory only when the current transaction lists it from that committed
+record and it is empty; directories not created by a recorded place
+transaction are never removed.
 
 The conflict plan is whole-set, but publication is per file. When a required
 mod is in the admitted set, publish it before its layout; deselection removes
@@ -1835,7 +1840,7 @@ states:
 
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
-| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file, which made no target write. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. |
+| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the second row applies. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. |
 | After some target writes | `dependency.recovery-required`; no replay. | Complete the recorded write prefix of journaled directory creations and file publications only while each destination is exactly its old or intended generation and all remaining stage bytes match; a later `EXDEV` stays pending as described under cross-filesystem refusal. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
 | During ownership-state commit | `dependency.recovery-required`; no replay. | The single atomic state-file rename leaves either the old generation, handled by the preceding row, or the new generation, handled by the following row. |
