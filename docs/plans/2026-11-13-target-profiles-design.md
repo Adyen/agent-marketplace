@@ -1811,10 +1811,10 @@ ownership or prove that a host registration can be rolled back.
 
 #### Edited files and verification
 
-Place payloads behave differently from owned aggregate entries.
-For place payloads, sync keeps an edited file and records edited drift; if any
-member of an installed package is edited, keep that package's entire current
-projection and do not partly refresh it. An upgrade that encounters an edit
+Place payloads differ from owned aggregate entries: sync keeps an
+edited file and records edited drift; if any member of an
+installed package is edited, keep that package's entire current projection
+and do not partly refresh it. An upgrade that encounters an edit
 keeps the complete old projection and refuses the new package revision as a
 unit. The user can restore or move the edit and sync again. On deselection,
 delete unchanged files only when their recorded ownership generation still
@@ -1846,7 +1846,7 @@ deferred runtime behavior.
 
 #### Trace to future acceptance witnesses
 
-Every row is **proposed / not implemented**. Existing specifications and code
+Every row is **proposed, not implemented**. Existing specifications and code
 below are precedents, not proof of Herdr place behavior.
 
 | Proposed transition | Existing contract/seam | Future acceptance witness |
