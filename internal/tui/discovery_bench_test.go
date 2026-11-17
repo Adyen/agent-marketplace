@@ -67,7 +67,7 @@ func BenchmarkTUIMarketplaceBrowseWarmCacheDiskIONoNetwork(b *testing.B) {
 		if msg.err != nil || len(msg.outcomes) != 1 || len(msg.outcomes[0].Items) != marketplace.DiscoveryPageLimit {
 			b.Fatalf("cached browse: %+v", msg)
 		}
-		m.applyDiscovery("", msg.outcomes)
+		m.applyBrowseDiscovery(msg.outcomes)
 		for !msg.done {
 			msg = waitMarketplaceDiscoveryUpdate(1, msg.sequence+1, "", msg.updates)().(discoveryLoadedMsg)
 			if msg.err != nil {

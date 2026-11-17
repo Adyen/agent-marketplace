@@ -223,13 +223,13 @@ func TestSearchClearFromListRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T
 	if m.filterActive || m.filter != "" || m.searchInput.Value() != "" {
 		t.Fatalf("cleared search state: active=%t filter=%q input=%q", m.filterActive, m.filter, m.searchInput.Value())
 	}
-	if got := rowNames(m.discoveryRows); !slices.Equal(got, []string{"browse-result"}) {
+	if got := rowNames(m.browseDiscoveryRows); !slices.Equal(got, []string{"browse-result"}) {
 		t.Fatalf("visible discovery rows = %v, want browse results", got)
 	}
 	if got := rowNames(m.rows); !slices.Equal(got, []string{"audit", "deploy", "release", "browse-result"}) {
 		t.Fatalf("merged rows = %v", got)
 	}
-	if cmd == nil || !m.discoveryLoading {
+	if cmd == nil || !m.browseLoading {
 		t.Fatalf("empty-query discovery not scheduled: cmd=%v loading=%t", cmd, m.discoveryLoading)
 	}
 }

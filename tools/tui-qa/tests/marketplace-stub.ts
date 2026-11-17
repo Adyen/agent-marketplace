@@ -15,6 +15,11 @@ export interface MarketplaceStub {
   driftedArchiveDigest: string;
   acquisitionDataRequestCount(): number;
   acquisitionDataRequestPaths(): string[];
+  searchRequestCount(): number;
+  browseRequestCount(): number;
+  waitForBrowseLaterPage(): Promise<void>;
+  holdNextBrowseLaterPage(): void;
+  releaseBrowsePages(): void;
   archiveFetches(): { placeholder: string[]; final: string[] };
   delayNextAcquisition(ms: number): void;
   delayedAcquisitionCount(): number;
@@ -119,6 +124,7 @@ export interface MarketplaceStubOptions {
   mismatchedPlaceholderArchive?: boolean;
   // Answer a query matching the installable skill with its exact revision.
   searchableInstall?: boolean;
+  startupBrowse?: boolean;
   // Assess the installable skill with one warning finding, so installing it
   // requires consent.
   installFindings?: boolean;
@@ -265,9 +271,36 @@ const kindSearchItems = [
 export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}): Promise<MarketplaceStub> => {
   const instanceID = "tui-qa-marketplace";
   const acquisitionDataRequests: string[] = [];
+  const startupBrowseItems = Array.from({ length: 61 }, (_, index) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "skill",
+    name: `browse-resource-${String(index).padStart(2, "0")}`,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Startup browse fixture resource",
+    availability: "available"
+  }));
   let nextAcquisitionDelayMs = 0;
   let delayedAcquisitions = 0;
   let servedArchiveDigest = archiveDigest;
+  let searchRequests = 0;
+  let browseRequests = 0;
+  let heldBrowsePageArmed = false;
+  let browsePageEntered = Promise.resolve();
+  let resolveBrowsePageEntered = () => {};
+  let browsePageReleased = Promise.resolve();
+  let resolveBrowsePageReleased = () => {};
+  const holdNextBrowsePage = (): void => {
+    heldBrowsePageArmed = true;
+    browsePageEntered = new Promise<void>((resolve) => {
+      resolveBrowsePageEntered = resolve;
+    });
+    browsePageReleased = new Promise<void>((resolve) => {
+      resolveBrowsePageReleased = resolve;
+    });
+  };
+  if (options.startupBrowse) holdNextBrowsePage();
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
@@ -308,15 +341,25 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
       const limit = Number(url.searchParams.get("limit") ?? "") || 50;
       const terms = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
       const kind = url.searchParams.get("kind") ?? "";
-      const candidates = [
-        inspectionSearchItem,
-        ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : [])
-      ];
+      searchRequests++;
+      if (options.startupBrowse && terms.length === 0 && kind === "") {
+        browseRequests++;
+        if (offset >= 50 && heldBrowsePageArmed) {
+          heldBrowsePageArmed = false;
+          resolveBrowsePageEntered();
+          response.once("close", resolveBrowsePageReleased);
+          await browsePageReleased;
+          if (response.destroyed) return;
+        }
+      }
+      const candidates = options.startupBrowse
+        ? startupBrowseItems
+        : [inspectionSearchItem, ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : [])];
       const matches = candidates.filter((item) => {
         const matchesKind = !kind || item.kind === kind;
         const text = `${item.name} ${item.description}`.toLowerCase();
-        const matchesQuery = terms.length > 0 && terms.some((term) => text.includes(term));
-        return matchesKind && (terms.length === 0 ? Boolean(kind) : matchesQuery);
+        const matchesQuery = terms.length > 0 ? terms.some((term) => text.includes(term)) : Boolean(kind) || Boolean(options.startupBrowse);
+        return matchesKind && matchesQuery;
       });
       response.end(JSON.stringify({ items: matches.slice(offset, offset + limit), total: matches.length, offset, limit }));
       return;
@@ -418,6 +461,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     materializedSkillContent,
     acquisitionDataRequestCount: () => acquisitionDataRequests.length,
     acquisitionDataRequestPaths: () => [...acquisitionDataRequests],
+    searchRequestCount: () => searchRequests,
+    browseRequestCount: () => browseRequests,
+    waitForBrowseLaterPage: () => browsePageEntered,
+    holdNextBrowseLaterPage: holdNextBrowsePage,
+    releaseBrowsePages: () => resolveBrowsePageReleased(),
     archiveFetches: () => {
       const fetched = (route: string): string[] =>
         acquisitionDataRequests.filter((requested) => requested.startsWith(route)).map((requested) => `sha256:${requested.slice(route.length)}`);

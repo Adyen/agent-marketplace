@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,10 @@ import (
 
 func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 	var searches atomic.Int32
+	items := make([]mpapi.ResourceListItem, 72)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry-a", "skill", fmt.Sprintf("review-%02d", i), float64(len(items)-i))
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
@@ -38,7 +43,11 @@ func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 			if got := r.URL.Query().Get("limit"); got != "50" {
 				t.Errorf("limit = %q, want 50", got)
 			}
-			_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{canonicalSearchItem("registry-a", "skill", "review", 1)}, Total: 72, Limit: 50})
+			offset, limit := 0, DiscoveryPageLimit
+			_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+			_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+			end := min(offset+limit, len(items))
+			_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:end], Total: len(items), Offset: offset, Limit: limit})
 		default:
 			http.NotFound(w, r)
 		}
@@ -56,14 +65,276 @@ func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := searches.Load(); got != 1 {
-		t.Fatalf("search requests = %d, want 1", got)
+	if got := searches.Load(); got != 2 {
+		t.Fatalf("search requests = %d, want two pages in the complete browse", got)
 	}
-	if len(first) != 1 || first[0].Total != 72 || !first[0].Truncated {
+	if len(first) != 1 || len(first[0].Items) != len(items) || first[0].Total != len(items) || first[0].Truncated {
 		t.Fatalf("first outcome = %#v", first)
 	}
-	if len(second) != 1 || second[0].CacheState != DiscoveryCacheFresh || second[0].Items[0].Name != "review" {
+	if len(second) != 1 || second[0].CacheState != DiscoveryCacheFresh || len(second[0].Items) != len(items) || second[0].Items[len(items)-1].Name != "review-71" {
 		t.Fatalf("second outcome = %#v", second)
+	}
+}
+
+// spec: tui-startup/cold-startup-browses-beyond-the-first-page
+// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
+func TestDiscoverBrowsePaginatesAndPublishesCumulativeSnapshots(t *testing.T) {
+	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+13)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+	}
+	var mu sync.Mutex
+	offsets := []int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "paged-browse")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		mu.Lock()
+		offsets = append(offsets, offset)
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:min(offset+limit, len(items))], Total: len(items), Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "paged-browse", Alias: "paged"}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}}
+	cache := NewDiscoveryCache(t.TempDir())
+	updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshots [][]DiscoveryOutcome
+	for update := range updates {
+		snapshots = append(snapshots, update)
+	}
+	if len(snapshots) < 3 {
+		t.Fatalf("snapshots = %d, want a cumulative snapshot after both pages and a completed result", len(snapshots))
+	}
+	firstPage := snapshots[0][0]
+	if len(firstPage.Items) != DiscoveryPageLimit || firstPage.Total != len(items) || !firstPage.Truncated {
+		t.Fatalf("first-page snapshot = %d items, total %d, truncated %t", len(firstPage.Items), firstPage.Total, firstPage.Truncated)
+	}
+	finalPage := snapshots[len(snapshots)-1][0]
+	if len(finalPage.Items) != len(items) || finalPage.Truncated || finalPage.Err != nil {
+		t.Fatalf("completed snapshot = %d items, truncated %t, error %v", len(finalPage.Items), finalPage.Truncated, finalPage.Err)
+	}
+	mu.Lock()
+	gotOffsets := slices.Clone(offsets)
+	mu.Unlock()
+	if !slices.Equal(gotOffsets, []int{0, DiscoveryPageLimit}) {
+		t.Fatalf("page offsets = %v, want [0 %d]", gotOffsets, DiscoveryPageLimit)
+	}
+	cached, ok := cache.Load(endpoint, "", "", DiscoveryPageLimit)
+	if !ok || len(cached.Items) != len(items) || cached.Total != len(items) || cached.Truncated {
+		t.Fatalf("complete browse cache = %d items, total %d, truncated %t, hit %t", len(cached.Items), cached.Total, cached.Truncated, ok)
+	}
+}
+
+// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
+func TestDiscoverBrowseEmptyEndpointMakesOneSearchRequest(t *testing.T) {
+	var searches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "empty-browse")
+			return
+		}
+		searches.Add(1)
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{}, Total: 0, Offset: 0, Limit: DiscoveryPageLimit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "empty-browse"}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if err != nil || len(outcomes) != 1 || len(outcomes[0].Items) != 0 || outcomes[0].Err != nil {
+		t.Fatalf("empty browse = %#v, err=%v", outcomes, err)
+	}
+	if got := searches.Load(); got != 1 {
+		t.Fatalf("empty endpoint search requests = %d, want one", got)
+	}
+}
+
+// spec: tui-startup/cold-startup-browses-beyond-the-first-page
+func TestDiscoverBrowseEndpointsProgressIndependently(t *testing.T) {
+	laterPageStarted := make(chan struct{}, 1)
+	releaseLaterPage := make(chan struct{}, 1)
+	heldItems := make([]mpapi.ResourceListItem, DiscoveryPageLimit+1)
+	for i := range heldItems {
+		heldItems[i] = canonicalSearchItem("held-registry", "skill", fmt.Sprintf("held-%02d", i), 0)
+	}
+	held := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "held-endpoint")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		if offset > 0 {
+			select {
+			case laterPageStarted <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseLaterPage:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: heldItems[offset:min(offset+limit, len(heldItems))], Total: len(heldItems), Offset: offset, Limit: limit})
+	}))
+	defer held.Close()
+	defer func() {
+		select {
+		case releaseLaterPage <- struct{}{}:
+		default:
+		}
+	}()
+	completed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "completed-endpoint")
+			return
+		}
+		items := []mpapi.ResourceListItem{canonicalSearchItem("complete-registry", "skill", "complete", 0)}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Offset: 0, Limit: DiscoveryPageLimit})
+	}))
+	defer completed.Close()
+	endpoints := []config.MarketplaceEntry{
+		{URL: held.URL, InstanceID: "held-endpoint"},
+		{URL: completed.URL, InstanceID: "completed-endpoint"},
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: endpoints}}
+	updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-laterPageStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("held endpoint did not start its later page")
+	}
+	gotHeldPage, gotCompletedEndpoint := false, false
+	deadline := time.After(2 * time.Second)
+	for !gotHeldPage || !gotCompletedEndpoint {
+		select {
+		case snapshot, ok := <-updates:
+			if !ok {
+				t.Fatal("discovery stream closed before independent endpoint progress arrived")
+			}
+			for _, outcome := range snapshot {
+				switch outcome.Endpoint.InstanceID {
+				case "held-endpoint":
+					gotHeldPage = len(outcome.Items) == DiscoveryPageLimit && outcome.Truncated && outcome.Err == nil
+				case "completed-endpoint":
+					gotCompletedEndpoint = len(outcome.Items) == 1 && !outcome.Truncated && outcome.Err == nil
+				}
+			}
+		case <-deadline:
+			t.Fatalf("progress while one endpoint was held = held page %t, completed endpoint %t", gotHeldPage, gotCompletedEndpoint)
+		}
+	}
+	releaseLaterPage <- struct{}{}
+	for range updates {
+	}
+}
+
+// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
+func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T) {
+	var offsets []int
+	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+3)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "truncated-cache")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		offsets = append(offsets, offset)
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:min(offset+limit, len(items))], Total: len(items), Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "truncated-cache"}
+	cache := NewDiscoveryCache(t.TempDir())
+	page := items[:DiscoveryPageLimit]
+	if err := cache.Store(DiscoveryOutcome{Endpoint: ep, Items: page, Total: len(items), Truncated: true, ObservedAt: time.Now()}, "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || len(outcomes[0].Items) != len(items) || outcomes[0].Truncated {
+		t.Fatalf("browse after truncated cache = %#v", outcomes)
+	}
+	if !slices.Equal(offsets, []int{0, DiscoveryPageLimit}) {
+		t.Fatalf("refreshed offsets = %v, want [0 %d]", offsets, DiscoveryPageLimit)
+	}
+}
+
+// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "partial-browse")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		if offset > 0 {
+			http.Error(w, "later page unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		items := make([]mpapi.ResourceListItem, DiscoveryPageLimit)
+		for i := range items {
+			items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: DiscoveryPageLimit + 4, Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "partial-browse"}
+	cache := NewDiscoveryCache(t.TempDir())
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil || len(outcomes) != 1 {
+		t.Fatalf("partial browse = %#v, err=%v", outcomes, err)
+	}
+	if len(outcomes[0].Items) != DiscoveryPageLimit || outcomes[0].Err == nil || !outcomes[0].Truncated {
+		t.Fatalf("partial browse outcome = %d items, truncated %t, error %v", len(outcomes[0].Items), outcomes[0].Truncated, outcomes[0].Err)
+	}
+	if _, err := os.Stat(cache.path(ep, "", "", "", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial catalog was cached: %v", err)
+	}
+}
+
+// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestDiscoverBrowseDeniedEndpointReceivesNoRequests(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "denied-browse"}
+	ec := config.EffectiveConfig{
+		Merged:              &config.Config{Marketplaces: []config.MarketplaceEntry{ep}},
+		AllowedMarketplaces: []string{"^https://allowed\\.example$"},
+	}
+	cache := NewDiscoveryCache(t.TempDir())
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	var blocked *config.MarketplaceURLBlockedError
+	if !errors.As(err, &blocked) || len(outcomes) != 0 {
+		t.Fatalf("denied browse = %#v, err=%v; want MarketplaceURLBlockedError before outcomes", outcomes, err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("denied endpoint received %d requests", got)
 	}
 }
 

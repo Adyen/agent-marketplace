@@ -235,9 +235,20 @@ var (
 type snapshotStreamClosedMsg struct{}
 
 func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return loadSnapshotMessage(ctx, workspace, homeDir, generation, false)
+}
+
+func loadSnapshotForReload(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return loadSnapshotMessage(ctx, workspace, homeDir, generation, true)
+}
+
+func loadSnapshotMessage(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration, reload bool) tea.Cmd {
 	return func() tea.Msg {
 		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
+		if reload {
+			return reloadMsg(snapshot)
+		}
 		return snapshot
 	}
 }

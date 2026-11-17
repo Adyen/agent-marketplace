@@ -154,7 +154,14 @@ export const targetPID = async (fixture: { pidFile: string }, timeoutMs = 5_000)
   while (Date.now() < deadline) {
     try {
       const pid = Number(fs.readFileSync(fixture.pidFile, "utf8").trim());
-      if (Number.isSafeInteger(pid) && pid > 1) return pid;
+      if (Number.isSafeInteger(pid) && pid > 1) {
+        try {
+          process.kill(pid, 0);
+          return pid;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }

@@ -92,7 +92,7 @@ func (m Model) footerActionHints() []footerItem {
 	if r, ok := m.selectedRow(); ok && rowToggleDenial(r) != toggleEligible {
 		actions = slices.DeleteFunc(actions, func(a [2]string) bool { return a[0] == "space" })
 	}
-	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
+	if m.failuresOrDrift() || len(m.marketplaceDiscoveryErrors()) > 0 {
 		actions = append([][2]string{{"r", "reload"}}, actions...)
 	}
 	if m.hasDiagnostics() {
@@ -178,7 +178,7 @@ func (m Model) footerStatus() (string, []string) {
 		leftParts = append(leftParts, m.driftStatusSegment())
 	}
 
-	var staleEndpoints, truncatedEndpoints int
+	var staleEndpoints, truncatedEndpoints, loadingEndpoints int
 	for _, outcome := range m.discoveryOutcomes {
 		if outcome.CacheState == "stale" {
 			staleEndpoints++
@@ -187,14 +187,24 @@ func (m Model) footerStatus() (string, []string) {
 			truncatedEndpoints++
 		}
 	}
+	for _, outcome := range m.browseOutcomes {
+		if outcome.CacheState == "stale" {
+			staleEndpoints++
+		}
+		if m.browseLoading && outcome.Truncated && outcome.Err == nil {
+			loadingEndpoints++
+		}
+	}
 	if staleEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d stale", staleEndpoints)))
 	}
-	if truncatedEndpoints > 0 {
+	if loadingEndpoints > 0 {
+		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d loading", loadingEndpoints)))
+	} else if truncatedEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d limited", truncatedEndpoints)))
 	}
-	if len(m.discoveryErrs) > 0 {
-		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", len(m.discoveryErrs))))
+	if failures := len(m.marketplaceDiscoveryErrors()); failures > 0 {
+		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", failures)))
 	}
 	if len(m.errs) > 0 {
 		leftParts = append(leftParts, styleFooterError.Render(fmt.Sprintf("! %d errors", len(m.errs))))
@@ -339,7 +349,7 @@ func (m Model) hasDiagnostics() bool {
 	if len(m.hookChanges) > 0 {
 		return true
 	}
-	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
+	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.marketplaceDiscoveryErrors()) > 0
 }
 
 func (m Model) failuresOrDrift() bool {

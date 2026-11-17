@@ -35,7 +35,7 @@ export interface FixtureOptions {
   // anything, and lets a search find its installable skill. "findings"
   // assesses that skill with a warning so installing it requires consent.
   // "mixed-denial" adds a blocked endpoint alongside the allowed stub.
-  marketplaceDiscovery?: "plain" | "findings" | "mixed-denial";
+  marketplaceDiscovery?: "plain" | "findings" | "mixed-denial" | "startup-browse";
   // Adds an unconfigured local Git registry for install-from-source journeys.
   adHocSource?: boolean;
   sshPromptSource?: boolean;
@@ -80,6 +80,11 @@ export interface Fixture {
   marketplaceURL?: string;
   marketplaceContentDigest?: string;
   marketplaceArchiveFetches?: () => { placeholder: string[]; final: string[] };
+  marketplaceSearchRequestCount?: () => number;
+  marketplaceBrowseRequestCount?: () => number;
+  marketplaceWaitForBrowseLaterPage?: () => Promise<void>;
+  marketplaceHoldNextBrowseLaterPage?: () => void;
+  marketplaceReleaseBrowsePages?: () => void;
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
   // Commits a file change to the Git registry and pushes it, moving the ref
@@ -134,7 +139,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
         searchableInstall: Boolean(options.marketplaceDiscovery),
-        installFindings: options.marketplaceDiscovery === "findings"
+        installFindings: options.marketplaceDiscovery === "findings",
+        startupBrowse: options.marketplaceDiscovery === "startup-browse"
       });
     }
     if (options.organization && stub) {
@@ -347,6 +353,11 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceURL: stub?.url,
       marketplaceContentDigest: stub?.contentDigest,
       marketplaceArchiveFetches: stub?.archiveFetches,
+      marketplaceSearchRequestCount: stub?.searchRequestCount,
+      marketplaceBrowseRequestCount: stub?.browseRequestCount,
+      marketplaceWaitForBrowseLaterPage: stub?.waitForBrowseLaterPage,
+      marketplaceHoldNextBrowseLaterPage: stub?.holdNextBrowseLaterPage,
+      marketplaceReleaseBrowsePages: stub?.releaseBrowsePages,
       orgConfigPath,
       orgLockPath,
       expectedOrgConfig,

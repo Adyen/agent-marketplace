@@ -15,6 +15,7 @@ const (
 	requestDetail         requestKind = "detail"
 	requestSnapshot       requestKind = "snapshot"
 	requestDiscovery      requestKind = "marketplace-discovery"
+	requestBrowse         requestKind = "marketplace-browse"
 	requestInstallPreview requestKind = "install-source-preview"
 )
 
@@ -23,12 +24,13 @@ type requestState struct {
 	detail         requestGeneration
 	snapshot       requestGeneration
 	discovery      requestGeneration
+	browse         requestGeneration
 	installPreview requestGeneration
 }
 
 func (r *requestState) begin(kind requestKind) requestGeneration {
 	switch kind {
-	case requestDetail, requestSnapshot, requestDiscovery, requestInstallPreview:
+	case requestDetail, requestSnapshot, requestDiscovery, requestBrowse, requestInstallPreview:
 	default:
 		return 0
 	}
@@ -41,6 +43,8 @@ func (r *requestState) begin(kind requestKind) requestGeneration {
 		r.snapshot = r.next
 	case requestDiscovery:
 		r.discovery = r.next
+	case requestBrowse:
+		r.browse = r.next
 	case requestInstallPreview:
 		r.installPreview = r.next
 	}
@@ -55,6 +59,8 @@ func (r requestState) active(kind requestKind) requestGeneration {
 		return r.snapshot
 	case requestDiscovery:
 		return r.discovery
+	case requestBrowse:
+		return r.browse
 	case requestInstallPreview:
 		return r.installPreview
 	default:
@@ -71,6 +77,8 @@ func (r *requestState) cancel(kind requestKind) requestGeneration {
 		r.snapshot = 0
 	case requestDiscovery:
 		r.discovery = 0
+	case requestBrowse:
+		r.browse = 0
 	case requestInstallPreview:
 		r.installPreview = 0
 	}
@@ -79,8 +87,11 @@ func (r *requestState) cancel(kind requestKind) requestGeneration {
 
 func (m *Model) beginRequest(kind requestKind) requestGeneration {
 	generation := m.requests.begin(kind)
-	if kind == requestDiscovery {
+	switch kind {
+	case requestDiscovery:
 		m.discoverySequence = 0
+	case requestBrowse:
+		m.browseSequence = 0
 	}
 	slog.Debug("tui request created", "kind", kind, "generation", generation)
 	return generation
