@@ -128,31 +128,31 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		if !hasSession && !dryRun && batch == nil && codexRootNeedsReconciliation(destination.Root, current) {
 			lockReport := newOwnedAggregateLockReporter(key, destination.Root)
 			store, err := ownership.Open(destination.Root, ownership.WithLockObserver(lockReport.observe))
-			if err != nil {
-				return codexMCPDiag(report, key, err)
-			}
-			session = ownedAggregateWriteSession{root: destination.Root, store: store, lockReport: lockReport}
-			hookOptions := codexHookJSONOptions()
-			sessionErr := withOwnedAggregateWriteSession(ctx, &state, session, hookOptions.sessionName, func() error {
-				outcomes, recoverErr := recoverOwnedAggregate(store)
-				for _, outcome := range outcomes {
-					report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
-						fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",
-							outcome.Generation, ownedAggregateLabel(destination.Root, outcome.File), outcome.Phase, outcome.Action)))
-				}
-				if recoverErr != nil {
-					report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, "", recoverErr, hookOptions.writeCode))
+			if err == nil {
+				session = ownedAggregateWriteSession{root: destination.Root, store: store, lockReport: lockReport}
+				hookOptions := codexHookJSONOptions()
+				sessionErr := withOwnedAggregateWriteSession(ctx, &state, session, hookOptions.sessionName, func() error {
+					outcomes, recoverErr := recoverOwnedAggregate(store)
+					for _, outcome := range outcomes {
+						report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
+							fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",
+								outcome.Generation, ownedAggregateLabel(destination.Root, outcome.File), outcome.Phase, outcome.Action)))
+					}
+					if recoverErr != nil {
+						report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, "", recoverErr, hookOptions.writeCode))
+						report = codexMCPDiag(report, key, recoverErr)
+						return nil
+					}
+					report = reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
 					return nil
+				})
+				if sessionErr != nil {
+					report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
+					report = codexMCPDiag(report, key, sessionErr)
 				}
-				report = reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
-				return nil
-			})
-			if sessionErr != nil {
-				report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
-				report = codexMCPDiag(report, key, sessionErr)
+				report.Diags = append(report.Diags, lockReport.diags()...)
+				return report
 			}
-			report.Diags = append(report.Diags, lockReport.diags()...)
-			return report
 		}
 		if hasSession {
 			return reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)

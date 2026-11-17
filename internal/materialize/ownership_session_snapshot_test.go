@@ -114,48 +114,79 @@ func TestCodexRootRecoversOnceAcrossHookAndMCPReconciles(t *testing.T) {
 }
 
 func TestCodexLockFailureKeepsHookAndMCPDiagnostics(t *testing.T) {
-	repo, home := t.TempDir(), t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	root := filepath.Join(repo, ".codex")
-	hooksPath := filepath.Join(root, "hooks.json")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		want map[string]int
+	}{
+		{name: "lock-timeout", want: map[string]int{diag.CodeOwnershipLockTimeout: 1, diag.CodeMaterializeCodexAggregateMalformed: 1}},
+		{name: "open-failure", want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 2}},
+		{name: "recover-failure", want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1, diag.CodeOwnershipStateCorrupt: 1}},
 	}
-	hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
-	if err := os.WriteFile(hooksPath, hooks, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	holder, err := ownership.Open(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release, err := holder.Lock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	t.Setenv(ownership.LockTimeoutEnvVar, "0")
-
-	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{
-		codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	got := make(map[string]int)
-	for _, diagnostic := range report.Diags {
-		got[diagnostic.Code]++
-		if diagnostic.Code == diag.CodeOwnershipLockTimeout || diagnostic.Code == diag.CodeMaterializeCodexAggregateMalformed {
-			if diagnostic.Severity != diag.SeverityError {
-				t.Errorf("diagnostic %q severity = %q, want error", diagnostic.Code, diagnostic.Severity)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, home := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			root := filepath.Join(repo, ".codex")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
 			}
-		}
-	}
-	for _, code := range []string{diag.CodeOwnershipLockTimeout, diag.CodeMaterializeCodexAggregateMalformed} {
-		if got[code] != 1 {
-			t.Errorf("diagnostic %q count = %d, want 1 (all: %#v)", code, got[code], got)
-		}
+			hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
+			if err := os.WriteFile(filepath.Join(root, "hooks.json"), hooks, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			switch tt.name {
+			case "lock-timeout":
+				holder, err := ownership.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				release, err := holder.Lock()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(release)
+				t.Setenv(ownership.LockTimeoutEnvVar, "0")
+			case "open-failure":
+				stateFile := filepath.Join(t.TempDir(), "state")
+				if err := os.WriteFile(stateFile, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("XDG_STATE_HOME", stateFile)
+			case "recover-failure":
+				store, err := ownership.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(store.JournalFile()), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(store.JournalFile(), []byte("{not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{
+				codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			got := make(map[string]int)
+			for _, diagnostic := range report.Diags {
+				got[diagnostic.Code]++
+				if diagnostic.Severity != diag.SeverityError {
+					t.Errorf("diagnostic %q severity = %q, want error", diagnostic.Code, diagnostic.Severity)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Errorf("diagnostic codes = %#v, want %#v", got, tt.want)
+			}
+			for code, count := range tt.want {
+				if got[code] != count {
+					t.Errorf("diagnostic %q count = %d, want %d", code, got[code], count)
+				}
+			}
+		})
 	}
 }
