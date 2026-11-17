@@ -126,7 +126,9 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		}
 		logCodexMCPReconciliationStart(key, destination.Root, len(current.mcps), current.blocked, dryRun)
 		session, hasSession := state.writeSession(destination.Root)
-		if !hasSession && !dryRun && batch == nil && codexRootNeedsReconciliation(destination.Root, current) {
+		hookWork := !state.reconcilesNativeHooks(key) && ownedJSONAggregatesHaveWork(destination.Root, []ownedJSONFileSpec{codexHookFileSpec}, current.hooks)
+		mcpWork := codexMCPHasWork(destination.Root, current.mcps, current.registrations, batch)
+		if !hasSession && !dryRun && batch == nil && (hookWork || mcpWork) {
 			lockReport := newOwnedAggregateLockReporter(key, destination.Root)
 			store, err := ownership.Open(destination.Root, ownership.WithLockObserver(lockReport.observe))
 			if err == nil {
@@ -140,16 +142,24 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 								outcome.Generation, ownedAggregateLabel(destination.Root, outcome.File), outcome.Phase, outcome.Action)))
 					}
 					if recoverErr != nil {
-						report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, "", recoverErr, hookOptions.writeCode))
-						report = codexMCPDiag(report, key, recoverErr)
+						if hookWork {
+							report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, "", recoverErr, hookOptions.writeCode))
+						}
+						if mcpWork {
+							report = codexMCPDiag(report, key, recoverErr)
+						}
 						return nil
 					}
 					report = reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
 					return nil
 				})
 				if sessionErr != nil {
-					report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
-					report = codexMCPDiag(report, key, sessionErr)
+					if hookWork {
+						report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
+					}
+					if mcpWork {
+						report = codexMCPDiag(report, key, sessionErr)
+					}
 				}
 				report.Diags = append(report.Diags, lockReport.diags()...)
 				return report
@@ -163,17 +173,16 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 	return report
 }
 
-func codexRootNeedsReconciliation(root string, current *codexOwnedAggregateState) bool {
-	if current != nil && (current.hooks != nil && len(current.hooks.entries) > 0 ||
-		len(current.mcps) > 0 || len(current.registrations) > 0) {
+var codexHookFileSpec = ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
+
+// codexMCPHasWork reports whether Codex MCP reconciliation would open the
+// ownership store for root.
+func codexMCPHasWork(root string, desired []codexMCPEntry, registrations []codexPluginRegistration, batch *pluginInstanceBatch) bool {
+	if len(desired) > 0 || len(registrations) > 0 || batch != nil {
 		return true
 	}
-	for _, rel := range []string{codexHooksFile, codexMCPFile} {
-		if _, err := os.Lstat(filepath.Join(root, rel)); err == nil || !os.IsNotExist(err) {
-			return true
-		}
-	}
-	return false
+	_, err := os.Lstat(filepath.Join(root, codexMCPFile))
+	return !os.IsNotExist(err)
 }
 
 func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, destination harness.Destination,
@@ -194,8 +203,7 @@ func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregat
 			hookOptions.deferLockDiagnostics = true
 			hookOptions.storeSessionHeld = true
 		}
-		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{codexHookFileSpec}, current.hooks, hookOptions, dryRun)
 	}
 	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, session, batch)
 }
@@ -744,10 +752,8 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 		seen[entry.name] = entry.resource
 	}
 	abs := filepath.Join(root, codexMCPFile)
-	if len(desired) == 0 && len(registrations) == 0 && batch == nil {
-		if _, err := os.Lstat(abs); os.IsNotExist(err) {
-			return report
-		}
+	if !codexMCPHasWork(root, desired, registrations, batch) {
+		return report
 	}
 	if !dryRun {
 		if err := os.MkdirAll(root, 0o755); err != nil {

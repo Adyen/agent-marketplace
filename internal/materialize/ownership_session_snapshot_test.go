@@ -113,14 +113,24 @@ func TestCodexRootRecoversOnceAcrossHookAndMCPReconciles(t *testing.T) {
 	}
 }
 
+// The expected counts are the diagnostics the base (per-reconciler session)
+// code reports: each reconciler reports a failure only when it has work, so a
+// root with no Codex hook work must not gain a hook-coded "root skipped"
+// diagnostic, and a root with no MCP work must not gain an MCP diagnostic.
 func TestCodexLockFailureKeepsHookAndMCPDiagnostics(t *testing.T) {
 	tests := []struct {
-		name string
-		want map[string]int
+		name, failure string
+		hooks, mcp    bool
+		want          map[string]int
 	}{
-		{name: "lock-timeout", want: map[string]int{diag.CodeOwnershipLockTimeout: 1, diag.CodeMaterializeCodexAggregateMalformed: 1}},
-		{name: "open-failure", want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 2}},
-		{name: "recover-failure", want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1, diag.CodeOwnershipStateCorrupt: 1}},
+		{name: "lock-timeout", failure: "lock-timeout", hooks: true, mcp: true, want: map[string]int{diag.CodeOwnershipLockTimeout: 1, diag.CodeMaterializeCodexAggregateMalformed: 1}},
+		{name: "open-failure", failure: "open-failure", hooks: true, mcp: true, want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 2}},
+		{name: "recover-failure", failure: "recover-failure", hooks: true, mcp: true, want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1, diag.CodeOwnershipStateCorrupt: 1}},
+		{name: "lock-timeout-mcp-only", failure: "lock-timeout", mcp: true, want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1}},
+		{name: "open-failure-mcp-only", failure: "open-failure", mcp: true, want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1}},
+		{name: "recover-failure-mcp-only", failure: "recover-failure", mcp: true, want: map[string]int{diag.CodeMaterializeCodexAggregateMalformed: 1}},
+		{name: "lock-timeout-hooks-only", failure: "lock-timeout", hooks: true, want: map[string]int{diag.CodeOwnershipLockTimeout: 1}},
+		{name: "recover-failure-hooks-only", failure: "recover-failure", hooks: true, want: map[string]int{diag.CodeOwnershipStateCorrupt: 1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -132,11 +142,19 @@ func TestCodexLockFailureKeepsHookAndMCPDiagnostics(t *testing.T) {
 			if err := os.MkdirAll(root, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
-			if err := os.WriteFile(filepath.Join(root, "hooks.json"), hooks, 0o644); err != nil {
-				t.Fatal(err)
+			if tt.hooks {
+				hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
+				if err := os.WriteFile(filepath.Join(root, "hooks.json"), hooks, 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
-			switch tt.name {
+			resolved := []resolver.ResolvedArtifact{codexSubagent("reviewer", "Review carefully.", config.RepoCommitted)}
+			if tt.mcp {
+				resolved = []resolver.ResolvedArtifact{
+					codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+				}
+			}
+			switch tt.failure {
 			case "lock-timeout":
 				holder, err := ownership.Open(root)
 				if err != nil {
@@ -166,9 +184,7 @@ func TestCodexLockFailureKeepsHookAndMCPDiagnostics(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{
-				codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
-			})
+			report, err := Run(context.Background(), repo, resolved)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
