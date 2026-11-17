@@ -124,6 +124,7 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 		if !destination.Info.OwnershipReconciledAggregates {
 			continue
 		}
+		logCodexMCPReconciliationStart(key, destination.Root, len(current.mcps), current.blocked, dryRun)
 		session, hasSession := state.writeSession(destination.Root)
 		if !hasSession && !dryRun && batch == nil && codexRootNeedsReconciliation(destination.Root, current) {
 			lockReport := newOwnedAggregateLockReporter(key, destination.Root)
@@ -724,11 +725,15 @@ func lineEnd(raw []byte, offset int) int {
 }
 
 func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+	logCodexMCPReconciliationStart(key, root, len(desired), incomplete, dryRun)
 	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, nil, incomplete, dryRun, nil, nil)
 }
 
+func logCodexMCPReconciliationStart(key outputKey, root string, desiredEntries int, incomplete, dryRun bool) {
+	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", desiredEntries, "incomplete", incomplete, "dry_run", dryRun)
+}
+
 func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, registrations []codexPluginRegistration, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
-	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
 		if first, duplicate := seen[entry.name]; duplicate {
