@@ -1631,9 +1631,9 @@ or a second ownership database.
   `ReadPendingPluginGenerationRefs`, accept a journaled agent-owned stage
   outside the destination parent, and replace that path-order invariant with
   an explicit dependency-topological publish order (path-order ties). A
-  pending journal is handled as today: `Commit` refuses destinations that
-  overlap a pending journal, and callers of `CheckPending` refuse while any
-  journal is pending.
+  pending journal keeps today's behavior, where `Commit` refuses
+  destinations that overlap a pending journal and callers of `CheckPending`
+  refuse while any journal is pending.
 - `stageCapturedDestination` currently uses
   `Destination.StagingDir` in the destination parent, while
   `publishLocked` uses `.packagegen-*` stages swept by
@@ -1743,8 +1743,8 @@ These local-move and leaf windows are observation limits, not a proposal for
 new rename flags, and root binding does not prevent a concurrent local move
 in that window. An alias that cannot be proven to be the recorded canonical
 root is not ownership proof. A case-variant spelling on a case-insensitive
-host is an unproven alias because `ownership.CanonicalRoot` does not fold
-case, so it is not ownership proof. Store the resolved XDG state root used
+host is also an unproven alias because `ownership.CanonicalRoot` does not
+fold case. Store the resolved XDG state root used
 by the existing ownership store in the local approval binding. If
 `XDG_STATE_HOME` changes and that recorded metadata is unavailable, report
 ownership as unavailable and refuse place mutation or retirement; do not
