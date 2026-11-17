@@ -83,7 +83,6 @@ export interface Fixture {
   marketplaceSearchRequestCount?: () => number;
   marketplaceBrowseRequestCount?: () => number;
   marketplaceWaitForBrowseLaterPage?: () => Promise<void>;
-  marketplaceHoldNextBrowseLaterPage?: () => void;
   marketplaceReleaseBrowsePages?: () => void;
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
@@ -356,7 +355,6 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceSearchRequestCount: stub?.searchRequestCount,
       marketplaceBrowseRequestCount: stub?.browseRequestCount,
       marketplaceWaitForBrowseLaterPage: stub?.waitForBrowseLaterPage,
-      marketplaceHoldNextBrowseLaterPage: stub?.holdNextBrowseLaterPage,
       marketplaceReleaseBrowsePages: stub?.releaseBrowsePages,
       orgConfigPath,
       orgLockPath,

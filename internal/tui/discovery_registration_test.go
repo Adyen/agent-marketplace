@@ -129,7 +129,6 @@ func TestDiscoveryRegistrationTUIEndpointMatchIsNarrow(t *testing.T) {
 			m := newTestModel()
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{tc.configured}}
 			out := registrationDiscoveryOutcome(tc.returned, "review")
-			// Seed a previous verified query, then exercise the real refresh filter.
 			m.discoveryOutcomes = []marketplace.DiscoveryOutcome{out}
 			m.discoveryRows = []row{{MarketplaceDiscovery: &marketplaceDiscovery{Endpoint: tc.returned, Item: out.Items[0]}}}
 			m.beginMarketplaceDiscovery("review", true)

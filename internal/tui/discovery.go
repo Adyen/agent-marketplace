@@ -3,11 +3,9 @@ package tui
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -436,21 +434,22 @@ func filterMarketplaceRows(rows []row, matches func(config.MarketplaceEntry) boo
 	return kept
 }
 
+func filterConfiguredOutcomes(outcomes []marketplace.DiscoveryOutcome, matches func(config.MarketplaceEntry) bool) []marketplace.DiscoveryOutcome {
+	return slices.DeleteFunc(outcomes, func(outcome marketplace.DiscoveryOutcome) bool {
+		return !matches(outcome.Endpoint)
+	})
+}
+
 func marketplaceBrowseRequestKey(cfg *config.Config) (string, int, error) {
 	effective := effectiveMarketplaceConfig(cfg)
-	type endpointKey struct {
-		URL        string `json:"url"`
-		InstanceID string `json:"instance_id"`
-		Alias      string `json:"alias"`
-	}
-	endpoints := make([]endpointKey, 0, len(cfg.Marketplaces))
+	endpoints := make([]string, 0, len(cfg.Marketplaces))
 	allowedCount := 0
 	for _, endpoint := range cfg.Marketplaces {
 		normalized, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
 		if err != nil {
 			return "", 0, err
 		}
-		endpoints = append(endpoints, endpointKey{URL: normalized, InstanceID: endpoint.InstanceID, Alias: endpoint.Alias})
+		endpoints = append(endpoints, normalized+"\x00"+endpoint.InstanceID+"\x00"+endpoint.Alias)
 		err = config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, effective.AllowedMarketplaces)
 		if err == nil {
 			allowedCount++
@@ -461,25 +460,10 @@ func marketplaceBrowseRequestKey(cfg *config.Config) (string, int, error) {
 			return "", 0, err
 		}
 	}
-	slices.SortFunc(endpoints, func(a, b endpointKey) int {
-		if c := strings.Compare(a.URL, b.URL); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.InstanceID, b.InstanceID); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Alias, b.Alias)
-	})
+	slices.Sort(endpoints)
 	allowed := slices.Clone(effective.AllowedMarketplaces)
-	sort.Strings(allowed)
-	data, err := json.Marshal(struct {
-		Endpoints []endpointKey `json:"endpoints"`
-		Allowed   []string      `json:"allowed"`
-	}{Endpoints: endpoints, Allowed: allowed})
-	if err != nil {
-		return "", 0, err
-	}
-	return string(data), allowedCount, nil
+	slices.Sort(allowed)
+	return strings.Join(endpoints, "\x00") + "\x01" + strings.Join(allowed, "\x00"), allowedCount, nil
 }
 
 func (m *Model) beginMarketplaceBrowse(force bool) tea.Cmd {
@@ -512,12 +496,8 @@ func (m *Model) beginMarketplaceBrowse(force bool) tea.Cmd {
 		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
 		m.discoveryRows = filterMarketplaceRows(m.discoveryRows, isConfigured)
 		m.browseDiscoveryRows = filterMarketplaceRows(m.browseDiscoveryRows, isConfigured)
-		m.discoveryOutcomes = slices.DeleteFunc(m.discoveryOutcomes, func(outcome marketplace.DiscoveryOutcome) bool {
-			return !isConfigured(outcome.Endpoint)
-		})
-		m.browseOutcomes = slices.DeleteFunc(m.browseOutcomes, func(outcome marketplace.DiscoveryOutcome) bool {
-			return !isConfigured(outcome.Endpoint)
-		})
+		m.discoveryOutcomes = filterConfiguredOutcomes(m.discoveryOutcomes, isConfigured)
+		m.browseOutcomes = filterConfiguredOutcomes(m.browseOutcomes, isConfigured)
 		m.rebuildDiscoveryErrors()
 		m.rebuildBrowseErrors()
 		m.mergeDiscoveryRows()
@@ -683,9 +663,7 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 	// must not attach results from a replaced URL or an existing exact identity.
 	if m.mergedCfg != nil {
 		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
-		outcomes = slices.DeleteFunc(slices.Clone(outcomes), func(outcome marketplace.DiscoveryOutcome) bool {
-			return !isConfigured(outcome.Endpoint)
-		})
+		outcomes = filterConfiguredOutcomes(slices.Clone(outcomes), isConfigured)
 	}
 	m.discoveryOutcomes = outcomes
 	m.rebuildDiscoveryErrors()
@@ -696,9 +674,7 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 func (m *Model) applyBrowseDiscovery(outcomes []marketplace.DiscoveryOutcome) {
 	if m.mergedCfg != nil {
 		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
-		outcomes = slices.DeleteFunc(slices.Clone(outcomes), func(outcome marketplace.DiscoveryOutcome) bool {
-			return !isConfigured(outcome.Endpoint)
-		})
+		outcomes = filterConfiguredOutcomes(slices.Clone(outcomes), isConfigured)
 	}
 	m.browseOutcomes = outcomes
 	m.rebuildBrowseErrors()

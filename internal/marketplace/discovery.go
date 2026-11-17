@@ -789,7 +789,7 @@ func discoverOneWithProgress(ctx context.Context, ep config.MarketplaceEntry, ve
 		if !browse {
 			return DiscoveryOutcome{Endpoint: ep, Items: items, Total: resp.Total, Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
 		}
-		return discoverBrowsePages(ctx, client, ep, opts, limit, items, resp, progress)
+		return discoverBrowsePages(ctx, client, ep, limit, timeout, items, resp, progress)
 	}
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
@@ -828,7 +828,7 @@ func discoveryRequestContext(ctx context.Context, browse bool, timeout time.Dura
 	return ctx, func() {}
 }
 
-func discoverBrowsePages(ctx context.Context, client *Client, ep config.MarketplaceEntry, opts DiscoveryOptions, limit int, first []mpapi.ResourceListItem, firstPage SearchResponse, progress func(DiscoveryOutcome) bool) (DiscoveryOutcome, error) {
+func discoverBrowsePages(ctx context.Context, client *Client, ep config.MarketplaceEntry, limit int, timeout time.Duration, first []mpapi.ResourceListItem, firstPage SearchResponse, progress func(DiscoveryOutcome) bool) (DiscoveryOutcome, error) {
 	items := slices.Clone(first)
 	total := firstPage.Total
 	if len(firstPage.Items) == 0 && total > 0 {
@@ -846,7 +846,7 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 	}
 	offset := len(firstPage.Items)
 	for offset < total {
-		pageCtx, cancel := discoveryRequestContext(ctx, true, discoveryRequestTimeout(opts.Timeout))
+		pageCtx, cancel := context.WithTimeout(ctx, timeout)
 		page, err := client.Search(pageCtx, SearchRequest{Limit: limit, Offset: offset})
 		cancel()
 		if err != nil {
@@ -877,13 +877,6 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 		}
 	}
 	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(total, len(items)), CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
-}
-
-func discoveryRequestTimeout(timeout time.Duration) time.Duration {
-	if timeout <= 0 {
-		return DefaultSearchTimeout
-	}
-	return timeout
 }
 
 // partialDiscovery retains received resources when a later discovery request

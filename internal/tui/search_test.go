@@ -230,7 +230,7 @@ func TestSearchClearFromListRestoresBrowseDiscoveryBeforeEmptyQuery(t *testing.T
 		t.Fatalf("merged rows = %v", got)
 	}
 	if cmd == nil || !m.browseLoading {
-		t.Fatalf("empty-query discovery not scheduled: cmd=%v loading=%t", cmd, m.discoveryLoading)
+		t.Fatalf("empty-query discovery not scheduled: cmd=%v loading=%t", cmd, m.browseLoading)
 	}
 }
 

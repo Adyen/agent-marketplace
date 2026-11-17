@@ -18,7 +18,6 @@ export interface MarketplaceStub {
   searchRequestCount(): number;
   browseRequestCount(): number;
   waitForBrowseLaterPage(): Promise<void>;
-  holdNextBrowseLaterPage(): void;
   releaseBrowsePages(): void;
   archiveFetches(): { placeholder: string[]; final: string[] };
   delayNextAcquisition(ms: number): void;
@@ -464,7 +463,6 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     searchRequestCount: () => searchRequests,
     browseRequestCount: () => browseRequests,
     waitForBrowseLaterPage: () => browsePageEntered,
-    holdNextBrowseLaterPage: holdNextBrowsePage,
     releaseBrowsePages: () => resolveBrowsePageReleased(),
     archiveFetches: () => {
       const fetched = (route: string): string[] =>
