@@ -1631,8 +1631,9 @@ or a second ownership database.
   `ReadPendingPluginGenerationRefs`, accept a journaled agent-owned stage
   outside the destination parent, and replace that path-order invariant with
   an explicit dependency-topological publish order (path-order ties). A
-  pending journal continues to block further dependency commits until
-  recovery.
+  pending journal is handled as today: `Commit` refuses destinations that
+  overlap a pending journal, and callers of `CheckPending` refuse while any
+  journal is pending.
 - `stageCapturedDestination` currently uses
   `Destination.StagingDir` in the destination parent, while
   `publishLocked` uses `.packagegen-*` stages swept by
@@ -1667,9 +1668,17 @@ For publication, capture the approved canonical target root with
 `internal/fsboundary/dir_unix.go:OpenDir`; use
 `internal/fsboundary/root_unix.go:OpenContainedRoot` and
 `internal/fsboundary/destination_unix.go:CaptureDestination` for contained
-paths and the repository link policy. Revalidate that root, its parent
-chain, destination leaf and any honored link before every publish or removal
-with `Destination.Verify`/`Publish`.
+paths and the repository link policy. Revalidate the destination leaf and any
+honored link before every publish or removal with `Destination.Verify`/
+`Publish`. Those methods remain bound to the pinned root object and do not
+re-resolve its path. As a required extension to place authority, re-stat the
+named root path immediately before every publish or removal and require
+`SameObject` with the pinned root identity; otherwise refuse with a generation
+conflict, following
+`internal/materialize/destination_boundary.go:captureDirectory`. The root's
+own parent chain is not captured, so a concurrent move of a root ancestor
+between that re-stat and the write is an observation limit, like the existing
+ancestor window below.
 Keep the unconditional `.packagegen-*` sweep limited to existing plugin
 stages. Recovery removes a place stage only when its recorded directory
 identity and manifest match. An unrecorded, missing-after-capture, changed or
@@ -1721,13 +1730,13 @@ Resolve and pin the root directory identity at plan admission; reuse
 `internal/materialize/destination_boundary.go:captureDirectory`'s named-root
 identity check as the precedent. Root binding prevents environment-,
 approval- and plan-time redirection and stale-root writes. Replacements of
-the root, a captured ancestor or a destination symlink are detected and
+a captured ancestor or a destination symlink are detected and
 refused by `Destination.Verify` when present at that verification step: do
 not retry through the new name, write, prune, or clear the journal. After
 `Destination.Publish`'s `verifyTarget` returns the parent descriptor and
-before `unix.Renameat`, a concurrent move of an ancestor carries that
-descriptor with the directory object, so the write can land in an object no
-longer at the approved path; this is not detected or reported. A file or
+before `unix.Renameat`, a concurrent move of a destination ancestor carries
+that descriptor with the directory object, so the write can land in an object
+no longer at the approved path; this is not detected or reported. A file or
 symlink leaf replaced after leaf verification is replaced at the captured
 parent; a directory leaf makes `renameat` fail rather than being overwritten.
 These local-move and leaf windows are observation limits, not a proposal for
@@ -1875,11 +1884,11 @@ below are precedents, not proof of Herdr place behavior.
 | Proposed transition | Existing contract/seam | Future acceptance witness |
 |---|---|---|
 | Engine staging and same-filesystem publish | `plugin-delivery` (Package roots resolve to immutable package generations); `packagegen.Plan` / `PublishUnderPackagesLock`; `fsboundary.Destination.Publish` | Stage outside a scratch target root and assert no host sibling; a different-device target refuses before writes; injected `EXDEV` leaves its journal and stage, with no copy fallback. |
-| Incomplete staging recovery | `dependencytxn.CheckPending`, `Recover`, `recoverJournal` | Crash after the first stage file: read-only `sync --check` returns `dependency.recovery-required` without byte changes; mutating recovery clears only an exact attempt-owned partial stage. Replace one stage byte and prove recovery stops with it and the journal intact. An unrecorded or changed place stage survives a mutating sync, even one selecting a plugin package, and blocks recovery. |
+| Incomplete staging recovery | `dependencytxn.CheckPending`, `Recover`, `recoverJournal` | Crash after the first stage file: read-only `sync --check` returns `dependency.recovery-required` without byte changes; mutating recovery clears only an exact attempt-owned partial stage. Replace one stage byte and prove recovery stops with it and the journal intact. A mutating sync selecting a plugin package stops on an unrecorded or changed place stage; the stage and journal are preserved. |
 | Partial publication recovery | `plugin-delivery` (Plugin instances install as a unit; Delivery transitions never activate a plugin twice); `dependencytxn.recoverJournal` | Crash after a published prefix: read-only status refuses without replay; mutating sync completes the exact recorded suffix. Change one destination generation and prove no subsequent file or evidence is deleted. |
 | Published files before ownership commit | `owned-entry-reconciliation` (Apply retains originally admitted ownership-record generation); `pluginInstanceBatch.commit` | Crash after all target files but before the ownership participant: read-only refuses; recovery commits the matching ownership generation once, without reacquisition. |
 | Ownership commit before/during prune | `plugin-delivery` (Removal retires only owned plugin output); `ownership.Store.Recover` | Crash before prune and between two removals: recovery prunes only matching stale generations; replace a remaining file and assert it and the pending journal survive. |
-| Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Change `HERDR_APP_HOME`, XDG state root, a root alias and a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
+| Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Rename the approved root and recreate a directory at its path; place publish and prune refuse. Change `HERDR_APP_HOME`, XDG state root, a root alias or a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
 | Destination leaf or ancestor move after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf or move its ancestor after `verifyTarget` returns the parent descriptor but before `renameat`: leaf replacement does not follow the leaf (a directory leaf fails), while the moved descriptor can carry publication into a directory no longer at the approved path; neither local race is detected or reported. |
 | New/new, installed/new and unmanaged conflicts | `owned-entry-reconciliation` (Unproven entries are preserved; Unmanaged collisions refuse only the generated entry); `planPluginArtifacts` | Reverse package order and assert both new colliders refuse; an installed package keeps its complete old projection; an identical unowned file, file/directory prefix collision, case-fold collision and NFC/NFD twin refuse deterministically. A deselected installed owner blocks a new claimant until its prune completes. |
 | Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. |
