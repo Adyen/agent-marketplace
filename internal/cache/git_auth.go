@@ -100,6 +100,18 @@ func gitSSHTransport(canonical string) bool {
 	return strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://")
 }
 
+func sshHostKeyCommand(transport *url.URL) string {
+	user := "git"
+	if transport.User != nil && transport.User.Username() != "" {
+		user = transport.User.Username()
+	}
+	target := user + "@" + transport.Hostname()
+	if port := transport.Port(); port != "" {
+		return "ssh -T -p " + port + " " + target
+	}
+	return "ssh -T " + target
+}
+
 func classifiedGitTransportFailure(canonical, stderr string) (string, bool) {
 	if gitSSHTransport(canonical) {
 		lower := strings.ToLower(stderr)
@@ -107,8 +119,7 @@ func classifiedGitTransportFailure(canonical, stderr string) (string, bool) {
 			strings.Contains(lower, "remote host identification has changed") {
 			transport, parseErr := url.Parse(canonical)
 			if parseErr == nil && transport.Hostname() != "" {
-				host := transport.Hostname()
-				return fmt.Sprintf("git.auth-transport-failed: the SSH host key for %s is not verified. Verify the host key (for example with ssh -T git@%s) and add it to ~/.ssh/known_hosts", host, host), true
+				return fmt.Sprintf("git.auth-transport-failed: the SSH host key for %s is not verified. Verify the host key (for example with %s) and add it to ~/.ssh/known_hosts", transport.Hostname(), sshHostKeyCommand(transport)), true
 			}
 		}
 		return "", false
@@ -116,6 +127,7 @@ func classifiedGitTransportFailure(canonical, stderr string) (string, bool) {
 	if strings.HasPrefix(canonical, "https://") || strings.HasPrefix(canonical, "http://") {
 		for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
 			if strings.Contains(line, "authentication failed") ||
+				strings.Contains(line, "terminal prompts disabled") ||
 				strings.Contains(line, "repository not found") ||
 				strings.Contains(line, "repository '") && strings.Contains(line, " not found") {
 				return gitTransportRepositoryDiagnostic, true

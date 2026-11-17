@@ -168,8 +168,15 @@ func TestGitTransportFailureClassification(t *testing.T) {
 			name:      "unverified SSH host key",
 			source:    "ssh://git@github.com:2222/owner/repo.git",
 			stderr:    "Host key verification failed.",
-			want:      sshHostKey,
+			want:      "git.auth-transport-failed: the SSH host key for github.com is not verified. Verify the host key (for example with ssh -T -p 2222 git@github.com) and add it to ~/.ssh/known_hosts",
 			forbidden: []string{"ssh://git@github.com:2222", "Host key verification failed."},
+		},
+		{
+			name:      "unverified SSH host key with non-git user",
+			source:    "ssh://deploy@host.example/o/r.git",
+			stderr:    "Host key verification failed.",
+			want:      "git.auth-transport-failed: the SSH host key for host.example is not verified. Verify the host key (for example with ssh -T deploy@host.example) and add it to ~/.ssh/known_hosts",
+			forbidden: []string{"ssh://deploy@host.example", "deploy@host.example/o/r.git", "Host key verification failed."},
 		},
 		{
 			name:      "changed SSH host key",
@@ -191,6 +198,13 @@ func TestGitTransportFailureClassification(t *testing.T) {
 			stderr:    "fatal: Authentication failed for 'https://user:tok@host:8443/o/r.git/'",
 			want:      repositoryFailure,
 			forbidden: []string{"user", "tok", "https://host:8443", "Authentication failed"},
+		},
+		{
+			name:      "HTTPS credential prompt disabled",
+			source:    "https://host/o/r.git",
+			stderr:    "fatal: could not read Username for 'https://host': terminal prompts disabled",
+			want:      repositoryFailure,
+			forbidden: []string{"could not read Username", "terminal prompts disabled"},
 		},
 		{
 			name:      "remote reports missing repository",

@@ -41,7 +41,9 @@ func main() {
 		return
 	}
 	schemas := e2eConfigSchemas()
-	execCmd, execErr := cmd.ExecuteC()
+	ctx, finishInterrupts := commandInterruptContext()
+	execCmd, execErr := cmd.ExecuteContextC(ctx)
+	finishInterrupts()
 	finishUpgradeNotice(os.Stderr)
 	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)

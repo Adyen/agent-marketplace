@@ -16,19 +16,26 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
+// boundedGitStderr keeps the first 64 KiB of a subprocess's stderr. buf is
+// unexported so os/exec's io.Copy cannot reach bytes.Buffer.ReadFrom and bypass
+// the cap.
 type boundedGitStderr struct {
-	bytes.Buffer
+	buf bytes.Buffer
 }
 
 func (b *boundedGitStderr) Write(p []byte) (int, error) {
 	n := len(p)
-	if remaining := 64*1024 - b.Len(); remaining > 0 {
+	if remaining := 64*1024 - b.buf.Len(); remaining > 0 {
 		if len(p) > remaining {
 			p = p[:remaining]
 		}
-		_, _ = b.Buffer.Write(p)
+		_, _ = b.buf.Write(p)
 	}
 	return n, nil
+}
+
+func (b *boundedGitStderr) String() string {
+	return b.buf.String()
 }
 
 // redactSecrets removes embedded credentials from any URLs found in s while
@@ -124,18 +131,18 @@ func cloneOrPull(url, ref string) (string, error) {
 
 // DefaultBranch returns the branch advertised by a remote repository's HEAD.
 func DefaultBranch(url string) (string, error) {
-	branch, _, err := RemoteDefaultBranch(url)
+	branch, _, err := RemoteDefaultBranch(context.Background(), url)
 	return branch, err
 }
 
 // RemoteDefaultBranch returns the branch and commit advertised by a remote
 // repository's HEAD in one ls-remote request.
-func RemoteDefaultBranch(url string) (branch, commit string, err error) {
+func RemoteDefaultBranch(ctx context.Context, url string) (branch, commit string, err error) {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return "", "", errors.New("registry url is required")
 	}
-	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
+	output, err := runGitOutputContext(ctx, "", "ls-remote", "--symref", url, "HEAD")
 	if err != nil {
 		return "", "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
 	}
@@ -283,6 +290,10 @@ func runGit(repoDir string, args ...string) error {
 }
 
 func runGitOutput(repoDir string, args ...string) (string, error) {
+	return runGitOutputContext(context.Background(), repoDir, args...)
+}
+
+func runGitOutputContext(ctx context.Context, repoDir string, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("runGit: no git command")
 	}
@@ -292,7 +303,7 @@ func runGitOutput(repoDir string, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return runGitRawOutput(repoDir, safeArgs, start)
+	return runGitRawOutputContext(ctx, repoDir, safeArgs, start)
 }
 
 func prepareGitArgs(repoDir string, args []string) ([]string, error) {
@@ -357,10 +368,6 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 	}
 
 	return safeArgs, nil
-}
-
-func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string, error) {
-	return runGitRawOutputContext(context.Background(), repoDir, safeArgs, start)
 }
 
 func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []string, start time.Time) (string, error) {

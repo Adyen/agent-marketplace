@@ -26,7 +26,7 @@ func TestRemoteDefaultBranchClassifiesTransportFailures(t *testing.T) {
 		isolatedGitAuth(t)
 		ssh := authFile(t, "fake-ssh", "#!/bin/sh\nprintf 'Host key verification failed.\\n' >&2\nexit 255\n", 0o700)
 		t.Setenv("GIT_SSH", ssh)
-		_, _, err := RemoteDefaultBranch("ssh://git@example.invalid/owner/repo.git")
+		_, _, err := RemoteDefaultBranch(context.Background(), "ssh://git@example.invalid/owner/repo.git")
 		if !isGitTransportFailure(err) || !strings.Contains(err.Error(), "the SSH host key for example.invalid is not verified") || !strings.Contains(err.Error(), "~/.ssh/known_hosts") {
 			t.Fatalf("RemoteDefaultBranch() error = %v, want host-key diagnostic", err)
 		}
@@ -37,7 +37,7 @@ func TestRemoteDefaultBranchClassifiesTransportFailures(t *testing.T) {
 	t.Run("HTTPS authentication", func(t *testing.T) {
 		isolatedGitAuth(t)
 		installGitFailureWrapper(t, "fatal: Authentication failed for https://example.invalid/owner/repo.git")
-		_, _, err := RemoteDefaultBranch("https://example.invalid/owner/repo.git")
+		_, _, err := RemoteDefaultBranch(context.Background(), "https://example.invalid/owner/repo.git")
 		if !isGitTransportFailure(err) || !strings.Contains(err.Error(), "repository not found or requires credentials") || strings.Contains(err.Error(), "Authentication failed") {
 			t.Fatalf("RemoteDefaultBranch() error = %v, want sanitized repository/credentials diagnostic", err)
 		}
@@ -45,7 +45,7 @@ func TestRemoteDefaultBranchClassifiesTransportFailures(t *testing.T) {
 	t.Run("unmatched stderr keeps first line", func(t *testing.T) {
 		isolatedGitAuth(t)
 		installGitFailureWrapper(t, "fatal: synthetic first line\nsynthetic second line")
-		_, _, err := RemoteDefaultBranch("ssh://git@example.invalid/owner/repo.git")
+		_, _, err := RemoteDefaultBranch(context.Background(), "ssh://git@example.invalid/owner/repo.git")
 		if err == nil || !strings.Contains(err.Error(), "git ls-remote --symref --") || !strings.Contains(err.Error(), ": exit status 128: fatal: synthetic first line") || strings.Contains(err.Error(), "synthetic second line") {
 			t.Fatalf("RemoteDefaultBranch() error = %v, want existing ls-remote first-line format", err)
 		}

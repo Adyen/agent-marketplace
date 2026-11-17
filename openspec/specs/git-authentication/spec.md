@@ -116,9 +116,14 @@ Every Git subprocess that Agent Marketplace starts, from the CLI or the TUI, SHA
 - **WHEN** SSH acquisition reaches a host whose key is not in the user's known hosts
 - **THEN** acquisition MUST fail and the user's known hosts files MUST be unchanged
 
+#### Scenario: Interrupting the CLI stops its Git subprocesses
+
+- **WHEN** the user interrupts the CLI (SIGINT or SIGTERM) while a Git subprocess runs
+- **THEN** Agent Marketplace MUST terminate that subprocess and its transport program
+
 ### Requirement: Transport failures name the likely cause
 
-A `git.auth-transport-failed` diagnostic SHALL name the likely cause when Git's error output matches a known class: an unverified SSH host key, or an HTTP(S) repository that is missing or requires credentials (failed authentication, or HTTP 401, 403 or 404). The diagnostic MUST NOT include Git's output. Unmatched failures keep the existing diagnostics.
+A `git.auth-transport-failed` diagnostic SHALL name the likely cause when Git's error output matches a known class: an unverified SSH host key, or an HTTP(S) repository that is missing or requires credentials (failed authentication, Git being unable to prompt for credentials, or HTTP 401, 403 or 404). The diagnostic MUST NOT include Git's output. Unmatched failures keep the existing diagnostics.
 
 #### Scenario: Unverified SSH host key is explained
 

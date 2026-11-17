@@ -498,3 +498,18 @@ func runGitCommand(t *testing.T, dir string, args ...string) string {
 
 	return string(output)
 }
+
+func TestBoundedGitStderrCapsSubprocessOutput(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is required to write subprocess stderr")
+	}
+	stderr := &boundedGitStderr{}
+	cmd := exec.Command("sh", "-c", "head -c 1048576 /dev/zero >&2")
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(stderr.String()); got != 64*1024 {
+		t.Fatalf("retained stderr length = %d, want %d", got, 64*1024)
+	}
+}
