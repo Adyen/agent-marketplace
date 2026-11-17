@@ -1614,18 +1614,43 @@ This decision is **proposed, not implemented**. It settles place delivery
 only; it does not add register-mode execution, an external-command rollback,
 or a second ownership database.
 
+#### Required extensions
+
+- `dependencytxn.ClassifyDestination` currently manages only `.agents`
+  config/lock leaves; other paths take `AuthorityLegacy`, whose `stageFile`
+  creates `.dependencytxn-*.tmp` beside the destination, `publish` uses
+  path-based `os.Rename`/`os.Remove`, and `classify` uses
+  `inspectDestination`. Place destinations require a new authority branch in
+  `commitLocked`, `publish` and `classify` that binds the captured root and
+  publishes agent-owned staging through `Destination.Publish`; place must
+  never use `AuthorityLegacy` or create dot-prefixed host staging siblings.
+- `validateStagingPath` and `validateJournal` currently require a stage to
+  remain contained in the destination parent (directly in it for managed
+  entries) and require strictly ascending file paths. A place intent must
+  remain a `.dependencytxn-*.json` journal visible to `CheckPending` and
+  `ReadPendingPluginGenerationRefs`, accept a journaled agent-owned stage
+  outside the destination parent, and replace that path-order invariant with
+  an explicit dependency-topological publish order (path-order ties). A
+  pending journal continues to block further dependency commits until
+  recovery.
+- `stageCapturedDestination` currently uses
+  `Destination.StagingDir` in the destination parent, while
+  `publishLocked` uses `.packagegen-*` stages swept by
+  `cleanupPackageStages`. Place requires a new agent-owned staging
+  constructor and a reserved stage name outside that sweep, with the intent
+  durable before the first staging write.
+
 #### Publication units and observation limits
 
-Before the first package-staging write, durably record a place-transaction
-intent containing the full payload manifest, immutable generation key,
-destination generations and a reserved engine-stage path. Then stage each
-reviewed package as a complete, immutable generation in
+The place-transaction intent contains the full payload manifest, immutable
+generation key, destination generations and reserved engine-stage path.
+Then stage each reviewed package as a complete, immutable generation in
 agent-marketplace-owned state, outside every application root and outside
 the acquisition cache. Extend the existing `internal/packagegen` generation
 namespace and lock/collection discipline for place identities; its current
 `Plan`, `PublishUnderPackagesLock` and `GarbageCollect` implementation is
-plugin-specific, so this is a reuse of its generation seam, not a claim that
-it already stores Herdr packages. The place generation key includes
+plugin-specific, so place extends its generation seam; this does not claim
+that it already stores Herdr packages. The place generation key includes
 Decision 13's profile identity and mapping plus every payload path, mode and
 content digest; extend `internal/packagegen/packagegen.go:BuildKey` and
 `internal/packagegen/gc.go:GarbageCollect` to retain it while a committed
@@ -1645,38 +1670,26 @@ For publication, capture the approved canonical target root with
 paths and the repository link policy. Revalidate that root, its parent
 chain, destination leaf and any honored link before every publish or removal
 with `Destination.Verify`/`Publish`.
-Create transaction-owned staging copies below agent-marketplace-owned data,
-not in the target tree: no `.dependencytxn-*` or other dot-prefixed host
-siblings. The existing `stageCapturedDestination` in
-`internal/dependencytxn/authority.go` uses
-`internal/fsboundary/staging_unix.go:Destination.StagingDir` to stage in the
-destination parent; place delivery must not reuse it. Instead, it requires a
-new agent-owned staging constructor passed to `Destination.Publish`.
-`internal/dependencytxn/txn.go:commitLocked` currently persists its journal
-after all files are staged, so the place intent must be durable before the
-first staging write. Reserve the place-stage name under agent-marketplace-owned
-transaction storage, outside the `.packagegen-*` entries matched by
-`cleanupPackageStages`; keep that unconditional sweep for existing plugin
-stages only. Journal the reserved name and directory identity before writing,
-and remove a place stage only during recovery when that identity and its
-manifest match. An unrecorded, missing-after-capture, changed or foreign stage
-is retained with its journal and stops recovery. These are required
-extensions, not current behavior: `publishLocked` currently creates random
-`.packagegen-*` stages and `WithPackagesLock` sweeps them unconditionally.
-Reuse the generation checks and exact old/new classification through
-`internal/dependencytxn/txn.go:CheckPending`, `Recover` and `recoverJournal`,
-not a second recovery protocol.
+Keep the unconditional `.packagegen-*` sweep limited to existing plugin
+stages. Recovery removes a place stage only when its recorded directory
+identity and manifest match. An unrecorded, missing-after-capture, changed or
+foreign stage is retained with its journal and stops recovery. With the required
+authority and journal extensions above, place recovery extends the
+generation checks and exact old/new classification in
+`internal/dependencytxn/txn.go:CheckPending`, `Recover` and `recoverJournal`;
+it is not an unchanged reuse of their current destination and ordering rules.
 `internal/fsboundary/destination_unix.go:Destination.Publish` provides one
 descriptor-relative, same-filesystem rename; it is not a multi-file
 transaction.
 
 Choose **refusal**, not copy-then-verify, for cross-filesystem publication.
-Before the first target write, compare staging and destination filesystem
-identities and refuse the package set if they differ. If a rename nevertheless
-returns `EXDEV`, stop and retain the staged generation and pending journal;
-never fall back to a target-root temporary or copy. If no file has yet been
-published, the target remains unchanged. If earlier files were published,
-they remain visible and recovery follows the table below.
+Before the first target write, compare the staging filesystem identity with
+the effective target parent after any honored link, and refuse the package
+set if they differ. If a rename nevertheless returns `EXDEV`, stop and retain
+the staged generation and pending journal; never fall back to a target-root
+temporary or copy. If no file has yet been published, the target remains
+unchanged. If earlier files were published, they remain visible and recovery
+follows the table below.
 
 The conflict plan is whole-set, but publication is per file. When a required
 mod is in the admitted set, publish it before its layout; deselection removes
@@ -1706,25 +1719,32 @@ is an explicit operation against the old recorded root and its authority.
 
 Resolve and pin the root directory identity at plan admission; reuse
 `internal/materialize/destination_boundary.go:captureDirectory`'s named-root
-identity check as the precedent. Replacements of the root, a captured
-ancestor or a destination symlink are detected and refused by
-`Destination.Verify` when present at that verification step: do not retry
-through the new name, write, prune, or clear the journal. A destination-leaf
-replacement in the residual window between leaf verification and
-`Destination.Publish`'s `unix.Renameat` is overwritten in place; rename never
-follows the leaf, so no write is redirected outside the captured root, but
-the race is not claimed to be detected or reported. This is an observation
-limit, not a proposal for a no-replace rename. An alias that cannot be proven
-to be the recorded canonical root is not ownership proof. Store the resolved
-XDG state root used by the existing ownership store in the local approval
-binding. If `XDG_STATE_HOME` changes and that recorded metadata is
-unavailable, report ownership as unavailable and refuse place mutation or
-retirement; do not open a new empty store and reinterpret existing files as
+identity check as the precedent. Root binding prevents environment-,
+approval- and plan-time redirection and stale-root writes. Replacements of
+the root, a captured ancestor or a destination symlink are detected and
+refused by `Destination.Verify` when present at that verification step: do
+not retry through the new name, write, prune, or clear the journal. After
+`Destination.Publish`'s `verifyTarget` returns the parent descriptor and
+before `unix.Renameat`, a concurrent move of an ancestor carries that
+descriptor with the directory object, so the write can land in an object no
+longer at the approved path; this is not detected or reported. A file or
+symlink leaf replaced after leaf verification is replaced at the captured
+parent; a directory leaf makes `renameat` fail rather than being overwritten.
+These local-move and leaf windows are observation limits, not a proposal for
+new rename flags, and root binding does not prevent a concurrent local move
+in that window. An alias that cannot be proven to be the recorded canonical
+root is not ownership proof. A case-variant spelling on a case-insensitive
+host is an unproven alias because `ownership.CanonicalRoot` does not fold
+case, so it is not ownership proof. Store the resolved XDG state root used
+by the existing ownership store in the local approval binding. If
+`XDG_STATE_HOME` changes and that recorded metadata is unavailable, report
+ownership as unavailable and refuse place mutation or retirement; do not
+open a new empty store and reinterpret existing files as
 a first installation.
 
 Plan the complete desired package set before any target publication. Record
-a deterministic dependency-topological publish order (path order breaks
-ties), not selection or iteration order. Retain the
+in the place journal a deterministic dependency-topological publish order
+(path order breaks ties), not selection or iteration order. Retain the
 complete installed projection when a selected package conflicts with another
 owner; refuse its new revision as a unit. Refuse every new package in a
 new/new conflict, independent of selection or iteration order. Any collision
@@ -1744,9 +1764,10 @@ collisions deterministic. A single conflict blocks each new package's full
 projection; independent packages may proceed.
 
 These rules extend the planning precedents in
-`internal/materialize/plugin_instance.go:preflightPluginInstances` and
-`internal/materialize/plugin_batch.go:planPluginArtifacts` (which retain a
-failed plugin instance and check prior output digests), and the
+`internal/materialize/plugin_instance.go:preflightPluginInstances` (which
+retains a failed plugin instance) and
+`internal/materialize/plugin_batch.go:planPluginArtifacts` (which checks
+prior output digests), and the
 batch/ownership commit in
 `internal/materialize/plugin_batch.go:pluginInstanceBatch.commit`; they are
 not current Herdr package behavior. The source contracts are
@@ -1770,13 +1791,14 @@ commands check it first and return the existing
 `dependency.recovery-required` behavior without replay. A mutating sync
 recovers only the admitted transaction from its journal and recorded
 generations before validating or planning fresh work. `dependencytxn`
-already refuses third-party bytes and non-prefix publication in
-`recoverJournal`; place applies the same exact-generation rule to staged
-payloads, ownership state and pruning. Reuse
+has journal recovery that refuses unexpected bytes and non-prefix
+publication; the place branch must retain those exact-generation checks
+while using its explicit recorded publish order rather than the current
+path-order invariant. Extend
 `internal/materialize/plugin_batch.go:pluginInstanceBatch.commit` and
-`ownership.Store.PrepareBatch` for the ownership participant in that
-transaction, and extend its journal ordering so package files publish first,
-ownership commits next, and stale files prune last.
+`ownership.Store.PrepareBatch` to enlist the ownership participant, with
+package files publishing first, ownership committing next, and stale files
+pruned last.
 `ownership.Store.Recover` handles the separate per-root ownership journal.
 The ownership state-file commit is one atomic rename, so an interruption
 during it resolves to the before or after row below. The E2E crash hook in
@@ -1838,11 +1860,12 @@ verification failure. A crash-recovered publication is neither a failed
 check nor a user edit: recovery itself runs no host code and leaves
 verification pending; the sync may run its normal post-recovery check only
 after completing the journal and revalidating selection, otherwise the next
-mutating sync runs it. Read-only commands do not run host code; they report
-the recorded result. This preserves
-Decision 6's distinction among files placed, check scope, manual setup and
-runtime evidence. A successful initial-load check still does not prove
-deferred runtime behavior.
+mutating sync runs it. Default read-only commands (`sync --check`, `status`,
+TUI drift views) run no host code and report the recorded result;
+`sync --check --verify` and `doctor` run verify live under Decision 6 and
+never write placement or ownership. This preserves Decision 6's distinction
+among files placed, check scope, manual setup and runtime evidence. A
+successful initial-load check still does not prove deferred runtime behavior.
 
 #### Trace to future acceptance witnesses
 
@@ -1857,12 +1880,12 @@ below are precedents, not proof of Herdr place behavior.
 | Published files before ownership commit | `owned-entry-reconciliation` (Apply retains originally admitted ownership-record generation); `pluginInstanceBatch.commit` | Crash after all target files but before the ownership participant: read-only refuses; recovery commits the matching ownership generation once, without reacquisition. |
 | Ownership commit before/during prune | `plugin-delivery` (Removal retires only owned plugin output); `ownership.Store.Recover` | Crash before prune and between two removals: recovery prunes only matching stale generations; replace a remaining file and assert it and the pending journal survive. |
 | Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Change `HERDR_APP_HOME`, XDG state root, a root alias and a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
-| Destination-leaf replacement after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf between verify and rename: no write lands outside the root; do not claim the race is reported. |
+| Destination leaf or ancestor move after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf or move its ancestor after `verifyTarget` returns the parent descriptor but before `renameat`: leaf replacement does not follow the leaf (a directory leaf fails), while the moved descriptor can carry publication into a directory no longer at the approved path; neither local race is detected or reported. |
 | New/new, installed/new and unmanaged conflicts | `owned-entry-reconciliation` (Unproven entries are preserved; Unmanaged collisions refuse only the generated entry); `planPluginArtifacts` | Reverse package order and assert both new colliders refuse; an installed package keeps its complete old projection; an identical unowned file, file/directory prefix collision, case-fold collision and NFC/NFD twin refuse deterministically. A deselected installed owner blocks a new claimant until its prune completes. |
 | Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. |
 | Edited package on deselection | `plugin-delivery` (Removal retires only owned plugin output); `resource-removal` | Deselect after editing one file: unchanged owned files retire, the edit survives byte-for-byte and is reported as ceded, with no implicit re-adoption. |
-| Failed initial-load verification | `exact-snapshot-verification` (Exact snapshot verification lasts one command or TUI action); Decision 6 verification boundary | Make the approved check fail: exact package files and ownership remain, the failure is recorded, `status` reports it without executing code, and next mutating sync retries it. |
-| Crash recovery versus user edit | `status-reporting` (Status reports drift at the effective output root); `dependencytxn.recoverJournal` | Recover a pending write, then separately edit an installed file: recovery leaves verification pending, while the next status reports the edit rather than labeling either event as the other. |
+| Failed initial-load verification | `exact-snapshot-verification` (loose precedent only: snapshot trust, not placement-check results); Decision 6 verification boundary | Make the approved check fail: exact package files and ownership remain, the failure is recorded, `status` reports it without executing code, and next mutating sync retries it. |
+| Crash recovery versus user edit | `status-reporting` (loose precedent only: nested-root drift, not this recovery distinction); `dependencytxn.recoverJournal` | Recover a pending write, then separately edit an installed file: recovery leaves verification pending, while the next status reports the edit rather than labeling either event as the other. |
 | Host observation of dependent packages | `plugin-delivery` (Plugin instances install as a unit) | Pause between per-file renames while a host watcher reads the tree; assert only the documented partial states and dependency ordering, not an atomic view or reload guarantee. |
 
 ## Compared with the herdr-plugins proposal
