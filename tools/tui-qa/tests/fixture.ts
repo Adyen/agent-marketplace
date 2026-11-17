@@ -17,6 +17,7 @@ export interface FixtureOptions {
   directorySource?: boolean;
   pluginSource?: boolean;
   overflowStatus?: boolean;
+  neutralConfiguredSkill?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
   // declares one exact Marketplace skill:
   //  - "missing-lock" leaves the organization acquisition lock absent, so a
@@ -33,7 +34,8 @@ export interface FixtureOptions {
   // Registers the stub as the user's "market" endpoint without selecting
   // anything, and lets a search find its installable skill. "findings"
   // assesses that skill with a warning so installing it requires consent.
-  marketplaceDiscovery?: "plain" | "findings";
+  // "mixed-denial" adds a blocked endpoint alongside the allowed stub.
+  marketplaceDiscovery?: "plain" | "findings" | "mixed-denial";
   // Adds an unconfigured local Git registry for install-from-source journeys.
   adHocSource?: boolean;
   sshPromptSource?: boolean;
@@ -122,6 +124,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let orgLockPath: string | undefined;
     let expectedOrgConfig: string | undefined;
     let expectedOrgSkillContent: string | undefined;
+    let postSyncUserConfig: string | undefined;
     let marketplaceAcquisitionDataRequestCount: (() => number) | undefined;
     let marketplaceAcquisitionDataRequestPaths: (() => string[]) | undefined;
     let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
@@ -189,6 +192,10 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     for (const name of overflowSkills) {
       write(path.join(source, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Status overflow fixture\n---\n\n# ${name}\n`);
     }
+    // A separate "helpers" source path keeps kind text out of the row's source label.
+    if (options.neutralConfiguredSkill) {
+      write(path.join(source, "helpers", "quiet-helper", "SKILL.md"), "---\nname: quiet-helper\ndescription: Quiet helper fixture\n---\n\n# quiet-helper\n");
+    }
     let registryURL: string;
     let expectedRepoConfig: string;
     if (options.pluginSource) {
@@ -219,13 +226,24 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
       registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
-      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
+      const neutralSource = options.neutralConfiguredSkill ? `  quiet:\n    git: ${registryURL}\n    ref: main\n    path: helpers\n` : "";
+      const neutralResource = options.neutralConfiguredSkill ? "  quiet:\n    include:\n      - skill/quiet-helper\n" : "";
+      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n${neutralSource}resources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}${neutralResource}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
       } else if (options.firstRun) {
         fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
       } else if (options.marketplaceDiscovery && stub) {
-        write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  market:\n    marketplace: ${stub.url}\n`);
+        const mixedDenial = options.marketplaceDiscovery === "mixed-denial";
+        const allowlist = mixedDenial
+          ? `allowed_marketplaces:\n  - '^${stub.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$'\n`
+          : "";
+        const deniedSource = mixedDenial ? "  denied-market:\n    marketplace: http://127.0.0.1:1\n" : "";
+        const baseUserConfig = `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  market:\n    marketplace: ${stub.url}\n`;
+        const userConfig = `${baseUserConfig}${deniedSource}${allowlist}`;
+        const configPath = path.join(home, ".agents", "config.yaml");
+        write(configPath, mixedDenial ? baseUserConfig : userConfig);
+        if (mixedDenial) postSyncUserConfig = userConfig;
       } else {
         write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n");
       }
@@ -299,6 +317,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         stub.driftArchiveDigest();
       }
     }
+    if (postSyncUserConfig) write(path.join(home, ".agents", "config.yaml"), postSyncUserConfig);
 
     const launcher = path.join(root, "launch-agent-marketplace");
     const pidFile = path.join(root, "target.pid");

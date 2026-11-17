@@ -2153,6 +2153,7 @@ func (m *Model) applyFilter() []row {
 	// Metadata only matches when every query term begins one of its words,
 	// so letters scattered through a long description never match.
 	nameMatches := fuzzy.FindFromNoSort(strings.Join(terms, ""), searchNameSource(m.rows))
+	kind, _, kindQuery := marketplaceKindQuery(m.filter)
 
 	filtered := m.filterScratch[:0]
 	next := 0
@@ -2165,6 +2166,10 @@ func (m *Model) applyFilter() []row {
 			r.searchMatchRunes = runeIndexes(r.searchName, nameMatches[next].MatchedIndexes)
 			next++
 		} else if rowHasAllWordPrefixes(&r, terms) {
+			r.searchNameMatch = false
+			r.searchScore = 0
+			r.searchMatchRunes = nil
+		} else if kindQuery && r.Artifact.Kind == kind {
 			r.searchNameMatch = false
 			r.searchScore = 0
 			r.searchMatchRunes = nil
