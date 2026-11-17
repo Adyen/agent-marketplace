@@ -175,8 +175,15 @@ func TestGitTransportFailureClassification(t *testing.T) {
 			name:      "changed SSH host key",
 			source:    "git+scp://git@github.com/owner/repo.git",
 			stderr:    "REMOTE HOST IDENTIFICATION HAS CHANGED\nHost key verification failed.",
-			want:      sshConnectionFailure,
+			want:      sshHostKey,
 			forbidden: []string{"git+scp://git@github.com/owner/repo.git", "REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed."},
+		},
+		{
+			name:      "changed SSH host key without verification message",
+			source:    "git+scp://git@github.com/owner/repo.git",
+			stderr:    "REMOTE HOST IDENTIFICATION HAS CHANGED",
+			want:      sshHostKey,
+			forbidden: []string{"git+scp://git@github.com/owner/repo.git", "REMOTE HOST IDENTIFICATION HAS CHANGED"},
 		},
 		{
 			name:      "authentication failure with userinfo and port",
