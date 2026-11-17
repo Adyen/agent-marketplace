@@ -1823,7 +1823,7 @@ states:
 
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
-| Before the first target write | `dependency.recovery-required`; no replay. | If the reserved stage path is absent, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. Any other stage—including one present without recorded identity, missing after capture, changed or foreign—is retained with the journal and recovery stops. |
+| Before the first target write | `dependency.recovery-required`; no replay. | If the reserved stage path is absent, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. |
 | After some files publish | `dependency.recovery-required`; no replay. | Complete the recorded publish prefix only while each destination is exactly its old or intended generation and all remaining stage bytes match. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
 | During ownership-state commit | `dependency.recovery-required`; no replay. | The single atomic state-file rename leaves either the old generation, handled by the preceding row, or the new generation, handled by the following row. |
@@ -1876,7 +1876,7 @@ reference, reports the check as failed, and does not roll files back. The
 next mutating sync retries the check against unchanged files; a later user
 edit is separately reported as edited drift and is not converted into a
 verification failure. A crash-recovered publication is neither a failed
-check nor a user edit: recovery itself runs no host code and leaves
+check nor a user edit. Recovery itself runs no host code and leaves
 verification pending; the sync may run its normal post-recovery check only
 after completing the journal and revalidating selection, otherwise the next
 mutating sync runs it. Default read-only commands (`sync --check`, `status`,
