@@ -257,3 +257,9 @@ Shared-aggregate repair SHALL inspect every registered harness target whose nati
 - **WHEN** the repository root is HOME and both scopes select Gemini aggregate entries
 - **THEN** repair SHALL compute candidates once against the combined desired entries
 - **AND** differing desired values for one identity SHALL report `materialize.destination.overlap`, offer no mutation of the shared file, and preserve settings and ownership state
+
+#### Scenario: Claude repair refuses overlapping scope destinations
+
+- **WHEN** `CLAUDE_CONFIG_DIR` places the machine Claude destination at or overlapping the repository Claude destination and both scopes select Claude aggregate entries
+- **THEN** repair SHALL report `materialize.destination.overlap` and offer no adoption, replacement, or removal for either Claude scope
+- **AND** settings and ownership state SHALL be preserved

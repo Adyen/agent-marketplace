@@ -192,13 +192,13 @@ func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.Re
 	}
 	var targets []hcc.Target
 	for _, target := range targetmeta.Targets() {
-		layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target))
+		layout, ok := targetmeta.LookupNativeLayout(target)
 		if !ok {
 			continue
 		}
 		for _, partition := range layout.Partitions {
 			if len(partition.Aggregates) > 0 {
-				targets = append(targets, hcc.Target(target))
+				targets = append(targets, target)
 				break
 			}
 		}

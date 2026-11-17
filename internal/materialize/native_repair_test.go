@@ -706,6 +706,53 @@ func TestGeminiRepairScopeConflictRefusesWithoutMutation(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/claude-repair-refuses-overlapping-scope-destinations
+func TestClaudeRepairOverlappingScopesRefusesWithoutCandidates(t *testing.T) {
+	repoRoot, _ := nativeRepairEnvironment(t)
+	selection := []resolver.ResolvedArtifact{
+		nativeRepairSelection(hcc.TargetClaude, "repo-tools", "node", false),
+		nativeRepairSelection(hcc.TargetClaude, "machine-tools", "node", true),
+	}
+	report, err := Run(context.Background(), repoRoot, selection)
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed Claude scopes: %v %+v", err, report)
+	}
+	repoMCPRoot, repoMCPRel, _ := nativeRepairMCPFile(t, repoRoot, hcc.TargetClaude, false)
+	machineMCPRoot, machineMCPRel, _ := nativeRepairMCPFile(t, repoRoot, hcc.TargetClaude, true)
+	statePaths := []string{removeNativeRepairState(t, repoMCPRoot), removeNativeRepairState(t, machineMCPRoot)}
+	files := []string{filepath.Join(repoMCPRoot, repoMCPRel), filepath.Join(machineMCPRoot, machineMCPRel)}
+	raws := make([][]byte, len(files))
+	infos := make([]os.FileInfo, len(files))
+	for i, path := range files {
+		if raws[i], err = os.ReadFile(path); err != nil {
+			t.Fatal(err)
+		}
+		if infos[i], err = os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(repoRoot, ".claude"))
+	previews, err := RepairPreviews(context.Background(), repoRoot, selection, nil)
+	if err != nil {
+		t.Fatalf("overlapping Claude preview: %v", err)
+	}
+	preview := nativeRepairTargetPreview(t, previews, hcc.TargetClaude)
+	if !diag.HasCode(preview.Diags, diag.CodeMaterializeDestinationOverlap) {
+		t.Fatalf("Claude overlap diagnostic missing: %+v", preview.Diags)
+	}
+	if preview.Actionable() || len(preview.Files) != 0 {
+		t.Fatalf("overlapping Claude scopes offered candidates: %+v", preview.Files)
+	}
+	for i, path := range files {
+		assertNativeRepairSnapshot(t, path, raws[i], infos[i].Mode(), infos[i].ModTime())
+	}
+	for _, statePath := range statePaths {
+		if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+			t.Fatalf("preview changed missing ownership state: %v", err)
+		}
+	}
+}
+
 func nativeRepairPluginSelection(t *testing.T, target hcc.Target, scopes []config.Source, sharedHome bool, includeMCP bool) (string, []resolver.ResolvedArtifact) {
 	t.Helper()
 	root := t.TempDir()
@@ -856,18 +903,11 @@ func TestNativeAggregateRepairIncludesSelectedPluginDesiredEntries(t *testing.T)
 			t.Fatal(err)
 		}
 		mcpFile := nativeRepairFileFor(t, previews, hcc.TargetClaude, mcpRoot, mcpRel, mcpContainer)
-		if len(mcpFile.Adoptions)+len(mcpFile.Conflicts) != 1 || len(mcpFile.Orphans) != 0 {
+		if len(mcpFile.Adoptions) != 1 || len(mcpFile.Conflicts) != 0 || len(mcpFile.Orphans) != 0 {
 			t.Fatalf("selected plugin MCP entry: adopt=%d replace=%d orphan=%d", len(mcpFile.Adoptions), len(mcpFile.Conflicts), len(mcpFile.Orphans))
 		}
-		mcpID := ownership.EntryID{}
-		mcpResource := ""
-		if len(mcpFile.Adoptions) == 1 {
-			mcpID = mcpFile.Adoptions[0].Candidate.EntryID()
-			mcpResource = mcpFile.Adoptions[0].Resource
-		} else {
-			mcpID = mcpFile.Conflicts[0].Candidate.EntryID()
-			mcpResource = mcpFile.Conflicts[0].Resource
-		}
+		mcpID := mcpFile.Adoptions[0].Candidate.EntryID()
+		mcpResource := mcpFile.Adoptions[0].Resource
 		if mcpID.Kind != ownership.KindMcpServer || mcpID.Key != "repair-kit-plugin-tools" || mcpResource != "repair-kit-plugin-tools" {
 			t.Fatalf("selected plugin MCP entry = %+v resource=%q", mcpID, mcpResource)
 		}

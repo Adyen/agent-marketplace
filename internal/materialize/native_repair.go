@@ -25,6 +25,13 @@ type nativeRepairFileKey struct {
 	container string
 }
 
+// nativeRepairMCPArtifact is one compiled MCP fragment; markerValue overrides
+// the policy marker for plugin-owned fragments, matching sync's plugin marker.
+type nativeRepairMCPArtifact struct {
+	output      artifact.Artifact
+	markerValue string
+}
+
 type nativeRepairDesiredFile struct {
 	spec    ownedJSONFileSpec
 	entries []ownedJSONEntry
@@ -34,6 +41,11 @@ type nativeRepairDesiredFile struct {
 func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, target hcc.Target) (*RepairPreview, error) {
 	compiled, _ := compileRepairTarget(repoRoot, resolved, target)
 	preview := &RepairPreview{Diags: append([]diag.Diagnostic(nil), compiled.allDiags...)}
+	if target == hcc.TargetClaude {
+		if d := preflightClaudeDestinations(&compiled, repoRoot); d != nil {
+			preview.Diags = append(preview.Diags, *d)
+		}
+	}
 	diagnosticKeys := make([]outputKey, 0, len(compiled.byTarget))
 	for key, work := range compiled.byTarget {
 		if key.target == target && work != nil {
@@ -151,14 +163,19 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 				preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "native MCP destinations could not be resolved safely"))
 				continue
 			}
-			var artifacts []artifact.Artifact
+			var artifacts []nativeRepairMCPArtifact
 			if work := compiled.byTarget[key]; work != nil {
-				artifacts = append(artifacts, work.artifacts...)
+				for _, output := range work.artifacts {
+					artifacts = append(artifacts, nativeRepairMCPArtifact{output: output})
+				}
 			}
 			for _, plan := range pluginPlans {
-				artifacts = append(artifacts, plan.artifacts...)
+				for _, output := range plan.artifacts {
+					artifacts = append(artifacts, nativeRepairMCPArtifact{output: output, markerValue: pluginMarkerValue(plan.ref.InstanceKey)})
+				}
 			}
-			for _, output := range artifacts {
+			for _, source := range artifacts {
+				output := source.output
 				root, rel, container, routed := nativeMCPArtifactDestination(destinations, mcpDeclaration, output.Path)
 				if !routed {
 					continue
@@ -172,6 +189,9 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 				markerField, markerValue := "", ""
 				if policy.Mode == artifact.ReconciliationMarker {
 					markerField, markerValue = policy.MarkerField, policy.MarkerValue
+					if source.markerValue != "" {
+						markerValue = source.markerValue
+					}
 				}
 				entries, decodeErr := nativeMCPFragmentEntries(rel, container, output.Bytes, markerField, markerValue)
 				if decodeErr != nil {
