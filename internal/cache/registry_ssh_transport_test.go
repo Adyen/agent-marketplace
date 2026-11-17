@@ -73,20 +73,18 @@ func TestGitAcquisitionDoesNotPromptOnTTY(t *testing.T) {
 	}
 	record := filepath.Join(t.TempDir(), "ssh-record")
 	release := filepath.Join(t.TempDir(), "release-ssh")
-	script := authFile(t, "fake-ssh", fmt.Sprintf(`#!/bin/sh
+	script := authFile(t, "ssh", fmt.Sprintf(`#!/bin/sh
+tty_open=no
+if ( : </dev/tty ) 2>/dev/null; then tty_open=yes; fi
 {
 	printf 'pid=%%s\n' "$$"
-} > %q
-while [ ! -e %q ]; do sleep 0.01; done
-tty_open=no
-if : </dev/tty 2>/dev/null; then tty_open=yes; fi
-{
 	printf 'askpass=%%s\n' "${SSH_ASKPASS_REQUIRE-}"
 	printf 'tty=%%s\n' "$tty_open"
-} >> %q
+} > %q
+while [ ! -e %q ]; do sleep 0.01; done
 printf 'Host key verification failed.\n' >&2
 exit 255
-`, record, release, record), 0o700)
+`, record, release), 0o700)
 	t.Setenv("GIT_SSH", script)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -119,13 +117,13 @@ exit 255
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		recorded, err = os.ReadFile(record)
-		if err == nil && strings.HasPrefix(string(recorded), "pid=") {
+		if err == nil && (strings.HasSuffix(string(recorded), "tty=no\n") || strings.HasSuffix(string(recorded), "tty=yes\n")) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err != nil || !strings.HasPrefix(string(recorded), "pid=") {
-		t.Fatalf("fake SSH did not record its PID: data=%q err=%v", recorded, err)
+	if err != nil || (!strings.HasSuffix(string(recorded), "tty=no\n") && !strings.HasSuffix(string(recorded), "tty=yes\n")) {
+		t.Fatalf("fake SSH did not record its askpass and terminal state: data=%q err=%v", recorded, err)
 	}
 	firstLine, _, _ := strings.Cut(strings.TrimSpace(string(recorded)), "\n")
 	key, value, valid := strings.Cut(firstLine, "=")
