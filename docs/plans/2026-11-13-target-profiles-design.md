@@ -1648,9 +1648,9 @@ Then stage each reviewed package as a complete, immutable generation in
 agent-marketplace-owned state, outside every application root and outside
 the acquisition cache. Extend the existing `internal/packagegen` generation
 namespace and lock/collection discipline for place identities; its current
-`Plan`, `PublishUnderPackagesLock` and `GarbageCollect` implementation is
-plugin-specific, so place extends its generation seam; this does not claim
-that it already stores Herdr packages. The place generation key includes
+`Plan`, `PublishUnderPackagesLock` and `GarbageCollect` are plugin-specific
+and do not store Herdr packages, so place extends the seam rather than
+reusing it unchanged. The place generation key includes
 Decision 13's profile identity and mapping plus every payload path, mode and
 content digest; extend `internal/packagegen/packagegen.go:BuildKey` and
 `internal/packagegen/gc.go:GarbageCollect` to retain it while a committed
@@ -1778,7 +1778,7 @@ not current Herdr package behavior. The source contracts are
 `openspec/specs/backup-recovery/spec.md`,
 `openspec/specs/exact-snapshot-verification/spec.md`,
 `openspec/specs/registry-symlink-containment/spec.md` and
-`openspec/specs/status-reporting/spec.md`. In particular, they distinguish
+`openspec/specs/status-reporting/spec.md`. They distinguish
 unproven collisions from proven-owned drift (`owned-entry-reconciliation`,
 `Unproven entries are preserved` and
 `Proven owned entries reconcile against recorded state`).
@@ -1786,7 +1786,7 @@ unproven collisions from proven-owned drift (`owned-entry-reconciliation`,
 #### Recovery state machine
 
 Keep one pending transaction from the first staging write through ownership
-commit and pruning. Read-only `status`, `sync --check` and other read-only
+commit and pruning. Read-only `status`, `sync --check` and similar
 commands check it first and return the existing
 `dependency.recovery-required` behavior without replay. A mutating sync
 recovers only the admitted transaction from its journal and recorded
