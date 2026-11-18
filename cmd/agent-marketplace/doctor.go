@@ -85,15 +85,14 @@ or blocker. Each step is classified as safe, destructive, guided, or
 human-only. After a step runs, doctor diagnoses again and confirms any newly
 available safe steps before continuing. Pending dependency and ownership
 journals left by an interrupted run are recovered first as safe steps that
-need only the journal itself, so
-they run even when configuration is invalid. Replaying a journal completes only
-writes an earlier run already admitted; it is a safe step, not a destructive
-replacement, and a refused recovery fails the step, exits 1, and leaves the
-journal and its target bytes unchanged. One terminal confirmation authorizes
-safe steps. Destructive replacements and orphan removals keep their per-entry
-confirmations and never run with --yes. Devin and Codex shared aggregate files
-include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
-and .codex/config.toml.
+need only the journal itself, so they run even when configuration is invalid.
+Replaying a journal completes only writes an earlier run already admitted; it
+is a safe step, not a destructive replacement, and a refused recovery fails the
+step, exits 1, and leaves the journal and its target bytes unchanged. One
+terminal confirmation authorizes safe steps. Destructive replacements and
+orphan removals keep their per-entry confirmations and never run with --yes.
+Devin and Codex shared aggregate files include hooks.v1.json, config.json#hooks,
+mcp_config.json, .codex/hooks.json, and .codex/config.toml.
 Repair also inspects the shared aggregates of every other harness target that
 declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
 mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and

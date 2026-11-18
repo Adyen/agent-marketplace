@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -210,7 +209,7 @@ func runDoctorRepairJourney(t *testing.T, env *Env, overrides map[string]string,
 	}
 	defer terminal.Close()
 
-	var output doctorRepairJourneyOutput
+	var output synchronizedBuffer
 	readDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(&output, terminal)
@@ -264,21 +263,4 @@ func assertDoctorRepairJourney(t *testing.T, env *Env, repair doctorRepairJourne
 	if check.ExitCode != 0 {
 		t.Fatalf("sync --check after doctor repair exited %d:\n%s", check.ExitCode, check.Combined)
 	}
-}
-
-type doctorRepairJourneyOutput struct {
-	mu sync.Mutex
-	bytes.Buffer
-}
-
-func (b *doctorRepairJourneyOutput) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.Buffer.Write(p)
-}
-
-func (b *doctorRepairJourneyOutput) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.Buffer.String()
 }
