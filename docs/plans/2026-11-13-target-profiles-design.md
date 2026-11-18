@@ -1312,8 +1312,8 @@ alias/read-before-write only, with no profile-aware command.
 
 - An id in `targets:` without its profile selected is a configuration
   error (Decision 2).
-- A selected profile whose id was removed from `targets:` leaves the
-  target disabled; its packages are skipped and `status` says so.
+- Removing a selected profile's ID from the list disables the target.
+  Direct selections and collection members follow Decision 1.
 
 Enable adds only the ID for a known, selected profile admitted by policy.
 Disable removes only that ID, not profile selection. Preserve the authored
