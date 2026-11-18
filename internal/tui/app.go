@@ -1490,7 +1490,7 @@ func (m *Model) restoreBrowseDiscovery() {
 	m.discoveryRows = nil
 	m.discoveryOutcomes = nil
 	m.discoveryErrs = nil
-	if m.authoritativeRows == nil && m.provisionalRows == nil {
+	if m.authoritativeRows == nil && m.provisionalRows == nil && len(m.browseDiscoveryRows) == 0 {
 		m.rows = slices.DeleteFunc(m.rows, func(candidate row) bool {
 			return candidate.MarketplaceDiscovery != nil
 		})

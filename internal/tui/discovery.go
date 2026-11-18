@@ -372,6 +372,7 @@ func discoveryEndpointMatcher(entries []config.MarketplaceEntry, allowed []strin
 
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	if strings.TrimSpace(query) == "" {
+		m.cancelMarketplaceDiscovery()
 		return m.beginMarketplaceBrowse(false)
 	}
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {

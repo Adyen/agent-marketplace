@@ -130,6 +130,43 @@ func TestClearingSearchRebuildsAnEmptyBrowseInventory(t *testing.T) {
 	}
 }
 
+// spec: tui-startup/search-during-loading-and-clear-restore-complete-browsing
+func TestClearingSearchRestoresBrowseInventoryBeforeLocalRowsLoad(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	m := NewModel("/repo", "/home")
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
+		Endpoint: endpoint,
+		Items:    []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "skill", "browse-resource", "browse result")},
+		Total:    1,
+	}})
+	if !slices.ContainsFunc(m.filteredRows, func(candidate row) bool { return candidate.Artifact.Name == "browse-resource" }) {
+		t.Fatal("browse result was not shown before local rows loaded")
+	}
+
+	m.filter = "needle"
+	m.applyDiscovery("needle", []marketplace.DiscoveryOutcome{{
+		Endpoint: endpoint,
+		Items:    []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "skill", "needle-resource", "search result")},
+		Total:    1,
+	}})
+	if !slices.ContainsFunc(m.filteredRows, func(candidate row) bool { return candidate.Artifact.Name == "needle-resource" }) {
+		t.Fatal("search result was not shown")
+	}
+	key, _, err := marketplaceBrowseRequestKey(m.mergedCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.browseKey = key
+	m.browseFinished = true
+
+	updated, _ := m.clearSearch()
+	m = updated.(Model)
+	if !slices.ContainsFunc(m.filteredRows, func(candidate row) bool { return candidate.Artifact.Name == "browse-resource" }) {
+		t.Fatal("clearing search did not restore the browse result before local rows loaded")
+	}
+}
+
 // spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
 func TestWhitespaceSearchReusesTheExistingBrowse(t *testing.T) {
 	m := newTestModel()
@@ -147,6 +184,40 @@ func TestWhitespaceSearchReusesTheExistingBrowse(t *testing.T) {
 	cmd := m.beginMarketplaceRefresh(false)
 	if cmd != nil || m.discoveryLoading || m.discoverySequence != 0 || m.browseLoading {
 		t.Fatalf("whitespace search started another discovery: cmd=%t search=%t sequence=%d browse=%t", cmd != nil, m.discoveryLoading, m.discoverySequence, m.browseLoading)
+	}
+}
+
+// spec: tui-startup/search-during-loading-and-clear-restore-complete-browsing
+func TestWhitespaceSearchCancelsInFlightDiscovery(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	m := NewModel("/repo", "/home")
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	key, _, err := marketplaceBrowseRequestKey(m.mergedCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.browseKey = key
+	m.browseFinished = true
+
+	if cmd := m.beginMarketplaceDiscovery("needle", false); cmd == nil {
+		t.Fatal("search did not start discovery")
+	}
+	defer m.cancelMarketplaceLoads()
+	generation := m.requests.active(requestDiscovery)
+	m.beginMarketplaceDiscovery(" ", false)
+	updated, _ := m.Update(discoveryLoadedMsg{
+		generation: generation,
+		sequence:   1,
+		query:      "needle",
+		outcomes: []marketplace.DiscoveryOutcome{{
+			Endpoint: endpoint,
+			Items:    []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "skill", "late-result", "late search result")},
+			Total:    1,
+		}},
+	})
+	m = updated.(Model)
+	if len(m.discoveryRows) != 0 {
+		t.Fatal("whitespace search accepted the superseded query result")
 	}
 }
 
