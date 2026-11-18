@@ -462,7 +462,7 @@ One terminal confirmation authorizes every safe step, adoptions included. Removi
 
 With `--repair --json`, stdout contains exactly one JSON document with plan steps and results. JSON mode never prompts, excludes MCP environment and header values, and marks destructive and guided steps `deferred`; without `--yes` it only previews, while with `--yes` it runs safe steps. Exit status matches text repair for the same state. `--json` without `--repair` is an error.
 
-Compatibility findings do not block `sync`. Repair failures, corrupt ownership state, unparseable shared files, plans left with only blocked, deferred guided, or human-only items, and previewed or declined runs that leave missing or stale acquisition-lock authority all return exit status 1; the command exits 0 when the setup ends clean or you declined without leaving that authority unresolved.
+Compatibility findings do not block `sync`. Repair exits 0 when the setup ends clean, you decline without unresolved missing or stale acquisition authority, an off-terminal preview has only safe or destructive steps, or `--yes` leaves only destructive entries unchanged. Repair exits 1 when a step fails, corrupt state remains, any blocked, guided (including deferred guided), or human-only item remains, or missing or stale acquisition authority remains after preview or decline.
 
 ## `backup`
 

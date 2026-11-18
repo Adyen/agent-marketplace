@@ -81,8 +81,11 @@ never requires a Devin binary, so nothing doctor reports here blocks it.
 
 --repair diagnoses harness drift and shared-aggregate ownership, then prints a
 numbered plan with each step's safety class, diagnostic code, files, and inputs
-or blocker. Pending dependency and ownership journals left by an interrupted
-run are recovered first as safe steps that need only the journal itself, so
+or blocker. Each step is classified as safe, destructive, guided, or
+human-only. After a step runs, doctor diagnoses again and confirms any newly
+available safe steps before continuing. Pending dependency and ownership
+journals left by an interrupted run are recovered first as safe steps that
+need only the journal itself, so
 they run even when configuration is invalid. Replaying a journal completes only
 writes an earlier run already admitted; it is a safe step, not a destructive
 replacement, and a refused recovery fails the step, exits 1, and leaves the
@@ -107,6 +110,13 @@ and organization issues remain human-only.
 With --repair, --json emits one structured plan and result document to stdout
 without prompting. Use --yes to run safe steps; destructive and guided steps
 remain deferred.
+
+Repair exits 0 when the setup ends clean, when you decline without unresolved
+missing or stale acquisition authority, for an off-terminal preview with only
+safe or destructive steps, or when --yes leaves only destructive entries
+unchanged. It exits 1 when a step fails, corrupt state remains, any blocked,
+guided, or human-only item remains, or missing or stale acquisition authority
+remains after preview or decline.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

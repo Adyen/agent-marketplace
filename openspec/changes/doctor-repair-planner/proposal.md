@@ -9,7 +9,7 @@
 - Invalid configuration, failed resolution, and organization acquisition failure no longer refuse the whole repair. Steps whose inputs are valid still run; the others are listed as blocked by the plan item that explains the cause.
 - Repair adds a harness drift stage that reconciles drift through sync without changing any acquisition lock.
 - The existing Devin and Codex shared-aggregate repair becomes the last stage of the plan with its candidate classes, destructive per-entry prompts, and policy checks unchanged; safe adoption is now approved by the plan confirmation.
-- Exit status reflects whether the user is still stuck: exit 0 only when the setup ends clean or the user declined.
+- Exit status reflects whether the user is still stuck: exit 0 when the setup ends clean, the user declined without missing or stale acquisition authority, an off-terminal preview holds only safe or destructive steps, or `--yes` leaves only destructive entries unchanged. A failed step, corrupt state, any blocked, guided, or human-only item, or missing or stale acquisition authority after preview or decline exits 1.
 - Later work in this change adds journal recovery, acquisition lock, configuration, and further shared-aggregate fixers, and JSON plan output.
 
 ## Capabilities

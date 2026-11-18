@@ -105,7 +105,7 @@ Repair SHALL validate the configuration and acquisition-lock inputs that authori
 
 ### Requirement: Repair exit status reports whether the user is still stuck
 
-Repair SHALL exit 0 only when the setup ends clean or the user declined without leaving missing or stale acquisition authority. It SHALL exit 1 when a step failed, corrupt state remains, missing or stale acquisition authority remains after preview or decline, or only blocked or human-only items remain.
+Repair SHALL exit 0 when the setup ends clean, the user declined without leaving missing or stale acquisition authority, an off-terminal preview holds only safe or destructive steps, or a `--yes` run leaves only destructive entries unchanged. It SHALL exit 1 when a step fails, corrupt state remains, any blocked, guided, or human-only item remains, or missing or stale acquisition authority remains after preview or decline.
 
 #### Scenario: Repair exits zero when the setup ends clean
 
@@ -121,6 +121,12 @@ Repair SHALL exit 0 only when the setup ends clean or the user declined without 
 
 - **WHEN** a confirmed step fails
 - **THEN** repair SHALL report the failure and exit 1
+
+#### Scenario: Repair exits zero for preview or deferred destructive entries
+
+- **WHEN** an off-terminal preview holds only safe or destructive steps, or a `--yes` run leaves only destructive entries unchanged
+- **THEN** repair SHALL exit 0
+- **AND** destructive entries SHALL remain byte-identical
 
 ### Requirement: Repair refreshes writable acquisition locks without upgrading pins
 
