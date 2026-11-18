@@ -1797,7 +1797,7 @@ Resolve and pin the root directory identity at plan admission; reuse
 identity check as the precedent. Root binding prevents environment-,
 approval- and plan-time redirection and stale-root writes. Replacements of
 a captured ancestor or a destination symlink are detected and
-refused by `Destination.Verify` when present at that verification step: do
+refused by `Destination.Verify` when present at that verification step. Do
 not retry through the new name, write, prune, or clear the journal. After
 `Destination.Publish`'s `verifyTarget` returns the parent descriptor and
 before `unix.Renameat`, a concurrent move of a destination ancestor carries
@@ -1895,7 +1895,7 @@ states:
 
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
-| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity matches and every present file is a byte prefix of its manifest entry, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the after-some-target-writes row applies. A recorded stage that is missing after capture loses no evidence. Clear the intent. Any other stage, including one present without recorded identity, changed or foreign, is retained with the journal and recovery stops. A stage left without recorded identity by a crash between creating the stage directory and recording it stays retained; the user removes it manually after `status` names its path, and the next mutating sync clears the intent. |
+| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity matches and every present file is a byte prefix of its manifest entry, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the after-some-target-writes row applies. A recorded stage that is missing after capture loses no evidence, so clear the intent. Any other stage, including one present without recorded identity, changed or foreign, is retained with the journal and recovery stops. A stage left without recorded identity by a crash between creating the stage directory and recording it stays retained; the user removes it manually after `status` names its path, and the next mutating sync clears the intent. |
 | During a journaled directory creation | `dependency.recovery-required`; no replay. | If the marked directory is absent, apply the first row when no earlier target write was recorded; otherwise the next row completes the prefix and creates it again from the mark, even when an identity was recorded, because a user's deletion of a created directory is not detected (an observation limit), and durably records the recreated directory's identity in place of the old one. If it is present with no recorded identity, retain it with the journal and stop recovery, because it cannot be proven to be the transaction's own directory. If it is present with a recorded identity that is not `SameObject`, retain it with the journal and stop. If its recorded identity matches, the next row applies. |
 | After some target writes | `dependency.recovery-required`; no replay. | Complete the recorded write prefix of journaled directory creations and file publications only while each destination is exactly its old or intended generation and all remaining present stage bytes match, recopying absent stage files for the unpublished suffix from the retained generation as described above; a later `EXDEV` stays pending as described under cross-filesystem refusal. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
@@ -1904,9 +1904,9 @@ states:
 | Interruption during pruning | `dependency.recovery-required`; no replay. | A marked entry that is absent counts as removed; any other absent stale file stops recovery with the journal intact. An edited stale file is left in place and reported as in the preceding row, and a retained non-empty listed directory counts as a completed entry. Continue only the remaining exact prune set, remove the emptied engine stage after a `SameObject` check against its recorded identity, where an absent stage counts as removed, then clear the journal and release unreferenced package generations. A changed parent, a non-regular replacement, or a non-empty or changed stage stops and preserves the remaining evidence. |
 | No pending journal after commit and prune | Normal read-only inspection; any verification-pending or failed result remains visible. | No recovery work; a later sync plans from the committed ownership generation. |
 
-Every stop in this table names, in read-only `status` and in the mutating
-error, the journal path and the stage, directory or destination path it
-stopped on; this extends the `CheckPending` message, which today names only
+Every stop in this table names the journal path and the stage, directory or
+destination path it stopped on, in read-only `status` and in the mutating
+error; this extends the `CheckPending` message, which today names only
 the journal. The user resolves a stop by restoring the named destination to
 its recorded old or intended generation, or by removing the named stage or
 unrecorded directory, or by resolving the filesystem layout after an `EXDEV`
@@ -2058,7 +2058,7 @@ covers more than one app.
   organization's harness list for that user. Proposed: seed the new list
   with the currently effective one. The cost is that later organization
   additions no longer reach that user.
-- **Place implementation details left to the implementation change.**
+- **Place details left to the implementation change.**
   Decision 14 settles outcomes; these remain for the change that implements
   place delivery. The root-keyed ownership schema fields that hold
   created-directory identities, per-file prune generations, verification
