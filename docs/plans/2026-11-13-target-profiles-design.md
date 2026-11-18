@@ -1700,8 +1700,9 @@ stage, or into a new recorded stage when the stage directory is gone, checking
 each digest.
 `fsboundary`'s `Destination.Publish` provides one
 descriptor-relative, same-filesystem rename; it is not a multi-file
-transaction. Check each stage file's digest against its manifest entry
-immediately before its `Publish` call, in publication and in recovery.
+transaction. Check each stage file's mode and digest against its manifest
+entry immediately before its `Publish` call, in publication and in recovery.
+A mode mismatch stops the transaction before that `Publish` call.
 
 Choose **refusal**, not copy-then-verify, for cross-filesystem publication.
 Before the first target write, compare the staging filesystem identity with
