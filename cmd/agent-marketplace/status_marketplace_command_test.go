@@ -12,10 +12,51 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: status-reporting/removed-pin-keeps-its-state-and-gains-a-note
 func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	server, repoRoot := statusMarketplaceFixture(t, false)
+	defer server.Close()
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("status")
+	if err != nil {
+		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+	}
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	for _, needle := range []string{
+		"MARKETPLACE PINS", "ALIAS", "REGISTRY_SLUG", "INSTALLED_NAME", "team", "source-slug", "review-installed", "v1", contentDigest,
+		"current", "false", "REPO", "removed from the Marketplace; pinned revision kept",
+		"WARNINGS", "agent-marketplace remove review-installed",
+	} {
+		if !strings.Contains(output, needle) {
+			t.Fatalf("expected Marketplace status output to contain %q, got:\n%s", needle, output)
+		}
+	}
+}
+
+// spec: status-reporting/required-removed-pin-names-its-required-entry-in-status
+func TestStatusReportsRequiredRemovedMarketplacePin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	server, repoRoot := statusMarketplaceFixture(t, true)
+	defer server.Close()
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("status")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "resources.team.required") || strings.Contains(output, "agent-marketplace remove") {
+		t.Fatalf("required-pin warning has the wrong remediation:\n%s", output)
+	}
+}
+
+func statusMarketplaceFixture(t *testing.T, required bool) (*httptest.Server, string) {
+	t.Helper()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	contentDigest := "sha256:" + strings.Repeat("a", 64)
@@ -29,18 +70,25 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(revision)
+		if strings.HasSuffix(r.URL.Path, "/revisions/"+contentDigest) {
+			_ = json.NewEncoder(w).Encode(revision)
+			return
+		}
+		http.NotFound(w, r)
 	}))
-	defer server.Close()
 
 	repoRoot := t.TempDir()
+	requiredLine := ""
+	if required {
+		requiredLine = "    required: true\n"
+	}
 	writeConfig(t, repoRoot+"/.agents/config.yaml", `
 apiVersion: agent-marketplace/v4
 sources:
   team: {marketplace: `+server.URL+`}
 resources:
   team:
-    include:
+`+requiredLine+`    include:
       - source-slug/skill/review: {as: review-installed}
 `)
 	writeFile(t, repoRoot+"/.agents/lock.yaml", `apiVersion: agent-marketplace-lock/v2
@@ -61,20 +109,7 @@ marketplaces:
         archive_digest: sha256:`+strings.Repeat("b", 64)+`
         acquisition: mirror
 `)
-	withWorkingDir(t, repoRoot)
-
-	output, err := executeCommand("status")
-	if err != nil {
-		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
-	}
-	for _, needle := range []string{
-		"MARKETPLACE PINS", "ALIAS", "REGISTRY_SLUG", "INSTALLED_NAME", "team", "source-slug", "review-installed", "v1", contentDigest,
-		"current", "false", "REPO",
-	} {
-		if !strings.Contains(output, needle) {
-			t.Fatalf("expected Marketplace status output to contain %q, got:\n%s", needle, output)
-		}
-	}
+	return server, repoRoot
 }
 
 // spec: status-reporting/lock-required-error-keeps-the-declared-harnesses

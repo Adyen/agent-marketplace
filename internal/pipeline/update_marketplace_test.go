@@ -688,6 +688,8 @@ func seedMissingPinEnv(t *testing.T) *missingPinEnv {
 }
 
 // spec: update-output/missing-resource-is-kept-while-other-pins-update
+// spec: update-output/the-warning-repeats-on-every-update
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
 func TestUpdateContinuesPastMissingMarketplacePin(t *testing.T) {
 	env := seedMissingPinEnv(t)
 	home, repo, configPath, lockPath := env.home, env.repo, env.configPath, env.lockPath
@@ -703,16 +705,18 @@ func TestUpdateContinuesPastMissingMarketplacePin(t *testing.T) {
 	fake.missing["skill/gone"] = true
 
 	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
-	var missing *MissingMarketplaceResourcesError
-	if result == nil || !errors.As(err, &missing) {
-		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError", result, err)
+	if err != nil || result == nil {
+		t.Fatalf("update = (%#v, %v), want a successful result", result, err)
 	}
 	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 1 {
 		t.Fatalf("Marketplace result = %#v, want one update and one skip", result)
 	}
-	for _, want := range []string{fake.URL, string(registry.ID) + "/skill/gone", "agent-marketplace remove gone"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("update warnings = %v, want one removed-resource warning", result.Warnings)
+	}
+	for _, want := range []string{fake.URL, string(registry.ID) + "/skill/gone", "pinned revision kept", "agent-marketplace remove gone"} {
+		if !strings.Contains(result.Warnings[0].Error(), want) {
+			t.Fatalf("removed-resource warning %q does not name %q", result.Warnings[0], want)
 		}
 	}
 	layerAssertFileUnchanged(t, configPath, configBytes, configStat)
@@ -728,6 +732,20 @@ func TestUpdateContinuesPastMissingMarketplacePin(t *testing.T) {
 	staySkill, err := os.ReadFile(filepath.Join(home, ".config", "devin", "skills", "stay", "SKILL.md"))
 	if err != nil || !strings.Contains(string(staySkill), "stay body v2") {
 		t.Fatalf("updated stay output = %q, %v", staySkill, err)
+	}
+	lockAfterFirstUpdate, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repeated, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err != nil || repeated == nil || len(repeated.Warnings) != 1 ||
+		repeated.Warnings[0].Error() != result.Warnings[0].Error() {
+		t.Fatalf("repeated update = (%#v, %v), want the same warning", repeated, err)
+	}
+	lockAfterRepeat, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfterRepeat) != string(lockAfterFirstUpdate) {
+		t.Fatalf("repeated update changed the lock: %v", err)
 	}
 }
 
@@ -751,13 +769,16 @@ func TestUpdateWithOnlyMissingMarketplacePinsChangesNothing(t *testing.T) {
 		reconciled = true
 		return testMarketplaceUpdateReconcile(ctx, a, b, bumps, edits, lockEdits)
 	}})
-	var missing *MissingMarketplaceResourcesError
-	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 2 {
-		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError for two pins", result, err)
+	if result == nil || err != nil || len(result.Warnings) != 2 {
+		t.Fatalf("update = (%#v, %v), want two warnings and no error", result, err)
 	}
 	for _, want := range []string{"one", "two"} {
-		if !strings.Contains(err.Error(), "/skill/"+want) {
-			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+		found := false
+		for _, warning := range result.Warnings {
+			found = found || strings.Contains(warning.Error(), "/skill/"+want)
+		}
+		if !found {
+			t.Fatalf("removed-resource warnings %v do not name %q", result.Warnings, want)
 		}
 	}
 	if reconciled || result.UpdatedMarketplacePins != 0 {
@@ -783,12 +804,11 @@ func TestUpdateKeepsMissingMarketplaceCollection(t *testing.T) {
 	fake.missing["collection/bundle"] = true
 
 	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
-	var missing *MissingMarketplaceResourcesError
-	if result == nil || !errors.As(err, &missing) {
-		t.Fatalf("update = (%#v, %v), want result with MissingMarketplaceResourcesError", result, err)
+	if err != nil || result == nil || len(result.Warnings) != 1 {
+		t.Fatalf("update = (%#v, %v), want one warning and no error", result, err)
 	}
-	if !strings.Contains(err.Error(), "/collection/bundle") {
-		t.Fatalf("missing-resource error %q does not name the collection", err.Error())
+	if !strings.Contains(result.Warnings[0].Error(), "/collection/bundle") {
+		t.Fatalf("removed-resource warning %q does not name the collection", result.Warnings[0])
 	}
 	if result.UpdatedMarketplacePins != 1 {
 		t.Fatalf("Marketplace result = %#v, want the stay pin updated", result)
@@ -804,6 +824,133 @@ func TestUpdateKeepsMissingMarketplaceCollection(t *testing.T) {
 	latest := fake.resources["source/skill/stay"].revision
 	if stay == nil || string(stay.ContentDigest) != string(latest.ContentDigest) {
 		t.Fatalf("stay lock record = %#v, want latest %s", stay, latest.ContentDigest)
+	}
+}
+
+// spec: update-output/cached-pinned-revision-is-usable
+func TestUpdateKeepsMissingMarketplacePinFromVerifiedCache(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "cached")
+	fake.addSkill(t, registry, "stay")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry,
+		layerPreparePins(t, fake, "skill", "cached"), layerPreparePins(t, fake, "skill", "stay"))
+	delete(fake.resources, "source/skill/cached")
+	fake.setSkill(t, registry, "stay", "stay body v2")
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err != nil || result == nil || len(result.Warnings) != 1 || result.UpdatedMarketplacePins != 1 {
+		t.Fatalf("partial update = (%#v, %v), want cached pin warning and another pin updated", result, err)
+	}
+	if !strings.Contains(result.Warnings[0].Error(), "/skill/cached") {
+		t.Fatalf("warning %q does not name the cached pin", result.Warnings[0])
+	}
+	if got := marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "stay"); got == nil ||
+		got.ContentDigest != lockfile.Digest(fake.resources["source/skill/stay"].revision.ContentDigest) {
+		t.Fatalf("eligible pin lock = %#v, want the latest revision", got)
+	}
+}
+
+// spec: update-output/unusable-pinned-revision-remains-an-error
+func TestUpdateContinuesPastUnusableMissingMarketplacePin(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "stay")
+	fake.addSkill(t, registry, "gone")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry,
+		layerPreparePins(t, fake, "skill", "stay"), layerPreparePins(t, fake, "skill", "gone"))
+	goneRecord := *marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "gone")
+	fake.setSkill(t, registry, "stay", "stay body v2")
+	delete(fake.resources, "source/skill/gone")
+	cache := marketplace.DefaultCache()
+	for _, path := range []string{
+		cache.MetadataPath(fake.URL, string(goneRecord.RegistryID), "skill", "gone", string(goneRecord.ContentDigest)),
+		cache.ArtifactPath(string(goneRecord.ArchiveDigest)),
+		cache.PlaceholderArchivePath(string(goneRecord.ArchiveDigest)),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 1 {
+		t.Fatalf("update = (%#v, %v), want one missing-resource error after updating other pins", result, err)
+	}
+	for _, want := range []string{fake.URL, string(registry.ID) + "/skill/gone", "agent-marketplace remove gone", "install the new name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing-resource error %q does not name %q", err, want)
+		}
+	}
+	if result.UpdatedMarketplacePins != 1 {
+		t.Fatalf("updated Marketplace pins = %d, want 1", result.UpdatedMarketplacePins)
+	}
+	doc := layerMarketplaceLockDoc(t, env.lockPath)
+	if got := marketplaceLockResource(doc, "skill", "gone"); got == nil || !reflect.DeepEqual(*got, goneRecord) {
+		t.Fatalf("unusable pin lock record changed: got %#v, want %#v", got, goneRecord)
+	}
+	stay := marketplaceLockResource(doc, "skill", "stay")
+	if want := fake.resources["source/skill/stay"].revision.ContentDigest; stay == nil || stay.ContentDigest != lockfile.Digest(want) {
+		t.Fatalf("updated stay pin = %#v, want digest %s", stay, want)
+	}
+}
+
+// spec: update-output/unusable-pinned-revision-remains-an-error
+func TestUpdatePreservesCachedRevocationErrorForMissingPin(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "gone")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry, layerPreparePins(t, fake, "skill", "gone"))
+	record := *marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "gone")
+	cache := marketplace.DefaultCache()
+	revision, found, err := cache.ReadResourceRevision(fake.URL, string(record.RegistryID), "skill", "gone", string(record.ContentDigest))
+	if err != nil || !found {
+		t.Fatalf("cached revision = (%#v, %t, %v), want installed metadata", revision, found, err)
+	}
+	revision.Revocation = &store.Revocation{
+		Kind: store.RevocationRevision, TargetID: string(revision.ContentDigest), Reason: "withdrawn",
+	}
+	if _, err := cache.WriteResourceRevision(fake.URL, string(record.RegistryID), "skill", "gone", string(record.ContentDigest), revision); err != nil {
+		t.Fatal(err)
+	}
+	delete(fake.resources, "source/skill/gone")
+
+	_, err = Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("update error = %v, want cached revocation error", err)
+	}
+}
+
+// spec: update-output/required-removed-pin-names-its-required-entry
+func TestUpdateWarnsForRequiredRemovedMarketplacePin(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "required-skill")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry, layerPreparePins(t, fake, "skill", "required-skill"))
+	data, err := os.ReadFile(env.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := strings.Replace(string(data), "\n    include:", "\n    required: true\n    include:", 1)
+	if required == string(data) {
+		t.Fatalf("config has no Marketplace include group to mark required:\n%s", data)
+	}
+	writeFileMode(t, env.configPath, required, 0o600)
+	fake.missing["skill/required-skill"] = true
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err != nil || result == nil || len(result.Warnings) != 1 {
+		t.Fatalf("update = (%#v, %v), want required-pin warning and no error", result, err)
+	}
+	alias := result.MarketplacePins[0].Entry.Alias
+	for _, want := range []string{"/skill/required-skill", "resources." + alias + ".required"} {
+		if !strings.Contains(result.Warnings[0].Error(), want) {
+			t.Fatalf("required warning %q does not name %q", result.Warnings[0], want)
+		}
+	}
+	if strings.Contains(result.Warnings[0].Error(), "agent-marketplace remove") {
+		t.Fatalf("required warning suggests removal: %q", result.Warnings[0])
 	}
 }
 

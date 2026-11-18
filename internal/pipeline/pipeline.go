@@ -84,6 +84,8 @@ type ResolveOptions struct {
 	marketplaceInstall                    *marketplace.PreparedInstall
 	marketplaceInstallSource              config.Source
 	verifiedMarketplaceRevisions          *marketplace.VerifiedRevisions
+	marketplacePinsToSkip                 map[marketplacePinIdentity]bool
+	retainedMarketplacePins               []materialize.RetainedMarketplacePin
 	MarketplaceLockEvidenceStrict         bool
 	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
@@ -709,6 +711,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		}
 		marketplaceCfg = &filtered
 	}
+	if len(opts.marketplacePinsToSkip) > 0 {
+		mpResolver = marketplacePinSkippingResolver{delegate: mpResolver, skip: opts.marketplacePinsToSkip}
+	}
 	var selectedCollections []resolver.ResolvedArtifact
 	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
 		marketplaceCfg,
@@ -1180,6 +1185,17 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if len(opts.retainedMarketplacePins) > 0 {
+		pins := slices.Clone(opts.retainedMarketplacePins)
+		for i := range pins {
+			targets := resolved.TargetHarnesses
+			if pins[i].Source.IsMachineScope() {
+				targets = resolved.MachineTargetHarnesses
+			}
+			pins[i].Targets = resolver.HarnessTargets(targets)
+		}
+		materializeOptions = append(materializeOptions, materialize.WithRetainedMarketplacePins(pins))
+	}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}

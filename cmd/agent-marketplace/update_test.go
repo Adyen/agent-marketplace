@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -995,6 +996,7 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 
 // spec: update-output/missing-resource-is-kept-while-other-pins-update
 // spec: update-output/lock-and-outputs-agree-after-a-partial-update
+// spec: update-output/unusable-pinned-revision-remains-an-error
 func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1022,15 +1024,15 @@ func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 	server.resources["gone"].missing.Store(true)
 
 	output, err := executeCommand("update")
-	if err == nil {
-		t.Fatalf("update succeeded, want missing-resource error:\n%s", output)
+	if err != nil {
+		t.Fatalf("update failed with a usable pinned revision: %v\n%s", err, output)
 	}
 	if !strings.Contains(output, "Marketplace pins updated: 1") {
-		t.Fatalf("update report did not print before the error:\n%s", output)
+		t.Fatalf("update report did not include the eligible pin:\n%s", output)
 	}
-	for _, want := range []string{server.URL, "src", "skill", "gone", "agent-marketplace remove gone"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+	for _, want := range []string{server.URL, "src/skill/gone", "pinned revision kept", "agent-marketplace remove gone"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("removed-resource warning does not name %q:\n%s", want, output)
 		}
 	}
 	goneAfter := commandLockResource(t, lockPath, "gone")
@@ -1046,6 +1048,49 @@ func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 	checkOutput, checkErr := executeCommand("sync", "--check")
 	if checkErr != nil || strings.Contains(checkOutput, "out of sync") {
 		t.Fatalf("sync --check after partial update = (%v):\n%s", checkErr, checkOutput)
+	}
+
+	gonePath := filepath.Join(repo, ".factory", "skills", "gone", "SKILL.md")
+	goneContent, err := os.ReadFile(gonePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := marketplace.DefaultCache()
+	for _, path := range []string{
+		cache.MetadataPath(server.URL, string(goneBefore.RegistryID), "skill", "gone", string(goneBefore.ContentDigest)),
+		cache.ArtifactPath(string(goneBefore.ArchiveDigest)),
+		cache.PlaceholderArchivePath(string(goneBefore.ArchiveDigest)),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	delete(server.resources, "gone")
+	server.setSkill(t, "stay", "stay body v3")
+
+	output, updateErr := executeCommand("update")
+	if updateErr == nil {
+		t.Fatalf("update with an unusable pinned revision succeeded:\n%s", output)
+	}
+	if !strings.Contains(output, "Marketplace pins updated: 1") {
+		t.Fatalf("update report did not print before the unusable-pin error:\n%s", output)
+	}
+	for _, want := range []string{server.URL, "src/skill/gone", "agent-marketplace remove gone", "install the new name"} {
+		if !strings.Contains(updateErr.Error(), want) {
+			t.Fatalf("unusable-pin error %q does not name %q", updateErr.Error(), want)
+		}
+	}
+	if after, readErr := os.ReadFile(gonePath); readErr != nil || !bytes.Equal(after, goneContent) {
+		t.Fatalf("unusable pin changed installed bytes: %v, update error=%v\n%s", readErr, updateErr, output)
+	}
+	goneAfter = commandLockResource(t, lockPath, "gone")
+	if goneAfter == nil || !reflect.DeepEqual(*goneAfter, *goneBefore) {
+		t.Fatalf("unusable pin lock entry changed: got %#v, want %#v", goneAfter, goneBefore)
+	}
+	stayAfter = commandLockResource(t, lockPath, "stay")
+	latest = server.resources["stay"].revision.ContentDigest
+	if stayAfter == nil || string(stayAfter.ContentDigest) != string(latest) {
+		t.Fatalf("stay lock entry = %#v, want latest %s after unusable-pin error", stayAfter, latest)
 	}
 }
 

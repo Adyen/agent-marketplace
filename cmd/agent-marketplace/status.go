@@ -294,6 +294,17 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			statusWarnings = append(statusWarnings, issue.Err)
 		}
 	}
+	for _, pin := range result.MarketplaceStatuses {
+		if !pin.RemovedUpstream {
+			continue
+		}
+		statusWarnings = append(statusWarnings, marketplace.RemovedMarketplacePinWarning(
+			config.MarketplaceEntry{URL: pin.URL, Alias: pin.Alias, Required: pin.Required},
+			config.MarketplaceResourcePin{
+				RegistryID: pin.RegistryID, Kind: pin.Kind, Name: pin.Name, InstalledName: pin.InstalledName,
+			},
+		))
+	}
 
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,

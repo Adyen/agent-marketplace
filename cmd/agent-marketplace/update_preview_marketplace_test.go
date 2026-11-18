@@ -135,14 +135,15 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 	server.resources["gone"].missing.Store(true)
 
 	output, err := updateDryRun(t, "--include-diff")
-	if err == nil {
-		t.Fatalf("missing-pin preview succeeded, want exit 1:\n%s", output)
+	if err != nil {
+		t.Fatalf("missing-pin preview failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
 		"Dry run: no updates were applied.",
 		"Marketplace pins proposed for update: 1",
 		"update",
-		"gone",
+		"/skill/gone",
+		"pinned revision kept",
 		"agent-marketplace remove gone",
 		"+stay body v2",
 	} {
@@ -153,7 +154,8 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 	// The retained missing pin has no proposed content change: its lock entry
 	// stays at the pinned revision and no diff is invented for it.
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "gone") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed") || strings.HasPrefix(strings.TrimSpace(line), "+") || strings.HasPrefix(strings.TrimSpace(line), "-")) {
+		if strings.Contains(line, "gone") && !strings.Contains(line, "skipped") && !strings.HasPrefix(line, "warning:") &&
+			(strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed") || strings.HasPrefix(strings.TrimSpace(line), "+") || strings.HasPrefix(strings.TrimSpace(line), "-")) {
 			t.Fatalf("missing pin got an invented content change or hunk: %s", line)
 		}
 	}
@@ -171,6 +173,7 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 }
 
 // spec: update-output/applied-diffs-retain-partial-update-behavior
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
 func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -195,13 +198,14 @@ func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T)
 	server.resources["gone"].missing.Store(true)
 
 	output, err := executeCommand("update", "--include-diff")
-	if err == nil {
-		t.Fatalf("partial update succeeded, want exit 1:\n%s", output)
+	if err != nil {
+		t.Fatalf("partial update failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
 		"Marketplace pins updated: 1",
 		"+stay body v2 applied",
-		"gone",
+		"/skill/gone",
+		"pinned revision kept",
 		"agent-marketplace remove gone",
 	} {
 		if !strings.Contains(output, want) {
@@ -209,7 +213,7 @@ func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T)
 		}
 	}
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "\"gone\"") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed")) {
+		if strings.Contains(line, "\"gone\"") && !strings.Contains(line, "skipped") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed")) {
 			t.Fatalf("retained missing pin was reported as an invented content change: %s", line)
 		}
 	}
