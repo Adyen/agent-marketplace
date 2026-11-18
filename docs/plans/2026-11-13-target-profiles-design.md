@@ -474,36 +474,48 @@ by this design-only assignment.
 
 ### 2. `targets:` in consumer configuration
 
-Proposed v4 alias behavior (not shipped):
+Proposed v4 target-list behavior (not shipped):
 
 ```yaml
 apiVersion: agent-marketplace/v4
 targets: [claude, devin, herdr-app]
 ```
 
-`targets:` is the same list as `harnesses:`. `harnesses:` stays as an
-alias and is deprecated later. A file declaring both is refused.
-Resource-group narrowing (`targets:` inside a group, formerly
-`harnesses:`) gets the same alias and keeps its "narrows, never widens"
-rule.
+For non-empty lists, `targets:` and `harnesses:` are lossless aliases.
+`harnesses:` is deprecated later. A file declaring both is refused.
+The same non-empty alias applies inside resource groups, which still
+narrow the applicable root list and never widen it.
 
-An absent user list inherits organization; groups narrow the root. R5
-proposes `targets: []` as narrowing, not shipped; I2 must amend
-`resource-selection`'s non-empty-list inheritance rule.
+At the user root, an absent list or `harnesses: []` keeps shipped
+inheritance: use the organization list, with the existing repository
+fallback when neither supplies a list. Only `targets: []` explicitly
+selects no targets and stops inheritance. I2 must add a
+`resource-selection` spec delta for this distinction, not reinterpret
+existing empty `harnesses:` lists.
 
-Editing an absent user list first copies the effective inherited list.
-This snapshot keeps current harnesses but misses later organization
-additions. Delete the user key to inherit again; `[]` stays explicit.
-Enabling outside organization policy refuses; disabling narrows.
+Editing an inherited user list first copies the effective list. This
+snapshot keeps current targets but misses later organization additions.
+Deleting the user key restores inheritance. Editors must not silently
+rewrite `harnesses: []` to `targets: []` or save a last-target removal
+as `harnesses: []` (or omit the key), which would restore inheritance.
+Save that removal as `targets: []` only when writing `targets:` is
+admitted. Otherwise refuse without changing config or lock and tell
+the user to upgrade all readers of the file and migrate to `targets:`
+once the rollout permits it. Enabling outside organization policy
+refuses; disabling narrows.
 
 **Rollout.** v4 parsing rejects unknown fields, so a released v5.x client
 refuses a file that contains `targets:`. In a committed repository
 configuration that would break teammates on an older CLI. The switch
 therefore follows the read-before-write rule:
 
-1. v6.0 reads both spellings. Editors keep the spelling a file already
-   uses and write `harnesses:` into a file that has neither.
-2. A later release makes editors write `targets:` by default.
+1. v6.0 reads both spellings. During reader rollout, editors keep the
+   existing spelling and default to `harnesses:` when neither key is
+   present. Do not introduce `targets:` before all readers of the file
+   are compatible.
+2. Once compatible readers are deployed, a file may migrate explicitly
+   to `targets:` where writes are admitted. A later release makes editors
+   write `targets:` by default.
 3. A release after that deprecates `harnesses:`.
 
 CLI releases older than v5 are not a compatibility constraint for this
@@ -1108,8 +1120,10 @@ When host commands run:
 | author import dry-run | nothing; discovery, validation and placement planning only |
 | explicit `target verify` | separate opt-in live check; approved version probe and named check against the selected installed package |
 
-Normal read-only commands run nothing. This design adds no live check to
-`sync --check --verify` or `doctor`; `target verify` is separate opt-in.
+Read-only commands do not run the new profile host commands. Existing
+checks stay unchanged: `doctor` keeps its `devin --version` probe. This design
+adds no live check to `sync --check --verify` or `doctor`; `target verify` is
+separate opt-in.
 
 Safety rules:
 
@@ -1133,11 +1147,14 @@ Safety rules:
 `target verify` takes a Decision 13 locator and stable installation ID:
 `agent-marketplace target verify herdr-app%2Fmod/chris-links --installation 01J...`.
 It checks the exact revisions, recorded root/state, current approval and
-executable digest before running the named check. Missing/stale state,
-root, approval, check or executable refuses without writing a result,
-config, lock, approval, ownership or target file. An executed check records
-its revisions, scope, host-version status, result and evidence source; it
-never installs, activates, repairs or removes.
+executable digest before either the version probe or the named check. Before
+either command, all owned files of the selected installed package must match
+the recorded hashes of its installed projection, not the source package
+digest. Report edited or missing paths as drift (Decision 14) and refuse.
+This refusal, like one for missing or stale state, root, approval, check or
+executable, writes no result, config, lock, approval, ownership or target
+file. An executed check records its revisions, scope, host-version status,
+result and evidence source; it never installs, activates, repairs or removes.
 
 ### 7. Consent: profile approval and package assessment
 
@@ -1250,6 +1267,14 @@ missing-state refusals still apply (Decision 14). Optional
 `require_verified_host_version` is an organization-only target-ID list,
 default empty.
 
+**Rollout.** The first release carrying I3's organization-root readers
+supports `target_preapprovals` and `require_verified_host_version`. Older
+clients reject these unknown fields. Keep both keys absent until every
+client sharing the organization root runs a release that explicitly
+supports them, and remove both keys before rolling back to an older reader.
+While both are absent, normal per-user approval remains available. Strict
+parsing is unchanged.
+
 Headless sync never prompts for approval. It follows the skip rule in
 Decision 1. Direct install also refuses before acquisition when the
 organization version rule is unmet. Enabling is not consent.
@@ -1315,8 +1340,9 @@ People writing their own profiles is a main goal, so external profiles
 are supported from the first profile change, not added later.
 
 I3 proposes `agent-marketplace target enable <target-id>` and
-`agent-marketplace target disable <target-id>`. I2 adds
-alias/read-before-write only, with no profile-aware command.
+`agent-marketplace target disable <target-id>`. I2 adds Decision 2's
+list semantics and read-before-write behavior, with no profile-aware
+command.
 
 - An id in `targets:` without its profile selected is a configuration
   error (Decision 2).
@@ -1324,11 +1350,12 @@ alias/read-before-write only, with no profile-aware command.
   Direct selections and collection members follow Decision 1.
 
 Enable adds only the ID for a known, selected profile admitted by policy.
-Disable removes only that ID, not profile selection. Preserve the authored
-alias or write `harnesses:` if none exists. Validate v4 roots/includes;
-edit only user selection and leave config/lock unchanged on refusal. Run no
-host process or change approval, ownership, or target files. JSON is an
-operation result, not config.
+Disable removes only that ID, not profile selection. Follow Decision 2
+for spelling and inheritance: disabling the last target requires an
+admitted `targets: []` write; otherwise refuse unchanged with migration
+guidance. Validate v4 roots/includes; edit only user selection and leave
+config/lock unchanged on refusal. Run no host process or change approval,
+ownership, or target files. JSON is an operation result, not config.
 
 Disabling a target or deselecting its profile does not remove the old-root
 installation; individual package deselection follows Decision 14.
@@ -2195,7 +2222,7 @@ below are precedents, not proof of Herdr place behavior.
 | Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Rename the approved root and recreate a directory at its path; place publish and prune refuse. Change `HERDR_APP_HOME`, XDG state root, a root alias or a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
 | Destination leaf or ancestor move after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf or move its ancestor after `verifyTarget` returns the parent descriptor but before `renameat`: leaf replacement does not follow the leaf (a directory leaf fails), while the moved descriptor can carry publication into a directory no longer at the approved path; neither local race is detected or reported. For pruning/deselection, assert an edit present at `Destination.RemoveLeaf` verification is retained; document the verify-then-unlink observation window, not test it as a guarantee. |
 | New/new, installed/new and unmanaged conflicts | `owned-entry-reconciliation` (Unproven entries are preserved; Unmanaged collisions refuse only the generated entry); `planPluginArtifacts` | Reverse package order and assert both new colliders refuse; an installed package keeps its complete old projection; an identical unowned file, file/directory prefix collision, case-fold collision and NFC/NFD twin refuse deterministically. A deselected installed owner blocks a new claimant until its prune completes. |
-| Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. |
+| Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. With that edit still present, `target verify` reports its path as drift and refuses without running either host command or writing any result, config, lock, approval, ownership or target file. |
 | Edited package on deselection | `plugin-delivery` (Removal retires only owned plugin output); `resource-removal` | Deselect after editing one file: unchanged owned files retire, the edit survives byte-for-byte and is reported as ceded, with no implicit re-adoption. |
 | Failed initial-load verification | `exact-snapshot-verification` (loose precedent only: snapshot trust, not placement-check results); Decision 6 verification boundary | Make the approved check fail: exact package files and ownership remain, the failure is recorded, `status` reports it without executing code, and next mutating sync retries it. |
 | Crash recovery versus user edit | `status-reporting` (loose precedent only: nested-root drift, not this recovery distinction); `dependencytxn.recoverJournal` | Recover a pending write, then separately edit an installed file: recovery leaves verification pending, while the next status reports the edit rather than labeling either event as the other. |
@@ -2256,8 +2283,10 @@ target `feat/target-profiles`; none authorizes enqueue or release.
 
 1. **I1 `generalize-target-kinds`**: accepted-kind model; fresh-approval
    ready, not enqueue; no profile construction.
-2. **I2 `targets-alias`**: alias/read-before-write and TUI QA; no
-   profile-aware commands. Blocked on I1 and R5.
+2. **I2 `targets-alias`**: Decision 2 list semantics and read-before-write;
+   requires a `resource-selection` spec delta, mixed-version consumer
+   regression tests, and a real-terminal TUI QA journey for the edit
+   behavior below. No profile-aware commands. Blocked on I1 and R5.
 3. **I3 `target-profile-place`**: macOS/Linux place, identity, approval,
    import and recovery; blocked on I2, prerequisite PRs, Decision 14
    witnesses and verified profile/proxy evidence.
@@ -2300,13 +2329,29 @@ The relevant OpenSpec changes must prove these acceptance cases:
 - Exact org preapproval binds OS/target/profile/root/state/executable/roles;
   changed-state-root preapproval refuses; changed-target-root approval
   never prunes old output.
-- Absent user list snapshots; explicit empty does not. Groups cannot widen.
+- I2: Run a released v5.x reader and the I2 reader on the same v4
+  fixtures. An absent user list and `harnesses: []` both inherit the
+  organization list (and keep the existing repository fallback); both
+  readers agree on non-empty `harnesses:`. Check resolution through
+  `sync` and `status`. On I2, a non-empty `targets:` list resolves like
+  its legacy spelling, and `targets: []` selects no targets instead of
+  inheriting. The older reader refuses `targets:`, so the rollout must
+  not introduce it while that reader is still in use.
+- I2 editor witness: An unrelated edit leaves `harnesses: []` as
+  written; adding a target to an inherited user list snapshots the
+  effective list. In config editor tests and a real-terminal TUI journey,
+  removing the last target before a `targets:` write is admitted shows
+  migration guidance and leaves config and lock unchanged. With the
+  write admitted, it saves `targets: []`; rereading does not restore
+  inherited targets. Groups cannot widen the applicable target list.
 - Direct disabled/unavailable selection refuses; collections report skips.
   Sync/check and authored errors follow Decision 1.
 - `approve`/`retire` require TTY, show exact bindings/removals, preserve
   edits, and refuse when recorded state/root is unavailable.
 - Host version is known/missing/unknown; only explicit org policy blocks.
-  Requirements keep existing semantics.
+  Requirements keep existing semantics. For I3, verify that old and new
+  readers accept the shared v4 organization root with both keys absent
+  and that new readers accept it with both keys present.
 - Native mod directories and complete personal app bundles use one
   `herdr-app` profile through explicit import mappings. A complete bundle
   places its layout, mods and permitted root support files together;
