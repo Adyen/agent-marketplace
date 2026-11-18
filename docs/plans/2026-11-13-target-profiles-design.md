@@ -1260,7 +1260,7 @@ removes only proven-owned unchanged bytes and preserves edits/unowned files.
 | Platform | profile, package sidecar | runtime OS | hard: skip elsewhere |
 | Root detected | profile root binding | canonical root check, no command execution | observation only; it does not authorize a check |
 | Host executable | profile command binding | exact approved canonical path and digest, rechecked before execution | presence alone is not consent; command roles need the binding |
-| Host version | profile `host.version` | single probe with fixed argv, run only when host commands may run (Decision 6) | soft: warn outside `verified`; organization policy may block |
+| Host version | profile `host.version_probe` | single probe with fixed argv, run only when host commands may run (Decision 6) | soft: warn outside `verified`; organization policy may block |
 | Package host version | package sidecar `host: { min, tested }` | compared with the last recorded version probe | soft: warn below `min` or above `tested` |
 | Required packages | package sidecar `metadata.requires` | a selected resource with that kind and name (Decision 4) | advisory; selected automatically with `requires.expand` |
 | Programs the package runs | package sidecar `binaries: [gh, python3]` | PATH lookup only | advisory warning |
