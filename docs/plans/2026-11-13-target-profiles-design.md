@@ -1233,19 +1233,22 @@ apiVersion: agent-marketplace/v4
 target_preapprovals:
   - {os: linux, target_id: herdr-app, profile_digest: sha256:<64-lowercase-hex>,
      canonical_root: /home/alice/.config/herdr-app,
+     canonical_state_root: /home/alice/.local/state/agent-marketplace,
      executable: {canonical_path: /usr/bin/herdr-app, sha256: sha256:<64-lowercase-hex>},
      command_roles: [version_probe, initial-load]}
 ```
 
-Each entry binds exact OS, target, profile digest, canonical root and
-command roles. The root must equal the resolved root beneath admitted
-home/XDG config bases. No wildcard, prefix, raw environment grant, or
-outside override is allowed. `executable` is the canonical absolute path
-and SHA-256 when commands exist, otherwise `no-execution`. Multiple
-entries are independent exact grants. A match creates a concrete local
-receipt with the state-store identity; a mismatch needs interactive
-approval. Optional `require_verified_host_version` is an organization-only
-target-ID list, default empty.
+Each entry binds exact OS, target, profile digest, canonical target root,
+canonical state root, executable binding and command roles. The target
+root must equal the resolved root beneath admitted home/XDG config bases.
+No wildcard, prefix, raw environment grant, or outside override is allowed.
+`executable` is the canonical absolute path and SHA-256 when commands exist,
+otherwise `no-execution`. Multiple entries are independent exact grants.
+Match the resolved canonical state root before creating a receipt and derive
+the receipt's root key from it. A mismatch cannot mint a receipt. Existing
+missing-state refusals still apply (Decision 14). Optional
+`require_verified_host_version` is an organization-only target-ID list,
+default empty.
 
 Headless sync never prompts for approval. It follows the skip rule in
 Decision 1. Direct install also refuses before acquisition when the
@@ -2265,6 +2268,10 @@ target `feat/target-profiles`; none authorizes enqueue or release.
 6. **I6 `target-profile-register`**: register inventory and recovery;
    blocked on I5 and lifecycle decisions.
 
+Each implementation backlog child holds its own capability scope,
+acceptance criteria, non-goals, verification commands and blockers; the
+sequence above is only a summary.
+
 At the 2026-11-18 read-only check, #1068 was MERGED into this branch at
 base. #626, #643, #661, #671 and #672 were OPEN, no merge commit, and
 remain I3/I4 blockers. Collections remain the Marketplace edge workaround.
@@ -2291,7 +2298,8 @@ The relevant OpenSpec changes must prove these acceptance cases:
 - A program listed in the sidecar is never a `requires` item, and a
   missing one does not fail `sync --strict`.
 - Exact org preapproval binds OS/target/profile/root/state/executable/roles;
-  changed-root approval never prunes old output.
+  changed-state-root preapproval refuses; changed-target-root approval
+  never prunes old output.
 - Absent user list snapshots; explicit empty does not. Groups cannot widen.
 - Direct disabled/unavailable selection refuses; collections report skips.
   Sync/check and authored errors follow Decision 1.
