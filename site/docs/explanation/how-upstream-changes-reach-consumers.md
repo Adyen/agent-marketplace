@@ -85,16 +85,7 @@ A required miss still fails `sync` when the lock moved without the `update` chec
 
 ### Hosted Marketplace pins
 
-A Marketplace pin names an exact, immutable revision. If the registry renames or deletes the resource, the pinned revision still installs, and `status` still shows it as `current`. At `update`, the CLI asks the Marketplace for the newest revision of the old name. The Marketplace no longer knows that name, so `update` keeps that pin at its current revision, updates the other pins, and exits `1` with an error such as:
-
-```text
-Configured registry entries: 0
-Marketplace pins updated: 0
-Other Marketplace pins skipped: 1
-Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": skipped ("resource no longer exists on the Marketplace")
-Error: 1 Marketplace resource(s) no longer exist:
-marketplace https://marketplace.example.com pin shared-agents/skill/foo: resource not found; remove the old pin with `agent-marketplace remove foo` and install the new name
-```
+A Marketplace pin names an exact revision. When the registry renames or deletes the resource, the Marketplace no longer returns a latest revision for the old name. If the exact pinned revision is still usable, `update` keeps it, updates the other pins, warns, and exits `0`. `status` keeps the pin's state and notes the removal in its detail. If the exact revision is unavailable both on the Marketplace and in the verified local cache, `update` exits `1` and tells you to remove the old pin and install its replacement.
 
 Replace the pin to move it; see [how to handle a renamed or removed resource](../how-to/handle-renamed-or-removed-resources.md#_6-replace-a-hosted-marketplace-pin).
 

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,21 +21,57 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 	}
 	server, repoRoot := statusMarketplaceFixture(t, false)
 	defer server.Close()
+	configBefore := snapshotSyncIndependentNativeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"))
+	lockBefore := snapshotSyncIndependentNativeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"))
 	withWorkingDir(t, repoRoot)
 
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	output, err := executeCommand("status")
+	assertSyncIndependentNativeFileUnchanged(t, "status", configBefore)
+	assertSyncIndependentNativeFileUnchanged(t, "status", lockBefore)
 	if err != nil {
 		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
 	}
-	contentDigest := "sha256:" + strings.Repeat("a", 64)
 	for _, needle := range []string{
 		"MARKETPLACE PINS", "ALIAS", "REGISTRY_SLUG", "INSTALLED_NAME", "team", "source-slug", "review-installed", "v1", contentDigest,
-		"current", "false", "REPO", "removed from the Marketplace; pinned revision kept",
-		"WARNINGS", "agent-marketplace remove review-installed",
+		"false", "REPO", "WARNINGS", "agent-marketplace remove review-installed",
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected Marketplace status output to contain %q, got:\n%s", needle, output)
 		}
+	}
+
+	warningFound := false
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "warning: ") &&
+			strings.Contains(line, server.URL) &&
+			strings.Contains(line, "src/skill/review") &&
+			strings.Contains(line, "agent-marketplace remove review-installed") {
+			warningFound = true
+			break
+		}
+	}
+	if !warningFound {
+		t.Fatalf("expected a Marketplace warning naming %s, src/skill/review, and the remove remedy, got:\n%s", server.URL, output)
+	}
+
+	var reviewCells []string
+	for _, line := range strings.Split(output, "\n") {
+		cells := regexp.MustCompile(" {2,}").Split(strings.TrimSpace(line), -1)
+		if len(cells) == 18 && cells[7] == `"review-installed"` && cells[9] == strconv.Quote(contentDigest) {
+			reviewCells = cells
+			break
+		}
+	}
+	if reviewCells == nil {
+		t.Fatalf("expected a Marketplace pin row for review-installed at %s, got:\n%s", contentDigest, output)
+	}
+	if reviewCells[13] != `"current"` {
+		t.Fatalf("review-installed STATE = %s, want %q:\n%s", reviewCells[13], `"current"`, output)
+	}
+	note := "removed from the Marketplace; pinned revision kept"
+	if reviewCells[17] != strconv.Quote(note) {
+		t.Fatalf("review-installed DETAIL = %s, want %q:\n%s", reviewCells[17], strconv.Quote(note), output)
 	}
 }
 
