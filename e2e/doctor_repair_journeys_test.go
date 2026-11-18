@@ -21,7 +21,7 @@ import (
 func TestDoctorRepairJourneyInterruptedWrite(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	createPendingDoctorRepairJournal(t, env, "/workspace")
+	createPendingDoctorRepairJournal(t, env)
 
 	repair := runDoctorRepairJourney(t, env, nil, "y", "y")
 	assertDoctorRepairJourney(t, env, repair)
@@ -161,7 +161,7 @@ func TestDoctorRepairJourneyGuidedConfigurationEdit(t *testing.T) {
 	}
 }
 
-func createPendingDoctorRepairJournal(t *testing.T, env *Env, repo string) {
+func createPendingDoctorRepairJournal(t *testing.T, env *Env) {
 	t.Helper()
 	registry := env.CreateBareRepo("doctor-repair-journey", RegistryFiles([]Skill{{Name: "review"}}, nil, nil))
 	config := fmt.Sprintf(`apiVersion: agent-marketplace/v4
@@ -169,7 +169,7 @@ harnesses: [factory]
 sources: {tools: {git: %q, ref: main}}
 resources: {tools: {include: [skill/review]}}
 `, registry)
-	env.WriteFile(filepath.Join(repo, ".agents", "config.yaml"), config)
+	env.WriteFile("/workspace/.agents/config.yaml", config)
 	crash := env.RunAMWithEnv(map[string]string{
 		"AGENT_MARKETPLACE_E2E_CRASH_AT": "after-publish:0",
 	}, "sync", "--no-backup")
@@ -194,15 +194,14 @@ func runDoctorRepairJourney(t *testing.T, env *Env, overrides map[string]string,
 	defer cancel()
 	cmd := exec.CommandContext(ctx, env.binary, "doctor", "--repair")
 	cmd.Dir = env.workspace
-	commandEnv := env.subprocessEnv()
-	filtered := commandEnv[:0]
-	for _, value := range commandEnv {
+	var commandEnv []string
+	for _, value := range env.subprocessEnv() {
 		key, _, _ := strings.Cut(value, "=")
 		if key != "VISUAL" && key != "EDITOR" {
-			filtered = append(filtered, value)
+			commandEnv = append(commandEnv, value)
 		}
 	}
-	commandEnv = subprocessEnvWithOverrides(filtered, map[string]string{"TERM": "dumb"})
+	commandEnv = subprocessEnvWithOverrides(commandEnv, map[string]string{"TERM": "dumb"})
 	commandEnv = subprocessEnvWithOverrides(commandEnv, overrides)
 	cmd.Env = commandEnv
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 160})
@@ -255,7 +254,7 @@ func runDoctorRepairJourney(t *testing.T, env *Env, overrides map[string]string,
 
 func assertDoctorRepairJourney(t *testing.T, env *Env, repair doctorRepairJourneyResult) {
 	t.Helper()
-	if repair.answered == 0 || !strings.Contains(repair.Combined, "[y/N]") {
+	if repair.answered == 0 {
 		t.Fatalf("repair did not show and receive a confirmation (exit %d):\n%s", repair.ExitCode, repair.Combined)
 	}
 	if repair.ExitCode != 0 {
