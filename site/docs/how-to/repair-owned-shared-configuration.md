@@ -69,6 +69,14 @@ agent-marketplace doctor --repair --yes
 
 Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`; every entry a destructive step would change stays byte-identical and is printed as `left unchanged`.
 
+### JSON output
+
+`agent-marketplace doctor --repair --json` writes one JSON document containing
+the plan and step results, and never prompts. Without `--yes`, it only previews
+and writes no repair files. With `--yes`, it runs safe steps and reports
+destructive and guided steps as deferred. `--json` without `--repair` is an
+error.
+
 After each step runs, the command diagnoses the setup again and shows any new steps for confirmation before they run. A step that keeps recurring stops the repair after five runs with exit status 1.
 
 ## 3. Verify
@@ -85,7 +93,7 @@ The check exits with status 0 when the shared configuration matches your selecti
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
 - A journal recovery that cannot prove its recorded authority, such as foreign bytes or a non-prefix publication state, fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
 - It never edits your harness lists.
-- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, the plan is left with only blocked, deferred `guided`, or `human-only` items, or a preview or decline left missing or stale acquisition-lock authority unresolved. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
+- Repair exits 0 when the setup ends clean, you decline without unresolved missing or stale acquisition authority, an off-terminal preview has only safe or destructive steps, or `--yes` leaves only destructive entries unchanged. It exits 1 when a step fails, missing or stale acquisition authority remains after preview or decline, or, in a run you did not decline, corrupt state or any blocked, guided (including deferred guided), or human-only item remains. Invalid configuration or failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
 
 ## Related documentation

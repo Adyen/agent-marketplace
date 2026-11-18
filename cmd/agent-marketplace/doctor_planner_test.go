@@ -127,6 +127,7 @@ func snapshotDoctorRepairFiles(t *testing.T, repoRoot, aggregatePath string) fun
 }
 
 // spec: doctor-repair-planning/off-terminal-repair-without-yes-is-preview-only
+// spec: doctor-repair-planning/repair-exits-zero-for-preview-or-deferred-destructive-entries
 func TestDoctorRepairOffTerminalPlanIsPreviewOnly(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -155,6 +156,7 @@ func TestDoctorRepairOffTerminalPlanIsPreviewOnly(t *testing.T) {
 }
 
 // spec: doctor-repair-planning/repair-with-yes-runs-only-safe-steps
+// spec: doctor-repair-planning/repair-exits-zero-for-preview-or-deferred-destructive-entries
 func TestDoctorRepairYesRunsSafeStepAndDefersDestructiveEntry(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

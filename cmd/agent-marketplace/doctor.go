@@ -81,32 +81,44 @@ never requires a Devin binary, so nothing doctor reports here blocks it.
 
 --repair diagnoses harness drift and shared-aggregate ownership, then prints a
 numbered plan with each step's safety class, diagnostic code, files, and inputs
-or blocker. Pending dependency and ownership journals left by an interrupted
-run are recovered first as safe steps that need only the journal itself, so
-they run even when configuration is invalid. Replaying a journal completes only
-writes an earlier run already admitted; it is a safe step, not a destructive
-replacement, and a refused recovery fails the step, exits 1, and leaves the
-journal and its target bytes unchanged. One terminal confirmation authorizes
-safe steps. Destructive replacements and orphan removals keep their per-entry
-confirmations and never run with --yes. Devin and Codex shared aggregate files
-include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
-and .codex/config.toml.
+or blocker. Each step is classified as safe, destructive, guided, or
+human-only. After a step runs, doctor diagnoses again and confirms any newly
+available safe steps before continuing. Pending dependency and ownership
+journals left by an interrupted run are recovered first as safe steps that
+need only the journal itself, so they run even when configuration is invalid.
+Replaying a journal completes only writes an earlier run already admitted; it
+is a safe step, not a destructive replacement, and a refused recovery fails the
+step, exits 1, and leaves the journal and its target bytes unchanged. One
+terminal confirmation authorizes safe steps. Destructive replacements and
+orphan removals keep their per-entry confirmations and never run with --yes.
+Devin and Codex shared aggregate files include hooks.v1.json, config.json#hooks,
+mcp_config.json, .codex/hooks.json, and .codex/config.toml.
 Repair also inspects the shared aggregates of every other harness target that
 declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
 mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
 mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
 Off a terminal, --repair is preview-only unless --yes
-is set; --yes runs only safe steps. Repair uses the acquisition locks already
-on disk and never rewrites configuration automatically, edits harness lists,
-or edits organization files. Configuration field, YAML, and duplicate-key
-errors are guided with a safe source snippet. On a terminal without --yes,
-repair offers $VISUAL or $EDITOR and diagnoses again after the editor exits.
-With --yes or off a terminal, guided configuration edits are deferred. Version
-and organization issues remain human-only.
+is set; --yes runs only safe steps. Drift repair uses the acquisition locks
+already on disk. Safe lock steps can create a missing writable lock or
+reconcile a stale one without upgrading pins; destructive lock recovery needs
+a terminal confirmation and a backup. Repair never rewrites configuration
+automatically, edits harness lists, or edits organization files.
+Configuration field, YAML, and duplicate-key errors are guided with a safe
+source snippet. On a terminal without --yes, repair offers $VISUAL or $EDITOR
+and diagnoses again after the editor exits. With --yes or off a terminal,
+guided configuration edits are deferred. Version and organization issues
+remain human-only.
 
 With --repair, --json emits one structured plan and result document to stdout
 without prompting. Use --yes to run safe steps; destructive and guided steps
 remain deferred.
+
+Repair exits 0 when the setup ends clean, when you decline without unresolved
+missing or stale acquisition authority, for an off-terminal preview with only
+safe or destructive steps, or when --yes leaves only destructive entries
+unchanged. It exits 1 when a step fails, missing or stale acquisition
+authority remains after preview or decline, or, in a run you did not decline,
+corrupt state or any blocked, guided, or human-only item remains.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
