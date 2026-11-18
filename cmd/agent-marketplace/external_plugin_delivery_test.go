@@ -138,7 +138,7 @@ func TestSyncExternalGitSubdirectoryHonorsExclusions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, release, err := cache.LeaseExactGitReadOnlyWithContext(context.Background(), externalRegistry.URL, oid)
+	snapshot, release, err := cache.LeaseExactGitReadOnlyWithRootContext(context.Background(), externalRegistry.URL, oid, externalRoot.Path)
 	if err != nil {
 		t.Fatalf("lease locked subdirectory snapshot: %v", err)
 	}

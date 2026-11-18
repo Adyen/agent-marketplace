@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -80,6 +81,7 @@ type ResolveOptions struct {
 	MarketplaceMode                       *resolver.MarketplaceResolveMode
 	marketplaceInstall                    *marketplace.PreparedInstall
 	marketplaceInstallSource              config.Source
+	verifiedMarketplaceRevisions          *marketplace.VerifiedRevisions
 	MarketplaceLockEvidenceStrict         bool
 	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
@@ -321,14 +323,14 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	return result
 }
 
-func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
-	releaseExactLease := func() {}
+func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, releaseExactLease func()) {
+	releaseExactLease = func() {}
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
 	start := time.Now()
 	if opts.Offline {
 		opts.CatalogMode = catalog.LoadModeInspect
 	}
 	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
-	var result ResolveResult
 	result.LockMetadata = append([]LockMetadata(nil), opts.LockMetadata...)
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -361,6 +363,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		if resolveSpan != (telemetry.Span{}) {
 			resolveSpan.SetAttributes(resolveResultAttrs(result, time.Since(start)))
 			resolveSpan.End()
+		}
+	}()
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			result.Errors = append(result.Errors, closeErr)
 		}
 	}()
 
@@ -641,6 +648,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	marketplaceResolver := marketplace.NewResolver()
 	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
 	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
+	marketplaceResolver.Verified = opts.verifiedMarketplaceRevisions
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
 	// while normal sync passes the loaded config through the generic resolver.
@@ -783,11 +791,11 @@ func resolveExternalPluginPackages(ctx context.Context, artifacts []resolver.Res
 				"the locked external plugin snapshot is unavailable")
 			continue
 		}
-		snapshotKey := locked.URL + "\x00" + oid.String()
+		snapshotKey := locked.URL + "\x00" + oid.String() + "\x00" + rootPath
 		snapshot, found := snapshots[snapshotKey]
 		if !found {
 			var release func()
-			snapshot, release, err = cache.LeaseExactGitReadOnlyWithContext(ctx, locked.URL, oid)
+			snapshot, release, err = cache.LeaseExactGitReadOnlyWithRootContext(ctx, locked.URL, oid, rootPath)
 			if err != nil {
 				setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
 					"the locked external plugin snapshot is unavailable")

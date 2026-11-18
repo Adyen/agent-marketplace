@@ -150,7 +150,7 @@ Startup migrates the database schema forward, and there is no automatic down-mig
 
 - The public listener returns `404` for `/readyz` and `/metrics`.
 - The application has no built-in authentication, authorization, or TLS. The proxy provides all three.
-- `/metrics` reports HTTP request counters, a latency histogram, and in-flight requests from the API process only. The worker has no HTTP listener. Read [health and metrics](../../reference/marketplace-health-and-metrics.md) and [How to reindex and monitor a Marketplace](./reindex-and-monitor.md) before designing alerts.
+- `/metrics` reports HTTP request counters, a latency histogram, and in-flight requests on the API operations listener; a separate worker process serves its own `/metrics` on its operations listener. Read [health and metrics](../../reference/marketplace-health-and-metrics.md) and [How to reindex and monitor a Marketplace](./reindex-and-monitor.md) before designing alerts.
 
 ## Related documentation
 

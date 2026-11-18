@@ -159,8 +159,8 @@ func intentPluginLockContexts(ctx context.Context, intent config.Intent, docs ma
 		}
 	}
 	cfg := &config.Config{Registries: registries}
-	exact, release := DocExactSnapshots(locked, func(registry lockfile.GitRegistry) (string, func(), error) {
-		return leaseRegistrySnapshot(ctx, registry)
+	exact, release := DocExactSnapshots(locked, func(registry lockfile.GitRegistry, rootPath string) (string, func(), error) {
+		return leaseRegistrySnapshot(ctx, registry, rootPath)
 	})
 	defer release()
 	plan, errs, err := BuildPluginSelectionPlan(ctx, cfg, nil, "", "", exact)
@@ -175,12 +175,12 @@ func intentPluginLockContexts(ctx context.Context, intent config.Intent, docs ma
 
 // leaseRegistrySnapshot opens a registry record's committed snapshot for
 // read-only use during plugin-lock planning.
-func leaseRegistrySnapshot(ctx context.Context, registry lockfile.GitRegistry) (string, func(), error) {
+func leaseRegistrySnapshot(ctx context.Context, registry lockfile.GitRegistry, rootPath string) (string, func(), error) {
 	oid, err := cache.ParseGitOID(registry.Commit.String())
 	if err != nil {
 		return "", nil, err
 	}
-	path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+	path, release, err := cache.LeaseExactGitReadOnlyWithRootContext(ctx, registry.URL, oid, rootPath)
 	if err != nil {
 		return "", nil, err
 	}

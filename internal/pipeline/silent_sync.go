@@ -115,7 +115,7 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, LockMetadata: o.LockMetadata, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
+	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, LockMetadata: o.LockMetadata, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource, verifiedMarketplaceRevisions: o.verifiedMarketplaceRevisions}
 	syncResult := Sync(ctx, resolveOpts)
 	if o.resolved != nil {
 		*o.resolved = syncResult.Resolved
@@ -129,19 +129,20 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 }
 
 type silentSyncOptions struct {
-	IgnoreBlockedRegistries  bool
-	CatalogMode              catalog.LoadMode
-	CatalogOption            []catalog.LoadOption
-	ExactLockLease           func(context.Context) (func(), error)
-	LockMetadata             []LockMetadata
-	DependencyReconciler     DependencyReconciler
-	StagedConfigEdits        []StagedConfigEdit
-	ConfigStaging            *configStagingManager
-	DependencyCommitted      bool
-	MarketplaceMode          *resolver.MarketplaceResolveMode
-	marketplaceInstall       *marketplace.PreparedInstall
-	marketplaceInstallSource config.Source
-	resolved                 *[]resolver.ResolvedArtifact
+	IgnoreBlockedRegistries      bool
+	CatalogMode                  catalog.LoadMode
+	CatalogOption                []catalog.LoadOption
+	ExactLockLease               func(context.Context) (func(), error)
+	LockMetadata                 []LockMetadata
+	DependencyReconciler         DependencyReconciler
+	StagedConfigEdits            []StagedConfigEdit
+	ConfigStaging                *configStagingManager
+	DependencyCommitted          bool
+	MarketplaceMode              *resolver.MarketplaceResolveMode
+	marketplaceInstall           *marketplace.PreparedInstall
+	marketplaceInstallSource     config.Source
+	verifiedMarketplaceRevisions *marketplace.VerifiedRevisions
+	resolved                     *[]resolver.ResolvedArtifact
 }
 
 type silentSyncOpt func(*silentSyncOptions)
@@ -156,6 +157,10 @@ func withMarketplaceInstall(plan *marketplace.PreparedInstall, source config.Sou
 		o.marketplaceInstall = plan
 		o.marketplaceInstallSource = source
 	}
+}
+
+func withVerifiedMarketplaceRevisions(revisions *marketplace.VerifiedRevisions) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.verifiedMarketplaceRevisions = revisions }
 }
 
 func withDependencyReconciler(reconciler DependencyReconciler) silentSyncOpt {

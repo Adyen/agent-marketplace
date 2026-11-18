@@ -690,7 +690,7 @@ Starts the interactive terminal UI for browsing Git registries and hosted Market
 agent-marketplace tui
 ```
 
-The command finds the repository root from the current directory and uses your home directory for machine-scope configuration and output. It shows configured resources before any network discovery, loads up to 50 results from each Marketplace, and starts a Marketplace search 250 milliseconds after you stop typing. Discovery results stay fresh for five minutes and can be shown as stale results for up to 24 hours when an endpoint fails.
+The command finds the repository root from the current directory and uses your home directory for machine-scope configuration and output. It shows configured resources before any network discovery, loads up to 50 free-text results from each Marketplace (a single kind query reaches every match), and starts a Marketplace search 250 milliseconds after you stop typing. Discovery results stay fresh for five minutes and can be shown as stale results for up to 24 hours when an endpoint fails.
 
 Marketplace installation verifies the exact revision before saving it. Security findings show the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources stay visible but cannot be installed.
 

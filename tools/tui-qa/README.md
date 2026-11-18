@@ -25,7 +25,7 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 
 1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, selects the available `alpha-skill` (whose detail offers `space = toggle · enter = full view`), opens details, returns, and quits.
 2. `tests/search-and-select.spec.ts` searches, checks that the match stays and a distractor disappears, and selects the match.
-3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, and verifies the config and the files written to the harness folders.
+3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, verifies the config and harness files, and checks that sync builds its locked Git source revision once.
 4. `tests/help-and-return.spec.ts` opens help and returns to the same selection. Its minimum-size variant scrolls through every help group and independently authored key/description pair at 50x12, acknowledging each line's changed frame without a sleep. Close and hard-quit hints remain visible throughout. Escape returns to the selected `alpha-skill`, reopening restores the exact final viewport, and Ctrl+C exits directly from help.
 5. `tests/resize-and-recover.spec.ts` shrinks the terminal below the minimum size, checks that a toggle and a wheel event are ignored, and recovers at exactly 50x12 with the selection unchanged.
 6. `tests/ctrl-c-hard-exit.spec.ts` exits with Ctrl+C within a time bound.
@@ -90,6 +90,7 @@ the pre-selected harness into the v4 user configuration.
 60. `tests/failed-sync.spec.ts` also starts from a v4 directory source selecting a Devin hook against a hand-written flat-entry `.devin/hooks.v1.json`. The settled launch shows a `materialize.devin` error banner, and the errors screen shows the `materialize.devin.aggregate-shape` catalog guidance instead of generic recovery copy. After closing the screen, `s` keeps the error and leaves the repository config and aggregate unchanged; `q` exits.
 61. `tests/plugin-parent-rows.spec.ts` launches with a plugin format source and checks that the plugin `t/kit` renders as one parent row with its skill, hook, and MCP members on screen.
 62. `tests/plugin-member-exclusion.spec.ts` selects the nested `skill t/review` member of a selected plugin, excludes it from that plugin through the toggle options, and checks the row, the member status, and that the config adds only a plugin `exclude` entry; restoring the member removes the exclusion and leaves nothing pending.
+63. `tests/marketplace-kind-search.spec.ts` searches the configured Marketplace by `/mcp` and `/command`, reaches opaque-name MCP servers and commands, reaches a configured skill with no kind text through the `/skills` alias, clears each query to restore the browse rows, and verifies the authored configs, acquisition lock, and materialized skill stay byte-identical.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

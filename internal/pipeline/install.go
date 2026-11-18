@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -122,6 +123,13 @@ type resourceIdentity struct {
 // Install adds resources to the appropriate config layer and re-syncs.
 // It handles --tag, --all, --from, collection, and named-resource installs.
 func Install(ctx context.Context, opts InstallOptions) (result *InstallResult, retErr error) {
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
+
 	if opts.PrepareDependencies != nil && opts.DependencyReconcile == nil {
 		return nil, errors.New("install dependency preparation requires a dependency reconciler")
 	}
