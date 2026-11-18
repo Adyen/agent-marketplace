@@ -137,7 +137,7 @@ journey.test("startup progressively browses the complete Marketplace catalog wit
     });
     fixture.marketplaceReleaseBrowseFirstPage?.();
     await step("cold startup publishes the first page while page two is held", () => {}, async () => {
-      await locate(terminal, "browse-resource-00").expect({ timeout: 15_000 });
+      await locate(terminal, "browse-resource-00").expect({ timeout: 5_000 });
     });
     coldFirstFrameMS = Date.now() - startedAt;
     await step("the second page stays held after the first page is usable", () => {}, async () => {
@@ -163,7 +163,7 @@ journey.test("startup progressively browses the complete Marketplace catalog wit
       await locate(terminal, /Marketplace: 1 loading/).unique().expect({ not: true });
     });
     await step("reach the final resource without searching", () => terminal.write("G"), async () => {
-      await locate(terminal, /Name:\s+browse-resource-60/).unique().expect({ timeout: 10_000 });
+      await locate(terminal, /Name:\s+browse-resource-60/).unique().expect({ timeout: 5_000 });
     });
     assert.equal(fixture.marketplaceBrowseRequestCount?.(), 2, "cold browsing did not fetch both pages exactly once");
     assert.equal(fixture.marketplaceSearchRequestCount?.(), 2, "cold browse issued unexpected search requests");
@@ -193,7 +193,7 @@ searchJourney.test("search and clear preserve browse inventory while a later pag
   });
   fixture.marketplaceReleaseBrowseFirstPage?.();
   await step("the first browse page is visible while page two is held", () => {}, async () => {
-    await locate(terminal, "browse-resource-00").expect({ timeout: 15_000 });
+    await locate(terminal, "browse-resource-00").expect({ timeout: 5_000 });
     await waitForBrowseLaterPage(fixture);
     await locate(terminal, /Marketplace: 1 loading/).unique().expect();
     await locate(terminal, /~ in sync/).unique().expect();
@@ -222,7 +222,7 @@ searchJourney.test("search and clear preserve browse inventory while a later pag
   await step("clear search and restore the complete browse list", () => terminal.write("\x1b"), async () => {
     await locate(terminal, "61 matches · esc clear").expect({ not: true });
     await terminal.write("G");
-    await locate(terminal, /Name:\s+browse-resource-60/).unique().expect({ timeout: 10_000 });
+    await locate(terminal, /Name:\s+browse-resource-60/).unique().expect({ timeout: 5_000 });
   });
   assert.equal(fixture.marketplaceBrowseRequestCount?.(), 2, "search interrupted or repeated browse pages");
   assert.equal(fixture.marketplaceSearchRequestCount?.(), 3, "search request count changed unexpectedly");
@@ -242,7 +242,7 @@ warmJourney.test("warm startup displays the complete cached catalog in a fresh p
   let priorFailure: unknown;
   try {
     await step("fresh warm startup displays cached Marketplace rows", () => {}, async () => {
-      await locate(terminal, "browse-resource-00").expect({ timeout: 15_000 });
+      await locate(terminal, "browse-resource-00").expect({ timeout: 5_000 });
       await locate(terminal, /~ in sync/).unique().expect();
     });
     firstFrameMS = Date.now() - startedAt;

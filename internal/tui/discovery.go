@@ -735,7 +735,28 @@ func configuredMarketplaceErrors(cfg *config.Config) []error {
 }
 
 func (m Model) marketplaceDiscoveryErrors() []error {
-	return append(slices.Clone(m.discoveryErrs), m.browseErrs...)
+	var errs []error
+	seenPolicyDenials := make(map[string]struct{})
+	for _, err := range slices.Concat(m.discoveryErrs, m.browseErrs) {
+		if key, ok := policyDenialEndpoint(err); ok {
+			if _, exists := seenPolicyDenials[key]; exists {
+				continue
+			}
+			seenPolicyDenials[key] = struct{}{}
+		}
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// policyDenialEndpoint returns the endpoint identity of a configured policy denial.
+func policyDenialEndpoint(err error) (string, bool) {
+	var endpointErr *marketplaceEndpointError
+	var blocked *config.MarketplaceURLBlockedError
+	if errors.As(err, &endpointErr) && errors.As(err, &blocked) {
+		return marketplaceEndpointIdentity(endpointErr.Endpoint), true
+	}
+	return "", false
 }
 
 func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOutcome) {
@@ -773,10 +794,15 @@ func (m *Model) updateBrowsePending(outcomes []marketplace.DiscoveryOutcome) {
 		return
 	}
 	remaining := m.browsePending[:0]
+	var allowed []string
+	if m.mergedCfg != nil {
+		allowed = effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces
+	}
 	for _, endpoint := range m.browsePending {
 		pending := true
+		matchesEndpoint := discoveryEndpointMatcher([]config.MarketplaceEntry{endpoint}, allowed)
 		for _, outcome := range outcomes {
-			if marketplaceEndpointIdentity(outcome.Endpoint) != marketplaceEndpointIdentity(endpoint) {
+			if !matchesEndpoint(outcome.Endpoint) {
 				continue
 			}
 			pending = outcome.Err == nil && (outcome.Truncated || outcome.CacheState == marketplace.DiscoveryCacheStale)

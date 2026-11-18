@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -244,5 +245,8 @@ func TestDiscoverFreshBrowseCacheOverlaysReceivedRowsUntilLaterPageFails(t *test
 	after, err := os.ReadFile(cachePath)
 	if err != nil || !bytes.Equal(after, before) {
 		t.Fatalf("failed overlay replaced the cache: equal=%t err=%v", bytes.Equal(after, before), err)
+	}
+	if _, err := os.Stat(cache.catalogPath(endpoint, DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed overlay wrote a catalog record: %v", err)
 	}
 }

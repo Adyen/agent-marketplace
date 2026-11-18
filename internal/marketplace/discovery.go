@@ -764,7 +764,7 @@ func Discover(ctx context.Context, ec config.EffectiveConfig, query string, opts
 	for update := range updates {
 		outcomes = update
 	}
-	return outcomes, nil
+	return outcomes, ctx.Err()
 }
 
 func validateDiscoveryPage(items []mpapi.ResourceListItem, total, limit int) error {

@@ -133,7 +133,7 @@ func TestClearingSearchRebuildsAnEmptyBrowseInventory(t *testing.T) {
 // spec: tui-startup/search-during-loading-and-clear-restore-complete-browsing
 func TestClearingSearchRestoresBrowseInventoryBeforeLocalRowsLoad(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	m := NewModel("/repo", "/home")
+	m := NewModel(t.TempDir(), t.TempDir())
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
 	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
 		Endpoint: endpoint,
@@ -190,7 +190,7 @@ func TestWhitespaceSearchReusesTheExistingBrowse(t *testing.T) {
 // spec: tui-startup/search-during-loading-and-clear-restore-complete-browsing
 func TestWhitespaceSearchCancelsInFlightDiscovery(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	m := NewModel("/repo", "/home")
+	m := NewModel(t.TempDir(), t.TempDir())
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
 	key, _, err := marketplaceBrowseRequestKey(m.mergedCfg)
 	if err != nil {
@@ -218,6 +218,44 @@ func TestWhitespaceSearchCancelsInFlightDiscovery(t *testing.T) {
 	m = updated.(Model)
 	if len(m.discoveryRows) != 0 {
 		t.Fatal("whitespace search accepted the superseded query result")
+	}
+}
+
+// spec: tui-startup/search-during-loading-and-clear-restore-complete-browsing
+func TestWhitespaceSearchRestoresBrowseRows(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
+	m := newTestModel()
+	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+	m.filter = "needle"
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
+		Endpoint: endpoint,
+		Items:    []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "skill", "browse-resource", "browse result")},
+		Total:    1,
+	}})
+	m.applyDiscovery("needle", []marketplace.DiscoveryOutcome{{
+		Endpoint: endpoint,
+		Items:    []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "skill", "needle-resource", "search result")},
+		Total:    1,
+	}})
+	key, _, err := marketplaceBrowseRequestKey(m.mergedCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.browseKey = key
+	m.browseFinished = true
+	m.searchInput.SetValue("")
+	m.searchInput.Focus()
+
+	updated, _ := m.applySearchInput(keyPress(' '))
+	m = updated.(Model)
+	if m.filter != "" || m.searchInput.Value() != "" {
+		t.Fatalf("whitespace search was not normalized to empty: filter=%q input=%q", m.filter, m.searchInput.Value())
+	}
+	if slices.ContainsFunc(m.rows, func(candidate row) bool { return candidate.Artifact.Name == "needle-resource" }) {
+		t.Fatal("search-only row remained visible after whitespace search")
+	}
+	if !slices.ContainsFunc(m.rows, func(candidate row) bool { return candidate.Artifact.Name == "browse-resource" }) {
+		t.Fatal("whitespace search did not restore browse rows")
 	}
 }
 
@@ -252,6 +290,42 @@ func TestBrowseReloadDropsNewlyDeniedEndpointRowsAndReportsPolicy(t *testing.T) 
 	}
 	if !slices.ContainsFunc(m.browseErrs, func(err error) bool { return strings.Contains(err.Error(), "denied") }) {
 		t.Fatalf("newly denied Marketplace policy error is missing: %v", m.browseErrs)
+	}
+	if combined := m.marketplaceDiscoveryErrors(); len(combined) != 1 || !strings.Contains(combined[0].Error(), "denied") {
+		t.Fatalf("combined Marketplace errors = %v, want the configured policy denial exactly once", combined)
+	}
+}
+
+// spec: tui-startup/cold-startup-browses-beyond-the-first-page
+func TestBrowsePendingMatchesAcquiredEndpointIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configured config.MarketplaceEntry
+		outcome    config.MarketplaceEntry
+		want       int
+	}{
+		{
+			name:       "unacquired URL accepts its acquired identity",
+			configured: config.MarketplaceEntry{URL: "HTTPS://market.example/"},
+			outcome:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "acquired"},
+			want:       0,
+		},
+		{
+			name:       "explicit identity stays bound",
+			configured: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "configured"},
+			outcome:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "acquired"},
+			want:       1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel()
+			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{tc.configured}}
+			m.browsePending = []config.MarketplaceEntry{tc.configured}
+			m.updateBrowsePending([]marketplace.DiscoveryOutcome{{Endpoint: tc.outcome, Total: 1}})
+			if len(m.browsePending) != tc.want {
+				t.Fatalf("pending endpoints = %#v, want %d", m.browsePending, tc.want)
+			}
+		})
 	}
 }
 

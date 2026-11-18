@@ -312,6 +312,23 @@ func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t 
 	if _, err := os.Stat(cache.path(ep, "", "", "", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial catalog was cached: %v", err)
 	}
+	if _, err := os.Stat(cache.catalogPath(ep, DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial catalog record was cached: %v", err)
+	}
+}
+
+// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestDiscoverReturnsCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example", InstanceID: "market",
+	}}}}
+	outcomes, err := Discover(ctx, ec, "needle", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("discovery error = %v, want caller cancellation; outcomes=%#v", err, outcomes)
+	}
 }
 
 // spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing

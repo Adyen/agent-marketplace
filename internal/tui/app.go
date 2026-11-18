@@ -1538,14 +1538,19 @@ func (m Model) clearSearch() (tea.Model, tea.Cmd) {
 	m.filter = ""
 	m.searchInput.SetValue("")
 	m.searchInput.Blur()
-	m.cancelMarketplaceDiscovery()
-	m.restoreBrowseDiscovery()
+	browseCmd := m.restoreBrowseAfterSearch()
 	// Rows hidden by the filter reappear above the selection; scroll as
 	// little as possible so they are visible instead of kept off-screen.
 	m.listOffset = 0
 	m.clampListOffset()
 	recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
-	return m, m.beginMarketplaceBrowse(false)
+	return m, browseCmd
+}
+
+func (m *Model) restoreBrowseAfterSearch() tea.Cmd {
+	m.cancelMarketplaceDiscovery()
+	m.restoreBrowseDiscovery()
+	return m.beginMarketplaceBrowse(false)
 }
 
 func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1557,10 +1562,10 @@ func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.filter == previous {
 		return m, cmd
 	}
-	if m.filter == "" {
-		m.cancelMarketplaceDiscovery()
-		m.restoreBrowseDiscovery()
-		return m, tea.Batch(cmd, m.beginMarketplaceBrowse(false), m.spinner.Tick)
+	if strings.TrimSpace(m.filter) == "" {
+		m.filter = ""
+		m.searchInput.SetValue("")
+		return m, tea.Batch(cmd, m.restoreBrowseAfterSearch(), m.spinner.Tick)
 	}
 	return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
 }
