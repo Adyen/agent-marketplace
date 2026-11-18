@@ -1874,7 +1874,7 @@ states:
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
 | Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity matches and every present file is a byte prefix of its manifest entry, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the second row applies. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. A stage left without recorded identity by a crash between creating the stage directory and recording it stays retained; the user removes it manually after `status` names its path, and the next mutating sync clears the intent. |
-| During a journaled directory creation | `dependency.recovery-required`; no replay. | If the marked directory is absent, the creation did not happen: apply the first row when no earlier target write was recorded, otherwise the next row. If it is present with no recorded identity, retain it with the journal and stop recovery, because it cannot be proven to be the transaction's own directory. If its recorded identity matches, the next row applies. |
+| During a journaled directory creation | `dependency.recovery-required`; no replay. | If the marked directory is absent, the creation did not happen. Apply the first row when no earlier target write was recorded, otherwise the next row. If it is present with no recorded identity, retain it with the journal and stop recovery, because it cannot be proven to be the transaction's own directory. If its recorded identity matches, the next row applies. |
 | After some target writes | `dependency.recovery-required`; no replay. | Complete the recorded write prefix of journaled directory creations and file publications only while each destination is exactly its old or intended generation and all remaining stage bytes match; a later `EXDEV` stays pending as described under cross-filesystem refusal. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
 | During ownership-state commit | `dependency.recovery-required`; no replay. | The single atomic state-file rename leaves either the old generation, handled by the preceding row, or the new generation, handled by the following row. |
@@ -1888,7 +1888,7 @@ stopped on; this extends the `CheckPending` message, which today names only
 the journal. The user resolves a stop by restoring the named destination to
 its recorded old or intended generation, or by removing the named stage or
 unrecorded directory; the next mutating sync then takes the matching row.
-Recovery never guesses, and this design has no forced clear.
+This design has no forced clear.
 
 The journal must record the ordered package writes and directory creations,
 the stage directory identity, ownership participant, stale-file generations,
@@ -1908,8 +1908,8 @@ ownership or prove that a host registration can be rolled back.
 
 #### Edited files and verification
 
-Place payloads differ from owned aggregate entries: sync keeps an
-edited file and records edited drift; if any member of an
+Place payloads differ from owned aggregate entries. Sync keeps an
+edited file and records edited drift. If any member of an
 installed package is edited, keep that package's entire current projection
 and do not partly refresh it. An upgrade that encounters an edit
 keeps the complete old projection and refuses the new package revision as a
