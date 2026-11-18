@@ -90,6 +90,7 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 		userConfig  string
 		errorCode   string
 		wantHarness bool
+		duplicate   bool
 	}{
 		{
 			name:        "user harness declaration",
@@ -107,6 +108,12 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 			userConfig: "apiVersion: agent-marketplace/v3\nharnesses: [factory]\n",
 			errorCode:  "v4.api-version",
 		},
+		{
+			name:       "duplicate Marketplace endpoint declaration",
+			userConfig: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+			errorCode:  "v4.marketplace-lock-mismatch",
+			duplicate:  true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -116,10 +123,11 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 			writeFile(t, filepath.Join(home, ".agents", "config.yaml"), tc.userConfig)
 
 			repo := t.TempDir()
-			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
-sources:
-  hosted: {marketplace: `+server.URL+`}
-resources:
+			sources := "  hosted: {marketplace: " + server.URL + "}\n"
+			if tc.duplicate {
+				sources += "  alias: {marketplace: " + server.URL + "}\n"
+			}
+			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n"+sources+`resources:
   hosted: {include: [tools/skill/review]}
 `)
 			withWorkingDir(t, repo)
@@ -127,6 +135,9 @@ resources:
 			output, err := executeCommand("status")
 			if err == nil || (!strings.Contains(output, tc.errorCode) && !strings.Contains(err.Error(), tc.errorCode)) {
 				t.Fatalf("status error = %v, want nonzero %s:\n%s", err, tc.errorCode, output)
+			}
+			if tc.duplicate && !strings.Contains(output+"\n"+err.Error(), "duplicate Marketplace source declaration") {
+				t.Fatalf("status error = %v, want duplicate Marketplace source diagnostic:\n%s", err, output)
 			}
 
 			start := strings.Index(output, "TARGET HARNESS SET")

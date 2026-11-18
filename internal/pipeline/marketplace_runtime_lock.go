@@ -40,7 +40,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	intent := readIntent(ctx, opts)
 	suppressIntentReport := false
 	defer func() {
-		if intentReady != nil && !suppressIntentReport && len(intent.Errors) == 0 && len(effective.Errors) > 0 && !effective.MergedValidationFailed {
+		if intentReady != nil && !suppressIntentReport && len(intent.Errors) == 0 && len(effective.Errors) > 0 && !effective.ConfigurationValidationFailed {
 			intentReady(intent)
 		}
 	}()

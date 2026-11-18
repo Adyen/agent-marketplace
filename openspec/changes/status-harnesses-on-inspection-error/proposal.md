@@ -19,3 +19,7 @@ None.
 ## Impact
 
 `cmd/agent-marketplace/status.go` and its tests. No configuration, lock, or API change.
+
+## Release note
+
+`status` now shows which harnesses are configured, and where they were declared, when acquisition-lock or Marketplace inspection fails. The original error and exit status are unchanged.

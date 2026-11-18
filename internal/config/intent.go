@@ -636,6 +636,12 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	ec.Errors = nil
 	for _, layer := range ec.LayerResults() {
 		ec.Errors = append(ec.Errors, layer.Errors...)
+		for _, err := range layer.Errors {
+			var validation *V4ValidationError
+			if errors.As(err, &validation) && validation.authoredConfig {
+				ec.ConfigurationValidationFailed = true
+			}
+		}
 	}
 	bindingErrorCount := len(ec.Errors)
 
@@ -723,7 +729,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
-	ec.MergedValidationFailed = len(ec.Errors) > bindingErrorCount
+	ec.ConfigurationValidationFailed = ec.ConfigurationValidationFailed || len(ec.Errors) > bindingErrorCount
 
 	if len(ec.Errors) > 0 {
 		slog.Error("effective config loaded with errors",
