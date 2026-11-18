@@ -21,7 +21,7 @@ func TestProbeDefaultBranchIgnoresLocalCredentialHelper(t *testing.T) {
 	t.Chdir(workspace)
 
 	// Control: the local helper does authenticate ordinary ls-remote.
-	_, _ = DefaultBranch(f.url)
+	_, _ = DefaultBranch(context.Background(), f.url)
 	if f.accepted.Load() == 0 {
 		t.Fatal("control: DefaultBranch did not authenticate through the local credential helper")
 	}
@@ -42,6 +42,9 @@ func TestProbeDefaultBranchIgnoresLocalCredentialHelper(t *testing.T) {
 	cancel()
 	if _, _, err := ProbeDefaultBranch(cancelled, f.url); err == nil {
 		t.Fatal("ProbeDefaultBranch ignored a cancelled context")
+	}
+	if _, err := DefaultBranch(cancelled, f.url); err == nil {
+		t.Fatal("DefaultBranch ignored a cancelled context")
 	}
 	if got := f.challenged.Load(); got != challenged {
 		t.Fatalf("ProbeDefaultBranch with a cancelled context reached the server %d time(s)", got-challenged)

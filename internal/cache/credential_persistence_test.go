@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -23,7 +24,7 @@ func TestDefaultBranchCredentialRedaction(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	raw := "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE"
-	_, err := DefaultBranch(raw)
+	_, err := DefaultBranch(context.Background(), raw)
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 128 {
 		t.Fatalf("wrong Git error: %v", err)

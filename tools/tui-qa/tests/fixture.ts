@@ -38,6 +38,7 @@ export interface FixtureOptions {
   marketplaceDiscovery?: "plain" | "findings" | "mixed-denial";
   // Adds an unconfigured local Git registry for install-from-source journeys.
   adHocSource?: boolean;
+  sshPromptSource?: boolean;
   // Seeds the Git registry with collection "starter", whose only member is
   // alpha-skill.
   collection?: boolean;
@@ -160,6 +161,16 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     }
 
     const env = isolatedEnvironment(root, home, tmp, xdg, orgConfigPath);
+    if (options.sshPromptSource) {
+      const fakeSSH = path.join(root, "git-ssh-prompt");
+      write(
+        fakeSSH,
+        "#!/bin/bash\n{ printf 'Are you sure you want to continue connecting (yes/no/[fingerprint])?' >/dev/tty; IFS= read -r answer </dev/tty; } 2>/dev/null || true\nprintf 'Host key verification failed.\\n' >&2\nexit 255\n",
+        0o700
+      );
+      env.GIT_SSH = fakeSSH;
+      env.GIT_SSH_COMMAND = shellQuote(fakeSSH);
+    }
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
@@ -255,12 +266,16 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       adHocSourceURL = pathToFileURL(adHocBareRegistry).href;
       const fixtureRegistryPattern = `^${registryURL.replace(/\.git$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
       const adHocRegistryPattern = `^${adHocSourceURL.replace(/\.git$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+      const allowedRegistries = [
+        `  - ${JSON.stringify(fixtureRegistryPattern)}`,
+        `  - ${JSON.stringify(adHocRegistryPattern)}`
+      ];
+      if (options.sshPromptSource) allowedRegistries.push(`  - ${JSON.stringify("^example\\.invalid/owner/repo$")}`);
       write(path.join(home, ".agents", "config.yaml"), [
         "apiVersion: agent-marketplace/v4",
         "harnesses: [factory]",
         "allowed_registries:",
-        `  - ${JSON.stringify(fixtureRegistryPattern)}`,
-        `  - ${JSON.stringify(adHocRegistryPattern)}`,
+        ...allowedRegistries,
         "sources: {}",
         ""
       ].join("\n"));

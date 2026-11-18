@@ -80,7 +80,7 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 		defaultBranch, commit := choice.DefaultBranch, choice.Commit
 		if defaultBranch == "" || commit == "" {
 			var err error
-			if defaultBranch, commit, err = cache.RemoteDefaultBranch(rawURL); err != nil {
+			if defaultBranch, commit, err = cache.RemoteDefaultBranch(ctx, rawURL); err != nil {
 				return preview, err
 			}
 		}

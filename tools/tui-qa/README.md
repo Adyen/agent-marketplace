@@ -91,6 +91,7 @@ the pre-selected harness into the v4 user configuration.
 61. `tests/plugin-parent-rows.spec.ts` launches with a plugin format source and checks that the plugin `t/kit` renders as one parent row with its skill, hook, and MCP members on screen.
 62. `tests/plugin-member-exclusion.spec.ts` selects the nested `skill t/review` member of a selected plugin, excludes it from that plugin through the toggle options, and checks the row, the member status, and that the config adds only a plugin `exclude` entry; restoring the member removes the exclusion and leaves nothing pending.
 63. `tests/marketplace-kind-search.spec.ts` searches the configured Marketplace by `/mcp` and `/command`, reaches opaque-name MCP servers and commands, reaches a configured skill with no kind text through the `/skills` alias, clears each query to restore the browse rows, and verifies the authored configs, acquisition lock, and materialized skill stay byte-identical.
+64. `tests/git-transport-prompts.spec.ts` enters an allowed explicit SSH source in the install-from-source TUI with a fake SSH transport that attempts to write a host-key question to `/dev/tty` and read a response. The prompt never appears, the host-key diagnostic is shown, Esc closes the modal, and config and lock bytes remain unchanged.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

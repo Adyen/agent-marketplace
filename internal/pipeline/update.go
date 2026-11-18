@@ -907,7 +907,7 @@ func discoverTagBump(repoDir, currentRef string) (string, bool, error) {
 	}
 
 	args := []string{"tag", "-l", matches[1] + "*"}
-	cmd := processstart.Command(context.Background(), "git", args...)
+	cmd := processstart.Detached(context.Background(), "git", args...)
 	cmd.Dir = repoDir
 	var stderr tagBumpStderr
 	cmd.Stderr = &stderr
