@@ -130,8 +130,8 @@ func cloneOrPull(url, ref string) (string, error) {
 }
 
 // DefaultBranch returns the branch advertised by a remote repository's HEAD.
-func DefaultBranch(url string) (string, error) {
-	branch, _, err := RemoteDefaultBranch(context.Background(), url)
+func DefaultBranch(ctx context.Context, url string) (string, error) {
+	branch, _, err := RemoteDefaultBranch(ctx, url)
 	return branch, err
 }
 

@@ -41,7 +41,7 @@ func TestDefaultBranchReturnsAdvertisedBranch(t *testing.T) {
 	runGitCommand(t, source, "commit", "-m", "seed")
 	runGitCommand(t, "", "clone", "--bare", source, origin)
 
-	got, err := DefaultBranch(origin)
+	got, err := DefaultBranch(context.Background(), origin)
 	if err != nil {
 		t.Fatalf("DefaultBranch: %v", err)
 	}

@@ -1353,7 +1353,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		defaultBranch := probedBranch
 		if defaultBranch == "" {
 			var err error
-			if defaultBranch, err = cache.DefaultBranch(fromURL); err != nil {
+			if defaultBranch, err = cache.DefaultBranch(ctx, fromURL); err != nil {
 				return nil, err
 			}
 		}
