@@ -51,6 +51,5 @@ func watchInterrupts(parent context.Context, grace time.Duration, reraise func(o
 		close(returned)
 		<-stopped
 		signal.Stop(signals)
-		cancel()
 	}
 }

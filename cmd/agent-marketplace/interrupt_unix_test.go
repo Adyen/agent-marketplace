@@ -71,8 +71,11 @@ func TestInterruptWatchDoesNotReraiseWithoutSignal(t *testing.T) {
 		return
 	}
 	reraised := make(chan os.Signal, 1)
-	_, finish := watchInterrupts(context.Background(), interruptGracePeriod, func(sig os.Signal) { reraised <- sig })
+	ctx, finish := watchInterrupts(context.Background(), interruptGracePeriod, func(sig os.Signal) { reraised <- sig })
 	finish()
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("context cancelled by finish without an interrupt: %v", err)
+	}
 	select {
 	case sig := <-reraised:
 		t.Fatalf("signal %v re-raised without an interrupt", sig)
