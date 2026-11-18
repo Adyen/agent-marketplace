@@ -759,8 +759,16 @@ func TestUpdateWithOnlyMissingMarketplacePinsChangesNothing(t *testing.T) {
 	fake.addSkill(t, registry, "two")
 	installV4MarketplaceLayer(t, repo, configPath, entry,
 		layerPreparePins(t, fake, "skill", "one"), layerPreparePins(t, fake, "skill", "two"))
+	installed := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repo)})
+	if len(installed.Errors) != 0 {
+		t.Fatalf("materialize Marketplace pins: %v", installed.Errors)
+	}
 	configBytes, configStat := layerFreezeFile(t, configPath)
 	lockBytes, lockStat := layerFreezeFile(t, lockPath)
+	onePath := filepath.Join(env.home, ".config", "devin", "skills", "one", "SKILL.md")
+	twoPath := filepath.Join(env.home, ".config", "devin", "skills", "two", "SKILL.md")
+	oneBytes, oneStat := layerFreezeFile(t, onePath)
+	twoBytes, twoStat := layerFreezeFile(t, twoPath)
 	fake.missing["skill/one"] = true
 	fake.missing["skill/two"] = true
 
@@ -786,6 +794,8 @@ func TestUpdateWithOnlyMissingMarketplacePinsChangesNothing(t *testing.T) {
 	}
 	layerAssertFileUnchanged(t, configPath, configBytes, configStat)
 	layerAssertFileUnchanged(t, lockPath, lockBytes, lockStat)
+	layerAssertFileUnchanged(t, onePath, oneBytes, oneStat)
+	layerAssertFileUnchanged(t, twoPath, twoBytes, twoStat)
 }
 
 // spec: update-output/missing-collection-is-kept
