@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1000,8 +1001,8 @@ func TestSupersededKindDiscoveryCannotReplaceSearchOrBrowseInventory(t *testing.
 			if len(m.browseDiscoveryRows) != 1 || m.browseDiscoveryRows[0].Artifact.Name != browseNames[0] {
 				t.Fatalf("late completion changed browse inventory: %#v", m.browseDiscoveryRows)
 			}
-			if len(m.browseDiscoveryRows) != 1 || m.browseDiscoveryRows[0].Artifact.Name != browseNames[0] {
-				t.Fatalf("late completion replaced current browse: %#v", m.browseDiscoveryRows)
+			if slices.ContainsFunc(m.discoveryRows, func(candidate row) bool { return candidate.Artifact.Name == "late-opaque" }) {
+				t.Fatalf("late completion entered the current search inventory: %#v", m.discoveryRows)
 			}
 			if m.cursor < 0 || (len(m.flatItems) > 0 && m.cursor >= len(m.flatItems)) {
 				t.Fatalf("search left unsafe cursor %d for %d items", m.cursor, len(m.flatItems))

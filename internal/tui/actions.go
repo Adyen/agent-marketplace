@@ -35,29 +35,30 @@ const (
 )
 
 type snapshotLoadedMsg struct {
-	generation           requestGeneration
-	stage                snapshotStage
-	stages               <-chan snapshotLoadedMsg
-	rows                 []row
-	driftReport          materialize.DriftReport
-	driftAssessment      driftAssessment
-	catalogs             map[string][]catalog.Entry
-	resolved             []resolver.ResolvedArtifact
-	mergedCfg            *config.Config
-	provisionalCfg       *config.Config
-	provisionalRows      []row
-	configuredRegistries []config.RegistryEntry
-	inventoryResult      *pipeline.ResolveResult
-	materializationModes config.MaterializationModes
-	localExcludes        []string
-	globalHarnesses      []string
-	projectHarnesses     []string
-	targetHarnesses      []hcc.Target
-	targetHarnessSource  config.Source
-	errs                 []error
-	warnings             []error
-	diagnostics          []tuiDiagnostic
-	refreshAfterLoad     bool
+	generation             requestGeneration
+	stage                  snapshotStage
+	stages                 <-chan snapshotLoadedMsg
+	rows                   []row
+	driftReport            materialize.DriftReport
+	driftAssessment        driftAssessment
+	catalogs               map[string][]catalog.Entry
+	resolved               []resolver.ResolvedArtifact
+	mergedCfg              *config.Config
+	provisionalCfg         *config.Config
+	provisionalRows        []row
+	configuredRegistries   []config.RegistryEntry
+	inventoryResult        *pipeline.ResolveResult
+	materializationModes   config.MaterializationModes
+	localExcludes          []string
+	globalHarnesses        []string
+	projectHarnesses       []string
+	targetHarnesses        []hcc.Target
+	targetHarnessSource    config.Source
+	errs                   []error
+	warnings               []error
+	diagnostics            []tuiDiagnostic
+	refreshAfterLoad       bool
+	forceMarketplaceBrowse bool
 }
 
 type reloadMsg snapshotLoadedMsg

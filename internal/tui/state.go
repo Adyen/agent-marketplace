@@ -306,6 +306,7 @@ type Model struct {
 	browseOutcomes      []marketplace.DiscoveryOutcome
 	browseCancel        context.CancelFunc
 	browseLoading       bool
+	browsePending       []config.MarketplaceEntry
 	browseSequence      uint64
 	browseKey           string
 	browseFinished      bool

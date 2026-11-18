@@ -323,6 +323,7 @@ func (m *Model) clearMarketplaceBrowse() {
 	m.browseDiscoveryRows = nil
 	m.browseOutcomes = nil
 	m.browseErrs = nil
+	m.browsePending = nil
 }
 
 func (m *Model) clearMarketplaceDiscovery(rebuildAuthoritative bool) {
@@ -339,7 +340,7 @@ func (m *Model) clearMarketplaceDiscovery(rebuildAuthoritative bool) {
 // discoveryEndpointMatcher never treats a missing pinned identity as a wildcard.
 // Only an exactly empty, resource-free declaration can match a live-acquired ID,
 // and even then the canonical configured transport URL must remain the same.
-func discoveryEndpointMatcher(entries []config.MarketplaceEntry) func(config.MarketplaceEntry) bool {
+func discoveryEndpointMatcher(entries []config.MarketplaceEntry, allowed []string) func(config.MarketplaceEntry) bool {
 	configured := make(map[string]struct{}, len(entries))
 	unacquired := make(map[string]struct{})
 	for _, endpoint := range entries {
@@ -354,6 +355,9 @@ func discoveryEndpointMatcher(entries []config.MarketplaceEntry) func(config.Mar
 		}
 	}
 	return func(endpoint config.MarketplaceEntry) bool {
+		if config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, allowed) != nil {
+			return false
+		}
 		url, err := marketplace.NormalizeMarketplaceURL(endpoint.URL)
 		if err != nil || (endpoint.InstanceID != "" && strings.TrimSpace(endpoint.InstanceID) == "") {
 			return false
@@ -367,7 +371,7 @@ func discoveryEndpointMatcher(entries []config.MarketplaceEntry) func(config.Mar
 }
 
 func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
-	if query == "" {
+	if strings.TrimSpace(query) == "" {
 		return m.beginMarketplaceBrowse(false)
 	}
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) == 0 {
@@ -375,7 +379,7 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 		m.clearMarketplaceDiscovery(rebuildAuthoritative)
 		return nil
 	}
-	isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
+	isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces)
 	before := len(m.discoveryRows)
 	m.discoveryRows = filterMarketplaceRows(m.discoveryRows, isConfigured)
 	if len(m.discoveryRows) != before {
@@ -493,7 +497,7 @@ func (m *Model) beginMarketplaceBrowse(force bool) tea.Cmd {
 	if keyChanged {
 		m.cancelMarketplaceBrowse()
 		m.cancelMarketplaceDiscovery()
-		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
+		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces)
 		m.discoveryRows = filterMarketplaceRows(m.discoveryRows, isConfigured)
 		m.browseDiscoveryRows = filterMarketplaceRows(m.browseDiscoveryRows, isConfigured)
 		m.discoveryOutcomes = filterConfiguredOutcomes(m.discoveryOutcomes, isConfigured)
@@ -507,6 +511,13 @@ func (m *Model) beginMarketplaceBrowse(force bool) tea.Cmd {
 	m.browseKey = key
 	m.browseFinished = false
 	m.browseLoading = true
+	m.browsePending = m.browsePending[:0]
+	allowed := effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces
+	for _, endpoint := range m.mergedCfg.Marketplaces {
+		if config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, allowed) == nil {
+			m.browsePending = append(m.browsePending, endpoint)
+		}
+	}
 	generation := m.beginRequest(requestBrowse)
 	ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
 	m.browseCancel = cancel
@@ -515,10 +526,29 @@ func (m *Model) beginMarketplaceBrowse(force bool) tea.Cmd {
 
 func (m *Model) beginMarketplaceRefresh(forceBrowse bool) tea.Cmd {
 	browse := m.beginMarketplaceBrowse(forceBrowse)
-	if m.filter == "" {
+	if strings.TrimSpace(m.filter) == "" {
 		return browse
 	}
 	return tea.Batch(browse, m.beginMarketplaceDiscovery(m.filter, false))
+}
+
+type marketplaceEndpointError struct {
+	Endpoint config.MarketplaceEntry
+	Err      error
+}
+
+func (e *marketplaceEndpointError) Error() string {
+	return fmt.Sprintf("%s: %v", marketplaceEndpointDisplay(e.Endpoint), e.Err)
+}
+
+func (e *marketplaceEndpointError) Unwrap() error { return e.Err }
+
+func marketplaceEndpointIdentity(endpoint config.MarketplaceEntry) string {
+	url := endpoint.URL
+	if normalized, err := marketplace.NormalizeMarketplaceURL(url); err == nil {
+		url = normalized
+	}
+	return url + "\x00" + endpoint.InstanceID
 }
 
 func discoveryCoordinate(instanceID, registryID, kind, name string) string {
@@ -633,20 +663,74 @@ func (m *Model) displayDiscoveryRows() []row {
 
 func (m *Model) rebuildDiscoveryErrors() {
 	m.discoveryErrs = m.discoveryErrs[:0]
+	seen := make(map[string]struct{})
 	for _, outcome := range m.discoveryOutcomes {
 		if outcome.Err != nil {
-			m.discoveryErrs = append(m.discoveryErrs, fmt.Errorf("%s: %w", marketplaceEndpointDisplay(outcome.Endpoint), outcome.Err))
+			m.discoveryErrs = append(m.discoveryErrs, &marketplaceEndpointError{Endpoint: outcome.Endpoint, Err: outcome.Err})
+			seen[marketplaceEndpointIdentity(outcome.Endpoint)] = struct{}{}
+		}
+	}
+	if m.mergedCfg != nil {
+		browseErrors := make(map[string]struct{}, len(m.browseErrs))
+		for _, err := range m.browseErrs {
+			var endpointErr *marketplaceEndpointError
+			if errors.As(err, &endpointErr) {
+				browseErrors[marketplaceEndpointIdentity(endpointErr.Endpoint)] = struct{}{}
+			}
+		}
+		for _, err := range configuredMarketplaceErrors(m.mergedCfg) {
+			var endpointErr *marketplaceEndpointError
+			if !errors.As(err, &endpointErr) {
+				continue
+			}
+			key := marketplaceEndpointIdentity(endpointErr.Endpoint)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			if _, exists := browseErrors[key]; exists {
+				continue
+			}
+			m.discoveryErrs = append(m.discoveryErrs, err)
+			seen[key] = struct{}{}
 		}
 	}
 }
 
 func (m *Model) rebuildBrowseErrors() {
 	m.browseErrs = m.browseErrs[:0]
+	seen := make(map[string]struct{})
 	for _, outcome := range m.browseOutcomes {
 		if outcome.Err != nil {
-			m.browseErrs = append(m.browseErrs, fmt.Errorf("%s: %w", marketplaceEndpointDisplay(outcome.Endpoint), outcome.Err))
+			m.browseErrs = append(m.browseErrs, &marketplaceEndpointError{Endpoint: outcome.Endpoint, Err: outcome.Err})
+			seen[marketplaceEndpointIdentity(outcome.Endpoint)] = struct{}{}
 		}
 	}
+	for _, err := range configuredMarketplaceErrors(m.mergedCfg) {
+		var endpointErr *marketplaceEndpointError
+		if !errors.As(err, &endpointErr) {
+			continue
+		}
+		key := marketplaceEndpointIdentity(endpointErr.Endpoint)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		m.browseErrs = append(m.browseErrs, err)
+		seen[key] = struct{}{}
+	}
+}
+
+func configuredMarketplaceErrors(cfg *config.Config) []error {
+	if cfg == nil {
+		return nil
+	}
+	allowed := effectiveMarketplaceConfig(cfg).AllowedMarketplaces
+	var errs []error
+	for _, endpoint := range cfg.Marketplaces {
+		if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, allowed); err != nil {
+			errs = append(errs, &marketplaceEndpointError{Endpoint: endpoint, Err: err})
+		}
+	}
+	return errs
 }
 
 func (m Model) marketplaceDiscoveryErrors() []error {
@@ -662,7 +746,7 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 	// snapshot. Also match the current endpoint declarations: acquiring a new ID
 	// must not attach results from a replaced URL or an existing exact identity.
 	if m.mergedCfg != nil {
-		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
+		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces)
 		outcomes = filterConfiguredOutcomes(slices.Clone(outcomes), isConfigured)
 	}
 	m.discoveryOutcomes = outcomes
@@ -673,13 +757,50 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 
 func (m *Model) applyBrowseDiscovery(outcomes []marketplace.DiscoveryOutcome) {
 	if m.mergedCfg != nil {
-		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces)
+		isConfigured := discoveryEndpointMatcher(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces)
 		outcomes = filterConfiguredOutcomes(slices.Clone(outcomes), isConfigured)
 	}
 	m.browseOutcomes = outcomes
 	m.rebuildBrowseErrors()
+	m.updateBrowsePending(outcomes)
 	m.browseDiscoveryRows = m.discoveryRowsFromOutcomes(outcomes)
 	m.mergeDiscoveryRows()
+}
+
+func (m *Model) updateBrowsePending(outcomes []marketplace.DiscoveryOutcome) {
+	if len(m.browsePending) == 0 {
+		return
+	}
+	remaining := m.browsePending[:0]
+	for _, endpoint := range m.browsePending {
+		pending := true
+		for _, outcome := range outcomes {
+			if marketplaceEndpointIdentity(outcome.Endpoint) != marketplaceEndpointIdentity(endpoint) {
+				continue
+			}
+			pending = outcome.Err == nil && (outcome.Truncated || outcome.CacheState == marketplace.DiscoveryCacheStale)
+			break
+		}
+		if pending {
+			remaining = append(remaining, endpoint)
+		}
+	}
+	m.browsePending = remaining
+}
+
+func (m Model) marketplaceDiscoveryFailureCount() int {
+	seen := make(map[string]struct{})
+	for _, err := range m.marketplaceDiscoveryErrors() {
+		var endpointErr *marketplaceEndpointError
+		key := ""
+		if errors.As(err, &endpointErr) {
+			key = "endpoint:" + marketplaceEndpointIdentity(endpointErr.Endpoint)
+		} else {
+			key = "error:" + err.Error()
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (m *Model) discoveryRowsFromOutcomes(outcomes []marketplace.DiscoveryOutcome) []row {

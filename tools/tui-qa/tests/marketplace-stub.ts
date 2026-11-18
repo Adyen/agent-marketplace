@@ -17,6 +17,8 @@ export interface MarketplaceStub {
   acquisitionDataRequestPaths(): string[];
   searchRequestCount(): number;
   browseRequestCount(): number;
+  waitForBrowseFirstPage(): Promise<void>;
+  releaseBrowseFirstPage(): void;
   waitForBrowseLaterPage(): Promise<void>;
   releaseBrowsePages(): void;
   archiveFetches(): { placeholder: string[]; final: string[] };
@@ -285,6 +287,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
   let servedArchiveDigest = archiveDigest;
   let searchRequests = 0;
   let browseRequests = 0;
+  let heldFirstBrowsePageArmed = false;
+  let browseFirstPageEntered = Promise.resolve();
+  let resolveBrowseFirstPageEntered = () => {};
+  let browseFirstPageReleased = Promise.resolve();
+  let resolveBrowseFirstPageReleased = () => {};
   let heldBrowsePageArmed = false;
   let browsePageEntered = Promise.resolve();
   let resolveBrowsePageEntered = () => {};
@@ -299,7 +306,19 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
       resolveBrowsePageReleased = resolve;
     });
   };
-  if (options.startupBrowse) holdNextBrowsePage();
+  const holdFirstBrowsePage = (): void => {
+    heldFirstBrowsePageArmed = true;
+    browseFirstPageEntered = new Promise<void>((resolve) => {
+      resolveBrowseFirstPageEntered = resolve;
+    });
+    browseFirstPageReleased = new Promise<void>((resolve) => {
+      resolveBrowseFirstPageReleased = resolve;
+    });
+  };
+  if (options.startupBrowse) {
+    holdFirstBrowsePage();
+    holdNextBrowsePage();
+  }
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
@@ -343,6 +362,13 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
       searchRequests++;
       if (options.startupBrowse && terms.length === 0 && kind === "") {
         browseRequests++;
+        if (offset === 0 && heldFirstBrowsePageArmed) {
+          heldFirstBrowsePageArmed = false;
+          resolveBrowseFirstPageEntered();
+          response.once("close", resolveBrowseFirstPageReleased);
+          await browseFirstPageReleased;
+          if (response.destroyed) return;
+        }
         if (offset >= 50 && heldBrowsePageArmed) {
           heldBrowsePageArmed = false;
           resolveBrowsePageEntered();
@@ -462,6 +488,8 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     acquisitionDataRequestPaths: () => [...acquisitionDataRequests],
     searchRequestCount: () => searchRequests,
     browseRequestCount: () => browseRequests,
+    waitForBrowseFirstPage: () => browseFirstPageEntered,
+    releaseBrowseFirstPage: () => resolveBrowseFirstPageReleased(),
     waitForBrowseLaterPage: () => browsePageEntered,
     releaseBrowsePages: () => resolveBrowsePageReleased(),
     archiveFetches: () => {

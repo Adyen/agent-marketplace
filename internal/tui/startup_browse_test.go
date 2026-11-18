@@ -295,11 +295,22 @@ func TestReloadReplacesHeldStartupBrowseEndpoint(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("old endpoint later page was not held")
 	}
+	oldGeneration := m.requests.active(requestBrowse)
+	oldSequence := m.browseSequence
+	oldCancel := m.browseCancel
+	cancelCalled := false
+	m.browseCancel = func() {
+		cancelCalled = true
+		oldCancel()
+	}
 
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{newEndpoint}}
 	newCmd := m.beginMarketplaceDiscovery("", false)
 	if newCmd == nil {
 		t.Fatal("replacement endpoint did not start a browse load")
+	}
+	if !cancelCalled || m.requests.active(requestBrowse) == oldGeneration {
+		t.Fatal("replacement browse did not synchronously cancel and supersede the old request")
 	}
 	drainStartupDiscovery(t, &m, newCmd)
 	select {
@@ -311,9 +322,22 @@ func TestReloadReplacesHeldStartupBrowseEndpoint(t *testing.T) {
 		t.Fatalf("replacement browse rows = %#v", m.browseDiscoveryRows)
 	}
 	if oldWait != nil {
-		late := oldWait()
-		updated, _ := m.Update(late)
-		m = updated.(Model)
+		_ = oldWait()
+	}
+	late := discoveryLoadedMsg{
+		generation: oldGeneration,
+		sequence:   oldSequence + 1,
+		browse:     true,
+		outcomes: []marketplace.DiscoveryOutcome{{
+			Endpoint: oldEndpoint,
+			Items:    oldItems,
+			Total:    len(oldItems),
+		}},
+	}
+	updated, _ = m.Update(late)
+	m = updated.(Model)
+	if !slices.ContainsFunc(m.browseDiscoveryRows, func(candidate row) bool { return candidate.Artifact.Name == "replacement-resource" }) {
+		t.Fatalf("late result erased the replacement inventory: %#v", m.browseDiscoveryRows)
 	}
 	for _, r := range m.browseDiscoveryRows {
 		if r.MarketplaceDiscovery.Endpoint.InstanceID != newEndpoint.InstanceID {

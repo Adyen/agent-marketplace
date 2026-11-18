@@ -184,7 +184,7 @@ func (m Model) footerStatus() (string, []string) {
 		instanceID string
 	}
 	staleSeen := make(map[endpointKey]struct{})
-	var staleEndpoints, truncatedEndpoints, loadingEndpoints int
+	var staleEndpoints, truncatedEndpoints int
 	countStale := func(outcome marketplace.DiscoveryOutcome) {
 		if outcome.CacheState != marketplace.DiscoveryCacheStale {
 			return
@@ -204,7 +204,23 @@ func (m Model) footerStatus() (string, []string) {
 	}
 	for _, outcome := range m.browseOutcomes {
 		countStale(outcome)
-		if m.browseLoading && outcome.Truncated && outcome.Err == nil {
+	}
+	loadingEndpoints := 0
+	if m.browseLoading {
+		loadingEndpoints = len(m.browsePending)
+		loadingSeen := make(map[endpointKey]struct{}, loadingEndpoints)
+		for _, endpoint := range m.browsePending {
+			loadingSeen[endpointKey{url: endpoint.URL, instanceID: endpoint.InstanceID}] = struct{}{}
+		}
+		for _, outcome := range m.browseOutcomes {
+			if !outcome.Truncated || outcome.Err != nil {
+				continue
+			}
+			key := endpointKey{url: outcome.Endpoint.URL, instanceID: outcome.Endpoint.InstanceID}
+			if _, ok := loadingSeen[key]; ok {
+				continue
+			}
+			loadingSeen[key] = struct{}{}
 			loadingEndpoints++
 		}
 	}
@@ -213,10 +229,11 @@ func (m Model) footerStatus() (string, []string) {
 	}
 	if loadingEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d loading", loadingEndpoints)))
-	} else if truncatedEndpoints > 0 {
+	}
+	if truncatedEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d limited", truncatedEndpoints)))
 	}
-	if failures := len(m.marketplaceDiscoveryErrors()); failures > 0 {
+	if failures := m.marketplaceDiscoveryFailureCount(); failures > 0 {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", failures)))
 	}
 	if len(m.errs) > 0 {

@@ -127,7 +127,7 @@ func TestDiscoverBrowsePaginatesAndPublishesCumulativeSnapshots(t *testing.T) {
 	if !slices.Equal(gotOffsets, []int{0, DiscoveryPageLimit}) {
 		t.Fatalf("page offsets = %v, want [0 %d]", gotOffsets, DiscoveryPageLimit)
 	}
-	cached, ok := cache.Load(endpoint, "", "", DiscoveryPageLimit)
+	cached, ok := cache.loadBrowse(endpoint, DiscoveryPageLimit)
 	if !ok || len(cached.Items) != len(items) || cached.Total != len(items) || cached.Truncated {
 		t.Fatalf("complete browse cache = %d items, total %d, truncated %t, hit %t", len(cached.Items), cached.Total, cached.Truncated, ok)
 	}
@@ -345,15 +345,15 @@ func TestDiscoverBrowseStaleCacheMergesReceivedRowsAfterLaterPageFailure(t *test
 
 	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "stale-partial-browse"}
 	cache := NewDiscoveryCache(t.TempDir())
-	if err := cache.Store(DiscoveryOutcome{
+	if err := cache.storeBrowse(DiscoveryOutcome{
 		Endpoint:   ep,
 		Items:      staleItems,
 		Total:      len(staleItems),
 		ObservedAt: time.Now().Add(-time.Hour),
-	}, "", "", DiscoveryPageLimit); err != nil {
+	}, DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	cachePath := cache.path(ep, "", "", "", DiscoveryPageLimit)
+	cachePath := cache.catalogPath(ep, DiscoveryPageLimit)
 	before, err := os.ReadFile(cachePath)
 	if err != nil {
 		t.Fatal(err)
@@ -1724,6 +1724,7 @@ func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
 			offset := 0
 			_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 			if offset == 0 {
+				time.Sleep(350 * time.Millisecond)
 				items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "kind-match", 1)}
 				_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: 2, Offset: offset, Limit: DiscoveryPageLimit})
 				return
@@ -1738,7 +1739,7 @@ func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
 
 	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "kind-timeout"}
 	effective := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
-	timeout := 200 * time.Millisecond
+	timeout := 600 * time.Millisecond
 	cache := NewDiscoveryCache(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1764,8 +1765,8 @@ func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
 	select {
 	case got := <-done:
 		elapsed := time.Since(started)
-		if elapsed > 2*timeout {
-			t.Fatalf("kind discovery returned after %s, beyond the configured %s bound", elapsed, timeout)
+		if elapsed > timeout+150*time.Millisecond {
+			t.Fatalf("kind discovery returned after %s, beyond its shared %s deadline", elapsed, timeout)
 		}
 		if got.err != nil || len(got.outcomes) != 1 || got.outcomes[0].Err == nil {
 			t.Fatalf("kind timeout outcome = %#v, err=%v; want an endpoint error", got.outcomes, got.err)
@@ -1773,8 +1774,8 @@ func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
 		if len(got.outcomes[0].Items) == 0 || got.outcomes[0].Items[0].Name != "text-match" {
 			t.Fatalf("kind timeout dropped text matches: %#v", got.outcomes[0].Items)
 		}
-	case <-time.After(2 * timeout):
-		t.Fatalf("kind discovery did not return within %s after its later page blocked", 2*timeout)
+	case <-time.After(timeout + 500*time.Millisecond):
+		t.Fatalf("kind discovery did not return within %s after its later page blocked", timeout+500*time.Millisecond)
 	}
 }
 

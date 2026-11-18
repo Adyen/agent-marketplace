@@ -59,6 +59,9 @@ export interface Fixture {
   repo: string;
   launcher: string;
   pidFile: string;
+  launchStartedAtMS?: number;
+  marketplaceSearchRequestsAtLaunch?: number;
+  marketplaceBrowseRequestsAtLaunch?: number;
   registryURL: string;
   adHocSourceURL?: string;
   env: Record<string, string>;
@@ -82,6 +85,8 @@ export interface Fixture {
   marketplaceArchiveFetches?: () => { placeholder: string[]; final: string[] };
   marketplaceSearchRequestCount?: () => number;
   marketplaceBrowseRequestCount?: () => number;
+  marketplaceWaitForBrowseFirstPage?: () => Promise<void>;
+  marketplaceReleaseBrowseFirstPage?: () => void;
   marketplaceWaitForBrowseLaterPage?: () => Promise<void>;
   marketplaceReleaseBrowsePages?: () => void;
   marketplaceDelayNextAcquisition?: (ms: number) => void;
@@ -354,6 +359,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceArchiveFetches: stub?.archiveFetches,
       marketplaceSearchRequestCount: stub?.searchRequestCount,
       marketplaceBrowseRequestCount: stub?.browseRequestCount,
+      marketplaceWaitForBrowseFirstPage: stub?.waitForBrowseFirstPage,
+      marketplaceReleaseBrowseFirstPage: stub?.releaseBrowseFirstPage,
       marketplaceWaitForBrowseLaterPage: stub?.waitForBrowseLaterPage,
       marketplaceReleaseBrowsePages: stub?.releaseBrowsePages,
       orgConfigPath,
