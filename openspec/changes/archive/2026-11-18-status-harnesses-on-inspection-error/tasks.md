@@ -8,4 +8,4 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Run focused command tests, `make spec-check`, and `make validate`.
+- [x] 3.1 Run focused command tests, `make spec-check`, and `make validate`.
