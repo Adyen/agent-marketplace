@@ -53,6 +53,7 @@ No `agents-config` archive is written when backups are disabled in configuration
 
 ```bash
 tar -tzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz
+mkdir -p ~/.agents
 tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents
 ```
 
@@ -90,7 +91,7 @@ If your configuration uses `include` fragments outside `~/.agents/`, add those f
 `backup restore` only reads archives under `~/.agent-marketplace/backups/` on the machine where you run it. To use them on a new machine, copy that folder across first.
 
 1. [Install `agent-marketplace`](../install.md) on the new machine.
-2. Copy `agent-marketplace-machine-state.tar.gz` to the new machine and extract it. `tar` drops the leading `/` from paths when it creates an archive, so if your home folder has the same path on both machines, extract from the root folder: `tar -xzf agent-marketplace-machine-state.tar.gz -C /` (prints nothing on success). Otherwise extract it anywhere and move the files to the same places under the new home folder.
+2. Copy `agent-marketplace-machine-state.tar.gz` to the new machine and extract it. `tar` drops the leading `/` from paths when it creates an archive, so if your home folder has the same path on both machines, extract from the root folder: `tar -xzf agent-marketplace-machine-state.tar.gz -C /` (prints nothing on success). Otherwise extract it anywhere and move the files to the same places under the new home folder. If your state archive did not include the configuration and lock, copy `~/.agent-marketplace/backups/` to the new machine and restore them from the newest `agents-config` archive instead: `mkdir -p ~/.agents && tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
 3. Download the locked snapshots and write the harness output without changing your configuration or lock:
 
    ```bash
@@ -105,9 +106,7 @@ If your configuration uses `include` fragments outside `~/.agents/`, add those f
    ```
 
    When everything matches, it exits with status 0 and prints no drift summary.
-5. To get back your own files from the harness folders, copy `~/.agent-marketplace/backups/` to the new machine and run `agent-marketplace backup restore --target <harness>`. If your home folder path is different on the new machine, a restore of an archive that contains symlinked skills fails with `invalid absolute symlink target`, because the links point into the old home folder's cache. In that case, rely on step 3 to recreate the skills, and extract your own files from the archive by hand with `tar`.
-
-If your state archive did not include the configuration and lock, restore them from the newest `agents-config` archive instead: `tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
+5. To get back your own files from the harness folders, make sure `~/.agent-marketplace/backups/` is on the new machine and run `agent-marketplace backup restore --target <harness>`. If your home folder path is different on the new machine, a restore of an archive that contains symlinked skills fails with `invalid absolute symlink target`, because the links point into the old home folder's cache. In that case, rely on step 3 to recreate the skills, and extract your own files from the archive by hand with `tar`.
 
 Ownership state is keyed by the full path of each harness folder. If your home folder path is different on the new machine, the restored state does not match the new paths. Run `agent-marketplace doctor --repair` and adopt the entries it lists as exact matches. See [How to repair owned shared configuration](./repair-owned-shared-configuration.md).
 

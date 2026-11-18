@@ -451,7 +451,7 @@ Compatibility findings do not block `sync`. Repair failures, corrupt ownership s
 
 ## `backup`
 
-Manages backups of machine-scope harness output and of the user configuration. Backups live in `~/.agent-marketplace/backups/`. Alongside each harness backup, the `agents-config` directory holds archives of `~/.agents/config.yaml`, `~/.agents/lock.yaml`, and the `include` fragments inside `~/.agents/`, captured with the bytes on disk when the command started. Configuration archives follow the same retention and appear in their own `backup list` group; `backup restore` does not restore them. Extract one by hand with `tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
+Manages backups of machine-scope harness output and of the user configuration. Backups live in `~/.agent-marketplace/backups/`. Alongside each harness backup, the `agents-config` directory holds archives of `~/.agents/config.yaml`, `~/.agents/lock.yaml`, and the `include` fragments inside `~/.agents/`, captured with the bytes on disk when the command started. Configuration archives follow the same retention and appear in their own `backup list` group; `backup restore` does not restore them. Extract one by hand with `mkdir -p ~/.agents && tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
 
 ```text
 agent-marketplace backup <command>

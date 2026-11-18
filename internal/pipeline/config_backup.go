@@ -45,18 +45,14 @@ func CaptureUserConfig() *UserConfigSnapshot {
 	}
 
 	visited := make(map[string]backup.ConfigFile)
+	visiting := make(map[string]bool)
 	archived := make(map[string]bool)
 	includeFiles := 0
-	add := func(name string, file backup.ConfigFile) {
-		if archived[name] {
-			return
-		}
-		file.Name = name
-		snapshot.files = append(snapshot.files, file)
-		archived[name] = true
-	}
-	var visit func(string, string, bool) error
-	visit = func(filePath, archiveName string, followIncludes bool) error {
+	// visit captures filePath. A root passes its archive name; an include
+	// passes the path it has in a restored tree, where symlinks are plain
+	// files and the loader resolves includes from the authored location.
+	var visit func(filePath, archiveName, restoredPath string, followIncludes bool) error
+	visit = func(filePath, archiveName, restoredPath string, followIncludes bool) error {
 		canonical, err := filepath.EvalSymlinks(filePath)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -68,33 +64,46 @@ func CaptureUserConfig() *UserConfigSnapshot {
 		if err != nil {
 			return fmt.Errorf("resolve user config file %q: %w", filePath, err)
 		}
-		if captured, ok := visited[canonical]; ok {
-			if archiveName != "" {
-				add(archiveName, captured)
-			}
+		if visiting[canonical] {
 			return nil
 		}
 		if followIncludes && includeFiles >= maxUserConfigFiles {
 			return fmt.Errorf("user config include tree exceeds %d files", maxUserConfigFiles)
 		}
-		data, info, err := readUserConfigFile(canonical)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+		captured, ok := visited[canonical]
+		if !ok {
+			data, info, err := readUserConfigFile(canonical)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("read user config file %q: %w", canonical, err)
+			}
+			captured = backup.ConfigFile{Data: data, Mode: info.Mode(), ModTime: info.ModTime()}
+			visited[canonical] = captured
 		}
-		if err != nil {
-			return fmt.Errorf("read user config file %q: %w", canonical, err)
-		}
-		captured := backup.ConfigFile{Data: data, Mode: info.Mode(), ModTime: info.ModTime()}
-		visited[canonical] = captured
 		if followIncludes {
 			includeFiles++
 		}
+		if archiveName == "" {
+			// A target outside the directory stays out of the archive, even
+			// when a link inside the directory names it.
+			if _, inside := userConfigRelativePath(userDir, canonical); !inside {
+				slog.Debug("user config include is outside the user config directory", "path", canonical)
+			} else if relative, ok := userConfigRelativePath(userDir, restoredPath); ok {
+				archiveName = relative
+			} else {
+				archiveName, _ = userConfigRelativePath(userDir, canonical)
+			}
+		}
 		if archiveName != "" {
-			add(archiveName, captured)
-		} else if relative, ok := userConfigRelativePath(userDir, canonical); ok {
-			add(relative, captured)
-		} else {
-			slog.Debug("user config include is outside the user config directory", "path", canonical)
+			if archived[archiveName] {
+				return nil
+			}
+			file := captured
+			file.Name = archiveName
+			snapshot.files = append(snapshot.files, file)
+			archived[archiveName] = true
 		}
 
 		if !followIncludes {
@@ -103,25 +112,31 @@ func CaptureUserConfig() *UserConfigSnapshot {
 		var document struct {
 			Include config.IncludePaths `yaml:"include"`
 		}
-		if err := yaml.Unmarshal(data, &document); err != nil {
+		if err := yaml.Unmarshal(captured.Data, &document); err != nil {
 			return nil
 		}
+		visiting[canonical] = true
+		defer delete(visiting, canonical)
 		for _, include := range document.Include {
-			includePath := include
-			if !filepath.IsAbs(includePath) {
-				includePath = filepath.Join(filepath.Dir(canonical), includePath)
+			includePath, restoredInclude := include, include
+			if !filepath.IsAbs(include) {
+				includePath = filepath.Join(filepath.Dir(canonical), include)
+				restoredInclude = ""
+				if archiveName != "" {
+					restoredInclude = filepath.Join(userDir, filepath.Dir(archiveName), include)
+				}
 			}
-			if err := visit(includePath, "", true); err != nil {
+			if err := visit(includePath, "", restoredInclude, true); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	if err := visit(configPath, "config.yaml", true); err != nil {
+	if err := visit(configPath, "config.yaml", "", true); err != nil {
 		snapshot.err = err
 		return snapshot
 	}
-	if err := visit(lockPaths.RequestedLock, "lock.yaml", false); err != nil {
+	if err := visit(lockPaths.RequestedLock, "lock.yaml", "", false); err != nil {
 		snapshot.err = err
 	}
 	return snapshot
