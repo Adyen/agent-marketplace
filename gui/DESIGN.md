@@ -624,6 +624,9 @@ conflicts with an earlier section, this section wins.
   GUI add-source API/config admission rules has a non-blank ref, or a
   Marketplace location is an absolute HTTP(S) URL.
   Directory existence remains a server check.
+- *Rule — native directory picker*: place Browse… beside the Location input,
+  outside its label. Keep the Location error below the input row. Show Browse
+  only for native directory forms, and do not submit when it is activated.
 - *Observed*: each source is a row of text with a labelled Remove button. The
   footer button reads "Cancel", but the dialog applies each change at once.
 - *Rule*: each source is a card (`--gui-s0100`, 12 px radius, 12 px padding)

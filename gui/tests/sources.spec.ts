@@ -165,6 +165,69 @@ test('built GUI clears a directory source error when Location is edited', async 
   }
 })
 
+// spec: gui-configuration/choosing-a-folder-fills-location-without-adding-a-source
+test('built GUI fills and validates Location from the native folder picker before adding', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourceDir = bootstrap.addSourceDir!
+  const userConfigPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  const invalidPath = join(sourceDir, 'does-not-exist')
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential, selectedPath]) => {
+        const w = window as unknown as Record<string, unknown>
+        w.__AM_GUI_BOOTSTRAP__ = { credential }
+        w.go = {
+          main: {
+            App: {
+              ChooseDirectory: (defaultPath: string) => {
+                w.__AM_GUI_PICKER_DEFAULT_PATH__ = defaultPath
+                return Promise.resolve(selectedPath)
+              },
+            },
+          },
+        }
+      },
+      [bootstrap.credential, sourceDir] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    const originalConfig = await readFile(userConfigPath, 'utf8')
+    await page.getByRole('button', { name: 'Sources' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = dialog.getByLabel('Add user source')
+    const location = addSection.getByLabel('Source location')
+    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    await location.fill(invalidPath)
+    await addButton.click()
+    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+    await expect(location).toHaveAttribute('aria-invalid', 'true')
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+
+    await addSection.getByRole('button', { name: 'Browse for folder' }).press('Enter')
+    await expect(location).toHaveValue(sourceDir)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__AM_GUI_PICKER_DEFAULT_PATH__)).toBe(invalidPath)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+    await expect(dialog.getByLabel('User sources')).not.toContainText(sourceDir)
+
+    await addButton.click()
+    await expect(dialog.getByLabel('User sources')).toContainText(sourceDir, { timeout: 60_000 })
+    await expect
+      .poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 })
+      .toContain(`directory: ${sourceDir}`)
+  } finally {
+    await harness.stop()
+  }
+})
+
 test('Settings source labels share sans typography and Add source stays content-width', async ({ page }) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `./node_modules/.bin/vite build` in gui/ first')

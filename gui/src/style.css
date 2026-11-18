@@ -639,6 +639,17 @@ textarea:focus-visible,
   padding: 0;
 }
 
+.source-form__location {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-form__location .source-form__error {
+  grid-column: 1 / -1;
+}
+
 .source-form .source-form__kind > legend.source-form__label,
 .source-form__label {
   color: var(--gui-ink);
