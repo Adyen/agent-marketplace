@@ -150,7 +150,7 @@ func TestSearchDuringStartupBrowseKeepsArrivingRowsAndRestoresBrowseState(t *tes
 		}
 	}()
 	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "held-browse", Alias: "market"}
-	local := mkRow("resource-local", withGlobal, withRegistry("local", "local"))
+	local := mkRow("resource-55-local", withGlobal, withRegistry("local", "local"))
 	m := newTestModel()
 	m.width, m.height = 100, 32
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
@@ -182,11 +182,23 @@ func TestSearchDuringStartupBrowseKeepsArrivingRowsAndRestoresBrowseState(t *tes
 	m.pane = paneDetail
 	m.detailKey = rowKey(local)
 	selected := m.selectionKeyForRebuild()
-	m.filter = "resource"
+	m.filter = "resource-55"
 	m.recomputeView()
 	searchCmd := m.beginMarketplaceDiscovery(m.filter, false)
 	drainStartupDiscovery(t, &m, searchCmd)
-	if m.filter != "resource" || m.selectionKeyForRebuild() != selected || m.pane != paneDetail || m.detailKey != rowKey(local) {
+	assertMatchingRows := func(want int) {
+		t.Helper()
+		if len(m.filteredRows) != want {
+			t.Fatalf("visible rows matching %q = %d, want %d: %#v", m.filter, len(m.filteredRows), want, m.filteredRows)
+		}
+		for _, filtered := range m.filteredRows {
+			if !strings.Contains(filtered.Artifact.Name, "resource-55") {
+				t.Fatalf("nonmatching row %q remained visible for %q", filtered.Artifact.Name, m.filter)
+			}
+		}
+	}
+	assertMatchingRows(1)
+	if m.filter != "resource-55" || m.selectionKeyForRebuild() != selected || m.pane != paneDetail || m.detailKey != rowKey(local) {
 		t.Fatalf("search changed browse selection/detail state: filter=%q selection=%q want=%q pane=%v detail=%q", m.filter, m.selectionKeyForRebuild(), selected, m.pane, m.detailKey)
 	}
 
@@ -196,11 +208,16 @@ func TestSearchDuringStartupBrowseKeepsArrivingRowsAndRestoresBrowseState(t *tes
 		updated, next := m.Update(msg)
 		m = updated.(Model)
 		browseWait = next
+		if len(m.browseDiscoveryRows) == len(items) {
+			assertMatchingRows(2)
+		} else {
+			assertMatchingRows(1)
+		}
 	}
 	if browseWait != nil {
 		t.Fatal("browse did not finish after releasing the later page")
 	}
-	if m.filter != "resource" || m.selectionKeyForRebuild() != selected || m.pane != paneDetail || m.detailKey != rowKey(local) {
+	if m.filter != "resource-55" || m.selectionKeyForRebuild() != selected || m.pane != paneDetail || m.detailKey != rowKey(local) {
 		t.Fatalf("arriving page changed active search/detail state: filter=%q selection=%q want=%q pane=%v detail=%q", m.filter, m.selectionKeyForRebuild(), selected, m.pane, m.detailKey)
 	}
 	if len(m.browseDiscoveryRows) != len(items) || m.browseDiscoveryRows[len(items)-1].Artifact.Name != "resource-59" {
@@ -212,7 +229,7 @@ func TestSearchDuringStartupBrowseKeepsArrivingRowsAndRestoresBrowseState(t *tes
 
 	updated, _ = m.clearSearch()
 	m = updated.(Model)
-	if m.filter != "" || len(m.browseDiscoveryRows) != len(items) {
+	if m.filter != "" || len(m.browseDiscoveryRows) != len(items) || len(m.filteredRows) != len(items)+1 {
 		t.Fatalf("clear did not restore complete browse inventory: filter=%q rows=%d", m.filter, len(m.browseDiscoveryRows))
 	}
 	if m.selectionKeyForRebuild() != selected || m.pane != paneDetail || m.detailKey != rowKey(local) || !m.currentFoldState()["status:available"] {

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -178,19 +179,31 @@ func (m Model) footerStatus() (string, []string) {
 		leftParts = append(leftParts, m.driftStatusSegment())
 	}
 
+	type endpointKey struct {
+		url        string
+		instanceID string
+	}
+	staleSeen := make(map[endpointKey]struct{})
 	var staleEndpoints, truncatedEndpoints, loadingEndpoints int
-	for _, outcome := range m.discoveryOutcomes {
-		if outcome.CacheState == "stale" {
-			staleEndpoints++
+	countStale := func(outcome marketplace.DiscoveryOutcome) {
+		if outcome.CacheState != marketplace.DiscoveryCacheStale {
+			return
 		}
+		key := endpointKey{url: outcome.Endpoint.URL, instanceID: outcome.Endpoint.InstanceID}
+		if _, ok := staleSeen[key]; ok {
+			return
+		}
+		staleSeen[key] = struct{}{}
+		staleEndpoints++
+	}
+	for _, outcome := range m.discoveryOutcomes {
+		countStale(outcome)
 		if outcome.Truncated {
 			truncatedEndpoints++
 		}
 	}
 	for _, outcome := range m.browseOutcomes {
-		if outcome.CacheState == "stale" {
-			staleEndpoints++
-		}
+		countStale(outcome)
 		if m.browseLoading && outcome.Truncated && outcome.Err == nil {
 			loadingEndpoints++
 		}

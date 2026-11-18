@@ -371,16 +371,21 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 	}
 }
 
+// spec: tui-startup/cold-startup-browses-beyond-the-first-page
 func TestMarketplaceDiscoveryDedupesInstalledAliasByPinnedCoordinate(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public", Source: config.RepoCommitted}
 	m := newTestModel()
 	m.authoritativeRows = []row{{
 		Artifact:              resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "installed-alias"}, IsMarketplace: true, MarketplaceInstanceID: endpoint.InstanceID, MarketplaceRegistryID: "registry"},
+		EnabledGlobal:         true,
 		MarketplaceSelections: map[config.Source]marketplaceSelection{config.RepoCommitted: {Entry: endpoint, Pin: config.MarketplaceResourcePin{RegistryID: "registry", Kind: "skill", Name: "original-name"}}},
 	}}
 	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "original-name", Availability: mpapi.AvailabilityAvailable}}}})
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed-alias" {
 		t.Fatalf("discovery duplicated pinned resource under original name: %#v", m.rows)
+	}
+	if got := originBadge(m.rows[0]); got != "G" {
+		t.Fatalf("merged installed row badge = %q, want G", got)
 	}
 }
 

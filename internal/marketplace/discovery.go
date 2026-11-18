@@ -607,6 +607,12 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 			})
 			if fetchErr != nil {
 				if hit && (cached.CacheState == DiscoveryCacheStale || (browse && len(out.Items) == 0)) {
+					if browse && len(out.Items) > 0 {
+						items := appendUnseenItems(slices.Clone(out.Items), discoveryItemSet(out.Items), cached.Items)
+						cached.Items = items
+						cached.Total = max(cached.Total, out.Total, len(items))
+						cached.Truncated = true
+					}
 					cached.Err = fetchErr
 					send(discoveryEvent{outcome: cached, final: true})
 					return
@@ -789,15 +795,12 @@ func discoverOneWithProgress(ctx context.Context, ep config.MarketplaceEntry, ve
 		if !browse {
 			return DiscoveryOutcome{Endpoint: ep, Items: items, Total: resp.Total, Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
 		}
-		return discoverBrowsePages(ctx, client, ep, limit, timeout, items, resp, progress)
+		return discoverBrowsePages(requestCtx, client, ep, limit, timeout, items, resp, progress)
 	}
-	seen := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		seen[item.RegistryID+"\x00"+item.Kind+"\x00"+item.Name] = struct{}{}
-	}
+	seen := discoveryItemSet(items)
 	total := 0
 	for offset := 0; offset == 0 || offset < total; {
-		page, err := client.Search(ctx, SearchRequest{Kind: opts.IncludeKind, Limit: limit, Offset: offset})
+		page, err := client.Search(requestCtx, SearchRequest{Kind: opts.IncludeKind, Limit: limit, Offset: offset})
 		if err != nil {
 			return partialDiscovery(ep, items, resp.Total, truncated, err)
 		}
@@ -808,17 +811,35 @@ func discoverOneWithProgress(ctx context.Context, ep config.MarketplaceEntry, ve
 			}
 			break
 		}
-		for _, item := range page.Items {
-			coordinate := item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
-			if _, ok := seen[coordinate]; ok {
-				continue
-			}
-			seen[coordinate] = struct{}{}
-			items = append(items, item)
-		}
+		items = appendUnseenItems(items, seen, page.Items)
 		offset += len(page.Items)
 	}
 	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(resp.Total, len(items)), Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
+}
+
+func discoveryItemCoordinate(item mpapi.ResourceListItem) string {
+	return item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
+}
+
+func discoveryItemSet(items []mpapi.ResourceListItem) map[string]struct{} {
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		seen[discoveryItemCoordinate(item)] = struct{}{}
+	}
+	return seen
+}
+
+// appendUnseenItems appends each item whose coordinate is not yet in seen and records it.
+func appendUnseenItems(items []mpapi.ResourceListItem, seen map[string]struct{}, more []mpapi.ResourceListItem) []mpapi.ResourceListItem {
+	for _, item := range more {
+		coordinate := discoveryItemCoordinate(item)
+		if _, ok := seen[coordinate]; ok {
+			continue
+		}
+		seen[coordinate] = struct{}{}
+		items = append(items, item)
+	}
+	return items
 }
 
 func discoveryRequestContext(ctx context.Context, browse bool, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -834,10 +855,7 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 	if len(firstPage.Items) == 0 && total > 0 {
 		return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery made no progress before reported total"))
 	}
-	seen := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		seen[item.RegistryID+"\x00"+item.Kind+"\x00"+item.Name] = struct{}{}
-	}
+	seen := discoveryItemSet(items)
 	if progress != nil {
 		partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: total, Truncated: true, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
 		if !progress(partial) {
@@ -846,7 +864,7 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 	}
 	offset := len(firstPage.Items)
 	for offset < total {
-		pageCtx, cancel := context.WithTimeout(ctx, timeout)
+		pageCtx, cancel := discoveryRequestContext(ctx, true, timeout)
 		page, err := client.Search(pageCtx, SearchRequest{Limit: limit, Offset: offset})
 		cancel()
 		if err != nil {
@@ -859,14 +877,7 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 			total = page.Total
 			break
 		}
-		for _, item := range page.Items {
-			coordinate := item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
-			if _, ok := seen[coordinate]; ok {
-				continue
-			}
-			seen[coordinate] = struct{}{}
-			items = append(items, item)
-		}
+		items = appendUnseenItems(items, seen, page.Items)
 		offset += len(page.Items)
 		total = page.Total
 		if progress != nil {

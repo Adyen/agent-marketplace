@@ -154,6 +154,7 @@ searchJourney.test("search and clear preserve browse inventory while a later pag
   fixture.marketplaceReleaseBrowsePages?.();
   await step("the held page arrives without replacing the query", () => {}, async () => {
     await locate(terminal, /Marketplace: 1 loading/).unique().expect({ not: true });
+    await locate(terminal, "1 match · esc clear").expect();
     await locate(terminal, "browse-resource-55").expect();
   });
   await step("clear search and restore the complete browse list", () => terminal.write("\x1b"), async () => {

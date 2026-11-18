@@ -8,9 +8,28 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestFooterCountsStaleMarketplaceEndpointOnceAcrossQueriesAndBrowse(t *testing.T) {
+	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "same-market"}
+	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, CacheState: marketplace.DiscoveryCacheStale}
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.width, m.height = 100, 24
+	m.loading = false
+	m.driftAssessment = driftReady
+	m.discoveryOutcomes = []marketplace.DiscoveryOutcome{outcome}
+	m.browseOutcomes = []marketplace.DiscoveryOutcome{outcome}
+
+	_, parts := m.footerStatus()
+	footer := ansi.Strip(strings.Join(parts, " "))
+	if !strings.Contains(footer, "Marketplace: 1 stale") || strings.Contains(footer, "Marketplace: 2 stale") {
+		t.Fatalf("stale endpoint count = %q, want one endpoint", footer)
+	}
+}
 
 func TestFooterErrorPriorityKeepsRecoveryActions(t *testing.T) {
 	for _, width := range []int{50, 59, 60, 80, 100, 160} {
