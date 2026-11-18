@@ -245,12 +245,16 @@ only `herdr-app`. A host kind resolves only when its target is enabled
 (Decision 10):
 
 - A direct package for a known disabled or unavailable target refuses
-  before acquisition/config/lock writes. Malformed, unknown, or
-  repository-scope-ineligible authored selections remain errors.
-- Collections may retain known disabled, unavailable, or unapproved
-  members, report why they were skipped, and never claim delivery.
-  Headless sync skips that target and proceeds independently; `sync --check`
-  stays read-only under the existing diagnostic/`--strict` policy.
+  that package before acquisition or config/lock writes for that target.
+  Unrelated targets proceed. Malformed, unknown, or repository-scope-ineligible
+  authored selections remain configuration errors.
+- A collection retains affected members in its selection and reports why
+  they were skipped; it never claims they were delivered. Headless sync
+  skips an unapproved target, even for a previously authored direct
+  selection, and proceeds with independent targets. A new direct install
+  for an unapproved target refuses before acquisition or config/lock
+  writes for that target. `sync --check` remains read-only and follows
+  the existing diagnostic and `--strict` policy.
 - Consent, availability, or changed environment values never deselect a
   target or authorize pruning. Explicit retirement is separate (Decision 7).
 
@@ -470,6 +474,8 @@ by this design-only assignment.
 
 ### 2. `targets:` in consumer configuration
 
+Proposed v4 alias behavior (not shipped):
+
 ```yaml
 apiVersion: agent-marketplace/v4
 targets: [claude, devin, herdr-app]
@@ -586,7 +592,7 @@ no aggregate fragment mapping. A payload outside these declarations is
 refused as a whole at ingestion and sync, never silently dropped.
 Support-file declarations do not authorize replacing unowned files or
 writing shared aggregates as whole files. `verify` names a check defined
-once in the profile; a kind without one is reported as unverified.
+once in the profile; a kind without one is reported as `not-configured`.
 
 The v1 profile has one user root and no repository root. Fields use
 Decision 13 types and grammars; defaults have exactly `macos` and `linux`
@@ -1241,10 +1247,9 @@ receipt with the state-store identity; a mismatch needs interactive
 approval. Optional `require_verified_host_version` is an organization-only
 target-ID list, default empty.
 
-Headless sync never prompts; it skips pending targets with diagnostics and
-continues independently. `sync --check` remains read-only under existing
-strict rules. Direct install refuses before acquisition when approval or
-an organization version rule is unmet. Enabling is not consent.
+Headless sync never prompts for approval. It follows the skip rule in
+Decision 1. Direct install also refuses before acquisition when the
+organization version rule is unmet. Enabling is not consent.
 
 Approval never grants old-root deletion. Interactive
 `agent-marketplace target retire <installation-id>` reads recorded
@@ -2310,7 +2315,7 @@ The relevant OpenSpec changes must prove these acceptance cases:
   values or runs an upstream installer.
 - A manual-collision fixture names path/owner, refuses adoption, and leaves
   remediation to the user; bytes do not prove ownership.
-- A theme with no verify rule is reported as unverified, not passed.
+- A theme with no verify rule is reported as `not-configured`, not passed.
 - Pane-switcher activation, layout selection and deferred key bindings
   remain visible as manual setup. Placement and verification cannot
   clear those requirements implicitly.
