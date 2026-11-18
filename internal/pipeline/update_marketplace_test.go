@@ -23,7 +23,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit) (DependencyLockView, error) {
+func testMarketplaceUpdateReconcile(_ context.Context, _, _ string, _ []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit, _ []MarketplacePinUpdate) (DependencyLockView, error) {
 	for _, edit := range edits {
 		if err := os.MkdirAll(filepath.Dir(edit.Path), 0o755); err != nil {
 			return DependencyLockView{}, err
@@ -410,7 +410,7 @@ func TestMarketplaceUpdateRollbackRestoresConfigAfterSyncFailure(t *testing.T) {
 	fake.setSkill(t, registry, "review", "new review content")
 	wantErr := errors.New("sync reconciliation failed")
 	called := false
-	_, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(_ context.Context, _, _ string, _ []RefBump, _ []StagedConfigEdit, edits []StagedLockEdit) (DependencyLockView, error) {
+	_, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(_ context.Context, _, _ string, _ []RefBump, _ []StagedConfigEdit, edits []StagedLockEdit, _ []MarketplacePinUpdate) (DependencyLockView, error) {
 		called = true
 		if len(edits) != 1 || string(edits[0].Bytes) == string(lockBefore) {
 			t.Fatal("control did not stage updated lock evidence")
@@ -765,9 +765,9 @@ func TestUpdateWithOnlyMissingMarketplacePinsChangesNothing(t *testing.T) {
 	fake.missing["skill/two"] = true
 
 	reconciled := false
-	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(ctx context.Context, a, b string, bumps []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit) (DependencyLockView, error) {
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: func(ctx context.Context, a, b string, bumps []RefBump, edits []StagedConfigEdit, lockEdits []StagedLockEdit, missingPins []MarketplacePinUpdate) (DependencyLockView, error) {
 		reconciled = true
-		return testMarketplaceUpdateReconcile(ctx, a, b, bumps, edits, lockEdits)
+		return testMarketplaceUpdateReconcile(ctx, a, b, bumps, edits, lockEdits, missingPins)
 	}})
 	if result == nil || err != nil || len(result.Warnings) != 2 {
 		t.Fatalf("update = (%#v, %v), want two warnings and no error", result, err)

@@ -96,9 +96,12 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
-	BrowsingConfigReady     func(*config.Config)
-	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
-	ConfigReady             func(*config.Config)
+	// MarketplacePinsToSkip lists pins classified as missing by the current
+	// update.
+	MarketplacePinsToSkip  []MarketplacePinUpdate
+	BrowsingConfigReady    func(*config.Config)
+	ProvisionalConfigReady func(*config.Config, *config.LocalConfig)
+	ConfigReady            func(*config.Config)
 	// MarketplaceArtifactsFromCache resolves Marketplace selections into
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
@@ -711,8 +714,15 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		}
 		marketplaceCfg = &filtered
 	}
-	if len(opts.marketplacePinsToSkip) > 0 {
-		mpResolver = marketplacePinSkippingResolver{delegate: mpResolver, skip: opts.marketplacePinsToSkip}
+	skippedMarketplacePins := opts.marketplacePinsToSkip
+	if len(opts.MarketplacePinsToSkip) > 0 {
+		skippedMarketplacePins = make(map[marketplacePinIdentity]bool, len(opts.MarketplacePinsToSkip))
+		for _, pin := range opts.MarketplacePinsToSkip {
+			skippedMarketplacePins[marketplacePinIdentityOf(pin.Entry, pin.OldPin)] = true
+		}
+	}
+	if len(skippedMarketplacePins) > 0 {
+		mpResolver = marketplacePinSkippingResolver{delegate: mpResolver, skip: skippedMarketplacePins}
 	}
 	var selectedCollections []resolver.ResolvedArtifact
 	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(

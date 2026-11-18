@@ -111,19 +111,13 @@ func (e *MissingMarketplaceResourcesError) Error() string {
 	return b.String()
 }
 
-func missingMarketplacePins(plans []marketplaceUpdatePlan) error {
-	var missing *MissingMarketplaceResourcesError
+func missingMarketplacePinUpdates(plans []marketplaceUpdatePlan) []MarketplacePinUpdate {
+	var missing []MarketplacePinUpdate
 	for i := range plans {
 		if plans[i].Reason != marketplaceResourceMissingReason {
 			continue
 		}
-		if missing == nil {
-			missing = &MissingMarketplaceResourcesError{}
-		}
-		missing.Pins = append(missing.Pins, plans[i].MarketplacePinUpdate)
-	}
-	if missing == nil {
-		return nil
+		missing = append(missing, plans[i].MarketplacePinUpdate)
 	}
 	return missing
 }
@@ -136,7 +130,7 @@ type UpdateTarget struct {
 	Names    []string
 }
 
-type UpdateDependencyReconciler func(context.Context, string, string, []RefBump, []StagedConfigEdit, []StagedLockEdit) (DependencyLockView, error)
+type UpdateDependencyReconciler func(context.Context, string, string, []RefBump, []StagedConfigEdit, []StagedLockEdit, []MarketplacePinUpdate) (DependencyLockView, error)
 
 // UpdateResult holds the outcome of an update operation.
 type UpdateResult struct {
@@ -200,7 +194,11 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	for _, plan := range plans {
 		actionable = actionable || !plan.Skipped
 	}
-	missing := missingMarketplacePins(plans)
+	missingPins := missingMarketplacePinUpdates(plans)
+	var missing error
+	if len(missingPins) > 0 {
+		missing = &MissingMarketplaceResourcesError{Pins: missingPins}
+	}
 	if opts.RemovedPinsOnly {
 		return updateResult(updatedRegistries, nil, plans), missing
 	}
@@ -291,8 +289,8 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		for _, path := range lockEditOrder {
 			ordered = append(ordered, lockEdits[path])
 		}
-		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
-	}), withMarketplacePinsSkipped(missingMarketplacePinIdentities(plans)), withRetainedMarketplacePins(retainedMarketplacePins(plans))}
+		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered, missingPins)
+	}), withMarketplacePinsSkipped(missingMarketplacePinIdentities(missingPins)), withRetainedMarketplacePins(retainedMarketplacePins(plans))}
 	if opts.DryRun {
 		// Preview: reconcile and validate the prepared candidate state without
 		// publishing config or locks and without materializing. The dependency
@@ -344,16 +342,13 @@ func updateResult(updatedRegistries int, bumps []RefBump, plans []marketplaceUpd
 	return result
 }
 
-func missingMarketplacePinIdentities(plans []marketplaceUpdatePlan) map[marketplacePinIdentity]bool {
-	var skip map[marketplacePinIdentity]bool
-	for _, plan := range plans {
-		if plan.Reason != marketplaceResourceMissingReason {
-			continue
-		}
-		if skip == nil {
-			skip = make(map[marketplacePinIdentity]bool)
-		}
-		skip[marketplacePinIdentityOf(plan.Entry, plan.OldPin)] = true
+func missingMarketplacePinIdentities(pins []MarketplacePinUpdate) map[marketplacePinIdentity]bool {
+	if len(pins) == 0 {
+		return nil
+	}
+	skip := make(map[marketplacePinIdentity]bool, len(pins))
+	for _, pin := range pins {
+		skip[marketplacePinIdentityOf(pin.Entry, pin.OldPin)] = true
 	}
 	return skip
 }
