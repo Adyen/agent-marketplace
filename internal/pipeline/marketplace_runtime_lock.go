@@ -26,18 +26,24 @@ const (
 // LoadEffective loads configuration with explicit organization-lock semantics:
 // online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
 func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil)
+	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil, nil)
 	return ec
 }
 
 // loadEffective also reports whether organization Marketplace state was acquired
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
-func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig)) (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig), intentReady func(config.Intent)) (effective config.EffectiveConfig, lockUse transientOrganizationMarketplaceLockUse) {
 	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
 	intent := readIntent(ctx, opts)
+	suppressIntentReport := false
+	defer func() {
+		if intentReady != nil && !suppressIntentReport && len(intent.Errors) == 0 && len(effective.Errors) > 0 && !effective.MergedValidationFailed {
+			intentReady(intent)
+		}
+	}()
 	if len(intent.Errors) > 0 {
 		return config.Bind(intent, config.Evidence{}), transientOrganizationMarketplaceLockUnused
 	}
@@ -50,6 +56,7 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 		return config.Bind(intent, evidence), transientOrganizationMarketplaceLockUnused
 	}
 	if err := MarketplaceAllowlistError(intent); err != nil {
+		suppressIntentReport = true
 		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
 	}
 	paths, err := config.ResolveConfigLockPaths(organization.Path)

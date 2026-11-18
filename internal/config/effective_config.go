@@ -105,13 +105,14 @@ type EffectiveConfig struct {
 	// declares an allowlist (permitting all remote origins), empty when a
 	// layer explicitly sets an empty allowlist (denying all remote origins),
 	// and non-empty when an allowlist is configured.
-	Allowed             []string
-	AllowedMarketplaces []string
-	TargetHarnesses     []string
-	TargetHarnessSource Source
-	Errors              []error
-	Warnings            []error
-	Managed             bool
+	Allowed                []string
+	AllowedMarketplaces    []string
+	TargetHarnesses        []string
+	TargetHarnessSource    Source
+	MergedValidationFailed bool
+	Errors                 []error
+	Warnings               []error
+	Managed                bool
 	// Diagnostics is the filesystem and trust state of the externally managed
 	// organization config at the fixed path.
 	Diagnostics ManagedInstallationDiagnostics

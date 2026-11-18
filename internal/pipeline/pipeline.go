@@ -102,6 +102,8 @@ type ResolveOptions struct {
 	// inspect-mode pin table is computed unchanged. Status, doctor, and list set
 	// it; every other caller keeps metadata-only inspect behavior.
 	MarketplaceArtifactsFromCache bool
+	// ReportDeclaredHarnesses preserves the parsed target set for status output.
+	ReportDeclaredHarnesses bool
 }
 
 type ResolveResult struct {
@@ -131,12 +133,17 @@ type ResolveResult struct {
 	Warnings                    []error
 	TargetHarnesses             []hcc.Target
 	TargetHarnessSource         config.Source
+	// DeclaredTargetHarnesses holds parsed declarations for reports when lock binding fails.
+	DeclaredTargetHarnesses     []hcc.Target
+	DeclaredTargetHarnessSource config.Source
 	// MachineTargetHarnesses is the target set for output selected by the user
 	// and organization layers. Repository configuration never narrows it.
-	MachineTargetHarnesses     []hcc.Target
-	MachineTargetHarnessSource config.Source
-	Managed                    bool
-	Diagnostics                config.ManagedInstallationDiagnostics
+	MachineTargetHarnesses         []hcc.Target
+	MachineTargetHarnessSource     config.Source
+	DeclaredMachineTargetHarnesses []hcc.Target
+	DeclaredMachineTargetSource    config.Source
+	Managed                        bool
+	Diagnostics                    config.ManagedInstallationDiagnostics
 	// SelectedCollections are display-only collection roots that were
 	// selected but expanded into members in Resolved. Never materialize them.
 	SelectedCollections []resolver.ResolvedArtifact
@@ -434,6 +441,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		}
 	}
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
+	var intentReady func(config.Intent)
+	if opts.ReportDeclaredHarnesses {
+		intentReady = func(intent config.Intent) {
+			targets, source := intent.TargetHarnesses()
+			machineTargets, machineSource := intent.MachineTargetHarnesses()
+			result.DeclaredTargetHarnesses = hccTargetsFromStrings(targets)
+			result.DeclaredTargetHarnessSource = source
+			result.DeclaredMachineTargetHarnesses = hccTargetsFromStrings(machineTargets)
+			result.DeclaredMachineTargetSource = machineSource
+		}
+	}
 	if useLoaders {
 		loaders := opts.Loaders
 		if loaders.Org == nil {
@@ -474,10 +492,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			Errors:       errs,
 		}
 		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady, intentReady)
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady, intentReady)
 	}
 
 	result.Diagnostics = ec.Diagnostics
