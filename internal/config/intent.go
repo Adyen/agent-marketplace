@@ -638,7 +638,9 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		ec.Errors = append(ec.Errors, layer.Errors...)
 		for _, err := range layer.Errors {
 			var validation *V4ValidationError
-			if errors.As(err, &validation) && validation.authoredConfig {
+			if errors.As(err, &validation) &&
+				(validation.authoredConfig ||
+					(validation.Code != v4MarketplaceLockRequiredCode && validation.Code != v4MarketplaceLockMismatchCode)) {
 				ec.ConfigurationValidationFailed = true
 			}
 		}

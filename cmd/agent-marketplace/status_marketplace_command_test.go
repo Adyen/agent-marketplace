@@ -86,11 +86,12 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 	defer server.Close()
 
 	for _, tc := range []struct {
-		name        string
-		userConfig  string
-		errorCode   string
-		wantHarness bool
-		duplicate   bool
+		name          string
+		userConfig    string
+		errorCode     string
+		wantHarness   bool
+		duplicate     bool
+		repoSelection string
 	}{
 		{
 			name:        "user harness declaration",
@@ -114,6 +115,12 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 			errorCode:  "v4.marketplace-lock-mismatch",
 			duplicate:  true,
 		},
+		{
+			name:          "repository Marketplace exclusion",
+			userConfig:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+			errorCode:     "v4.layer-field",
+			repoSelection: "exclude",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -127,8 +134,12 @@ func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T
 			if tc.duplicate {
 				sources += "  alias: {marketplace: " + server.URL + "}\n"
 			}
+			selection := tc.repoSelection
+			if selection == "" {
+				selection = "include"
+			}
 			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n"+sources+`resources:
-  hosted: {include: [tools/skill/review]}
+  hosted: {`+selection+`: [tools/skill/review]}
 `)
 			withWorkingDir(t, repo)
 
