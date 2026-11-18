@@ -90,8 +90,9 @@ type Store struct {
 	rootIdentity fsboundary.Identity
 	rootBound    bool
 
-	crasher Crasher
-	now     func() time.Time
+	crasher           Crasher
+	now               func() time.Time
+	proofLoadObserver func()
 	// retain is the number of safety backups kept per canonical output file. The
 	// plan fixes it at five; it is a field only so a test can prove the pruning
 	// loop is driven by the constant rather than hard-coded comparisons.
@@ -106,6 +107,7 @@ type Store struct {
 	// descriptions and therefore genuinely contend. See lock.go.
 	lockMu  sync.Mutex
 	session *lockSession
+	proofMu sync.Mutex
 	// acquireMu serializes whole acquisitions on this Store so that two
 	// goroutines sharing it cannot both decide to open a descriptor. It is a
 	// separate mutex from lockMu because it is held across the retry loop, and
@@ -144,6 +146,11 @@ func WithStateRoot(dir string) Option {
 // WithCrasher installs a crash injector.
 func WithCrasher(c Crasher) Option {
 	return func(s *Store) { s.crasher = c }
+}
+
+// WithProofLoadObserver observes Proof calls that read state.json; it must not call back into the same Store.
+func WithProofLoadObserver(observer func()) Option {
+	return func(s *Store) { s.proofLoadObserver = observer }
 }
 
 // WithClock overrides the clock used for timestamps.

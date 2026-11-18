@@ -276,8 +276,13 @@ func WithLockObserver(obs LockObserver) Option {
 // lockSession is one held lock: the descriptor whose open file description owns
 // the kernel lock, and the reentrancy depth of this Store.
 type lockSession struct {
-	f     *os.File
-	depth int
+	f            *os.File
+	depth        int
+	record       *Record
+	recordLoaded bool
+	recordPin    metadataPin
+	recordExists bool
+	recordErr    error
 }
 
 // LockPath returns the advisory lock file for this canonical root:
