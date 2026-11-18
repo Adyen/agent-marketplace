@@ -152,9 +152,10 @@ does not exercise host activation, runtime behavior, Tern's installer,
 Windows roots, production race safety, crash recovery, ownership, or
 approval. Tern's documented installer uses dot-named staging; this trial
 applies files directly and rejects such entries. The trial sends absolute
-overrides to paths inside its scratch directory. The design still needs to
-resolve whether app overrides fit the engine's refusal of arbitrary
-absolute roots (see Open items). The trial does not freeze profile v1.
+overrides to paths inside its scratch directory. That is not a first-place
+root approval: the profile below accepts only roots beneath canonical home
+or XDG config bases, and Tern remains follow-on. The trial does not freeze
+profile v1.
 
 ## Decisions
 
@@ -243,13 +244,15 @@ its kind. A skill reaches every enabled harness; `herdr-app/mod` reaches
 only `herdr-app`. A host kind resolves only when its target is enabled
 (Decision 10):
 
-- A direct selection of a host package whose profile is not selected is a
-  target-scoped configuration error, reported before acquisition; unrelated
-  target work may proceed.
-- A collection member whose target is not enabled is skipped and listed in
-  `status`, without a diagnostic on every sync. This lets organization
-  collections include app packages without writing into the homes of
-  people who do not use that app.
+- A direct package for a known disabled or unavailable target refuses
+  before acquisition/config/lock writes. Malformed, unknown, or
+  repository-scope-ineligible authored selections remain errors.
+- Collections may retain known disabled, unavailable, or unapproved
+  members, report why they were skipped, and never claim delivery.
+  Headless sync skips that target and proceeds independently; `sync --check`
+  stays read-only under the existing diagnostic/`--strict` policy.
+- Consent, availability, or changed environment values never deselect a
+  target or authorize pruning. Explicit retirement is separate (Decision 7).
 
 A kind becomes portable only when two targets declare a translator for it.
 Host kinds get no canonical IR until then.
@@ -327,7 +330,8 @@ do not restate a parallel per-target capability authority. Keep diagnostic-only 
 from successfully emitted kinds. Keep hook catalogs scoped to hook
 translation, plugin catalogs to package projection, and model/tool
 catalogs to the translation surfaces that use them. Profile-only targets
-need none; retain all current catalogs.
+are not constructed in I1. A later profile phase needs none of these
+compiler catalogs; I1 retains their current behavior.
 
 Preserve existing output bytes and routing while composing the model:
 Factory's forced command copies, Devin and Codex converted command skills,
@@ -477,6 +481,15 @@ Resource-group narrowing (`targets:` inside a group, formerly
 `harnesses:`) gets the same alias and keeps its "narrows, never widens"
 rule.
 
+An absent user list inherits organization; groups narrow the root. R5
+proposes `targets: []` as narrowing, not shipped; I2 must amend
+`resource-selection`'s non-empty-list inheritance rule.
+
+Editing an absent user list first copies the effective inherited list.
+This snapshot keeps current harnesses but misses later organization
+additions. Delete the user key to inherit again; `[]` stays explicit.
+Enabling outside organization policy refuses; disabling narrows.
+
 **Rollout.** v4 parsing rejects unknown fields, so a released v5.x client
 refuses a file that contains `targets:`. In a committed repository
 configuration that would break teammates on an older CLI. The switch
@@ -518,52 +531,87 @@ discovery and source-to-destination mappings belong to package metadata
 or curator-supplied import declarations (Decision 4), and cannot widen
 the profile's permissions.
 
-Profile skeleton (field names illustrative, fixed in the OpenSpec change):
+First place profile v1 proposal (macOS/Linux, user-root, `place` only):
 
 ```yaml
 apiVersion: agent-marketplace.io/target-profile/v1
 id: herdr-app
 label: Herdr app
-platforms: [macos, linux, windows]
-detect: { any: [{ binary: herdr-app }, { root: user }] }
+platforms: [macos, linux]
 roots:
   user:
-    env: HERDR_APP_HOME
-    default: { macos: ~/.config/herdr-app, linux: ~/.config/herdr-app }
+    override: HERDR_APP_HOME
+    default:
+      macos: {base: home, path: .config/herdr-app}
+      linux: {base: xdg-config, path: herdr-app}
+    allowed_bases: [home, xdg-config]
 host:
-  binary: herdr-app
-  version:  { probe: [herdr-app, --version], pattern: '(\d+\.\d+\.\d+)' }
-  verified: [{ range: ">=X.Y.0 <X.Z.0", date: 2026-11-12, evidence: <ref> }]
-  shipped:  { mods: [tabs, agents, files], layouts: [main, terminals, win98] }
-package:
-  metadata: agent-marketplace.yaml                      # curation sidecar
-  display:  { readme: RECIPE.md, preview: preview.png }
+  executable: herdr-app
+  version_probe:
+    argv: [--version]
+    pattern: '(\d+\.\d+\.\d+)'
+  verified:
+    - { range: ">=X.Y.0 <X.Z.0", date: 2026-11-12, evidence: <ref> }
+  shipped:
+    mods: [tabs, agents, files]
+    layouts: [main, terminals, win98]
+checks:
+  initial-load:
+    scope: eager-package-load
+    argv: [check, "{subject}"]
+    subject: {under: mods, component: package-name}
 kinds:
   mod:
     deliver: place
-    place:   { into: [mods/] }
-    verify:  [herdr-app, check, "{path}"]
+    into: [mods/]
+    verify: initial-load
   layout:
     deliver: place
-    place:
-      into: [layouts/, mods/, backgrounds/, themes/]
-      files: [gitlab.json, review-prompt.md, rereview-prompt.md]
+    into: [layouts/, mods/, backgrounds/, themes/]
+    support_files: [gitlab.json, review-prompt.md, rereview-prompt.md]
   theme:
     deliver: place
-    place:   { into: [themes/] }
-  icons:                                  # with aggregates (Decision 5)
-    deliver: place
-    place:   { into: [program-icons/] }
+    into: [themes/]
 ```
+
+Profile `kinds` keys are local; import, dry-run, and sidecar identities use `herdr-app/mod`.
 
 Place delivery copies the normalized package payload to the same relative
 paths under the target root, except aggregate fragments (Decision 5).
-Curation metadata and declared display files are not payload. `into`
-lists permitted top-level directories; `files` permits exact root-level
-support files. A payload outside those declarations is refused as a whole,
-at Marketplace ingestion and at sync, instead of being dropped silently.
+Curation metadata and declared display files are not payload. Profile
+`into` is a non-empty array of target-root-relative directory prefixes;
+`support_files` is an optional array of exact root-relative file names.
+The first-place profile contains only `mod`, `layout`, and `theme`, with
+no aggregate fragment mapping. A payload outside these declarations is
+refused as a whole at ingestion and sync, never silently dropped.
 Support-file declarations do not authorize replacing unowned files or
-writing shared aggregates as whole files. `verify` is optional (Decision 6).
+writing shared aggregates as whole files. `verify` names a check defined
+once in the profile; a kind without one is reported as unverified.
+
+The v1 profile has one user root and no repository root. Fields use
+Decision 13 types and grammars; defaults have exactly `macos` and `linux`
+keys, each a relative `{base, path}` record. `home` and `xdg-config`
+resolve from canonical home and XDG config directories, never from the
+current directory. `override` names an environment
+variable, not approval; supplied values must be absolute, under an admitted
+canonical base, and exactly consented. Relative values refuse. Aliases
+failing Decision 14's recorded-root check are not approval.
+`host.executable` and command argv elements are strings; `checks` is a map
+of named checks with one scope and one package-relative subject. Unknown
+fields, duplicate names, unsupported platforms, an absolute default, or a
+root outside the canonical home/XDG config bases refuse profile loading.
+The YAML is proposed input, not a shipped format.
+
+All commands use the single `host.executable` binding. `version_probe.argv`
+and each check's `argv` are literal argument arrays: no shell, executable
+substitution, or computed command. A check may use `{subject}` only as a
+data argument. For a Herdr mod, `{under: mods, component: package-name}`
+resolves to that package's owned native directory, not the generation root
+or the whole host root. The engine validates the exact installed absolute
+path and passes it as one argument; it never uses shell expansion. Approval binds
+the canonical executable and its SHA-256 whenever a probe or check exists.
+The register example below and aggregate profile shapes are follow-on
+proposals, not part of this first-place profile.
 
 `theme` and `icons` are kinds of their own, so a color theme or a set of
 program icons can be shared without a layout. A layout may still bundle a
@@ -583,7 +631,7 @@ and requires the packages it shares with other layouts (Decision 4).
 Runtime data, host-provided facilities and programs found on PATH remain
 separate from those packaged dependencies.
 
-Register-mode example, using the real Herdr CLI (`plugin link <PATH>`,
+Follow-on register-mode example (not first place v1), using the real Herdr CLI (`plugin link <PATH>`,
 `plugin unlink <ID>`, `plugin list --json` returning `result.plugins[]`
 with `plugin_id` and `plugin_root`):
 
@@ -605,13 +653,14 @@ kinds:
       path: plugin_root
 ```
 
-The format must also fit tern without special cases: tern places
+The declarative format should also fit Tern without special cases: Tern places
 `<config>/plugins/<id>/` with per-OS roots (macOS `~/Library/Application
 Support/Tern`, Linux `$XDG_CONFIG_HOME/tern`, Windows `%APPDATA%\Tern`) and
 a `TERN_CONFIG_DIR` override. Tern skips dot-named plugin entries and stages
-changes in dot-named siblings. Keep the paper test against real Herdr app
-layouts, tern and omp, and retain further trials before freezing v1. The
-scratch-only Tern trial above exercises declarative root overrides, paths
+changes in dot-named siblings. Tern and its Windows root are follow-on
+examples only; neither is in the first place release. Keep the paper test
+against real Herdr app layouts, Tern and omp, and retain further trials
+before freezing the generic format. The scratch-only Tern trial above exercises declarative root overrides, paths
 with spaces, package topology and metadata exclusions without a target-ID
 switch; Tern remains a candidate, not an approved v1 profile. Herdr layout
 dependency checks are host-specific author/analysis validation, not a
@@ -629,8 +678,8 @@ code-executing validation to make placement work.
   symlink containment. Roots resolve under `$HOME` or the OS/XDG config
   and data directories; arbitrary absolute roots are refused. A root may
   not be `$HOME` or an XDG base directory itself, and may not overlap
-  agent-marketplace's own directories. This needs reconciliation with
-  app-specific absolute root overrides before profile v1 is frozen.
+  agent-marketplace's own directories. App overrides follow the admitted
+  canonical-base and exact-consent rules above.
 - A profile cannot claim another target's id or overlap its roots.
 - No dot-prefixed staging siblings inside target roots.
 - Lock, drift, `sync --check`, backup and pruning behave as for every
@@ -644,9 +693,58 @@ Git origin, ref and optional subdirectory identify the source. An author
 or curator declares package boundaries and explicit file/tree mappings
 from that source to native destination-relative paths. The declaration
 lives in the registry-side curation sidecar (Decision 13); upstream
-repositories need not adopt the curated registry layout.
-The metadata syntax is fixed in the OpenSpec change, not by adding
-per-repository target profiles.
+repositories need not adopt the curated registry layout. The local
+`target dry-run` input is a versioned YAML import manifest whose proposed
+shape is:
+
+```yaml
+apiVersion: agent-marketplace.io/target-import/v1
+target_id: herdr-app
+kind: herdr-app/mod
+name: chris-links
+mappings:
+  - source_path: mods/chris-links/main.js
+    destination_path: mods/chris-links/main.js
+  - source_path: mods/chris-links/mod.json
+    destination_path: mods/chris-links/mod.json
+display_files: [README.md]
+metadata:
+  requires: []
+  manual_setup: [Bind the configured hotkey in Herdr app settings.]
+```
+
+`apiVersion`, `target_id`, `kind`, `name`, and `mappings` are required
+exactly once; the version is the literal shown, IDs/names use Decision
+13's grammars, and `mappings` is a non-empty array of objects with only
+two required strings: `source_path` and `destination_path`.
+Both paths are unique, slash-separated relative paths without absolute
+prefixes, backslashes, empty/`.`/`..` components, controls or ambiguity.
+Each source is a regular non-symlink file beneath `--source`; tree imports
+expand to explicit mappings, and every selected payload file maps once.
+Each destination is unique and within profile `into` or an exact
+`support_files` entry. Escapes, symlinks, special/unmapped files, unknown
+fields, or duplicate YAML keys refuse. Optional `display_files` is a
+unique array of source-relative strings that remain outside payload.
+
+Optional `metadata.requires` is an array of existing prerequisite
+references: `kind:name` string shorthands or `{kind, name, registry?, path?}`
+objects;
+it never packages or acquires a source sibling. Optional `manual_setup`
+is an array of non-empty strings. The curator's `agent-marketplace.yaml`
+sidecar stores identity, prerequisites, setup notes, provenance, and the
+assessed mapping. Bundled dependencies need explicit mappings; separately
+curated dependencies need `metadata.requires`.
+
+In the persisted sidecar, Decision 13's `files` array uses `source_path`
+relative to `payload/` and target-root-relative `destination_path`.
+Original source paths belong to provenance. The import manifest and
+sidecar are distinct schemas.
+
+No field accepts a glob, shell, script, installer, host command,
+substitution, or code. Import and dry-run do not change payload bytes.
+Curators must repair missing Python modules and queue placeholders; the
+engine never runs an installer, substitutes paths, loads a checkout
+sibling, or replaces a package with another engine.
 
 This supports a directory of native mods, a single mod, or a complete
 personal app setup. For example, an import can map `mods/chris-links/`
@@ -726,9 +824,11 @@ the payload, so changing a destination requires a new assessment.
 
 A package declares the other packages it needs with `metadata.requires`
 in its sidecar. This is the existing resource-prerequisites contract: a
-list of `kind:name` strings or maps with `name`, `kind` and optional
-`registry` and `path` hints, met by any selected resource with that kind
-and name. A layout that uses someone else's mod requires it:
+list of `kind:name` string shorthands or objects with `name`, `kind` and
+optional `registry` and `path` hints, met by any selected resource with
+that kind and name. A layout that uses someone else's mod may use either
+form. The string shorthand is `herdr-app/mod:andrew-tabs`; the structured
+object is `{kind: herdr-app/mod, name: andrew-tabs}`. For example:
 
 ```yaml
 metadata:
@@ -747,9 +847,8 @@ Reuse needs three extensions, fixed in the OpenSpec change:
 - A requirement on a host package whose target is not enabled follows the
   collection-member rule in Decision 1.
 
-Selection follows the prerequisite stack that is open as pull requests
-#626, #643, #661, #671 and #672 (state on 2026-11-13) and inherits its
-rollout:
+Selection follows the prerequisite stack. See the delivery plan's
+verified 2026-11-18 dependency snapshot for its current status and rollout:
 
 - Without `requires.expand`, a requirement is advisory. Selecting a layout
   warns about each unselected mod and prints its install command.
@@ -766,8 +865,13 @@ rollout:
   target-specific code.
 
 A layout placed without a required mod does not work. Package views
-report an unmet requirement next to pending manual setup, never as ready
-(Decision 11). Whether such a layout is placed at all is an open item.
+report an unmet requirement separately from placement and pending manual
+setup, never as ready (Decision 11). In v1 the existing prerequisite
+semantics remain: requirements are advisory unless the existing
+`requires.expand` behavior applies. An unmet requirement alone does not
+silently block place delivery, expand dependency resolution, or change the
+current hard/soft diagnostic policy. Directly selected packages still obey
+target availability, scope, and authored-config refusals in Decision 1.
 
 `requires` has no version constraint. Keeping a layout and the mods it
 requires compatible within one registry revision is the curator's job.
@@ -797,6 +901,16 @@ only it uses.
 Placing a layout and the mods it requires is several filesystem writes,
 and a running host can observe the state in between; the proposed
 publication and recovery contract is Decision 14.
+
+For an unowned collision, refuse the complete package and report the exact
+destination and its observed owner classification (`unowned` or the
+recorded owning package); never infer ownership from byte equality. Manual
+remediation is a proposed user flow, not an adoption feature: show the
+diagnostic and path, ask the user to make an independent backup and move or
+remove the unmanaged collision, then rerun the operation. Restore a saved
+file only after rechecking current ownership and conflicts. The CLI, TUI,
+and Marketplace do not move, overwrite, adopt, or restore the colliding
+file, and byte equality is not proof of ownership.
 
 Upstream resolves a name clash by renaming the incoming mod. Curators do
 the same at curation time, or split a shared mod into its own package;
@@ -898,7 +1012,9 @@ The Herdr app treats any edit to `keys.json` as making the whole file the
 user's, and then stops adding new default shortcuts on upgrade. Without an
 upstream change the first merge can only warn about this, once.
 
-### 6. Host commands: register lifecycle and verification
+### 6. First-place verification; register lifecycle is follow-on
+
+Register operations below are follow-on, not first-place behavior.
 
 Register lifecycle:
 
@@ -943,60 +1059,79 @@ update API cannot provide that stronger guarantee; post-command
 inventory detects observable divergence and preserves pending evidence
 instead of attempting a destructive rollback.
 
-**Verification.** A kind may declare `verify`, a command that checks one
-delivered package, such as `herdr-app check <mod folder>`. It runs after
-place or register in a mutating sync. A failure is reported, makes sync
-exit nonzero and is recorded. Decision 14 chooses to retain the placed
-package after a failed check and defines its recovery and retry state.
-Herdr app mods use place followed by verify, not register. Verification
-reports only what the host check exercised; it does not prove all runtime
-paths or user configuration are valid, and it does not repair them.
+**Verification.** A kind may name one profile check. `initial-load` has
+scope `eager-package-load`, subject `{under: mods, component: package-name}`,
+and argv `[check, "{subject}"]`. The engine passes the validated absolute
+owned package path as one data argument, not the generation/host root; no
+shell expansion. It rechecks the approved executable
+and digest. A kind without a check is `not-configured`, not passed. A check
+may load code and does not prove deferred runtime behavior.
 
-Keep distinct results for files placed, the named check and its scope,
-exact package/profile revisions and host version, pending manual setup or
-unmet requirements, and runtime acceptance evidence only when actually
-exercised. The host documents `herdr-app check` as an initial-load and eager
-element check, not a check of deferred renders or later runtime paths.
-The spike demonstrated the gap: `andrew-links` passed the check but its
-Python helper import failed, while queue placeholders also passed.
-Never infer functional readiness from a
-successful host check, no warnings, or an empty `manual_setup`. Host-version
-evidence and runtime witnesses are curator evidence, not a new
-consumer-configured command surface.
+Each placement/verification result retains this separate evidence shape:
+
+```yaml
+placement: {status: placed, package_revision: sha256:<64-hex>, profile_revision: sha256:<64-hex>}
+verification: [{check: initial-load, scope: eager-package-load, status: passed, package_revision: sha256:<64-hex>, profile_revision: sha256:<64-hex>, host_version: {status: known, value: 0.1.15}, evidence_source: local-command}]
+manual_setup: {status: pending, items: [Bind the configured hotkey in Herdr app settings.]}
+requirements: {status: unmet, items: [herdr-app/mod:andrew-tabs]}
+runtime_evidence: {status: not-exercised, scenarios: []}
+```
+
+Verification status is `passed`, `failed`, `not-configured`, or `not-run`;
+host-version status is `known`, `missing`, or `unknown`. Exercised runtime
+evidence names the scenario, revisions, host version, status and source.
+Published evidence stays distinct from local results. None of placement,
+verification, setup, requirements or runtime evidence is a readiness flag:
+an empty setup list, absent check, successful load check, or no warnings
+does not prove readiness. The spike's Python helper and queue placeholders
+passed load checks but still failed in use.
+
+Default policy does not block on unmet requirements or missing host
+version. Organization policy alone may require verified version evidence
+for an exact target ID. Missing, unknown, or out-of-range evidence then
+blocks that target with its own diagnostic: direct install refuses before
+acquisition, sync skips that target, and check uses existing strict-mode
+rules. Other targets and prerequisite semantics do not change.
 
 When host commands run:
 
 | Command | Runs |
 |---|---|
-| mutating `sync` | version probe, register, unregister, inventory, verify |
-| `sync --check`, `status`, TUI drift views | nothing; they report the recorded inventory and verify results |
-| `sync --check --verify`, `doctor` | version probe, inventory and verify, live; never register or unregister |
+| planned mutating `sync` | R4's approved version probe and configured check; register operations are follow-on |
+| `sync --check`, `status`, TUI drift views | nothing; they report recorded state and verification results |
 | author import dry-run | nothing; discovery, validation and placement planning only |
-| explicit author live verification | approved version probe and verify against the selected installed package; never register or unregister |
+| explicit `target verify` | separate opt-in live check; approved version probe and named check against the selected installed package |
 
-The default read-only path executes nothing for two reasons. Those
-commands run unattended in CI, pre-commit and session-start hooks. And a
-verify command can load package code: `herdr-app check` loads the mod. The
-cost is that an out-of-band `herdr plugin unlink` shows up only at the
-next mutating sync or live check. The profile declares the command; the
-user decides when it runs outside a mutating sync.
+Normal read-only commands run nothing. This design adds no live check to
+`sync --check --verify` or `doctor`; `target verify` is separate opt-in.
 
 Safety rules:
 
 - No host command runs before the profile revision is approved
   (Decision 7).
-- Every argv must start with `host.binary`. No shell, no other programs.
-- The binary is resolved to an absolute path at approval and recorded
-  with it. Later runs execute the recorded path, not a fresh PATH lookup.
-  A path inside the current repository, or reached through a relative PATH
-  entry, is refused. A changed path asks for approval again.
-- Templates substitute only `{path}`, `{id}`, `{version}`, each as exactly
-  one argv element.
+- The first place profile has one executable binding (`host.executable`)
+  for its version probe and checks. The executable is resolved to a
+  canonical absolute path and SHA-256 at approval; later execution uses
+  and rechecks that exact file, not a new PATH lookup. A path inside the
+  current repository or reached through a relative PATH entry is refused.
+  A changed path or digest requires fresh approval.
+- There is no shell, second program, or general template language.
+  A declared check's argv is literal except its one package-relative
+  `{subject}` data argument. Executable, option positions, IDs, and
+  command roles are never substituted.
 - Stdin closed, per-command timeout, bounded and redacted output.
 - Journal recovery uses the exact previous and desired registration
   states above; it never treats ID presence alone as success.
-- A missing host binary makes the target unavailable for that run; other
-  targets proceed.
+- Other targets proceed when this target lacks its approved executable.
+
+`target verify` takes a Decision 13 locator and stable installation ID:
+`agent-marketplace target verify herdr-app%2Fmod/chris-links --installation 01J...`.
+It checks the exact revisions, recorded root/state, current approval and
+executable digest before running the named check. Missing/stale state,
+root, approval, check or executable refuses without writing a result,
+config, lock, approval, ownership or target file. An executed check records
+its revisions, scope, host-version status, result and evidence source; it
+never installs, activates, repairs or removes.
 
 ### 7. Consent: profile approval and package assessment
 
@@ -1049,41 +1184,82 @@ The pipeline provides three things instead:
   users as disclosure and is labeled as analysis output.
 - A package that turns out to be harmful is revoked.
 
-**Local approval binds resolved destinations.** Approval is recorded in
-user state against the profile revision digest, canonical resolved
-destination roots and resolved host executable path, when applicable.
-The first sync of a target shows what the profile does: its roots, place
-rules, aggregate files, the exact command set and the resolved host
-binary. A new profile revision or a change to either resolved roots or
-executable path shows a diff and requires approval again.
+**Local approval binds the exact destination.** The user-state receipt
+keys OS, target, profile digest, canonical target root, canonical state
+store and the profile's exact command roles. It also binds executable
+canonical path and SHA-256, or explicit `no-execution`. Selection and
+approval are separate. The engine rechecks the executable before use.
 
-Changing `HERDR_APP_HOME`, XDG settings or a root alias can change the
-destination without changing profile bytes. Until the new destination is
-approved, the target reports "target destination changed" and writes
-nothing at either location. Ownership stays bound to the recorded
-installation roots. Approval of the new location allows a new
-installation there; it does not authorize cleanup of the old one.
-V1 does not automatically relocate installations: status shows both
-locations, and retiring the old installation requires an explicit action
-using its recorded ownership and execution authority.
+`agent-marketplace target approve <target-id>` shows these bindings and
+asks for confirmation. It writes only the receipt, not selection or
+deletion authority. It requires a TTY; non-TTY and `--yes` refuse with
+`target.confirmation-required` and write nothing. `--json` reports the
+result after interactive confirmation and is not config input.
 
-Headless sync skips an unapproved target with a remediable diagnostic;
-other targets proceed, so one pending approval never blocks agent
-resources. An organization layer may pre-approve specific profile digests
-with explicit destination and executable-binding rules for hands-off
-rollout. A digest alone does not authorize arbitrary environment-derived
-destinations. The client records the concrete approved bindings on each
-machine; a binding outside those rules requires interactive approval.
-Without organization preapproval, individuals approve interactively.
-Enabling a target is not by itself consent.
+The proposed local receipt is distinct from both the user selection and
+the consumer configuration:
+
+```json
+{
+  "schema_version": 1, "os": "linux", "target_id": "herdr-app",
+  "profile_digest": "sha256:<64-lowercase-hex>", "canonical_root": "/home/alice/.config/herdr-app",
+  "state_store": {"canonical_root": "/home/alice/.local/state/agent-marketplace", "root_key": "<64-lowercase-hex>"},
+  "executable": {"canonical_path": "/usr/bin/herdr-app", "sha256": "sha256:<64-lowercase-hex>"},
+  "command_roles": ["version_probe", "initial-load"]
+}
+```
+
+`executable` is `"no-execution"` only when no probe/check role exists.
+`root_key` is the existing ownership `RootKey` of the canonical state
+root. The receipt records the matching organization entry and concrete
+values, never a policy pattern.
+
+Changing `HERDR_APP_HOME`, XDG settings or a root alias requires approval
+for the new canonical root and writes nothing at either location before
+approval. A new approval starts a separate installation; it never moves or
+prunes the recorded one. Status may show both roots.
+
+Organization preapproval is an exact entry in the v4 organization root,
+never an included fragment:
+
+```yaml
+apiVersion: agent-marketplace/v4
+target_preapprovals:
+  - {os: linux, target_id: herdr-app, profile_digest: sha256:<64-lowercase-hex>,
+     canonical_root: /home/alice/.config/herdr-app,
+     executable: {canonical_path: /usr/bin/herdr-app, sha256: sha256:<64-lowercase-hex>},
+     command_roles: [version_probe, initial-load]}
+```
+
+Each entry binds exact OS, target, profile digest, canonical root and
+command roles. The root must equal the resolved root beneath admitted
+home/XDG config bases. No wildcard, prefix, raw environment grant, or
+outside override is allowed. `executable` is the canonical absolute path
+and SHA-256 when commands exist, otherwise `no-execution`. Multiple
+entries are independent exact grants. A match creates a concrete local
+receipt with the state-store identity; a mismatch needs interactive
+approval. Optional `require_verified_host_version` is an organization-only
+target-ID list, default empty.
+
+Headless sync never prompts; it skips pending targets with diagnostics and
+continues independently. `sync --check` remains read-only under existing
+strict rules. Direct install refuses before acquisition when approval or
+an organization version rule is unmet. Enabling is not consent.
+
+Approval never grants old-root deletion. Interactive
+`agent-marketplace target retire <installation-id>` reads recorded
+ownership/root, not the current default; it shows target, exact root and
+proposed removals before confirmation. Non-TTY/`--yes`, missing state,
+changed store or unavailable root refuses without mutation. Retirement
+removes only proven-owned unchanged bytes and preserves edits/unowned files.
 
 ### 8. Conditions on the host machine
 
 | Condition | Declared by | Check | Effect |
 |---|---|---|---|
 | Platform | profile, package sidecar | runtime OS | hard: skip elsewhere |
-| Host present | profile `detect` | PATH lookup (no execution) or root exists | hard: target unavailable this run |
-| Host binary (register) | profile `host.binary` | PATH lookup, absolute path recorded | hard |
+| Root detected | profile root binding | canonical root check, no command execution | observation only; it does not authorize a check |
+| Host executable | profile command binding | exact approved canonical path and digest, rechecked before execution | presence alone is not consent; command roles need the binding |
 | Host version | profile `host.version` | single probe with fixed argv, run only when host commands may run (Decision 6) | soft: warn outside `verified`; organization policy may block |
 | Package host version | package sidecar `host: { min, tested }` | compared with the last recorded version probe | soft: warn below `min` or above `tested` |
 | Required packages | package sidecar `metadata.requires` | a selected resource with that kind and name (Decision 4) | advisory; selected automatically with `requires.expand` |
@@ -1130,15 +1306,27 @@ resource, and resolved before the resources that need it.
 People writing their own profiles is a main goal, so external profiles
 are supported from the first profile change, not added later.
 
-**Enabling a target** is one action: selecting its profile. Selection
-appends the profile's id to the selecting layer's `targets:` list, and
-deselecting the profile removes it. The two can still be edited apart by
-hand:
+I3 proposes `agent-marketplace target enable <target-id>` and
+`agent-marketplace target disable <target-id>`. I2 adds
+alias/read-before-write only, with no profile-aware command.
 
 - An id in `targets:` without its profile selected is a configuration
   error (Decision 2).
 - A selected profile whose id was removed from `targets:` leaves the
   target disabled; its packages are skipped and `status` says so.
+
+Enable adds only the ID for a known, selected profile admitted by policy.
+Disable removes only that ID, not profile selection. Preserve the authored
+alias or write `harnesses:` if none exists. Validate v4 roots/includes;
+edit only user selection and leave config/lock unchanged on refusal. Run no
+host process or change approval, ownership, or target files. JSON is an
+operation result, not config.
+
+Disabling a target or deselecting its profile does not remove the old-root
+installation; individual package deselection follows Decision 14.
+Consent, availability and environment drift cannot authorize pruning;
+old-root removal requires confirmed
+`agent-marketplace target retire <installation-id>` (Decision 7).
 
 A profile with only a user root takes effect only when selected in the
 user or organization layer.
@@ -1150,27 +1338,40 @@ discovery surface for every profile it serves. Local-directory profiles are
 flagged as unvetted in `status`. Approval per revision (Decision 7) is the
 gate for every profile, whatever its source.
 
-### 11. Presentation (sketch, not yet discussed in depth)
+### 11. Presentation required for first place (broader polish deferred)
 
-- Group by destination: today's agent resource view stays as is; each
-  enabled target with host kinds gets its own TUI section and web catalog
-  tab/facet. Disabled targets are hidden in the TUI and filterable on the
-  web.
-- Host packages render through one generic package card driven by profile
-  `display` metadata (name, description, preview, capability summary,
-  owned keys). Adding a target adds no per-target UI code.
+- CLI and TUI listing/status show target selection separately from
+  availability, consent, placement and verification. Local surfaces may
+  show the concrete local root and installation ID; pending, disabled,
+  unavailable, unapproved, and policy-blocked states remain distinct.
+- The TUI groups enabled host packages by destination and uses a generic
+  package card driven by display metadata. Approval shows the exact
+  bindings in Decision 7; retirement shows the recorded installation and
+  exact proposed removals before confirmation. Manual collision
+  remediation shows the path and owner classification but never adopts it.
+- Marketplace browse/detail shows only published package metadata and
+  curator-published profile/version/check/runtime evidence. It must label
+  published evidence as such and must not claim local executable
+  discovery, detected local paths, local verification, or readiness.
+  CLI/TUI local evidence is not copied into or represented as Marketplace
+  evidence.
 - Host kinds are target-scoped names (`herdr-app/mod`), so the agent kind
   list does not grow.
-- Package views separate placement and verification results from pending
-  manual configuration or activation. A placed package with outstanding
-  setup or an unmet package requirement must not be presented as fully
-  ready to use. An empty `manual_setup` or successful host check alone
-  does not establish readiness (Decision 6).
+- Package views separate placed files, pending setup, unmet prerequisites,
+  named/scoped verification, and actually exercised runtime evidence.
+  They never collapse them into a functional-readiness badge. Empty
+  `manual_setup`, missing checks, no warnings, or successful
+  `herdr-app check` alone do not establish readiness (Decision 6).
 - Package requirements reuse the "Requires" and "Required by" sections
   that the prerequisite stack adds to the TUI and the Marketplace
   resource page (Decision 4).
 - The capability summary is labeled as analysis output, not as a
   permission the host enforces (Decision 7).
+
+I4 includes this minimum generic CLI/TUI state and the published/local
+evidence distinction in Marketplace browse/detail. Later presentation work
+may add broader styling, new facets, or polish, but it cannot defer these
+first-place safety distinctions or imply local machine state on the web.
 
 ### 12. Author dry-run and live verification
 
@@ -1178,7 +1379,23 @@ Mod authors need a way to check a local source and its import declaration
 before submitting it or changing their installed setup. The author
 dry-run uses the same importer, profile validation and placement planner
 as Marketplace ingestion and client sync. It works without an
-organization layer or a running host. CLI spelling is fixed in OpenSpec.
+organization layer or a running host. The proposed command is:
+
+```text
+agent-marketplace target dry-run --profile <file> --source <dir> --import <file> [--destination <dir>]
+```
+
+`--profile` names a local profile YAML file, `--source` an existing local
+directory, and `--import` the `target-import/v1` YAML manifest described in
+Decision 4. `--destination`, when supplied, is an existing canonical target
+root in an admitted home/XDG config base; it enables a read-only collision
+and recorded-ownership preview, not a write. The command does not fetch
+remote sources, create a destination, resolve runtime overrides, acquire a
+lock, or require profile approval. Invalid arguments, unreadable inputs,
+unknown fields, policy-ineligible roots, unmapped/escaping files, missing
+declared packaged content, duplicate/conflicting mappings, or a shipped
+name return nonzero with file/path-specific diagnostics and no target,
+config, lock, approval, ownership, cache, or registry writes.
 
 The report shows discovered package identities, selected and excluded
 source files, native destination paths, profile revision, invalid or
@@ -1186,20 +1403,40 @@ escaping paths, missing declared packaged dependencies, declared package
 requirements, names the host ships, and pending manual setup. When given
 a destination, it also reports collisions and proposed ownership changes
 against current state without applying them; otherwise it marks
-destination checks as not performed. A refused import returns nonzero
-with file-specific diagnostics.
+destination checks as not performed. The JSON result is a report schema,
+not the profile/import/config schema:
 
-Dry-run writes no target files, consumer configuration, acquisition locks
-or approval/ownership state. It executes no host commands, mod code,
-version probes or upstream installers. Source acquisition may use the
-ordinary cache when the author chooses a remote source; a local source
-needs no network acquisition.
+```json
+{
+  "schema_version": 1, "status": "valid",
+  "profile": {"id": "herdr-app", "revision": "sha256:<64-hex>"},
+  "package": {"target_id": "herdr-app", "kind": "herdr-app/mod", "name": "chris-links"},
+  "mappings": [{"source_path": "mods/chris-links/main.js", "destination_path": "mods/chris-links/main.js"}],
+  "requirements": [{"ref": "herdr-app/mod:andrew-tabs", "status": "unmet"}],
+  "manual_setup": [{"status": "pending", "text": "Bind the hotkey in Herdr app settings."}],
+  "destination_check": {"status": "not-requested", "conflicts": []}, "diagnostics": []
+}
+```
 
-Explicit live verification is separate and follows Decision 6's approval,
-binary binding and execution rules. It exercises the profile's check
-against an explicitly selected installed package; it does not implicitly
-install, activate or repair that package. Producing `verified` evidence
-must record which profile/package revisions and host version were checked.
+On refusal it returns `status: "refused"`, non-empty diagnostics with
+stable code and source/destination path where applicable, and a nonzero
+exit. The report never claims a filtered/unmapped file was delivered.
+
+Dry-run writes no target files, consumer configuration, acquisition locks,
+approval/ownership state, cache, or registry sidecar. It executes no host
+commands, mod code, version probes, package processes, substitutions, or
+upstream installers. A destination check may read existing state but does
+not create or repair it. The only output is the report on stdout plus
+ordinary diagnostics on stderr.
+
+Explicit live verification is the separate command in Decision 6. It
+requires the exact `--installation` ID and package locator, current
+approval, recorded root/state identity and executable digest. It exercises
+only the profile's named check against the installed package; it does not
+implicitly install, activate, repair, or retire it. If it executes, its
+local result records profile/package revisions, named scope, host-version
+status, outcome, and evidence source. `--json` output is an operation
+result, never reusable config.
 
 Source containment, declared dependencies and destination permissions
 are enforceable checks. Static analysis can identify some missing
@@ -1931,10 +2168,8 @@ neither a failed check nor a user edit. Recovery itself runs no host code
 and leaves
 verification pending; the sync runs its normal post-recovery check only
 after completing the journal and revalidating selection, otherwise the next
-mutating sync runs it. Default read-only commands (`sync --check`, `status`,
-TUI drift views) run no host code and report the recorded result;
-`sync --check --verify` and `doctor` run verify live under Decision 6 and
-never write placement or ownership. A
+mutating sync runs it. Read-only commands run no host code and report
+recorded results; see Decision 6 for live-check scope. A
 successful initial-load check still does not prove deferred runtime behavior.
 
 #### Trace to future acceptance witnesses
@@ -1982,155 +2217,54 @@ covers more than one app.
 | `permissions` manifest checked in CI | Not adopted. The host cannot enforce it; the analysis capability summary covers disclosure (Decision 7). |
 | Separate installer with its own `installed.json` | Not adopted. It duplicates ownership state agent-marketplace already keeps. |
 
-## Open items
+## Remaining implementation and evidence questions
 
-- **TUI and web presentation**, including the approval prompt and drift
-  views (Decision 11 is only a sketch).
-- **Import and author-tool syntax:** package boundaries and mapping
-  location are proposed in Decision 13; declared dependencies, manual
-  setup metadata, and CLI spelling for dry-run/live verification remain
-  open (Decision 12).
-- **Analysis policy for host packages:** proposed in Decision 13.
-- **Unmet package requirements.** `requires` is advisory unless
-  `requires.expand` is on, but a layout without a required mod does not
-  work. Undecided: place it and report it as not ready, or refuse it.
-- **Organization preapproval and retirement UX:** the policy syntax for
-  allowed destination and executable bindings and the explicit user action
-  for retiring an old installation remain open. Decision 14 settles the
-  canonical-root ownership binding and safety boundary, not that UX.
-- **Cross-filesystem place publication.** Refusing publication when the
-  agent-marketplace state directory and target root are on different
-  filesystems blocks those installs; whether to offer a supported alternative
-  remains open.
-- **Adopting existing hand installs.** Before release, document either a
-  safe first-release refusal and remediation path or design a separate,
-  explicit opt-in adoption flow. Never adopt implicitly, even when bytes
-  match. Pane-switcher and cos-queue collided with hand-installed files in
-  the seeded scratch home. A later adoption flow cannot treat byte equality
-  or a path under a store as durable ownership proof; shipping adoption
-  itself is not required if safe refusal is the chosen path.
-- **Organization block on unverified host versions:** exact policy shape.
-- **Profile format paper and executable tests** against real Herdr app
-  layouts and omp before freezing v1; the Tern trial is only a scratch
-  placement exercise and is not a v1 approval.
-- **Blocker, application root overrides versus engine root policy.** Tern
-  documents a `TERN_CONFIG_DIR` override and the trial routed one to an absolute
-  scratch path; this conflicts with the engine guarantee that arbitrary
-  absolute roots are refused. Decide how explicit overrides are constrained
-  or approved, including `HERDR_APP_HOME`, before freezing v1.
-- **Herdr app root on Windows:** not documented by the Herdr app; confirm
-  before declaring it.
-- **Appending to a layer that declares no target list.** Target lists
-  replace across layers instead of merging, so writing
-  `targets: [herdr-app]` into a user layer that had none would replace the
-  organization's harness list for that user. Proposed: seed the new list
-  with the currently effective one. The cost is that later organization
-  additions no longer reach that user.
-- **Place details left to the implementation change.**
-  Decision 14 settles outcomes; these remain for the change that implements
-  place delivery. The root-keyed ownership schema fields that hold
-  created-directory identities, per-file prune generations, verification
-  results and how long a retained directory's record lasts. The journal field
-  and version bump that select the place authority branch, and the recorded
-  order that places the ownership participant (the dependency-journal
-  `DesiredFile` from `PrepareBatch`) after every package write and before
-  prune. A `Dir`-based nearest-ancestor check for the pre-write device
-  comparison, since `CaptureDestination` refuses a missing parent. The
-  outcome for an owned file the user deleted, on sync, upgrade and deselection.
-  Whether a verification retry runs or defers when a retained package was
-  edited before it. How AC3's location guarantee is worded beside the
-  ancestor-move observation limit. Whether the root-spelling comparison
-  accepts a symlinked HOME or XDG path that resolves to the recorded root. The
-  exit for an unmarked stale file that is absent during prune. The new
-  extraction of place generation references in `ReadAllPluginGenerationRefs`,
-  which appends none today.
+First place is macOS/Linux, place-only. Collections may skip known
+disabled/unavailable members; malformed or ineligible authoring refuses.
+Unowned collisions refuse without adoption; requirements keep existing
+semantics; approval and retirement differ; cross-filesystem publish
+refuses; roots stay under admitted home/XDG config bases. Windows,
+aggregates, and register mode are later scopes.
 
-### Carried from the adversarial review, not yet resolved
+I3 must test Decision 14's remaining edges: created-directory identity,
+prune generations, verification retention, journal authority/order,
+nearest-ancestor device checks, deleted files, retry after edits, root
+spelling/symlinks, absent stale files, and generation references. The spike
+proves none.
 
-- **Register store versus package generations.** Decision 14 chooses the
-  existing immutable package-generation and ownership-reference seam for
-  place delivery. Whether register-mode generations share that store remains
-  open with `target-profile-register`; register delivery is not part of this
-  decision.
-- **Profile identity and retention:** proposed in Decision 13. Unregistering after a profile update or removal remains open under Decision 6 and `target-profile-register`.
-- **Staging and publication.** The proposed staging, cross-filesystem
-  refusal, destination containment and observation limits are proposed in
-  Decision 14; the acceptance witnesses there remain unimplemented.
-- **Herdr replaces its shipped mods on every start.** `host.shipped`
-  (Decision 3) refuses known shipped names at curation. A later Herdr
-  release may still ship a name we already placed. The guide documents
-  that an edited shipped file is moved to `<name>-edited` and replaced by
-  Herdr's version; whether a placed package of the same name is treated
-  that way is untested. Decision 14 defines how the engine reports and
-  retains bytes it observes as edited, but it cannot promise which copy
-  Herdr's own startup behavior will keep.
-- **Discovery and profile selection:** proposed in Decision 13.
-- **Required selections** of a host package whose target is not enabled
-  or not available on the machine.
-- **Windows** is outside the supported platforms in `CODING_STANDARDS.md`,
-  while the profile schema and the tern roots include it.
-- **Register details:** a package-supplied `{id}` with a leading `-`;
-  `herdr plugin enable/disable` state; backup cannot restore host-side
-  registration. Exact-path ownership checks and recovery behavior are
-  specified in Decision 6.
-- **Edited owned files and failed verification.** Decision 14 chooses
-  keep-on-sync/upgrade, cede-on-deselection, and retain-on-failed-check;
-  its per-transition witnesses remain unimplemented.
+Tern's trial proves simulated placement only. Verify any profile/proxy
+evidence used by implementation or exclude that case from v1. Herdr may
+replace a name it ships in a later release; curation rejects current
+`host.shipped` names, but startup behavior for a future overlap is unknown.
+Aggregate restore/cede semantics remain for I5, and register inventory,
+enable-state, option-like IDs, and recovery remain for I6. I4 includes the
+minimum local/published evidence views; broader polish and facets are
+deferred.
 
 ## Delivery plan (proposed OpenSpec changes, in order)
 
-Before freezing the `target-profile-place` contract, close the executable
-second-target trial, existing-install refusal or adoption path,
-initial-check/readiness evidence contract, and the
-analysis-policy/assessment-binding gates already called out below.
-Decision 14 settles the publication/crash/symlink and root-identity
-design; its acceptance witnesses remain part of those changes.
-`generalize-target-kinds` can start independently once the
-target-model home, glossary and kind matrix decisions are settled; it need
-not wait for the full place feature.
+These six phases need separate approved OpenSpec deltas. All merge requests
+target `feat/target-profiles`; none authorizes enqueue or release.
 
-1. `generalize-target-kinds`: per-target accepted kinds and delivery
-   modes; invariants and catalogs keyed by accepted kinds. No user-visible
-   behavior change for existing harnesses.
-2. `targets-alias`: `targets:` read as the same list as `harnesses:`
-   under `apiVersion: agent-marketplace/v4`, the static target-ID rule,
-   editors that keep the authored spelling, TUI first-launch support.
-3. `target-profile-place`: profile format v1, the virtual
-   `target-profile` resource kind from built-in and external sources,
-   approval bound to profile revision and resolved destinations, explicit
-   retirement of previous-root installations, place delivery with
-   curation sidecars, declarative source import and self-contained native
-   payloads, exact support-file permissions and single-owner
-   destinations. Include conflict planning that preserves installed
-   projections, sidecar `metadata.requires` with host kinds as
-   prerequisite kinds, `verify`, platform/detect/version conditions, the
-   sidecar program list and the shared author dry-run.
-   Define and implement the exact profile binding and delivery-mapping
-   identity in host-package assessments across Marketplace ingestion,
-   publication and online/cached client delivery. No aggregate merging.
-4. `herdr-app-target`: built-in Herdr app profile with mod, layout and
-   theme kinds and the shipped-name list, curated registry layout,
-   Marketplace ingestion/analysis of mods and complete app bundles,
-   package host versions and `cloned_from`, manual setup reporting,
-   explicit author live verification and TUI QA journeys. Exercise the
-   four source shapes in Decision 4 through one profile. Needs the
-   analysis policy and enforced package/profile assessment binding first.
-5. `target-profile-aggregates`: owned-entry aggregates declared by
-   profiles, including `on_edit`; `keys.json` and `programs.json` for the
-   Herdr app, the `icons` kind and fragment-only packages.
-6. `target-profile-register`: register delivery, store layout, live
-   inventory and ownership checks before mutation, recorded inventory
-   drift, binary binding, journaled previous/desired registration paths
-   and exact-state recovery.
+1. **I1 `generalize-target-kinds`**: accepted-kind model; fresh-approval
+   ready, not enqueue; no profile construction.
+2. **I2 `targets-alias`**: alias/read-before-write and TUI QA; no
+   profile-aware commands. Blocked on I1 and R5.
+3. **I3 `target-profile-place`**: macOS/Linux place, identity, approval,
+   import and recovery; blocked on I2, prerequisite PRs, Decision 14
+   witnesses and verified profile/proxy evidence.
+4. **I4 `herdr-app-target`**: curated profile, four source shapes, evidence
+   and minimum UI; blocked on I3, prerequisite PRs and curation evidence.
+5. **I5 `target-profile-aggregates`**: aggregate merge/ownership; blocked
+   on I4 and reviewed edit/cede/restore rules.
+6. **I6 `target-profile-register`**: register inventory and recovery;
+   blocked on I5 and lifecycle decisions.
 
-Changes 3 and 4 depend on the prerequisite stack (#626, #643, #661, #671,
-#672) being merged. Selecting a Marketplace layout together with its
-mods in one step also needs the later release that records Marketplace
-requirement edges; until then curated collections cover that case.
-
-Later changes cover Herdr plugins and omp (register mode plus binary
-analysis policy), tern, the presentation work, writing `targets:` by
-default and deprecating `harnesses:`.
+At the 2026-11-18 read-only check, #1068 was MERGED into this branch at
+base. #626, #643, #661, #671 and #672 were OPEN, no merge commit, and
+remain I3/I4 blockers. Collections remain the Marketplace edge workaround.
+Herdr plugins/omp, Tern, polish, default `targets:`, and alias deprecation
+are later work.
 
 The relevant OpenSpec changes must prove these acceptance cases:
 
@@ -2151,8 +2285,15 @@ The relevant OpenSpec changes must prove these acceptance cases:
   `metadata.requires` is not reported as `catalog.requires.invalid`.
 - A program listed in the sidecar is never a `requires` item, and a
   missing one does not fail `sync --strict`.
-- Changing a root override writes nothing at either location until
-  approved. Approval of the new destination does not prune the old one.
+- Exact org preapproval binds OS/target/profile/root/state/executable/roles;
+  changed-root approval never prunes old output.
+- Absent user list snapshots; explicit empty does not. Groups cannot widen.
+- Direct disabled/unavailable selection refuses; collections report skips.
+  Sync/check and authored errors follow Decision 1.
+- `approve`/`retire` require TTY, show exact bindings/removals, preserve
+  edits, and refuse when recorded state/root is unavailable.
+- Host version is known/missing/unknown; only explicit org policy blocks.
+  Requirements keep existing semantics.
 - Native mod directories and complete personal app bundles use one
   `herdr-app` profile through explicit import mappings. A complete bundle
   places its layout, mods and permitted root support files together;
@@ -2167,6 +2308,8 @@ The relevant OpenSpec changes must prove these acceptance cases:
   Known incomplete queue and links packages are refused at curation, not
   accepted on the strength of that check. No engine path substitutes
   values or runs an upstream installer.
+- A manual-collision fixture names path/owner, refuses adoption, and leaves
+  remediation to the user; bytes do not prove ownership.
 - A theme with no verify rule is reported as unverified, not passed.
 - Pane-switcher activation, layout selection and deferred key bindings
   remain visible as manual setup. Placement and verification cannot
@@ -2175,9 +2318,11 @@ The relevant OpenSpec changes must prove these acceptance cases:
   identity, payload, mapping and refusal diagnostics. Dry-run changes
   no target/config/lock/approval/ownership state and starts no host or
   package process; absent destination checks are reported as untested.
-- Explicit live verification requires approval and reports the exact
-  revisions and checks exercised without implicitly installing or
-  activating packages.
+- Live verification reports exact revisions, named scope, host version,
+  scenario, result and source. Missing check is not configured, not passed.
+- Local CLI/TUI and published Marketplace evidence stay distinct; web shows
+  no detected local paths/readiness. Placement, setup, requirements, check
+  and runtime evidence remain separate.
 - A second place target uses declarative profile and import data for its
   roots, package topology and metadata exclusions, with no target-ID-specific
   branch.
