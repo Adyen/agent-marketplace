@@ -11,3 +11,7 @@ None. This work changes no normative capability.
 
 ## Impact
 Only the target-profile design and planning records change. No production behavior changes.
+
+## Release note
+
+none - Design and planning only; supported behavior does not change.
