@@ -143,6 +143,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			// local cache, so the desired set matches sync --check without
 			// downloading artifacts or writing files.
 			MarketplaceArtifactsFromCache: true,
+			ReportDeclaredHarnesses:       true,
 		},
 		DryRun:                         runStatusMaterialize,
 		SkipMaterializeOnResolveErrors: true,
@@ -276,6 +277,16 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
+	reportTargetHarnesses := targetHarnesses
+	reportTargetSource := result.TargetHarnessSource
+	reportMachineTargets := machineTargets
+	reportMachineSource := result.MachineTargetHarnessSource
+	if len(targetHarnesses) == 0 && len(result.DeclaredTargetHarnesses) > 0 {
+		reportTargetHarnesses = sortedTargetNames(result.DeclaredTargetHarnesses)
+		reportTargetSource = result.DeclaredTargetHarnessSource
+		reportMachineTargets = sortedTargetNames(result.DeclaredMachineTargetHarnesses)
+		reportMachineSource = result.DeclaredMachineTargetSource
+	}
 
 	var statusWarnings []error
 	for _, issue := range inspection.Issues {
@@ -297,10 +308,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		errorRows:           errorRows,
 		dryRunReport:        dryRunReport,
 		cacheUnknown:        pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors),
-		targetHarnesses:     targetHarnesses,
-		targetSource:        result.TargetHarnessSource,
-		machineTargets:      machineTargets,
-		machineTargetSource: result.MachineTargetHarnessSource,
+		targetHarnesses:     reportTargetHarnesses,
+		targetSource:        reportTargetSource,
+		machineTargets:      reportMachineTargets,
+		machineTargetSource: reportMachineSource,
 		harnessTargets:      harnessTargets,
 		lockMetadata:        result.LockMetadata,
 		marketplaceStatuses: result.MarketplaceStatuses,
