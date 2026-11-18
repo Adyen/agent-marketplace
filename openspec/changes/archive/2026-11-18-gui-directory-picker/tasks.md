@@ -12,5 +12,5 @@
 ## 3. Verify and archive
 
 - [x] 3.1 Run GUI typecheck, Vitest, built sources Playwright tests and the desktop Go package tests with native coverage. Capture matched light and dark before/after form screenshots; label any stubbed dialog clearly.
-- [ ] 3.2 Run `make validate` and check spec traceability. Run `make spec-check` on the final archived tree.
-- [ ] 3.3 Run `openspec archive gui-directory-picker --yes` for the final commit of the same pull request.
+- [x] 3.2 Run `make validate` and check spec traceability. Run `make spec-check` on the final archived tree.
+- [x] 3.3 Run `openspec archive gui-directory-picker --yes` for the final commit of the same pull request.
