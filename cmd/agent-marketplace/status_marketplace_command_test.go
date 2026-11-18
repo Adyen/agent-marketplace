@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -73,5 +74,109 @@ marketplaces:
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected Marketplace status output to contain %q, got:\n%s", needle, output)
 		}
+	}
+}
+
+// spec: status-reporting/lock-required-error-keeps-the-declared-harnesses
+func TestStatusKeepsConfiguredHarnessesWhenMarketplaceLockIsMissing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+
+	for _, tc := range []struct {
+		name          string
+		userConfig    string
+		errorCode     string
+		wantHarness   bool
+		duplicate     bool
+		repoSelection string
+	}{
+		{
+			name:        "user harness declaration",
+			userConfig:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+			errorCode:   "v4.marketplace-lock-required",
+			wantHarness: true,
+		},
+		{
+			name:       "no configured harnesses",
+			userConfig: "apiVersion: agent-marketplace/v4\n",
+			errorCode:  "v4.marketplace-lock-required",
+		},
+		{
+			name:       "invalid user configuration",
+			userConfig: "apiVersion: agent-marketplace/v3\nharnesses: [factory]\n",
+			errorCode:  "v4.api-version",
+		},
+		{
+			name:       "duplicate Marketplace endpoint declaration",
+			userConfig: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+			errorCode:  "v4.marketplace-lock-mismatch",
+			duplicate:  true,
+		},
+		{
+			name:          "repository Marketplace exclusion",
+			userConfig:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
+			errorCode:     "v4.layer-field",
+			repoSelection: "exclude",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			writeFile(t, filepath.Join(home, ".agents", "config.yaml"), tc.userConfig)
+
+			repo := t.TempDir()
+			sources := "  hosted: {marketplace: " + server.URL + "}\n"
+			if tc.duplicate {
+				sources += "  alias: {marketplace: " + server.URL + "}\n"
+			}
+			selection := tc.repoSelection
+			if selection == "" {
+				selection = "include"
+			}
+			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n"+sources+`resources:
+  hosted: {`+selection+`: [tools/skill/review]}
+`)
+			withWorkingDir(t, repo)
+
+			output, err := executeCommand("status")
+			if err == nil || (!strings.Contains(output, tc.errorCode) && !strings.Contains(err.Error(), tc.errorCode)) {
+				t.Fatalf("status error = %v, want nonzero %s:\n%s", err, tc.errorCode, output)
+			}
+			if tc.duplicate && !strings.Contains(output+"\n"+err.Error(), "duplicate Marketplace source declaration") {
+				t.Fatalf("status error = %v, want duplicate Marketplace source diagnostic:\n%s", err, output)
+			}
+
+			start := strings.Index(output, "TARGET HARNESS SET")
+			if start < 0 {
+				t.Fatalf("status omitted TARGET HARNESS SET:\n%s", output)
+			}
+			targetSet := output[start:]
+			if end := strings.Index(targetSet, "\n\n"); end >= 0 {
+				targetSet = targetSet[:end]
+			}
+			if tc.wantHarness {
+				if !strings.Contains(targetSet, "factory") || !strings.Contains(targetSet, "USER") {
+					t.Fatalf("TARGET HARNESS SET row = %q, want factory with source USER:\n%s", targetSet, output)
+				}
+				if strings.Contains(output, "add harnesses to ~/.agents/config.yaml") {
+					t.Fatalf("status suggested adding already-declared harnesses:\n%s", output)
+				}
+			} else {
+				if !strings.Contains(targetSet, "none configured") {
+					t.Fatalf("TARGET HARNESS SET row = %q, want none configured:\n%s", targetSet, output)
+				}
+				if strings.Contains(targetSet, "factory") {
+					t.Fatalf("TARGET HARNESS SET used harnesses from an invalid or empty configuration:\n%s", output)
+				}
+				if !strings.Contains(output, "add harnesses to ~/.agents/config.yaml") {
+					t.Fatalf("status omitted the existing add-harnesses hint:\n%s", output)
+				}
+			}
+		})
 	}
 }
