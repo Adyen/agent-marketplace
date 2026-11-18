@@ -146,13 +146,14 @@ func TestDoctorRepairJourneyGuidedConfigurationEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repair := runDoctorRepairJourney(t, env, map[string]string{"EDITOR": editor}, "y")
+	editorCommand := "sh " + fmt.Sprintf("%q", editor)
+	repair := runDoctorRepairJourney(t, env, map[string]string{"EDITOR": editorCommand}, "y")
 	assertDoctorRepairJourney(t, env, repair)
 	if !strings.Contains(repair.Combined, "nothing to repair") {
 		t.Fatalf("repair did not converge after the editor exited:\n%s", repair.Combined)
 	}
 	if !strings.Contains(repair.Combined, "Edit ") ||
-		!strings.Contains(repair.Combined, fmt.Sprintf(" with %s? [y/N]", editor)) {
+		!strings.Contains(repair.Combined, fmt.Sprintf(" with %s? [y/N]", editorCommand)) {
 		t.Fatalf("repair did not offer the configured editor:\n%s", repair.Combined)
 	}
 	if strings.Contains(env.ReadFile("/workspace/.agents/config.yaml"), "unknown_field") {
