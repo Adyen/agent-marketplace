@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
+// spec: backup-recovery/sync-archives-user-configuration-with-harness-backups
 func TestBackupCreatedOnInstall(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -25,9 +27,11 @@ func TestBackupCreatedOnInstall(t *testing.T) {
 	writeSkill(t, working, "backup-test-skill", "A skill for backup testing", []string{"test"})
 	commitAndPushAll(t, working, "Add backup test skill")
 
-	// User config with registry.
+	include := []byte("apiVersion: agent-marketplace/v4\nbackup:\n  max_days: 9\n")
+	writeFile(t, filepath.Join(homeDir, ".agents", "fragments", "extra.yaml"), string(include))
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
 apiVersion: agent-marketplace/v4
+include: fragments/extra.yaml
 sources:
   skills:
     git: file://`+origin+`
@@ -56,6 +60,15 @@ sources:
 	if err := os.Remove(filepath.Join(backupsDir, ".last_backup")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove .last_backup: %v", err)
 	}
+	configBytes, err := os.ReadFile(filepath.Join(homeDir, ".agents", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockBytes, err := os.ReadFile(filepath.Join(homeDir, ".agents", "lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearConfigArchives(t, homeDir)
 	syncOutput, err := executeCommand("sync")
 	if err != nil {
 		t.Fatalf("sync failed: %v\n%s", err, syncOutput)
@@ -65,6 +78,18 @@ sources:
 	archives, err := filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
 	if err != nil || len(archives) == 0 {
 		t.Fatalf("expected backup archive in %s/factory/, got %v (err=%v)", backupsDir, archives, err)
+	}
+	configArchives := configArchivePaths(t, homeDir)
+	if len(configArchives) != 1 {
+		t.Fatalf("configuration archives = %v, want one", configArchives)
+	}
+	for name, want := range map[string][]byte{"config.yaml": configBytes, "lock.yaml": lockBytes, "fragments/extra.yaml": include} {
+		if got := readConfigArchive(t, configArchives[0])[name]; string(got) != string(want) {
+			t.Errorf("archive %s = %q, want %q", name, got, want)
+		}
+	}
+	if info, err := os.Stat(configArchives[0]); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("configuration archive mode = %v, stat error = %v; want 0600", info, err)
 	}
 	t.Logf("Backup archive: %s", archives[0])
 }
@@ -152,6 +177,7 @@ sources:
 	}
 }
 
+// spec: backup-recovery/backup-list-shows-configuration-archives-in-their-own-group
 func TestBackupListCommand(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -201,6 +227,29 @@ sources:
 	if !strings.Contains(listOutput, "factory") {
 		t.Fatalf("expected 'factory' in backup list output, got: %s", listOutput)
 	}
+	if !strings.Contains(listOutput, "agents-config") {
+		t.Fatalf("expected agents-config in backup list output, got: %s", listOutput)
+	}
+	configArchives := configArchivePaths(t, homeDir)
+	if len(configArchives) == 0 {
+		t.Fatal("expected configuration archives after sync")
+	}
+	groupHeader := "agents-config (" + strconv.Itoa(len(configArchives)) + "):\n  "
+	groupStart := strings.Index(listOutput, groupHeader)
+	if groupStart == -1 {
+		t.Fatalf("expected agents-config group header %q, got: %s", strings.TrimSuffix(groupHeader, "  "), listOutput)
+	}
+	timestampLine := strings.SplitN(listOutput[groupStart+len(groupHeader):], "\n", 2)[0]
+	matched := false
+	for _, archive := range configArchives {
+		if strings.TrimSuffix(filepath.Base(archive), ".tar.gz") == timestampLine {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Fatalf("agents-config group lists %q, which is not an archive timestamp from %v", timestampLine, configArchives)
+	}
 }
 
 func TestBackupListUsesCodexLabel(t *testing.T) {
@@ -220,6 +269,7 @@ func TestBackupListUsesCodexLabel(t *testing.T) {
 	}
 }
 
+// spec: backup-recovery/sync-without-backup-writes-no-configuration-archive
 func TestSyncNoBackupFlag(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -266,6 +316,14 @@ resources:
 	}
 
 	backupsDir := filepath.Join(homeDir, ".agent-marketplace", "backups")
+	syncOutput, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("initial sync failed: %v\n%s", err, syncOutput)
+	}
+	configArchives, err := filepath.Glob(filepath.Join(backupsDir, "agents-config", "*.tar.gz"))
+	if err != nil || len(configArchives) == 0 {
+		t.Fatalf("expected initial sync config archive, got %v (err=%v)", configArchives, err)
+	}
 	if err := backup.Create(map[hcc.Target]backup.ManagedPaths{
 		hcc.TargetFactory: {Root: factoryMachineDir, RelPaths: []string{"skills"}},
 	}); err != nil {
@@ -279,7 +337,7 @@ resources:
 		t.Fatal("expected initial backup create to produce an archive")
 	}
 
-	syncOutput, err := executeCommand("sync", "--no-backup")
+	syncOutput, err = executeCommand("sync", "--no-backup")
 	if err != nil {
 		t.Fatalf("sync --no-backup failed: %v\n%s", err, syncOutput)
 	}
@@ -290,6 +348,10 @@ resources:
 	}
 	if len(archives) != len(initialArchives) {
 		t.Fatalf("expected --no-backup to leave archive count unchanged: before=%d after=%d", len(initialArchives), len(archives))
+	}
+	configArchivesAfter, err := filepath.Glob(filepath.Join(backupsDir, "agents-config", "*.tar.gz"))
+	if err != nil || len(configArchivesAfter) != len(configArchives) {
+		t.Fatalf("--no-backup changed configuration archives: before=%v after=%v (err=%v)", configArchives, configArchivesAfter, err)
 	}
 }
 
@@ -373,6 +435,7 @@ sources:
 	}
 }
 
+// spec: backup-recovery/disabled-backups-write-no-configuration-archive
 func TestBackupDisabledViaConfig(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -420,6 +483,10 @@ sources:
 	archives, _ := filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
 	if len(archives) > 0 {
 		t.Fatalf("expected no backups when disabled, got %d", len(archives))
+	}
+	configArchives, err := filepath.Glob(filepath.Join(backupsDir, "agents-config", "*.tar.gz"))
+	if err != nil || len(configArchives) > 0 {
+		t.Fatalf("expected no configuration archives when backups are disabled, got %v (err=%v)", configArchives, err)
 	}
 }
 
@@ -594,6 +661,8 @@ sources:
 var _ = hcc.TargetFactory
 var _ = backup.ManagedPaths{}
 
+// spec: backup-recovery/backup-create-names-the-configuration-archive
+// spec: backup-recovery/configuration-archives-are-rotated-by-the-per-day-cap
 func TestBackupCreateOnDemand(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -630,6 +699,15 @@ sources:
 	}
 
 	backupsDir := filepath.Join(homeDir, ".agent-marketplace", "backups")
+	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configPath, string(append(configBytes, []byte("\nbackup:\n  max_days: 1\n  max_per_day: 2\n")...)))
+	clearConfigArchives(t, homeDir)
+	oldConfigArchive := filepath.Join(backupsDir, "agents-config", "2000-01-01-000000.tar.gz")
+	writeFile(t, oldConfigArchive, "")
 
 	// No backup should exist yet (install doesn't create one).
 	archives, _ := filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
@@ -645,11 +723,32 @@ sources:
 	if !strings.Contains(createOutput, "Backup created for:") {
 		t.Fatalf("expected success message in output, got: %s", createOutput)
 	}
+	if !strings.Contains(createOutput, "agents-config") {
+		t.Fatalf("backup create did not name the configuration archive: %s", createOutput)
+	}
 
 	// Verify backup archive was created.
 	archives, err = filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
 	if err != nil || len(archives) == 0 {
 		t.Fatalf("expected backup archive after 'backup create', got %v (err=%v)", archives, err)
+	}
+	first := configArchivePaths(t, homeDir)
+	if len(first) != 1 {
+		t.Fatalf("configuration archives after first create = %v", first)
+	}
+	for range 2 {
+		if output, err := executeCommand("backup", "create"); err != nil {
+			t.Fatalf("backup create: %v\n%s", err, output)
+		}
+	}
+	if archives := configArchivePaths(t, homeDir); len(archives) != 2 {
+		t.Fatalf("configuration archives after rotation = %v, want two", archives)
+	}
+	if _, err := os.Stat(oldConfigArchive); !os.IsNotExist(err) {
+		t.Fatalf("old configuration archive remains after max_days rotation: %v", err)
+	}
+	if _, err := os.Stat(first[0]); !os.IsNotExist(err) {
+		t.Fatalf("oldest configuration archive remains after rotation: %v", err)
 	}
 }
 
@@ -678,7 +777,7 @@ func TestBackupCreateUsesCodexLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup create failed: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "Backup created for: Codex\n") {
+	if !strings.Contains(output, "Backup created for: Codex, agents-config\n") {
 		t.Fatalf("backup create did not use the Codex label:\n%s", output)
 	}
 }

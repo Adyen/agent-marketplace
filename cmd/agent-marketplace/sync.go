@@ -60,16 +60,17 @@ func newSyncCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			noConfigBackup := locked
 			locked = locked || checkOnly || offline
 			if checkOnly {
 				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), strict, offline, locked)
 			}
-			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
+			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, noConfigBackup: noConfigBackup, marketplacePolicy: policy})
 		},
 	}
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check drift without reconciling; exits 1 if out of sync")
-	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backup of machine-scope harness directories")
+	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backups of machine-scope harness directories and the user configuration archive")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on unresolved selections ('selected but not found', 'found but failed to load') and on unmet prerequisites (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
@@ -82,7 +83,9 @@ func newSyncCmd() *cobra.Command {
 
 type lockRunOptions struct {
 	locked            bool
+	noConfigBackup    bool
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
+	userConfig        *pipeline.UserConfigSnapshot
 }
 
 var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
@@ -100,13 +103,22 @@ var runSyncCheckMaterialize = materialize.Run
 
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	var noConfigBackup bool
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	if len(lockOpts) > 0 {
+		noConfigBackup = lockOpts[0].noConfigBackup
 		marketplacePolicy = lockOpts[0].marketplacePolicy
 	}
 	ws, err := discoverSyncWorkspace()
 	if err != nil {
 		return err
+	}
+	var userConfig *pipeline.UserConfigSnapshot
+	if len(lockOpts) > 0 {
+		userConfig = lockOpts[0].userConfig
+	}
+	if userConfig == nil && !noConfigBackup && !noBackup {
+		userConfig = pipeline.CaptureUserConfig()
 	}
 	if err := prepareDependencyTransactions(ctx, (lockMode{locked: locked, offline: offline}).readOnlyDependencies()); err != nil {
 		return err
@@ -142,7 +154,20 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, LockMetadata: lockMetadata, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
+	resolveOpts := pipeline.ResolveOptions{
+		Workspace:                             ws,
+		NoBackup:                              noBackup,
+		NoConfigBackup:                        noConfigBackup,
+		UserConfigSnapshot:                    userConfig,
+		Offline:                               offline,
+		CatalogOption:                         []pkgcatalog.LoadOption{exactOption},
+		ExactLockLease:                        exactLease,
+		LockMetadata:                          lockMetadata,
+		SkipInventory:                         pruneStale,
+		MarketplaceRevocationPolicy:           marketplacePolicy,
+		MarketplaceLockEvidenceStrict:         locked,
+		MarketplaceReportArchiveEvidenceDrift: !locked && !offline,
+	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -354,7 +379,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 			// remove (collection-sourced, or a failed config edit) are still
 			// in the config — silently discarding the promotion the user
 			// asked for. Pinned by TestSyncPruneStaleStrictSurvivesTheReSync.
-			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: marketplacePolicy})
+			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked, noConfigBackup: noConfigBackup, marketplacePolicy: marketplacePolicy, userConfig: userConfig})
 		}
 	}
 

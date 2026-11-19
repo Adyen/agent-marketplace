@@ -170,7 +170,5 @@ v4_repo/install_selectors_list_and_maintenance_flags
 v4_repo/populated_prune_stale_strict
 v4_repo/prune_stale_strict
 v4_user/gc_and_deinit
-v4_user/inspect_lock_and_backup
-v4_user/populated_telemetry_preferences_and_backup
 v4_user/telemetry_preferences
 version/flag_prints_version
