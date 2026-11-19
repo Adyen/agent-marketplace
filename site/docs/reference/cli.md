@@ -560,7 +560,7 @@ agent-marketplace serve claude-delivery status --config <path>
 
 ### `serve claude-delivery sync`
 
-Runs one reconcile pass. The required `--once` flag makes it exit after that pass; when delivery is disabled or absent, no Claude Plugins API request is sent. If another pass is active for the same instance, the command exits with an error and leaves the request queued for the worker.
+Runs one reconcile pass. The required `--once` flag makes it exit after that pass; when delivery is disabled or absent, no Claude Plugins API request is sent. If another pass is active or waiting for a rate-limit cooldown, the command exits with an error and leaves the request queued for the worker.
 
 ```text
 agent-marketplace serve claude-delivery sync --config <path> --once
