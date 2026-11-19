@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,86 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 				t.Fatalf("worker rewrote registry status/config: %v\nbefore=%+v\nafter=%+v", readErr, original, after)
 			}
 		})
+	}
+}
+
+type claudeDeliverySchedulingStore struct {
+	store.MetadataStore
+	enqueued chan store.Job
+}
+
+func (s *claudeDeliverySchedulingStore) EnqueueJob(ctx context.Context, job store.Job) error {
+	if err := s.MetadataStore.EnqueueJob(ctx, job); err != nil {
+		return err
+	}
+	if job.Kind == "claude-delivery" {
+		select {
+		case s.enqueued <- job:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (s *claudeDeliverySchedulingStore) LeaseClaudeDeliveryJob(context.Context, store.MarketplaceID, store.JobID, string, time.Duration) (store.Job, error) {
+	return store.Job{}, store.ErrNotFound
+}
+
+func TestClaudeDeliveryRepairIntervalEnqueuesRepair(t *testing.T) {
+	deps, _ := managedFixture(t)
+	interval := config.Duration(10 * time.Millisecond)
+	deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+		Enabled: true,
+		APIKey: config.ClaudeEnterpriseAPIKeyReference{
+			Env: "CLAUDE_ENTERPRISE_TEST_KEY",
+		},
+		APIKeyID: "apikey_test",
+		Interval: &interval,
+	}
+	tracker := &claudeDeliverySchedulingStore{
+		MetadataStore: deps.MetadataStore,
+		enqueued:      make(chan store.Job, 4),
+	}
+	deps.MetadataStore = tracker
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runClaudeDeliveryWorker(ctx, deps)
+		close(done)
+	}()
+	stopped := false
+	stop := func() {
+		if stopped {
+			return
+		}
+		cancel()
+		<-done
+		stopped = true
+	}
+	defer stop()
+
+	jobs := make([]store.Job, 0, 2)
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	for len(jobs) < 2 {
+		select {
+		case job := <-tracker.enqueued:
+			jobs = append(jobs, job)
+		case <-timeout.C:
+			t.Fatalf("enqueued %d Claude delivery jobs, want configuration and one repair job", len(jobs))
+		}
+	}
+	stop()
+	if !strings.Contains(jobs[0].IdempotencyKey, ":configuration-") ||
+		!strings.Contains(jobs[1].IdempotencyKey, ":repair-") {
+		t.Fatalf("first Claude delivery jobs = %+v, want configuration then repair", jobs)
+	}
+	for _, job := range jobs {
+		stored, err := deps.MetadataStore.GetJob(context.Background(), job.ID)
+		if err != nil || stored.Kind != "claude-delivery" {
+			t.Fatalf("Claude delivery job %s was not persisted: %+v, %v", job.ID, stored, err)
+		}
 	}
 }
 

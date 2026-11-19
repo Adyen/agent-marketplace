@@ -155,7 +155,7 @@
 
 ## 9. Gates
 
-- [ ] 9.1 Run `make validate` and `make spec-check`. Verify
+- [x] 9.1 Run `make validate` and `make spec-check`. Verify
   `go run ./tools/specaudit trace` binds every scenario in this change
 - [ ] 9.2 Run `go run ./tools/specaudit gate -base origin/main -head HEAD` and confirm
   the spec delta is detected and no TUI journey is required

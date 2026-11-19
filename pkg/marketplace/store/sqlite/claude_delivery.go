@@ -8,6 +8,20 @@ import (
 )
 
 var _ store.ClaudeDeliveryStateStore = (*Store)(nil)
+var _ store.ClaudeDeliveryJobStore = (*Store)(nil)
+
+func (s *Store) LeaseClaudeDeliveryJob(ctx context.Context, marketplace store.MarketplaceID, requestedID store.JobID, workerID string, leaseDuration time.Duration) (store.Job, error) {
+	var leased store.Job
+	err := s.withTx(ctx, func(tx *Store) error {
+		id, err := store.SelectClaudeDeliveryJob(ctx, tx.q, marketplace, requestedID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		leased, err = tx.leaseJobByID(ctx, id, workerID, leaseDuration)
+		return err
+	})
+	return leased, err
+}
 
 func (s *Store) UpsertClaudeDeliveryPublished(ctx context.Context, row store.ClaudeDeliveryPlugin) error {
 	return store.UpsertClaudeDeliveryPublished(ctx, s.q, row)
