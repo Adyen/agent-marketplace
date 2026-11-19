@@ -30,6 +30,8 @@ export interface Bootstrap {
   discoveryFirstSearchStarted?: string
   discoveryFirstSearchCanceled?: string
   discoverySecondSearchStarted?: string
+  discoveryPageTwoStarted?: string
+  discoveryPageTwoRelease?: string
   localSkillFilesConfig?: string
   localSkillFilesLock?: string
   localSkillFilesMaterialized?: string

@@ -1,4 +1,4 @@
-import { expect, test, type TestInfo } from '@playwright/test'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -12,11 +12,11 @@ async function saveActions(testInfo: TestInfo, actions: string[]): Promise<void>
   await writeFile(path, `${JSON.stringify({ actions }, null, 2)}\n`)
 }
 
-async function waitForMarker(path: string | undefined): Promise<void> {
+async function waitForMarker(path: string | undefined, timeout = 30_000): Promise<void> {
   if (path == null) {
     throw new Error('discovery harness marker missing')
   }
-  await expect.poll(() => existsSync(path), { timeout: 30_000 }).toBe(true)
+  await expect.poll(() => existsSync(path), { timeout }).toBe(true)
 }
 
 async function markerCount(path: string | undefined): Promise<number> {
@@ -163,3 +163,85 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await saveActions(testInfo, actions)
   }
 })
+
+type PagedDiscoveryCase = {
+  name: string
+  mode: 'complete' | 'failure'
+}
+
+const pagedDiscoveryCases: PagedDiscoveryCase[] = [
+  { name: 'empty-query discovery receives later Marketplace pages', mode: 'complete' },
+  { name: 'failed later Marketplace page leaves empty-query discovery incomplete', mode: 'failure' },
+]
+
+async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: PagedDiscoveryCase): Promise<void> {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the discovery journey')
+  }
+
+  const harnessLogDir = join(dirname(testInfo.outputPath('discovery.actions.json')), 'harness')
+  await mkdir(harnessLogDir, { recursive: true })
+  const harness = await startHarness('user', {
+    AM_LOCALAPI_USER_FIXTURE: 'work41-paged-discovery',
+    AM_LOCALAPI_USER_DISCOVERY_MODE: scenario.mode,
+    AM_WORK28_TELEMETRY_EVIDENCE_DIR: harnessLogDir,
+  })
+  const { bootstrap } = harness
+  let released = false
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await launchBuiltUserApp(page, bootstrap)
+    const first = page.getByRole('option').filter({ hasText: 'paged-first' })
+    const second = page.getByRole('option').filter({ hasText: 'paged-second' })
+    await expect(first).toBeVisible({ timeout: 60_000 })
+    await page.screenshot({ path: testInfo.outputPath('discovery-first-page.png'), animations: 'disabled' })
+
+    await waitForMarker(bootstrap.discoveryPageTwoStarted, 10_000)
+    await expect(first).toBeVisible()
+    await expect(second).not.toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('discovery-page-two-held.png'), animations: 'disabled' })
+
+    if (bootstrap.discoveryPageTwoRelease == null) {
+      throw new Error('paged discovery release marker missing')
+    }
+    await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+    released = true
+
+    if (scenario.mode === 'complete') {
+      await expect(second).toBeVisible({ timeout: 60_000 })
+      await page.screenshot({ path: testInfo.outputPath('discovery-complete.png'), animations: 'disabled' })
+      return
+    }
+
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    const discoveryHealth = page.getByRole('region', { name: 'Marketplace discovery health' })
+    await expect(discoveryHealth).toContainText('Marketplace search failed', { timeout: 60_000 })
+    await expect(discoveryHealth).toContainText(
+      'Only part of the catalog is shown; search to find more',
+      { timeout: 60_000 },
+    )
+    await discoveryHealth.screenshot({
+      path: testInfo.outputPath('discovery-incomplete.png'),
+      animations: 'disabled',
+    })
+    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await expect(first).toBeVisible()
+    await expect(second).not.toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('discovery-incomplete-list.png'), animations: 'disabled' })
+  } finally {
+    if (!released && bootstrap.discoveryPageTwoRelease != null) {
+      await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+    }
+    await harness.stop()
+  }
+}
+
+for (const scenario of pagedDiscoveryCases) {
+  if (scenario.mode === 'complete') {
+    // spec: gui-shell/empty-query-discovery-receives-multiple-marketplace-pages
+    test(scenario.name, async ({ page }, testInfo) => runPagedDiscoveryCase(page, testInfo, scenario))
+  } else {
+    // spec: gui-shell/a-failed-later-page-leaves-empty-query-discovery-incomplete
+    test(scenario.name, async ({ page }, testInfo) => runPagedDiscoveryCase(page, testInfo, scenario))
+  }
+}

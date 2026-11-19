@@ -241,7 +241,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	fixture := os.Getenv("AM_LOCALAPI_USER_FIXTURE")
 	var discoveryCounterWriteFailed atomic.Bool
-	home, repo := newUserAPIFixture(t, fixture != "first-run" && fixture != "work39-resource-actions" && fixture != "work40-resource-actions")
+	home, repo := newUserAPIFixture(t, fixture != "first-run" && fixture != "work39-resource-actions" && fixture != "work40-resource-actions" && fixture != "work41-paged-discovery")
 	var orgConfigPath string
 	if fixture == "first-run" {
 		if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
@@ -435,6 +435,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	}
 	if fixture == "work35-discovery" {
 		setupWork35DiscoveryFixture(t, bootstrap, &discoveryCounterWriteFailed)
+	}
+	if fixture == "work41-paged-discovery" {
+		setupWork41PagedDiscoveryFixture(t, home, bootstrap)
 	}
 	lifecycle := session.RuntimeLifecycle()
 	if fixture == "update-availability" {
@@ -748,6 +751,72 @@ func setupWork35DiscoveryFixture(t *testing.T, bootstrap map[string]string, coun
 	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
 		t.Fatalf("seed Work35 discovery cache: %v", err)
 	}
+}
+
+func setupWork41PagedDiscoveryFixture(t *testing.T, home string, bootstrap map[string]string) {
+	t.Helper()
+	mode := os.Getenv("AM_LOCALAPI_USER_DISCOVERY_MODE")
+	if mode != "complete" && mode != "failure" {
+		t.Fatalf("invalid paged discovery mode %q", mode)
+	}
+	markerDir := t.TempDir()
+	pageStarted := filepath.Join(markerDir, "page-two-started")
+	pageRelease := filepath.Join(markerDir, "page-two-release")
+	const instanceID = "work41-marketplace"
+	items := []mpapi.ResourceListItem{
+		{
+			RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "paged-first",
+			Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64),
+			Availability: mpapi.AvailabilityAvailable, Score: 1,
+		},
+		{
+			RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "paged-second",
+			Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64),
+			Availability: mpapi.AvailabilityAvailable, Score: 2,
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+		case "/api/v1/search":
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+			if offset == 1 {
+				_ = os.WriteFile(pageStarted, []byte("1"), 0o600)
+				select {
+				case <-r.Context().Done():
+					return
+				case <-work35ReleaseSignal(r.Context(), pageRelease):
+				}
+				if mode == "failure" {
+					http.Error(w, "later page unavailable", http.StatusInternalServerError)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+					Items: []mpapi.ResourceListItem{items[1]}, Total: 2, Offset: 1, Limit: marketplace.DiscoveryPageLimit,
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{items[0]}, Total: 2, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	organization := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nallowed_marketplaces: ['^http://127\\.0\\.0\\.1:[0-9]+$']\nsources:\n  paged: {marketplace: " + server.URL + "}\n"
+	if err := os.WriteFile(orgPath, []byte(organization), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	bootstrap["orgConfig"] = orgPath
+	bootstrap["marketplaceEndpoint"] = server.URL
+	bootstrap["discoveryPageTwoStarted"] = pageStarted
+	bootstrap["discoveryPageTwoRelease"] = pageRelease
 }
 
 func setupWork36InspectionFixture(t *testing.T, home string, bootstrap map[string]string) []discoveryFixtureFile {
