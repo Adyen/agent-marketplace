@@ -139,7 +139,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			return result, err
 		}
 		row, hasState := existing[item.Resource.Coordinate]
-		if !hasState {
+		if !hasState || row.PluginName == "" {
 			row.Coordinate = item.Resource.Coordinate
 			registry, err := r.options.Metadata.GetRegistry(ctx, row.Coordinate.Registry)
 			if err != nil {

@@ -22,11 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-const claudeDeliveryJobKind = "claude-delivery"
-
-type claudeDeliveryPayload struct {
-	Marketplace store.MarketplaceID `json:"marketplace_id"`
-}
+const claudeDeliveryJobKind = store.ClaudeDeliveryJobKind
 
 func claudeEnterpriseEnabled(cfg config.Config) bool {
 	return cfg.ClaudeEnterprise != nil && cfg.ClaudeEnterprise.Enabled
@@ -34,7 +30,7 @@ func claudeEnterpriseEnabled(cfg config.Config) bool {
 
 func claudeDeliveryJob(cfg config.Config, trigger string) (store.Job, error) {
 	marketplace := store.MarketplaceID(cfg.Instance.ID)
-	payload, err := json.Marshal(claudeDeliveryPayload{Marketplace: marketplace})
+	payload, err := json.Marshal(store.ClaudeDeliveryJobPayload{Marketplace: marketplace})
 	if err != nil {
 		return store.Job{}, err
 	}
@@ -65,6 +61,10 @@ func enqueueClaudeDelivery(ctx context.Context, deps Deps, trigger string) (stor
 }
 
 func runClaudeDeliveryWorker(ctx context.Context, deps Deps) {
+	jobs, ok := deps.MetadataStore.(store.ClaudeDeliveryJobStore)
+	if !ok {
+		return
+	}
 	workerID := "claude-delivery-" + uuid.NewString()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -107,13 +107,15 @@ func runClaudeDeliveryWorker(ctx context.Context, deps Deps) {
 		if ctx.Err() != nil {
 			return
 		}
-		j, err := deps.MetadataStore.LeaseJob(ctx, claudeDeliveryJobKind, workerID, managedLeaseDuration(cfg))
-		if err == nil {
-			if _, err := processClaudeDelivery(ctx, deps, j, workerID); err != nil {
-				slog.WarnContext(ctx, "Claude delivery job failed", "failure_code", deliveryFailureCode(err))
+		if claudeEnterpriseEnabled(cfg) {
+			j, err := jobs.LeaseClaudeDeliveryJob(ctx, store.MarketplaceID(cfg.Instance.ID), "", workerID, managedLeaseDuration(cfg))
+			if err == nil {
+				if _, err := processClaudeDelivery(ctx, deps, j, workerID); err != nil {
+					slog.WarnContext(ctx, "Claude delivery job failed", "failure_code", deliveryFailureCode(err))
+				}
+			} else if !errors.Is(err, store.ErrNotFound) {
+				slog.ErrorContext(ctx, "Claude delivery lease failed", "failure_code", "job.lease")
 			}
-		} else if !errors.Is(err, store.ErrNotFound) {
-			slog.ErrorContext(ctx, "Claude delivery lease failed", "failure_code", "job.lease")
 		}
 		select {
 		case <-ctx.Done():
@@ -124,7 +126,7 @@ func runClaudeDeliveryWorker(ctx context.Context, deps Deps) {
 }
 
 func processClaudeDelivery(ctx context.Context, deps Deps, j store.Job, workerID string) (claudedelivery.ReconcileResult, error) {
-	var payload claudeDeliveryPayload
+	var payload store.ClaudeDeliveryJobPayload
 	if json.Unmarshal(j.Payload, &payload) != nil ||
 		payload.Marketplace != store.MarketplaceID(deps.Config.Instance.ID) {
 		return claudedelivery.ReconcileResult{}, finishClaudeDelivery(ctx, deps, j, workerID, errors.New("job.payload"))
@@ -155,7 +157,9 @@ func processClaudeDelivery(ctx context.Context, deps Deps, j store.Job, workerID
 		},
 	})
 	started := time.Now()
-	result, reconcileErr := reconciler.Reconcile(ctx)
+	workCtx, cancel := context.WithDeadline(ctx, j.LeaseUntil)
+	defer cancel()
+	result, reconcileErr := reconciler.Reconcile(workCtx)
 	outcome := "succeeded"
 	if reconcileErr != nil {
 		outcome = "failed"
@@ -287,6 +291,10 @@ func RunClaudeDeliveryOnce(ctx context.Context, deps Deps) (claudedelivery.Recon
 	if !claudeEnterpriseEnabled(cfg) {
 		return claudedelivery.ReconcileResult{}, false, nil
 	}
+	jobs, ok := deps.MetadataStore.(store.ClaudeDeliveryJobStore)
+	if !ok {
+		return claudedelivery.ReconcileResult{}, true, store.ErrTopology
+	}
 	deps.Config = cfg
 	if err := EnsureMarketplace(ctx, &deps); err != nil {
 		return claudedelivery.ReconcileResult{}, true, err
@@ -300,7 +308,10 @@ func RunClaudeDeliveryOnce(ctx context.Context, deps Deps) (claudedelivery.Recon
 		return claudedelivery.ReconcileResult{}, true, err
 	}
 	workerID := "claude-delivery-cli-" + uuid.NewString()
-	j, err := deps.MetadataStore.LeaseJobByID(ctx, id, workerID, managedLeaseDuration(cfg))
+	j, err := jobs.LeaseClaudeDeliveryJob(ctx, store.MarketplaceID(cfg.Instance.ID), id, workerID, managedLeaseDuration(cfg))
+	if errors.Is(err, store.ErrNotFound) {
+		return claudedelivery.ReconcileResult{}, true, fmt.Errorf("delivery job remains queued: %w", err)
+	}
 	if err != nil {
 		return claudedelivery.ReconcileResult{}, true, err
 	}

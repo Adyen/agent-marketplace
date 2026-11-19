@@ -120,6 +120,47 @@ func TestReconcileSkipsInvalidArchiveAndContinues(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/an-interrupted-pass-resumes-rather-than-restarts
+func TestReconcileRetriesNamelessFailureRows(t *testing.T) {
+	fixture := newDeliveryFixture(t, "guide", "guide text")
+	fixture.addResource(t, "next", "next skill", "commit-2", "publication-2")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-guide", "am-registry-skill-next"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+	delivery.options.Metadata = &registryReadFailures{
+		Store:     fixture.meta,
+		remaining: 2,
+	}
+
+	first, err := delivery.Reconcile(context.Background())
+	if err != nil || first.Failed != 2 {
+		t.Fatalf("first Reconcile = %+v, %v; want two recorded failures", first, err)
+	}
+	for _, name := range []string{"guide", "next"} {
+		row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), store.ResourceCoordinate{
+			Marketplace: "managed-test", Registry: "registry", Kind: "skill", Name: name,
+		})
+		if err != nil || row.PluginName != "" {
+			t.Fatalf("failed row for %s = %+v, %v; want no derived name", name, row, err)
+		}
+	}
+
+	second, err := delivery.Reconcile(context.Background())
+	if err != nil || second.Published != 2 || second.Conflicts != 0 {
+		t.Fatalf("second Reconcile = %+v, %v; want both resources published without conflicts", second, err)
+	}
+	for _, name := range []string{"guide", "next"} {
+		row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), store.ResourceCoordinate{
+			Marketplace: "managed-test", Registry: "registry", Kind: "skill", Name: name,
+		})
+		if err != nil || row.PluginName == "" || row.State != store.ClaudeDeliveryStatePublished {
+			t.Fatalf("recovered row for %s = %+v, %v", name, row, err)
+		}
+	}
+	if api.createCount() != 2 {
+		t.Fatalf("plugin create count = %d, want 2", api.createCount())
+	}
+}
+
 // spec: claude-enterprise-delivery/a-newly-created-plugin-becomes-available-to-members
 // spec: claude-enterprise-delivery/a-repeated-pass-over-unchanged-content-writes-nothing
 // spec: claude-enterprise-delivery/a-changed-resource-uploads-exactly-one-version
@@ -646,6 +687,19 @@ type deliveryFixture struct {
 	blobs      *fsblob.Store
 	coordinate store.ResourceCoordinate
 	resource   store.ResourceRevision
+}
+
+type registryReadFailures struct {
+	*sqlite.Store
+	remaining int
+}
+
+func (s *registryReadFailures) GetRegistry(ctx context.Context, id store.RegistryID) (store.Registry, error) {
+	if s.remaining > 0 {
+		s.remaining--
+		return store.Registry{}, errors.New("registry read failed")
+	}
+	return s.Store.GetRegistry(ctx, id)
 }
 
 func newDeliveryFixture(t *testing.T, name, content string) *deliveryFixture {

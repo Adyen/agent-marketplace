@@ -75,3 +75,9 @@ behalf, instead of asking every member to authenticate a browser.
   about which organization-owned `manual` marketplace receives the uploads.
 - **No consumer change**: no client configuration, lock, or harness output changes.
   Members need nothing installed locally.
+
+## Release note
+
+Marketplace operators can mirror published resources into a Claude Enterprise
+organization with `serve`. Delivery is off by default. Withdrawal stops new
+installations without removing installed copies or stored version history.

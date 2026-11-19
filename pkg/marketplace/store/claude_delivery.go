@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -58,6 +59,16 @@ type ClaudeDeliveryStateStore interface {
 	ListClaudeDeliveryDesired(context.Context, PublicationStore, MarketplaceID, []RegistryID) ([]ClaudeDeliveryDesired, error)
 }
 
+const ClaudeDeliveryJobKind = "claude-delivery"
+
+type ClaudeDeliveryJobPayload struct {
+	Marketplace MarketplaceID `json:"marketplace_id"`
+}
+
+type ClaudeDeliveryJobStore interface {
+	LeaseClaudeDeliveryJob(context.Context, MarketplaceID, JobID, string, time.Duration) (Job, error)
+}
+
 const ClaudeDeliverySchema = `
 CREATE TABLE claude_delivery_plugins (
  source_marketplace_id TEXT NOT NULL,
@@ -84,6 +95,35 @@ CREATE TABLE claude_delivery_plugins (
 );
 CREATE INDEX claude_delivery_state ON claude_delivery_plugins(state, updated_at);
 `
+
+func SelectClaudeDeliveryJob(ctx context.Context, q ManagedSQLQueries, marketplace MarketplaceID, requestedID JobID, now time.Time) (JobID, error) {
+	payload, err := json.Marshal(ClaudeDeliveryJobPayload{Marketplace: marketplace})
+	if err != nil {
+		return "", err
+	}
+	var id JobID
+	err = q.QueryRowContext(ctx, `
+		SELECT pending.id FROM jobs AS pending
+		WHERE pending.kind=$1 AND pending.payload=$2 AND ($3='' OR pending.id=$3)
+		  AND pending.attempt < pending.max_attempts
+		  AND pending.status IN ($4,$5,$6)
+		  AND (pending.lease_until IS NULL OR pending.lease_until <= $7)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM jobs AS active
+		    WHERE active.kind=$1 AND active.payload=$2
+		      AND active.status=$6 AND active.lease_until > $7
+		  )
+		ORDER BY pending.created_at, pending.id LIMIT 1`,
+		ClaudeDeliveryJobKind, payload, requestedID,
+		JobStatusPending, JobStatusFailed, JobStatusLeased, now.UnixMicro()).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("select Claude delivery job: %w", err)
+	}
+	return id, nil
+}
 
 func UpsertClaudeDeliveryPublished(ctx context.Context, q ManagedSQLQueries, row ClaudeDeliveryPlugin) error {
 	if err := row.validate(); err != nil || row.State != ClaudeDeliveryStatePublished || row.PluginID == "" {

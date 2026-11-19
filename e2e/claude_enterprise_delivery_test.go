@@ -1,12 +1,14 @@
 package e2e_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,7 +47,92 @@ func TestClaudeEnterpriseDeliveryDisabledMakesNoOutboundRequest(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("disabled delivery created rows: %+v %v", rows, err)
 	}
+	jobDB, err := sql.Open("sqlite", env.mustResolvePath("/workspace/marketplace.db"))
+	if err != nil {
+		t.Fatalf("open metadata database for job check: %v", err)
+	}
+	defer func() { _ = jobDB.Close() }()
+	var deliveryJobs int
+	if err := jobDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM jobs WHERE kind = ?", "claude-delivery").Scan(&deliveryJobs); err != nil {
+		t.Fatalf("count Claude delivery jobs: %v", err)
+	}
+	if deliveryJobs != 0 {
+		t.Fatalf("disabled delivery created %d Claude delivery jobs", deliveryJobs)
+	}
 	process.stop(t)
+}
+
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
+func TestClaudeEnterpriseDeliveryDoesNotOverlapOperatorPasses(t *testing.T) {
+	env, _ := newServeReindexEnvWithURL(t)
+	fake := &claudePluginsAPIFake{t: t}
+	firstRequest := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(firstRequest)
+			select {
+			case <-releaseFirst:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		fake.serveHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	config := env.ReadFile("/workspace/marketplace.yaml") + `
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_TEST_KEY
+  api_key_id: apikey_e2e
+  marketplace_id: marketplace_e2e
+  interval: 2s
+`
+	replaceServeConfig(t, env, config)
+	reindex := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
+	if reindex.ExitCode != 0 {
+		t.Fatalf("serve reindex exited %d:\n%s", reindex.ExitCode, reindex.Combined)
+	}
+
+	firstDone := make(chan ExecResult, 1)
+	go func() {
+		firstDone <- runClaudeDeliveryOnce(env, server.URL)
+	}()
+	firstJoined := false
+	defer func() {
+		releaseOnce.Do(func() { close(releaseFirst) })
+		if !firstJoined {
+			select {
+			case <-firstDone:
+			case <-time.After(10 * time.Second):
+				t.Error("first Claude delivery process did not exit after releasing the fake API")
+			}
+		}
+	}()
+
+	select {
+	case <-firstRequest:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first operator pass did not reach the fake Plugins API")
+	}
+
+	second := runClaudeDeliveryOnce(env, server.URL)
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("second operator pass made another Plugins API request: got %d requests before releasing the first", got)
+	}
+	if second.ExitCode == 0 || !strings.Contains(second.Combined, "delivery job remains queued") {
+		t.Fatalf("second operator pass result = %d:\n%s, want it to remain queued", second.ExitCode, second.Combined)
+	}
+
+	releaseOnce.Do(func() { close(releaseFirst) })
+	first := <-firstDone
+	firstJoined = true
+	if first.ExitCode != 0 {
+		t.Fatalf("first operator pass exited %d:\n%s", first.ExitCode, first.Combined)
+	}
 }
 
 // spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
