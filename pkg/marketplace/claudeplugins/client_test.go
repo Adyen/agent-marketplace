@@ -257,6 +257,27 @@ func TestCreatePluginUsesDocumentedMultipartAndRetriesThrottleOnce(t *testing.T)
 	}
 }
 
+func TestClaudeDeliveryRetryAfterSaturatesDuration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("retry-after", "9223372037")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":{"details":{"error_code":"rate_limited"}}}`)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := testClient(t, server, "key").GetPlugin(ctx, "plugin_test")
+	var throttle *ThrottledError
+	if !errors.As(err, &throttle) {
+		t.Fatalf("GetPlugin error = %T %v, want *ThrottledError", err, err)
+	}
+	if got, want := throttle.RetryAfter, time.Duration(1<<63-1); got != want {
+		t.Fatalf("throttle RetryAfter = %s, want saturated %s", got, want)
+	}
+}
+
 func TestInstallationSettingWritesForOnePluginAreSerialized(t *testing.T) {
 	var active, maximum atomic.Int32
 	var first sync.Once

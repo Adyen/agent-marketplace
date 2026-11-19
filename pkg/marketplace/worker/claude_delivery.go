@@ -60,6 +60,12 @@ func enqueueClaudeDelivery(ctx context.Context, deps Deps, trigger string) (stor
 	return j.ID, nil
 }
 
+func enqueueClaudeDeliveryAfterChange(ctx context.Context, deps Deps, trigger string) {
+	if _, err := enqueueClaudeDelivery(ctx, deps, trigger); err != nil {
+		slog.WarnContext(ctx, "Claude delivery enqueue failed", "failure_code", "job.enqueue")
+	}
+}
+
 func runClaudeDeliveryWorker(ctx context.Context, deps Deps) {
 	jobs, ok := deps.MetadataStore.(store.ClaudeDeliveryJobStore)
 	if !ok {
@@ -183,6 +189,10 @@ func finishClaudeDelivery(ctx context.Context, deps Deps, j store.Job, workerID 
 			return tx.CompleteJob(ctx, j.ID, workerID)
 		}
 		backoff := max(job.BaseBackoff, job.NextRetryDelay(j.Attempt))
+		var throttle *claudeplugins.ThrottledError
+		if errors.As(cause, &throttle) {
+			backoff = max(backoff, throttle.RetryAfter)
+		}
 		return tx.FailJob(ctx, j.ID, workerID, backoff)
 	})
 	if err != nil {
@@ -278,6 +288,10 @@ func recordClaudeDeliveryStateCounts(ctx context.Context, deps Deps) {
 func deliveryFailureCode(err error) string {
 	if err == nil {
 		return ""
+	}
+	var throttle *claudeplugins.ThrottledError
+	if errors.As(err, &throttle) {
+		return "claude-api.rate-limited"
 	}
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) && coded.ErrorCode() != "" {

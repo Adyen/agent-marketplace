@@ -207,11 +207,9 @@ row is republished; the existing plugin and its history are reused.
 
 Before creating a plugin the reconciler reads the marketplace inventory. A plugin
 that already holds the derived name is adopted only when its `created_by` is an
-`api_actor` carrying the exact `api_key_id` configured in `claude_enterprise`.
-Anything else, an administrator's plugin, another integration's, or a plugin with
-no recorded creator, is left alone and recorded as a conflict with a stable code.
-The identifier is required when delivery is enabled and must match
-`^apikey_[A-Za-z0-9]+$`; it identifies the key but is not a secret.
+`api_actor` carrying our key's `api_key_id`. Anything else, an administrator's
+plugin, another integration's, or a plugin with no recorded creator, is left alone
+and recorded as a conflict with a stable code.
 
 This mirrors the ownership discipline the client uses for shared harness files:
 never write to an entry we cannot prove we own.
