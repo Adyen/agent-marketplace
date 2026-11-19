@@ -10,6 +10,9 @@ const emit = defineEmits<{
   editLocation: []
 }>()
 
+const nativeApp = (window as Window & {
+  go?: { main?: { App?: { ChooseDirectory?: (defaultPath: string) => Promise<string> } } }
+}).go?.main?.App
 const kind = ref<SourceInput['kind']>('directory')
 const location = ref('')
 const refName = ref('')
@@ -49,6 +52,15 @@ function blur(field: SourceField) {
   touched.value.add(field)
 }
 
+async function browse() {
+  const chooseDirectory = nativeApp?.ChooseDirectory
+  if (chooseDirectory == null) return
+  const selected = await chooseDirectory.call(nativeApp, location.value).catch(() => '')
+  if (selected === '') return
+  location.value = selected
+  edit('location')
+}
+
 watch(kind, () => {
   touched.value.clear()
   if (props.serverLocationError != null) emit('editLocation')
@@ -86,22 +98,35 @@ function add() {
         </label>
       </div>
     </fieldset>
-    <label class="gui-field">
-      <span class="source-form__label">Location</span>
-      <input
-        v-model="location"
-        class="gui-input"
-        aria-label="Source location"
-        type="text"
-        :placeholder="locationPlaceholder"
-        :disabled="disabled"
-        :aria-invalid="locationError != null ? 'true' : undefined"
-        :aria-describedby="locationError != null ? `${idPrefix}-location-error` : undefined"
-        @input="edit('location')"
-        @blur="blur('location')"
-      />
-      <span v-if="locationError" :id="`${idPrefix}-location-error`" class="source-form__error" role="alert">{{ locationError }}</span>
-    </label>
+    <div class="gui-field">
+      <label class="source-form__label" :for="`${idPrefix}-location`">Location</label>
+      <div class="source-form__location">
+        <input
+          :id="`${idPrefix}-location`"
+          v-model="location"
+          class="gui-input"
+          aria-label="Source location"
+          type="text"
+          :placeholder="locationPlaceholder"
+          :disabled="disabled"
+          :aria-invalid="locationError != null ? 'true' : undefined"
+          :aria-describedby="locationError != null ? `${idPrefix}-location-error` : undefined"
+          @input="edit('location')"
+          @blur="blur('location')"
+        />
+        <UButton
+          v-if="kind === 'directory' && nativeApp?.ChooseDirectory != null"
+          label="Browse…"
+          aria-label="Browse for folder"
+          type="button"
+          class="gui-button--secondary source-form__browse"
+          color="neutral"
+          variant="soft"
+          @click="browse"
+        />
+        <span v-if="locationError" :id="`${idPrefix}-location-error`" class="source-form__error" role="alert">{{ locationError }}</span>
+      </div>
+    </div>
     <template v-if="kind === 'git'">
       <label class="gui-field">
         <span class="source-form__label">Ref</span>

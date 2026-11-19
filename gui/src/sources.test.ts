@@ -95,6 +95,27 @@ async function setInput(label: string, value: string) {
   await tick()
 }
 
+type DirectoryPicker = (defaultPath: string) => Promise<string>
+
+function installDirectoryPicker(chooseDirectory?: DirectoryPicker) {
+  const nativeWindow = window as Window & {
+    go?: { main?: { App?: { ChooseDirectory?: DirectoryPicker } } }
+  }
+  const previous = nativeWindow.go
+  if (chooseDirectory == null) {
+    delete nativeWindow.go
+  } else {
+    nativeWindow.go = { main: { App: { ChooseDirectory: chooseDirectory } } }
+  }
+  return () => {
+    if (previous == null) {
+      delete nativeWindow.go
+    } else {
+      nativeWindow.go = previous
+    }
+  }
+}
+
 function sourceKindRadio(value: SourceInput['kind'], label: string): HTMLInputElement {
   const group = dialog().querySelector<HTMLFieldSetElement>('fieldset[aria-label="Source kind"]')
   if (group == null) {
@@ -162,6 +183,88 @@ describe('Source settings', () => {
       'Ref',
       'Subpath',
     ])
+  })
+
+  // spec: gui-configuration/browse-is-absent-outside-native-directory-source-forms
+  it('offers a keyboard-focusable Browse button only for a native directory source', async () => {
+    const restore = installDirectoryPicker(async () => '/selected/registry')
+    try {
+      const { wrapper } = await mountSources({ userSources: [] })
+      await openSources(wrapper)
+
+      const browse = button('Browse for folder') as HTMLButtonElement
+      expect(browse.type).toBe('button')
+      expect(browse.closest('label')).toBeNull()
+      browse.focus()
+      expect(document.activeElement).toBe(browse)
+
+      await chooseSourceKind('git', 'Git registry')
+      expect(dialog().querySelector('button[aria-label="Browse for folder"]')).toBeNull()
+      expect(field('Source location')).not.toBeNull()
+
+      await chooseSourceKind('marketplace', 'Marketplace endpoint')
+      expect(dialog().querySelector('button[aria-label="Browse for folder"]')).toBeNull()
+      expect(field('Source location')).not.toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  // spec: gui-configuration/browse-is-absent-outside-native-directory-source-forms
+  it('keeps typed Location available without a native directory picker binding', async () => {
+    const restore = installDirectoryPicker()
+    try {
+      const { wrapper } = await mountSources({ userSources: [] })
+      await openSources(wrapper)
+      expect(dialog().querySelector('button[aria-label="Browse for folder"]')).toBeNull()
+      expect(field('Source location')).not.toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  // spec: gui-configuration/cancelling-the-dialog-preserves-location
+  it('preserves typed Location when the native folder chooser is cancelled', async () => {
+    const restore = installDirectoryPicker(async () => '')
+    try {
+      const { client, wrapper } = await mountSources({ userSources: [] })
+      await openSources(wrapper)
+      await setInput('Source location', '/var/typed-registry')
+
+      ;(button('Browse for folder') as HTMLButtonElement).click()
+      await tick()
+
+      expect(field('Source location').value).toBe('/var/typed-registry')
+      expect(client.configure).not.toHaveBeenCalled()
+    } finally {
+      restore()
+    }
+  })
+
+  // spec: gui-configuration/choosing-a-folder-fills-location-without-adding-a-source
+  it('validates a selected Location through the ordinary edit path without submitting', async () => {
+    const chooseDirectory = vi.fn(async () => '/var/selected-registry')
+    const restore = installDirectoryPicker(chooseDirectory)
+    try {
+      const { client, wrapper } = await mountSources({ userSources: [] })
+      await openSources(wrapper)
+      await setInput('Source location', ' \t ')
+      await field('Source location').dispatchEvent(new Event('blur'))
+      expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('directory')
+
+      const browse = button('Browse for folder') as HTMLButtonElement
+      browse.click()
+      await tick()
+
+      expect(chooseDirectory).toHaveBeenCalledWith(' \t ')
+      expect(field('Source location').value).toBe('/var/selected-registry')
+      expect(dialog().querySelector('[role="alert"]')).toBeNull()
+      expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+      expect(client.configure).not.toHaveBeenCalled()
+      expect(browse.closest('label')).toBeNull()
+    } finally {
+      restore()
+    }
   })
 
   // spec: gui-configuration/invalid-source-input-disables-addition

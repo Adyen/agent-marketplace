@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"log/slog"
+	"os"
 	"sync/atomic"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -23,6 +25,8 @@ type nativeWindow struct {
 	ctx context.Context
 }
 
+type directoryDialog func(string) (string, error)
+
 func (w nativeWindow) Unminimise() { wailsruntime.WindowUnminimise(w.ctx) }
 func (w nativeWindow) Show()       { wailsruntime.WindowShow(w.ctx) }
 func (w nativeWindow) Emit(event string, args ...string) {
@@ -34,19 +38,43 @@ func (w nativeWindow) Emit(event string, args ...string) {
 }
 
 type nativeState struct {
-	closeApproved atomic.Bool
+	closeApproved   atomic.Bool
+	directoryDialog atomic.Pointer[directoryDialog]
 }
 
 func (s *nativeState) approveClose() {
 	s.closeApproved.Store(true)
 }
 
+func (app *App) ChooseDirectory(location string) (string, error) {
+	dialog := app.directoryDialog.Load()
+	if dialog == nil {
+		return "", fmt.Errorf("native directory dialog is not initialized")
+	}
+
+	defaultDirectory := location
+	if info, err := os.Stat(location); err != nil || !info.IsDir() {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		defaultDirectory = home
+	}
+	return (*dialog)(defaultDirectory)
+}
+
 type lifecycleHooks struct {
+	eventsOn   func(context.Context, string, func(...any)) func()
 	onStartup  func(context.Context)
 	onDomReady func(context.Context)
 }
 
 func (app *App) appOptions(hooks lifecycleHooks) *options.App {
+	eventsOn := hooks.eventsOn
+	if eventsOn == nil {
+		eventsOn = wailsruntime.EventsOn
+	}
+
 	var windowCtx context.Context
 	app.quit = func() {
 		if windowCtx == nil {
@@ -70,7 +98,13 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Bind: []any{app},
 		OnStartup: func(ctx context.Context) {
 			windowCtx = ctx
-			wailsruntime.EventsOn(ctx, sessionEventsOpenEvent, func(data ...any) {
+			dialog := directoryDialog(func(defaultDirectory string) (string, error) {
+				return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
+					DefaultDirectory: defaultDirectory,
+				})
+			})
+			app.directoryDialog.Store(&dialog)
+			eventsOn(ctx, sessionEventsOpenEvent, func(data ...any) {
 				if len(data) < 2 {
 					return
 				}
@@ -80,7 +114,7 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 					app.openEventStream(nativeWindow{ctx: ctx}, id, credential)
 				}
 			})
-			wailsruntime.EventsOn(ctx, sessionEventsCloseEvent, func(data ...any) {
+			eventsOn(ctx, sessionEventsCloseEvent, func(data ...any) {
 				if len(data) == 0 {
 					return
 				}
