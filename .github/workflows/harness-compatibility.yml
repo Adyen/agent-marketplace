@@ -120,7 +120,7 @@ jobs:
           go -C e2e mod download
       - name: Authenticate read-only image consumer
         if: matrix.mode == 'probe'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
