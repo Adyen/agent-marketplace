@@ -80,6 +80,24 @@ func (s *RuntimeSource) RestartRequired() []string {
 
 // Run polls configuration bytes until ctx is cancelled.
 func (s *RuntimeSource) Run(ctx context.Context, interval time.Duration, apply func(context.Context, Snapshot, Config, Classification) error, reporter RuntimeReporter) error {
+	return s.run(ctx, interval, func(ctx context.Context) {
+		s.poll(ctx, apply, reporter)
+	})
+}
+
+// RunClaudeDelivery polls only Claude Enterprise delivery configuration.
+func (s *RuntimeSource) RunClaudeDelivery(ctx context.Context, interval time.Duration) error {
+	return s.run(ctx, interval, func(ctx context.Context) {
+		s.pollProjected(ctx, func(context.Context, Snapshot, Config, Classification) error {
+			return nil
+		}, nil, func(current, candidate Config) Config {
+			current.ClaudeEnterprise = candidate.ClaudeEnterprise
+			return current
+		})
+	})
+}
+
+func (s *RuntimeSource) run(ctx context.Context, interval time.Duration, poll func(context.Context)) error {
 	if interval <= 0 {
 		interval = RuntimePollInterval
 	}
@@ -90,12 +108,21 @@ func (s *RuntimeSource) Run(ctx context.Context, interval time.Duration, apply f
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			s.poll(ctx, apply, reporter)
+			poll(ctx)
 		}
 	}
 }
 
 func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Snapshot, Config, Classification) error, reporter RuntimeReporter) {
+	s.pollProjected(ctx, apply, reporter, nil)
+}
+
+func (s *RuntimeSource) pollProjected(
+	ctx context.Context,
+	apply func(context.Context, Snapshot, Config, Classification) error,
+	reporter RuntimeReporter,
+	project func(current, candidate Config) Config,
+) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if s.reject(sha256.Sum256([]byte("missing configuration")), boundedRuntimeReason(err)) && reporter != nil {
@@ -118,6 +145,9 @@ func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Sn
 		return
 	}
 	current := s.Current()
+	if project != nil {
+		candidate = project(current.Config, candidate)
+	}
 	classification, err := Classify(s.startup, current.Config, candidate)
 	if err != nil {
 		if s.reject(digest, boundedRuntimeReason(err)) && reporter != nil {

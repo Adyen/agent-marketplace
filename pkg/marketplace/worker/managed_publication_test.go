@@ -26,6 +26,47 @@ type publicationRaceBlobs struct {
 	beforePut func()
 }
 
+type deliveryEnqueueAttempts struct {
+	outsideTransaction int
+	insideTransaction  int
+}
+
+type failingClaudeDeliveryEnqueueStore struct {
+	store.MetadataStore
+	store.PublicationStore
+	store.ManagedConfigurationStore
+	store.ManagedRefreshAttemptStore
+	store.BlobOwnerStore
+	store.BlobOwnerMaintenanceStore
+	attempts          *deliveryEnqueueAttempts
+	insideTransaction bool
+}
+
+func (s *failingClaudeDeliveryEnqueueStore) EnqueueJob(ctx context.Context, job store.Job) error {
+	if job.Kind == store.ClaudeDeliveryJobKind {
+		if s.insideTransaction {
+			s.attempts.insideTransaction++
+		} else {
+			s.attempts.outsideTransaction++
+		}
+		return errors.New("Claude delivery enqueue unavailable")
+	}
+	return s.MetadataStore.EnqueueJob(ctx, job)
+}
+
+func (s *failingClaudeDeliveryEnqueueStore) WithTx(ctx context.Context, fn func(context.Context, store.MetadataStore) error) error {
+	return s.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		return fn(txCtx, &failingClaudeDeliveryEnqueueStore{
+			MetadataStore: tx, PublicationStore: tx.(store.PublicationStore),
+			ManagedConfigurationStore:  tx.(store.ManagedConfigurationStore),
+			ManagedRefreshAttemptStore: tx.(store.ManagedRefreshAttemptStore),
+			BlobOwnerStore:             tx.(store.BlobOwnerStore),
+			BlobOwnerMaintenanceStore:  tx.(store.BlobOwnerMaintenanceStore),
+			attempts:                   s.attempts, insideTransaction: true,
+		})
+	})
+}
+
 func (s *publicationRaceBlobs) Put(ctx context.Context, d store.ArchiveDigest, b []byte) error {
 	if s.beforePut != nil {
 		hook := s.beforePut
@@ -158,6 +199,65 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 				t.Fatalf("worker rewrote registry status/config: %v\nbefore=%+v\nafter=%+v", readErr, original, after)
 			}
 		})
+	}
+}
+
+func TestManagedPublicationSurvivesClaudeDeliveryEnqueueFailure(t *testing.T) {
+	ctx := context.Background()
+	deps, _ := managedFixture(t)
+	metadata := deps.MetadataStore
+	repo, cleanup := createTestRepo(t)
+	defer cleanup()
+	commit, err := testCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduleManaged(ctx, deps, "enqueue-failure"); err != nil {
+		t.Fatal(err)
+	}
+	refreshJob, err := metadata.LeaseJob(ctx, "managed-refresh", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+		Enabled: true,
+		APIKey: config.ClaudeEnterpriseAPIKeyReference{
+			Env: "CLAUDE_ENTERPRISE_TEST_KEY",
+		},
+		APIKeyID: "apikey_test",
+	}
+	attempts := &deliveryEnqueueAttempts{}
+	deps.MetadataStore = &failingClaudeDeliveryEnqueueStore{
+		MetadataStore: metadata, PublicationStore: metadata.(store.PublicationStore),
+		ManagedConfigurationStore:  metadata.(store.ManagedConfigurationStore),
+		ManagedRefreshAttemptStore: metadata.(store.ManagedRefreshAttemptStore),
+		BlobOwnerStore:             metadata.(store.BlobOwnerStore),
+		BlobOwnerMaintenanceStore:  metadata.(store.BlobOwnerMaintenanceStore),
+		attempts:                   attempts,
+	}
+	clone := func(context.Context, string, string, acquire.Credentials, acquire.Limits, time.Duration, ...string) (*acquire.Result, error) {
+		return &acquire.Result{Dir: repo, Commit: commit}, nil
+	}
+
+	if err := processManagedRefresh(ctx, deps, refreshJob, "worker", clone); err != nil {
+		t.Fatalf("managed refresh: %v", err)
+	}
+	publication, err := metadata.(store.PublicationStore).CurrentRegistryPublication(ctx, "src-test")
+	if err != nil || publication.ID == "" || publication.Occurrence.Commit != commit {
+		t.Fatalf("publication head = %+v, %v", publication, err)
+	}
+	completed, err := metadata.GetJob(ctx, refreshJob.ID)
+	if err != nil || completed.Status != store.JobStatusCompleted {
+		t.Fatalf("refresh job = %+v, %v", completed, err)
+	}
+	recorded, err := metadata.(store.ManagedRefreshAttemptStore).ListManagedRefreshAttempts(ctx,
+		store.ManagedRefreshAttemptQuery{Marketplace: "test-mp", JobID: refreshJob.ID, Limit: 10})
+	if err != nil || len(recorded) != 2 || recorded[0].Outcome != "succeeded" ||
+		recorded[0].PublicationID != publication.ID {
+		t.Fatalf("refresh attempts = %+v, %v", recorded, err)
+	}
+	if attempts.outsideTransaction+attempts.insideTransaction == 0 {
+		t.Fatal("Claude delivery enqueue was not attempted")
 	}
 }
 

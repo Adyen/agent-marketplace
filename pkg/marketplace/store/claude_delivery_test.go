@@ -67,6 +67,64 @@ func TestConformanceClaudeDeliveryLeaseScopesJobsToInstance(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
+func TestConformanceClaudeDeliveryFailureCooldownScopesJobsToInstance(t *testing.T) {
+	ctx := context.Background()
+	meta, _ := openStores(t)
+	jobs, ok := meta.(store.ClaudeDeliveryJobStore)
+	if !ok {
+		t.Fatal("metadata store does not implement Claude delivery job leasing")
+	}
+	payloadA, err := json.Marshal(store.ClaudeDeliveryJobPayload{Marketplace: "instance-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadB, err := json.Marshal(store.ClaudeDeliveryJobPayload{Marketplace: "instance-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().UTC().Truncate(time.Microsecond)
+	queued := []store.Job{
+		{ID: "job-a-exhausted", Kind: store.ClaudeDeliveryJobKind, Payload: payloadA, MaxAttempts: 1, CreatedAt: created, UpdatedAt: created},
+		{ID: "job-a-operator", Kind: store.ClaudeDeliveryJobKind, Payload: payloadA, MaxAttempts: 3, CreatedAt: created.Add(time.Second), UpdatedAt: created.Add(time.Second)},
+		{ID: "job-b-other", Kind: store.ClaudeDeliveryJobKind, Payload: payloadB, MaxAttempts: 3, CreatedAt: created.Add(2 * time.Second), UpdatedAt: created.Add(2 * time.Second)},
+	}
+	for _, job := range queued {
+		if err := meta.EnqueueJob(ctx, job); err != nil {
+			t.Fatalf("enqueue %s: %v", job.ID, err)
+		}
+	}
+
+	active, err := jobs.LeaseClaudeDeliveryJob(ctx, "instance-a", queued[0].ID, "worker-a", time.Minute)
+	if err != nil || active.ID != queued[0].ID || active.Attempt != 1 {
+		t.Fatalf("active instance-a lease = %+v, %v", active, err)
+	}
+	const cooldown = time.Hour
+	if err := meta.FailJob(ctx, active.ID, "worker-a", cooldown); err != nil {
+		t.Fatalf("fail active instance-a job: %v", err)
+	}
+	exhausted, err := meta.GetJob(ctx, active.ID)
+	if err != nil || exhausted.Status != store.JobStatusFailed ||
+		exhausted.Attempt != exhausted.MaxAttempts || !exhausted.LeaseUntil.After(time.Now()) {
+		t.Fatalf("failed job does not retain its exhausted-attempt cooldown: %+v, %v", exhausted, err)
+	}
+
+	if _, err := jobs.LeaseClaudeDeliveryJob(ctx, "instance-a", queued[1].ID, "worker-a-operator", time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("explicit instance-a lease during cooldown = %v, want ErrNotFound", err)
+	}
+	if _, err := jobs.LeaseClaudeDeliveryJob(ctx, "instance-a", "", "worker-a-spontaneous", time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("spontaneous instance-a lease during cooldown = %v, want ErrNotFound", err)
+	}
+	other, err := jobs.LeaseClaudeDeliveryJob(ctx, "instance-b", queued[2].ID, "worker-b", time.Minute)
+	if err != nil || other.ID != queued[2].ID {
+		t.Fatalf("instance-b lease during instance-a cooldown = %+v, %v", other, err)
+	}
+	operator, err := meta.GetJob(ctx, queued[1].ID)
+	if err != nil || operator.Attempt != 0 {
+		t.Fatalf("blocked operator job attempt = %d, %v, want zero", operator.Attempt, err)
+	}
+}
+
 // spec: claude-enterprise-delivery/a-renamed-registry-slug-does-not-rename-a-live-plugin
 func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 	ctx := context.Background()

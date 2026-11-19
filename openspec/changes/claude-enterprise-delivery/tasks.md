@@ -35,7 +35,7 @@ The [operator preconditions](operator-preconditions.md) are pending deployment c
   preference, and an invalid prefix. Annotate
   `// spec: claude-enterprise-delivery/inline-api-key-is-refused-at-validation`.
   Verify `go test ./pkg/marketplace/config -count=1`
-- [x] 2.2 Register the key with `internal/redact` and prove it never appears in
+- [x] 2.2 Keep the API key's formatting redacted and prove it never appears in
   configuration dumps, status output, or error strings. Annotate
   `// spec: claude-enterprise-delivery/status-reports-a-failure-by-code-without-content`
 - [x] 2.3 Classify the block in runtime configuration replacement so an enable,

@@ -139,9 +139,7 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 	if err := recordRefreshSuccess(ctx, deps.MetadataStore, merged.ID); err != nil {
 		return err
 	}
-	if _, err := enqueueClaudeDelivery(ctx, deps, "publication-"+uuid.NewString()); err != nil {
-		return fmt.Errorf("enqueue Claude delivery after publication: %w", err)
-	}
+	enqueueClaudeDeliveryAfterChange(ctx, deps, "publication-"+uuid.NewString())
 	return nil
 }
 
@@ -240,9 +238,7 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 		return err
 	}
 	if changed {
-		if _, err := enqueueClaudeDelivery(ctx, deps, "revocation-"+uuid.NewString()); err != nil {
-			return fmt.Errorf("enqueue Claude delivery after revocation change: %w", err)
-		}
+		enqueueClaudeDeliveryAfterChange(ctx, deps, "revocation-"+uuid.NewString())
 	}
 	return nil
 }
@@ -270,22 +266,21 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 		defer close(deliveryDone)
 		runClaudeDeliveryWorker(deliveryCtx, deps)
 	}()
+	var deliveryRuntimeDone chan struct{}
 	defer func() {
 		stopDelivery()
 		<-deliveryDone
+		if deliveryRuntimeDone != nil {
+			<-deliveryRuntimeDone
+		}
 	}()
 
 	if deps.Config.Management.Mode == "database" {
 		if deps.RuntimeSource != nil {
+			deliveryRuntimeDone = make(chan struct{})
 			go func() {
-				_ = deps.RuntimeSource.Run(ctx, config.RuntimePollInterval, func(
-					context.Context,
-					config.Snapshot,
-					config.Config,
-					config.Classification,
-				) error {
-					return nil
-				}, deps.Metrics)
+				defer close(deliveryRuntimeDone)
+				_ = deps.RuntimeSource.RunClaudeDelivery(deliveryCtx, config.RuntimePollInterval)
 			}()
 		}
 		return runManaged(ctx, deps)

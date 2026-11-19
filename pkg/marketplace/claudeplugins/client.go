@@ -213,7 +213,8 @@ func (e *APIError) Format(state fmt.State, verb rune) {
 }
 
 type ThrottledError struct {
-	APIError *APIError
+	APIError   *APIError
+	RetryAfter time.Duration
 }
 
 func (e *ThrottledError) Error() string {
@@ -420,13 +421,13 @@ func (c *Client) requestJSON(ctx context.Context, method, endpoint string, body 
 			if attempt == 0 && apiErr.RetryAfter >= 0 && response.Header.Get("retry-after") != "" {
 				if err := wait(requestContext, apiErr.RetryAfter); err != nil {
 					_ = response.Body.Close()
-					return &ThrottledError{APIError: apiErr}
+					return &ThrottledError{APIError: apiErr, RetryAfter: apiErr.RetryAfter}
 				}
 				_ = response.Body.Close()
 				continue
 			}
 			_ = response.Body.Close()
-			return &ThrottledError{APIError: apiErr}
+			return &ThrottledError{APIError: apiErr, RetryAfter: apiErr.RetryAfter}
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			apiErr := apiError(response)
@@ -514,7 +515,22 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 		if seconds < 0 {
 			return -1
 		}
+		if int64(seconds) > int64(time.Duration(1<<63-1)/time.Second) {
+			return time.Duration(1<<63 - 1)
+		}
 		return time.Duration(seconds) * time.Second
+	}
+	if len(value) > 0 {
+		integer := true
+		for _, digit := range value {
+			if digit < '0' || digit > '9' {
+				integer = false
+				break
+			}
+		}
+		if integer {
+			return time.Duration(1<<63 - 1)
+		}
 	}
 	if retryAt, err := http.ParseTime(value); err == nil {
 		delay := retryAt.Sub(now)

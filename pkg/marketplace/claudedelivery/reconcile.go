@@ -97,6 +97,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		OwnerType: "organization", MarketplaceID: marketplace.ID,
 	})
 	if err != nil {
+		if isThrottled(err) {
+			return ReconcileResult{}, err
+		}
 		return ReconcileResult{}, &ReconcileError{code: "inventory.read"}
 	}
 	byName := make(map[string]claudeplugins.Plugin, len(inventory))
@@ -188,6 +191,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		}
 		plugin, owned, err := r.resolveOwnedPlugin(ctx, row, hasState, byName)
 		if err != nil {
+			if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+				return result, stopErr
+			}
 			if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, "plugin.read"); saveErr != nil {
 				return result, saveErr
 			}
@@ -207,6 +213,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			if err != nil {
 				if errors.Is(err, errWriteRateLimit) {
 					return result, &ReconcileError{code: "write.rate-limited"}
+				}
+				if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+					return result, stopErr
 				}
 				if deliveryErrorCode(err) == "plugin.foreign" {
 					if markErr := state.MarkClaudeDeliveryConflict(ctx, row.Coordinate, row.PluginName, "plugin.foreign", r.options.Now()); markErr != nil {
@@ -238,6 +247,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			if err := r.setInstallationPreference(ctx, plugin.ID, row.InstallationPreference); err != nil {
 				if errors.Is(err, errWriteRateLimit) {
 					return result, &ReconcileError{code: "write.rate-limited"}
+				}
+				if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+					return result, stopErr
 				}
 				if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, deliveryErrorCode(err)); saveErr != nil {
 					return result, saveErr
@@ -271,6 +283,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 						if errors.Is(err, errWriteRateLimit) {
 							return result, &ReconcileError{code: "write.rate-limited"}
 						}
+						if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+							return result, stopErr
+						}
 						if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, deliveryErrorCode(err)); saveErr != nil {
 							return result, saveErr
 						}
@@ -294,6 +309,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			if errors.Is(err, errWriteRateLimit) {
 				return result, &ReconcileError{code: "write.rate-limited"}
 			}
+			if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+				return result, stopErr
+			}
 			if deliveryErrorCode(err) == "plugin.skill-name-taken" {
 				if markErr := state.MarkClaudeDeliverySkipped(ctx, row.Coordinate, row.PluginName, "plugin.skill-name-taken", r.options.Now()); markErr != nil {
 					return result, &ReconcileError{code: "state.write"}
@@ -311,6 +329,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			if err := r.setInstallationPreference(ctx, plugin.ID, row.InstallationPreference); err != nil {
 				if errors.Is(err, errWriteRateLimit) {
 					return result, &ReconcileError{code: "write.rate-limited"}
+				}
+				if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+					return result, stopErr
 				}
 				if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, deliveryErrorCode(err)); saveErr != nil {
 					return result, saveErr
@@ -330,6 +351,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			if errors.Is(err, errWriteRateLimit) {
 				return result, &ReconcileError{code: "write.rate-limited"}
 			}
+			if stop, stopErr := r.recordThrottleFailure(ctx, state, row, row.TargetMarketplaceID, &result, err); stop {
+				return result, stopErr
+			}
 			if saveErr := r.recordFailure(ctx, state, row, row.TargetMarketplaceID, deliveryErrorCode(err)); saveErr != nil {
 				return result, saveErr
 			}
@@ -348,6 +372,9 @@ func (r *Reconciler) resolveMarketplace(ctx context.Context) (claudeplugins.Plug
 	if r.options.Target.MarketplaceID != "" {
 		marketplace, err := r.options.Client.GetMarketplace(ctx, r.options.Target.MarketplaceID)
 		if err != nil {
+			if isThrottled(err) {
+				return claudeplugins.PluginMarketplace{}, err
+			}
 			return claudeplugins.PluginMarketplace{}, &ReconcileError{code: "marketplace.not-found"}
 		}
 		if marketplace.Owner.Type != "organization" || marketplace.Source != "manual" {
@@ -357,6 +384,9 @@ func (r *Reconciler) resolveMarketplace(ctx context.Context) (claudeplugins.Plug
 	}
 	marketplaces, err := r.options.Client.ListMarketplaces(ctx, claudeplugins.MarketplaceListQuery{OwnerType: "organization"})
 	if err != nil {
+		if isThrottled(err) {
+			return claudeplugins.PluginMarketplace{}, err
+		}
 		return claudeplugins.PluginMarketplace{}, &ReconcileError{code: "marketplace.read"}
 	}
 	var manual []claudeplugins.PluginMarketplace
@@ -444,6 +474,9 @@ func (r *Reconciler) createPlugin(ctx context.Context, state store.ClaudeDeliver
 		}
 		return plugin, true, nil
 	}
+	if isThrottled(err) {
+		return claudeplugins.Plugin{}, false, err
+	}
 	var apiErr *claudeplugins.APIError
 	if errors.As(err, &apiErr) && apiErr.Code == "skill_name_taken" {
 		return claudeplugins.Plugin{}, false, &ReconcileError{code: "plugin.skill-name-taken"}
@@ -490,6 +523,9 @@ func (r *Reconciler) publishVersion(ctx context.Context, state store.ClaudeDeliv
 	row.TargetMarketplaceID = marketplaceID
 	if plugin.LatestVersionID != "" && row.LatestVersionID != "" && plugin.LatestVersionID != row.LatestVersionID {
 		version, err := r.options.Client.GetVersion(ctx, plugin.ID, plugin.LatestVersionID)
+		if isThrottled(err) {
+			return row, err
+		}
 		if err == nil {
 			row = publishedRow(row, plugin, version, built, marketplaceID,
 				row.PublishedContentDigest, row.InstallationPreference, r.options.Now())
@@ -531,6 +567,9 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 			}
 			return version, latest, nil
 		}
+		if isThrottled(err) {
+			return claudeplugins.PluginVersion{}, plugin, err
+		}
 		var apiErr *claudeplugins.APIError
 		if errors.As(err, &apiErr) && apiErr.Code == "skill_name_taken" {
 			return claudeplugins.PluginVersion{}, plugin, &ReconcileError{code: "plugin.skill-name-taken"}
@@ -539,6 +578,9 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 			if apiErr.ShouldRetry != nil && *apiErr.ShouldRetry && attempt == 0 {
 				latest, readErr := r.options.Client.GetPlugin(ctx, plugin.ID)
 				if readErr != nil {
+					if isThrottled(readErr) {
+						return claudeplugins.PluginVersion{}, plugin, readErr
+					}
 					return claudeplugins.PluginVersion{}, plugin, err
 				}
 				plugin = latest
@@ -546,14 +588,26 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 			}
 			if apiErr.PluginVersionID != "" {
 				version, versionErr := r.options.Client.GetVersion(ctx, plugin.ID, apiErr.PluginVersionID)
+				if isThrottled(versionErr) {
+					return claudeplugins.PluginVersion{}, plugin, versionErr
+				}
 				latest, latestErr := r.options.Client.GetPlugin(ctx, plugin.ID)
+				if isThrottled(latestErr) {
+					return claudeplugins.PluginVersion{}, plugin, latestErr
+				}
 				if versionErr == nil && latestErr == nil {
 					return version, latest, nil
 				}
 			}
 			latest, readErr := r.options.Client.GetPlugin(ctx, plugin.ID)
+			if isThrottled(readErr) {
+				return claudeplugins.PluginVersion{}, plugin, readErr
+			}
 			if readErr == nil && latest.LatestVersionID != plugin.LatestVersionID {
 				version, versionErr := r.options.Client.GetVersion(ctx, plugin.ID, latest.LatestVersionID)
+				if isThrottled(versionErr) {
+					return claudeplugins.PluginVersion{}, plugin, versionErr
+				}
 				if versionErr == nil {
 					return version, latest, nil
 				}
@@ -561,8 +615,14 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 			return claudeplugins.PluginVersion{}, plugin, err
 		}
 		latest, readErr := r.options.Client.GetPlugin(ctx, plugin.ID)
+		if isThrottled(readErr) {
+			return claudeplugins.PluginVersion{}, plugin, readErr
+		}
 		if readErr == nil && latest.LatestVersionID != plugin.LatestVersionID {
 			version, readErr = r.options.Client.GetVersion(ctx, plugin.ID, latest.LatestVersionID)
+			if isThrottled(readErr) {
+				return claudeplugins.PluginVersion{}, plugin, readErr
+			}
 			if readErr == nil {
 				return version, latest, nil
 			}
@@ -592,6 +652,9 @@ func (r *Reconciler) setInstallationPreference(ctx context.Context, pluginID, pr
 		if err == nil {
 			return nil
 		}
+		if isThrottled(err) {
+			return err
+		}
 		var apiErr *claudeplugins.APIError
 		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
 			return err
@@ -605,6 +668,29 @@ func (r *Reconciler) recordFailure(ctx context.Context, state store.ClaudeDelive
 		return &ReconcileError{code: "state.write"}
 	}
 	return nil
+}
+
+func (r *Reconciler) recordThrottleFailure(
+	ctx context.Context,
+	state store.ClaudeDeliveryStateStore,
+	row store.ClaudeDeliveryPlugin,
+	marketplaceID string,
+	result *ReconcileResult,
+	err error,
+) (bool, error) {
+	if !isThrottled(err) {
+		return false, nil
+	}
+	if saveErr := r.recordFailure(ctx, state, row, marketplaceID, deliveryErrorCode(err)); saveErr != nil {
+		return true, saveErr
+	}
+	result.Failed++
+	return true, err
+}
+
+func isThrottled(err error) bool {
+	var throttle *claudeplugins.ThrottledError
+	return errors.As(err, &throttle)
 }
 
 func createdPluginRow(row store.ClaudeDeliveryPlugin, plugin claudeplugins.Plugin, contentDigest store.RevisionDigest, built BuildResult, marketplaceID, preference string, now time.Time) store.ClaudeDeliveryPlugin {
@@ -645,6 +731,9 @@ func deliveryErrorCode(err error) string {
 	if err == nil {
 		return "delivery.failed"
 	}
+	if isThrottled(err) {
+		return "claude-api.rate-limited"
+	}
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) {
 		return coded.ErrorCode()
@@ -656,10 +745,6 @@ func deliveryErrorCode(err error) string {
 			return "claude-api." + apiErr.Code
 		}
 		return fmt.Sprintf("claude-api.http-%d", apiErr.StatusCode)
-	}
-	var throttled *claudeplugins.ThrottledError
-	if errors.As(err, &throttled) {
-		return "claude-api.rate-limited"
 	}
 	return "delivery.failed"
 }

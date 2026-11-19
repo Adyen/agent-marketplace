@@ -111,7 +111,7 @@ func SelectClaudeDeliveryJob(ctx context.Context, q ManagedSQLQueries, marketpla
 		  AND NOT EXISTS (
 		    SELECT 1 FROM jobs AS active
 		    WHERE active.kind=$1 AND active.payload=$2
-		      AND active.status=$6 AND active.lease_until > $7
+		      AND active.status IN ($5,$6) AND active.lease_until > $7
 		  )
 		ORDER BY pending.created_at, pending.id LIMIT 1`,
 		ClaudeDeliveryJobKind, payload, requestedID,
