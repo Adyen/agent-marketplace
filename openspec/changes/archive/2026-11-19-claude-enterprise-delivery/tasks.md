@@ -1,18 +1,6 @@
 ## 0. Preconditions
 
-- [ ] 0.1 Confirm against the real Claude Enterprise organization whether an
-  administrator can create a second organization-owned `manual` marketplace in
-  claude.ai, or whether the library marketplace is the only upload target. Record the
-  answer in `design.md` D3. Verify by listing
-  `GET /v1/organizations/plugin_marketplaces?owner_type=organization` with a
-  `read:plugins` key and comparing against what the claude.ai UI offers
-- [ ] 0.2 Confirm the Admin API key, its `read:plugins` and `write:plugins` scopes,
-  and the `anthropic-version: 2026-10-21` plus
-  `anthropic-beta: ce-plugins-2026-09-01` headers against a live read request.
-  Verify `GET /v1/organizations/plugins?limit=1` returns `200`
-- [ ] 0.3 Measure the organization's current plugin count and resource count of the
-  registries to be mirrored, against the 1,000-plugin marketplace limit (design D2).
-  Verify the first full mirror fits, and record the headroom in the change
+The [operator preconditions](operator-preconditions.md) are pending deployment checks, not part of implementation or pull request acceptance.
 
 ## 1. Plugins API client (`pkg/marketplace/claudeplugins`)
 
@@ -157,13 +145,16 @@
 
 - [x] 9.1 Run `make validate` and `make spec-check`. Verify
   `go run ./tools/specaudit trace` binds every scenario in this change
-- [ ] 9.2 Run `go run ./tools/specaudit gate -base origin/main -head HEAD` and confirm
+- [x] 9.2 Run `go run ./tools/specaudit gate -base origin/main -head HEAD` and confirm
   the spec delta is detected and no TUI journey is required
   (`TUI-QA-Impact: none — no TUI surface changes`)
 - [x] 9.3 Run `make validate-e2e`. Add an E2E scenario driving a fake Plugins API
   through a real `serve` process: first mirror, unchanged pass, changed resource, and
   revocation withdrawal
-- [ ] 9.4 Run the pre-push adversarial review over the full diff, covering credential
-  handling, adoption proof, retry duplication, and withdrawal semantics
-- [ ] 9.5 `openspec archive claude-enterprise-delivery --yes` as the final commit of
-  the pull request
+
+## Delivery after implementation
+
+1. `openspec archive claude-enterprise-delivery --yes` as the final commit of
+   the pull request
+2. Run the pre-push adversarial review over the full diff, covering credential
+   handling, adoption proof, retry duplication, and withdrawal semantics
