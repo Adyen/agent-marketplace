@@ -30,6 +30,8 @@ type ClaudeDeliveryPlugin struct {
 	TargetMarketplaceID    string
 	PublishedArchiveDigest ArchiveDigest
 	PublishedContentDigest RevisionDigest
+	PendingVersionID       string
+	PendingArchiveDigest   ArchiveDigest
 	PublishedVersionID     string
 	LatestVersionID        string
 	ServedVersionID        string
@@ -80,6 +82,8 @@ CREATE TABLE claude_delivery_plugins (
  target_marketplace_id TEXT NOT NULL DEFAULT '',
  published_archive_digest TEXT NOT NULL DEFAULT '',
  published_content_digest TEXT NOT NULL DEFAULT '',
+ pending_version_id TEXT NOT NULL DEFAULT '',
+ pending_archive_digest TEXT NOT NULL DEFAULT '',
  published_version_id TEXT NOT NULL DEFAULT '',
  latest_version_id TEXT NOT NULL DEFAULT '',
  served_version_id TEXT NOT NULL DEFAULT '',
@@ -138,15 +142,18 @@ func UpsertClaudeDeliveryPublished(ctx context.Context, q ManagedSQLQueries, row
 	_, err := q.ExecContext(ctx, `INSERT INTO claude_delivery_plugins (
 		source_marketplace_id, registry_id, kind, resource_name, plugin_name, plugin_id,
 		target_marketplace_id, published_archive_digest, published_content_digest,
-		published_version_id, latest_version_id, served_version_id, content_scan_status,
-		reach, installation_preference, state, last_error_code, last_error_message,
+		pending_version_id, pending_archive_digest, published_version_id, latest_version_id,
+		served_version_id, content_scan_status, reach, installation_preference, state,
+		last_error_code, last_error_message,
 		created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'','',$17,$18)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'','',$19,$20)
 		ON CONFLICT (source_marketplace_id, registry_id, kind, resource_name) DO UPDATE SET
 		plugin_name=CASE WHEN claude_delivery_plugins.plugin_name='' THEN excluded.plugin_name ELSE claude_delivery_plugins.plugin_name END,
 		plugin_id=excluded.plugin_id, target_marketplace_id=excluded.target_marketplace_id,
 		published_archive_digest=excluded.published_archive_digest,
 		published_content_digest=excluded.published_content_digest,
+		pending_version_id=excluded.pending_version_id,
+		pending_archive_digest=excluded.pending_archive_digest,
 		published_version_id=excluded.published_version_id,
 		latest_version_id=excluded.latest_version_id, served_version_id=excluded.served_version_id,
 		content_scan_status=excluded.content_scan_status, reach=excluded.reach,
@@ -154,7 +161,8 @@ func UpsertClaudeDeliveryPublished(ctx context.Context, q ManagedSQLQueries, row
 		last_error_code='', last_error_message='', updated_at=excluded.updated_at`,
 		row.Coordinate.Marketplace, row.Coordinate.Registry, row.Coordinate.Kind, row.Coordinate.Name,
 		row.PluginName, row.PluginID, row.TargetMarketplaceID, row.PublishedArchiveDigest,
-		row.PublishedContentDigest, row.PublishedVersionID, row.LatestVersionID, row.ServedVersionID,
+		row.PublishedContentDigest, row.PendingVersionID, row.PendingArchiveDigest,
+		row.PublishedVersionID, row.LatestVersionID, row.ServedVersionID,
 		row.ContentScanStatus, row.Reach, row.InstallationPreference, row.State,
 		row.CreatedAt.UTC().UnixNano(), row.UpdatedAt.UTC().UnixNano())
 	if err != nil {
@@ -254,7 +262,8 @@ func boundedClaudeDeliveryFailureMessage(code string) string {
 func GetClaudeDeliveryPlugin(ctx context.Context, q ManagedSQLQueries, coordinate ResourceCoordinate) (ClaudeDeliveryPlugin, error) {
 	row := q.QueryRowContext(ctx, `SELECT source_marketplace_id,registry_id,kind,resource_name,
 		plugin_name,plugin_id,target_marketplace_id,published_archive_digest,published_content_digest,
-		published_version_id,latest_version_id,served_version_id,content_scan_status,reach,
+		pending_version_id,pending_archive_digest,published_version_id,latest_version_id,
+		served_version_id,content_scan_status,reach,
 		installation_preference,state,last_error_code,last_error_message,created_at,updated_at
 		FROM claude_delivery_plugins WHERE source_marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND resource_name=$4`,
 		coordinate.Marketplace, coordinate.Registry, coordinate.Kind, coordinate.Name)
@@ -268,7 +277,8 @@ func GetClaudeDeliveryPlugin(ctx context.Context, q ManagedSQLQueries, coordinat
 func ListClaudeDeliveryPlugins(ctx context.Context, q ManagedSQLQueries) ([]ClaudeDeliveryPlugin, error) {
 	rows, err := q.QueryContext(ctx, `SELECT source_marketplace_id,registry_id,kind,resource_name,
 		plugin_name,plugin_id,target_marketplace_id,published_archive_digest,published_content_digest,
-		published_version_id,latest_version_id,served_version_id,content_scan_status,reach,
+		pending_version_id,pending_archive_digest,published_version_id,latest_version_id,
+		served_version_id,content_scan_status,reach,
 		installation_preference,state,last_error_code,last_error_message,created_at,updated_at
 		FROM claude_delivery_plugins ORDER BY source_marketplace_id,registry_id,kind,resource_name`)
 	if err != nil {
@@ -299,7 +309,8 @@ func scanClaudeDeliveryPlugin(scanner claudeDeliveryScanner) (ClaudeDeliveryPlug
 	err := scanner.Scan(
 		&row.Coordinate.Marketplace, &row.Coordinate.Registry, &row.Coordinate.Kind, &row.Coordinate.Name,
 		&row.PluginName, &row.PluginID, &row.TargetMarketplaceID, &row.PublishedArchiveDigest,
-		&row.PublishedContentDigest, &row.PublishedVersionID, &row.LatestVersionID,
+		&row.PublishedContentDigest, &row.PendingVersionID, &row.PendingArchiveDigest,
+		&row.PublishedVersionID, &row.LatestVersionID,
 		&row.ServedVersionID, &row.ContentScanStatus, &row.Reach, &row.InstallationPreference,
 		&row.State, &row.LastErrorCode, &row.LastErrorMessage, &created, &updated)
 	if err != nil {
@@ -336,7 +347,9 @@ func ReadClaudeDeliveryDesired(ctx context.Context, metadata MetadataStore, publ
 				return nil, fmt.Errorf("read current Claude delivery resources: %w", searchErr)
 			}
 			for _, revision := range current {
-				if revision.Coordinate.Kind == "collection" || revision.Revocation != nil ||
+				coordinate := revision.Coordinate
+				if coordinate.Marketplace != marketplace || coordinate.Registry != registry ||
+					coordinate.Kind == "collection" || revision.Revocation != nil ||
 					!assessmentAllowsDelivery(revision.Assessment.Decision) {
 					continue
 				}
@@ -353,7 +366,8 @@ func ReadClaudeDeliveryDesired(ctx context.Context, metadata MetadataStore, publ
 		}
 		for _, occurrence := range publication.Resources {
 			coordinate := occurrence.Coordinate
-			if coordinate.Kind == "collection" {
+			if coordinate.Marketplace != marketplace || coordinate.Registry != registry ||
+				coordinate.Kind == "collection" {
 				continue
 			}
 			assessment, exists := assessments[coordinate]

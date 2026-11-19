@@ -278,6 +278,7 @@ func TestClaudeDeliveryRetryAfterSaturatesDuration(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/a-newly-created-plugin-becomes-available-to-members
 func TestInstallationSettingWritesForOnePluginAreSerialized(t *testing.T) {
 	var active, maximum atomic.Int32
 	var first sync.Once
@@ -302,19 +303,23 @@ func TestInstallationSettingWritesForOnePluginAreSerialized(t *testing.T) {
 		<-release
 		active.Add(-1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"installation_preference":"available"}`)
+		_, _ = io.WriteString(w, `{"installation_preference":"available","target":{"type":"organization"}}`)
 	}))
 	defer server.Close()
 
 	client := testClient(t, server, "key")
 	var wg sync.WaitGroup
+	targets := make(chan Owner, 2)
 	for range 2 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := client.SetInstallationSetting(context.Background(), "plugin_one", "available"); err != nil {
+			setting, err := client.SetInstallationSetting(context.Background(), "plugin_one", "available")
+			if err != nil {
 				t.Errorf("SetInstallationSetting: %v", err)
+				return
 			}
+			targets <- setting.Target
 		}()
 	}
 	select {
@@ -330,8 +335,14 @@ func TestInstallationSettingWritesForOnePluginAreSerialized(t *testing.T) {
 	}
 	close(release)
 	wg.Wait()
+	close(targets)
 	if got := maximum.Load(); got != 1 {
 		t.Fatalf("maximum concurrent installation-setting writes = %d", got)
+	}
+	for target := range targets {
+		if target.Type != "organization" {
+			t.Fatalf("decoded installation setting target = %+v, want organization", target)
+		}
 	}
 }
 

@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
 // spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
@@ -126,6 +129,7 @@ func TestConformanceClaudeDeliveryFailureCooldownScopesJobsToInstance(t *testing
 }
 
 // spec: claude-enterprise-delivery/a-renamed-registry-slug-does-not-rename-a-live-plugin
+// spec: claude-enterprise-delivery/a-pending-registration-is-completed-without-a-duplicate-plugin
 func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 	ctx := context.Background()
 	meta, _ := openStores(t)
@@ -143,6 +147,7 @@ func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 		ContentScanStatus: "pass", Reach: "organization", InstallationPreference: "available",
 		State: store.ClaudeDeliveryStatePublished, CreatedAt: now, UpdatedAt: now,
 	}
+	setClaudeDeliveryPendingFields(t, &first, "version_pending", "sha256:pending-one")
 	if err := delivery.UpsertClaudeDeliveryPublished(ctx, first); err != nil {
 		t.Fatalf("UpsertClaudeDeliveryPublished: %v", err)
 	}
@@ -164,6 +169,7 @@ func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 		row.PublishedArchiveDigest != updated.PublishedArchiveDigest {
 		t.Fatalf("delivery row after slug change = %+v", row)
 	}
+	assertClaudeDeliveryPendingFields(t, row, "version_pending", "sha256:pending-one")
 	if err := delivery.RecordClaudeDeliveryFailure(ctx, coordinate, row.PluginName, row.TargetMarketplaceID, "upload.failed", now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("RecordClaudeDeliveryFailure: %v", err)
 	}
@@ -176,12 +182,49 @@ func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 		strings.Contains(row.LastErrorMessage, "apikey_") || strings.Contains(row.LastErrorMessage, "request body") {
 		t.Fatalf("unsafe or unbounded failure: %+v", row)
 	}
+	assertClaudeDeliveryPendingFields(t, row, "version_pending", "sha256:pending-one")
 	if err := delivery.MarkClaudeDeliverySkipped(ctx, coordinate, row.PluginName, "archive.invalid-bin", now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("MarkClaudeDeliverySkipped: %v", err)
 	}
 	row, err = delivery.GetClaudeDeliveryPlugin(ctx, coordinate)
 	if err != nil || row.State != store.ClaudeDeliveryStateSkipped || row.LastErrorCode != "archive.invalid-bin" {
 		t.Fatalf("skipped delivery = %+v, %v", row, err)
+	}
+	assertClaudeDeliveryPendingFields(t, row, "version_pending", "sha256:pending-one")
+	if err := delivery.MarkClaudeDeliveryRetired(ctx, coordinate, now.Add(4*time.Minute)); err != nil {
+		t.Fatalf("MarkClaudeDeliveryRetired: %v", err)
+	}
+	row, err = delivery.GetClaudeDeliveryPlugin(ctx, coordinate)
+	if err != nil || row.State != store.ClaudeDeliveryStateRetired {
+		t.Fatalf("retired delivery = %+v, %v", row, err)
+	}
+	assertClaudeDeliveryPendingFields(t, row, "version_pending", "sha256:pending-one")
+}
+
+func setClaudeDeliveryPendingFields(t *testing.T, row *store.ClaudeDeliveryPlugin, versionID, archiveDigest string) {
+	t.Helper()
+	value := reflect.ValueOf(row).Elem()
+	for name, content := range map[string]string{
+		"PendingVersionID": versionID, "PendingArchiveDigest": archiveDigest,
+	} {
+		field := value.FieldByName(name)
+		if !field.IsValid() || !field.CanSet() {
+			t.Fatalf("ClaudeDeliveryPlugin has no writable %s field", name)
+		}
+		field.SetString(content)
+	}
+}
+
+func assertClaudeDeliveryPendingFields(t *testing.T, row store.ClaudeDeliveryPlugin, versionID, archiveDigest string) {
+	t.Helper()
+	value := reflect.ValueOf(row)
+	for name, want := range map[string]string{
+		"PendingVersionID": versionID, "PendingArchiveDigest": archiveDigest,
+	} {
+		field := value.FieldByName(name)
+		if !field.IsValid() || field.String() != want {
+			t.Errorf("ClaudeDeliveryPlugin.%s = %v, want %q", name, field, want)
+		}
 	}
 }
 
@@ -230,6 +273,132 @@ func TestClaudeDeliveryDesiredSetExcludesRejectedResourcesAndCollections(t *test
 	if len(desired) != 1 || desired[0].Resource.Coordinate.Name != "allowed" ||
 		desired[0].PublicationID != req.PublicationID {
 		t.Fatalf("desired set = %+v", desired)
+	}
+}
+
+// spec: claude-enterprise-delivery/a-rejected-resource-is-never-uploaded
+func TestClaudeDeliveryFallbackMatchesExactResourceCoordinate(t *testing.T) {
+	ctx := context.Background()
+	meta := openClaudeDeliverySQLite(t, "managed-test")
+	for _, registry := range []store.Registry{
+		{ID: "requested-registry", Slug: "requested-slug"},
+		{ID: "other-registry", Slug: "requested-registry"},
+	} {
+		registry.Ref = "main"
+		registry.Acquisition = store.AcquisitionIndexOnly
+		registry.Listed = true
+		if err := meta.PutRegistry(ctx, registry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inScope := store.ResourceCoordinate{
+		Marketplace: "managed-test", Registry: "requested-registry", Kind: "skill", Name: "in-scope",
+	}
+	outOfScope := store.ResourceCoordinate{
+		Marketplace: "managed-test", Registry: "other-registry", Kind: "skill", Name: "wrong-registry",
+	}
+	seedCurrentClaudeDeliveryResource(t, meta, inScope)
+	seedCurrentClaudeDeliveryResource(t, meta, outOfScope)
+
+	desired, err := store.ReadClaudeDeliveryDesired(ctx, meta, meta, "managed-test", []store.RegistryID{"requested-registry"})
+	if err != nil {
+		t.Fatalf("ReadClaudeDeliveryDesired: %v", err)
+	}
+	if len(desired) != 1 || desired[0].Resource.Coordinate != inScope {
+		t.Fatalf("fallback desired set = %+v, want only %+v", desired, inScope)
+	}
+}
+
+// spec: claude-enterprise-delivery/a-rejected-resource-is-never-uploaded
+func TestClaudeDeliveryPublicationMatchesExactMarketplace(t *testing.T) {
+	ctx := context.Background()
+	meta := openClaudeDeliverySQLite(t, "managed-test", "other-marketplace")
+	if err := meta.PutRegistry(ctx, store.Registry{
+		ID: "registry", Slug: "registry", Ref: "main",
+		Acquisition: store.AcquisitionIndexOnly, Listed: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := publicationRequest(t, "delivery-marketplace-scope", "in-scope", "other-marketplace")
+	otherCoordinate := req.Resources[1].Coordinate
+	otherCoordinate.Marketplace = "other-marketplace"
+	req.Resources[1].Coordinate = otherCoordinate
+	req.ResourceOccurrences[1].Coordinate = otherCoordinate
+	req.Assessments[1].Coordinate = otherCoordinate
+	req.Assessments[1].AssessmentDigest = ""
+	assessment, err := store.FinalizeResourceAssessment(req.Assessments[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Assessments[1] = assessment
+	if err := meta.PublishRegistryPublication(ctx, req); err != nil {
+		t.Fatalf("PublishRegistryPublication: %v", err)
+	}
+
+	desired, err := store.ReadClaudeDeliveryDesired(ctx, meta, meta, "managed-test", []store.RegistryID{"registry"})
+	if err != nil {
+		t.Fatalf("ReadClaudeDeliveryDesired: %v", err)
+	}
+	if len(desired) != 1 || desired[0].Resource.Coordinate.Name != "in-scope" ||
+		desired[0].Resource.Coordinate.Marketplace != "managed-test" {
+		t.Fatalf("publication desired set = %+v, want only the allowed in-scope resource", desired)
+	}
+}
+
+func openClaudeDeliverySQLite(t *testing.T, marketplaces ...store.MarketplaceID) *sqlite.Store {
+	t.Helper()
+	meta := sqlite.New(filepath.Join(t.TempDir(), "metadata.db"))
+	if err := meta.Open(context.Background()); err != nil {
+		t.Fatalf("Open SQLite metadata store: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	for _, id := range marketplaces {
+		if err := meta.PutMarketplace(context.Background(), store.Marketplace{
+			ID: id, Name: string(id), CanonicalURL: "https://" + string(id) + ".test",
+		}); err != nil {
+			t.Fatalf("PutMarketplace %q: %v", id, err)
+		}
+	}
+	return meta
+}
+
+func seedCurrentClaudeDeliveryResource(t *testing.T, meta *sqlite.Store, coordinate store.ResourceCoordinate) {
+	t.Helper()
+	ctx := context.Background()
+	contentDigest := store.RevisionDigest("sha256:" + strings.Repeat("a", 64))
+	manifestDigest := store.RevisionDigest("sha256:" + strings.Repeat("b", 64))
+	commit := "commit-" + string(coordinate.Registry)
+	if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: coordinate.Registry, Ref: "main", Commit: commit,
+		RegistryRevisionManifestDigest: manifestDigest, Acquisition: store.AcquisitionIndexOnly,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	revision := store.ResourceRevision{Coordinate: coordinate, ContentDigest: contentDigest, License: "MIT"}
+	if err := meta.PutResourceRevision(ctx, revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+		Coordinate: coordinate, ContentDigest: contentDigest, Commit: commit,
+		ManifestDigest: manifestDigest, SourcePath: coordinate.Name,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assessment := store.ResourceAssessment{
+		Coordinate: coordinate, ContentDigest: contentDigest, AnalyzerVersion: "delivery-test/v1",
+		PolicyDigest:             store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
+		Decision:                 store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64)),
+		AssessedAt:               time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC),
+	}
+	if err := meta.PutResourceAssessment(ctx, assessment); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.SetCurrentResourceAssessment(ctx, assessment); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.SetRegistryHead(ctx, coordinate.Registry, commit, ""); err != nil {
+		t.Fatal(err)
 	}
 }
 
