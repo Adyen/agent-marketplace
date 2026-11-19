@@ -5,5 +5,5 @@
 
 ## 2. Verify and archive
 
-- [ ] 2.1 Run the scoped Go and desktop checks, repository validation, and the spec gate. Retain before and after evidence for the affected desktop flow.
-- [ ] 2.2 Archive this change as the final delivery commit.
+- [x] 2.1 Run the scoped Go and desktop checks, repository validation, and the spec gate. Retain before and after evidence for the affected desktop flow.
+- [x] 2.2 Archive this change as the final delivery commit.

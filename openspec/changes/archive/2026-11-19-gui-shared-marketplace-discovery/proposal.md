@@ -16,3 +16,7 @@ The GUI branch lacks the shared Marketplace catalog pager and cache merged in PR
 ## Impact
 
 Shared Marketplace discovery and its tests, plus desktop regression coverage. No source filter, separate GUI browse inventory, TUI edits, Marketplace server changes, or consumer configuration changes.
+
+## Release note
+
+The desktop app shows Marketplace resources as pages arrive without a search. If a later page fails, the results already received stay available and Diagnostics reports that the catalog is incomplete.
