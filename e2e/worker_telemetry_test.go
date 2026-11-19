@@ -830,7 +830,7 @@ func TestTwoServeWorkersProbeAndRefreshChangedRegistryOnce(t *testing.T) {
 	env, _, config, _, firstOperations := newServeMetricsEnv(t)
 	secondOperations := publicGateEphemeralAddress(t)
 	config = strings.Replace(config,
-		"  interval: 200ms\n", "  interval: 1s\n", 1)
+		"  interval: 200ms\n", "  interval: 1h\n", 1)
 	if dsn := os.Getenv("POSTGRES_DSN"); dsn != "" {
 		config = strings.Replace(config,
 			"    driver: sqlite\n    dsn: "+env.mustResolvePath("/workspace/marketplace.db")+"\n",
