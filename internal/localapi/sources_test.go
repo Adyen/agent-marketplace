@@ -1817,6 +1817,24 @@ func TestUserMarketplaceEndpointRegistrationRemovalRoundTrip(t *testing.T) {
 	if id == "" {
 		t.Fatal("registered Marketplace endpoint has no projected ID")
 	}
+	// Registration also starts discovery. Count only requests after it settles.
+	for {
+		event := nextEvent(t, fixture.events)
+		if event.Type != "discovery" {
+			continue
+		}
+		var discovery discoveryEventPayload
+		payload, err := json.Marshal(event.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(payload, &discovery); err != nil {
+			t.Fatal(err)
+		}
+		if !discovery.Loading {
+			break
+		}
+	}
 	endpoint.requests.Store(0)
 
 	status, decoded = sourceAction(t, fixture.api, `{"action":"remove-source","id":"`+id+`"}`)
