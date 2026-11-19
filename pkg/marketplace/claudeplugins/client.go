@@ -171,7 +171,7 @@ type PluginMarketplace struct {
 
 type InstallationSetting struct {
 	InstallationPreference string `json:"installation_preference"`
-	Target                 string `json:"target,omitempty"`
+	Target                 Owner  `json:"target"`
 }
 
 type PluginListQuery struct {

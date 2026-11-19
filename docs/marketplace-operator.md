@@ -76,6 +76,8 @@ Configure the key's stable identifier as `api_key_id` as well as the secret refe
 
 Prefer a dedicated organization-owned `manual` marketplace so administrator-uploaded plugins and organization-level skill names remain separate. The library marketplace is shared with administrator uploads; use it only when that sharing is intended. Set `marketplace_id` to the chosen marketplace ID. When it is omitted, delivery requires exactly one organization-owned manual marketplace and uses it.
 
+Changing the target marketplace after plugins have been recorded stops delivery with `marketplace.target-changed`. Keep the existing target; this service does not migrate plugins between marketplaces.
+
 ```yaml
 claude_enterprise:
   enabled: true

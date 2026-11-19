@@ -49,12 +49,33 @@ func TestDerivePluginNameBoundsLongIdentitiesWithoutCollision(t *testing.T) {
 	if gotFirst == gotSecond {
 		t.Fatalf("distinct long identities collided: %q", gotFirst)
 	}
-	if len(gotFirst) != 64 || !strings.HasSuffix(gotFirst, "-"+digestForIdentity(prefix, first)[:8]) {
+	if len(gotFirst) != 64 || !strings.HasSuffix(gotFirst, "-9c87619f") {
 		t.Fatalf("long derived name = %q, want 55-character prefix and identity digest", gotFirst)
+	}
+	commonSuffix := strings.Repeat("shared-suffix-", 8)
+	ambiguousFirst := ResourceIdentity{
+		RegistryID: "registry-one", RegistrySlug: "shared", Kind: "skill", Name: "team-skill-" + commonSuffix,
+	}
+	ambiguousSecond := ResourceIdentity{
+		RegistryID: "registry-two", RegistrySlug: "shared-skill-team", Kind: "skill", Name: commonSuffix,
+	}
+	firstName, err := DerivePluginName(prefix, ambiguousFirst)
+	if err != nil {
+		t.Fatalf("DerivePluginName(ambiguous first): %v", err)
+	}
+	secondName, err := DerivePluginName(prefix, ambiguousSecond)
+	if err != nil {
+		t.Fatalf("DerivePluginName(ambiguous second): %v", err)
+	}
+	if len(firstName) != 64 || len(secondName) != 64 ||
+		firstName[:55] != secondName[:55] || firstName[55] != '-' || secondName[55] != '-' ||
+		firstName[56:] == secondName[56:] {
+		t.Fatalf("ambiguous long identities produced names %q and %q, want distinct truncated names", firstName, secondName)
 	}
 }
 
 // spec: claude-enterprise-delivery/the-mirrored-resource-keeps-its-own-name
+// spec: claude-enterprise-delivery/a-lost-version-response-does-not-store-a-duplicate-version
 func TestBuildArchiveKeepsResourceNameAndUsesDerivedManifestName(t *testing.T) {
 	input := skillBuildInput(t)
 	result, err := BuildArchive(input)
@@ -77,6 +98,10 @@ func TestBuildArchiveKeepsResourceNameAndUsesDerivedManifestName(t *testing.T) {
 	if manifest["displayName"] != "threat-model" || manifest["description"] != "Threat model description" {
 		t.Fatalf("manifest metadata = %#v", manifest)
 	}
+	author, ok := manifest["author"].(map[string]any)
+	if !ok || author["name"] != "Example Publisher" {
+		t.Fatalf("manifest author = %#v, want object with name Example Publisher", manifest["author"])
+	}
 	if manifest["version"] != "1.2.3" {
 		t.Fatalf("manifest version = %v, want declared version 1.2.3", manifest["version"])
 	}
@@ -86,25 +111,30 @@ func TestBuildArchiveKeepsResourceNameAndUsesDerivedManifestName(t *testing.T) {
 	}
 	if !strings.Contains(result.ReleaseNotes, "publication-42") ||
 		!strings.Contains(result.ReleaseNotes, "commit-123") ||
-		!strings.Contains(result.ReleaseNotes, input.ContentDigest) {
+		!strings.Contains(result.ReleaseNotes, input.ContentDigest) ||
+		!strings.HasSuffix(result.ReleaseNotes, "; archive_digest="+result.Digest) {
 		t.Fatalf("release notes omit provenance: %q", result.ReleaseNotes)
 	}
 }
 
+// spec: claude-enterprise-delivery/the-mirrored-resource-keeps-its-own-name
 func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
 	tests := []struct {
-		kind string
-		path string
+		name      string
+		kind      string
+		path      string
+		transport string
 	}{
-		{kind: "skill", path: "skills/threat-model/SKILL.md"},
-		{kind: "command", path: "commands/audit.md"},
-		{kind: "subagent", path: "agents/reviewer.md"},
-		{kind: "hook", path: "hooks/hooks.json"},
-		{kind: "mcpserver", path: ".mcp.json"},
+		{name: "skill", kind: "skill", path: "skills/threat-model/SKILL.md"},
+		{name: "command", kind: "command", path: "commands/audit.md"},
+		{name: "subagent", kind: "subagent", path: "agents/reviewer.md"},
+		{name: "hook", kind: "hook", path: "hooks/hooks.json"},
+		{name: "mcpserver stdio", kind: "mcpserver", path: ".mcp.json"},
+		{name: "mcpserver remote", kind: "mcpserver", path: ".mcp.json", transport: "http"},
 	}
 	for _, test := range tests {
-		t.Run(test.kind, func(t *testing.T) {
-			result, err := BuildArchive(buildInputForKind(t, test.kind))
+		t.Run(test.name, func(t *testing.T) {
+			result, err := BuildArchive(buildInputForKind(t, test.kind, test.transport))
 			if err != nil {
 				t.Fatalf("BuildArchive: %v", err)
 			}
@@ -118,6 +148,10 @@ func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
 			if _, ok := files["licenses/LICENSE"]; !ok {
 				t.Fatal("canonical license file was not included")
 			}
+			archive, err := zip.NewReader(bytes.NewReader(result.Archive), int64(len(result.Archive)))
+			if err != nil {
+				t.Fatalf("open built archive: %v", err)
+			}
 			switch test.kind {
 			case "skill":
 				if _, ok := files["skills/threat-model/guide.md"]; !ok {
@@ -127,10 +161,40 @@ func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
 				if _, ok := files["hooks/validator/helper.sh"]; !ok {
 					t.Fatal("hook support file was not placed beneath hooks/<name>")
 				}
-			}
-			archive, err := zip.NewReader(bytes.NewReader(result.Archive), int64(len(result.Archive)))
-			if err != nil {
-				t.Fatalf("open built archive: %v", err)
+				executableSupport, normalSupport := false, false
+				for _, file := range archive.File {
+					switch file.Name {
+					case "hooks/validator/helper.sh":
+						executableSupport = file.Mode().Perm() == 0o755
+					case "hooks/validator/readme.txt":
+						normalSupport = file.Mode().Perm() == 0o644
+					}
+				}
+				if !executableSupport || !normalSupport {
+					t.Fatalf("hook support modes executable=%t normal=%t, want 0755 and 0644",
+						executableSupport, normalSupport)
+				}
+			case "mcpserver":
+				var config struct {
+					MCPServers map[string]map[string]any `json:"mcpServers"`
+				}
+				if err := json.Unmarshal(files[".mcp.json"], &config); err != nil {
+					t.Fatalf("decode MCP config: %v", err)
+				}
+				server := config.MCPServers["knowledge"]
+				if test.transport == "" {
+					if server["command"] != "mcp" || server["type"] != nil ||
+						server["url"] != nil || server["transport"] != nil {
+						t.Fatalf("stdio MCP server = %#v, want stdio fallback fields", server)
+					}
+				} else {
+					if server["type"] != test.transport || server["url"] != "https://example.invalid/mcp" {
+						t.Fatalf("remote MCP server = %#v, want documented type and URL", server)
+					}
+					if _, exists := server["transport"]; exists {
+						t.Fatalf("remote MCP server contains obsolete transport field: %#v", server)
+					}
+				}
 			}
 			manifestCount := 0
 			for _, file := range archive.File {
@@ -142,6 +206,31 @@ func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
 				t.Fatalf("generated manifest count = %d", manifestCount)
 			}
 		})
+	}
+}
+
+// spec: claude-enterprise-delivery/the-mirrored-resource-keeps-its-own-name
+func TestMCPPluginFilesReserveTypeAndTransportExtras(t *testing.T) {
+	server := ir.NewMcpServer("knowledge", "", nil, nil,
+		map[string]any{"type": "extra-type", "transport": "extra-transport"}, ir.SourceRef{})
+	server.Transport = "http"
+	server.URL = "https://example.invalid/mcp"
+	files, err := pluginFiles(server, canonical.CanonicalArtifact{})
+	if err != nil {
+		t.Fatalf("pluginFiles: %v", err)
+	}
+	var config struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(files[".mcp.json"].data, &config); err != nil {
+		t.Fatalf("decode MCP config: %v", err)
+	}
+	result := config.MCPServers["knowledge"]
+	if result["type"] != "http" {
+		t.Fatalf("MCP type = %v, want http", result["type"])
+	}
+	if _, exists := result["transport"]; exists {
+		t.Fatalf("MCP config contains transport field from an extra: %#v", result)
 	}
 }
 
@@ -369,10 +458,10 @@ func editUnsupportedMethod(t *testing.T, raw []byte) []byte {
 
 func skillBuildInput(t *testing.T) BuildInput {
 	t.Helper()
-	return buildInputForKind(t, "skill")
+	return buildInputForKind(t, "skill", "")
 }
 
-func buildInputForKind(t *testing.T, kind string) BuildInput {
+func buildInputForKind(t *testing.T, kind, mcpTransport string) BuildInput {
 	t.Helper()
 	var resource ir.Resource
 	switch kind {
@@ -385,7 +474,15 @@ func buildInputForKind(t *testing.T, kind string) BuildInput {
 	case "hook":
 		resource = ir.NewHook("validator", "PreToolUse", "echo check", "command", nil, ir.SourceRef{})
 	case "mcpserver":
-		resource = ir.NewMcpServer("knowledge", "mcp", []string{"serve"}, map[string]string{"TOKEN": "private"}, nil, ir.SourceRef{})
+		if mcpTransport == "" {
+			resource = ir.NewMcpServer("knowledge", "mcp", []string{"serve"},
+				map[string]string{"TOKEN": "private"}, nil, ir.SourceRef{})
+		} else {
+			server := ir.NewMcpServer("knowledge", "", nil, nil, nil, ir.SourceRef{})
+			server.Transport = mcpTransport
+			server.URL = "https://example.invalid/mcp"
+			resource = server
+		}
 	default:
 		t.Fatalf("unsupported fixture kind %q", kind)
 	}
@@ -397,7 +494,10 @@ func buildInputForKind(t *testing.T, kind string) BuildInput {
 		artifact.Assets = map[string][]byte{"guide.md": []byte("asset")}
 	}
 	if kind == "hook" {
-		artifact.Support = map[string]canonical.SupportFile{"helper.sh": {Data: []byte("echo helper"), Executable: true}}
+		artifact.Support = map[string]canonical.SupportFile{
+			"helper.sh":  {Data: []byte("echo helper"), Executable: true},
+			"readme.txt": {Data: []byte("helper documentation")},
+		}
 	}
 	artifact.Licenses = map[string][]byte{"LICENSE": []byte("MIT")}
 	artifact.Manifest.RegistryID = "registry-1"
@@ -432,10 +532,4 @@ func sortedKeys(values map[string][]byte) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func digestForIdentity(prefix string, identity ResourceIdentity) string {
-	logicalKey := prefix + "-" + identity.RegistrySlug + "-" + identity.Kind + "-" + identity.Name
-	sum := sha256.Sum256([]byte(logicalKey))
-	return hex.EncodeToString(sum[:])
 }

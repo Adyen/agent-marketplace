@@ -329,6 +329,8 @@ claude_enterprise:
 | `default_installation_preference` | string | no | `available` | Organization-wide installation setting written for each newly created plugin: `required`, `auto_install`, `available`, or `not_available`. No marketplace-level default is ever written. |
 | `interval` | duration | no | `24h` | Repair interval between scheduled reconcile passes. Must be positive. |
 
+Changing the target marketplace after plugins have been recorded stops delivery with `marketplace.target-changed`. Keep the existing target; this service does not migrate plugins between marketplaces.
+
 Invalid values refuse with a coded `claude_enterprise.*` error naming the field, and the service does not start.
 
 ## `management`

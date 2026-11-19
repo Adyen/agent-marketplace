@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"sort"
 	"strings"
@@ -49,7 +50,6 @@ func DerivePluginName(prefix string, identity ResourceIdentity) (string, error) 
 		identity.RegistrySlug == "" || identity.Kind == "" || identity.Name == "" {
 		return "", errors.New("claude plugin identity is incomplete")
 	}
-	logicalKey := prefix + "-" + identity.RegistrySlug + "-" + identity.Kind + "-" + identity.Name
 	segments := []string{prefix, identity.RegistrySlug, identity.Kind, identity.Name}
 	parts := make([]string, len(segments))
 	for i, segment := range segments {
@@ -63,7 +63,8 @@ func DerivePluginName(prefix string, identity ResourceIdentity) (string, error) 
 	if len(name) <= 64 {
 		return name, nil
 	}
-	sum := sha256.Sum256([]byte(logicalKey))
+	key, _ := json.Marshal(segments)
+	sum := sha256.Sum256(key)
 	return name[:55] + "-" + hex.EncodeToString(sum[:])[:8], nil
 }
 
@@ -149,7 +150,7 @@ func BuildArchive(input BuildInput) (BuildResult, error) {
 		manifest["version"] = version
 	}
 	if input.PublisherName != "" {
-		manifest["author"] = input.PublisherName
+		manifest["author"] = map[string]string{"name": input.PublisherName}
 	}
 	if input.PublisherURL != "" {
 		manifest["homepage"] = input.PublisherURL
@@ -158,7 +159,7 @@ func BuildArchive(input BuildInput) (BuildResult, error) {
 	if err != nil {
 		return BuildResult{}, errors.New("encode Claude plugin manifest")
 	}
-	files[".claude-plugin/plugin.json"] = manifestBytes
+	files[".claude-plugin/plugin.json"] = pluginFile{data: manifestBytes}
 	archiveBytes, err := encodePluginArchive(files)
 	if err != nil {
 		return BuildResult{}, err
@@ -168,18 +169,24 @@ func BuildArchive(input BuildInput) (BuildResult, error) {
 	if contentDigest == "" {
 		contentDigest = canonicalArtifact.Manifest.ContentDigest
 	}
-	releaseNotes := fmt.Sprintf("publication=%s; registry_commit=%s; content_digest=%s",
-		input.PublicationID, input.RegistryCommit, contentDigest)
+	archiveDigest := "sha256:" + hex.EncodeToString(digest[:])
+	releaseNotes := fmt.Sprintf("publication=%s; registry_commit=%s; content_digest=%s; archive_digest=%s",
+		input.PublicationID, input.RegistryCommit, contentDigest, archiveDigest)
 	return BuildResult{
 		Archive:      archiveBytes,
-		Digest:       "sha256:" + hex.EncodeToString(digest[:]),
+		Digest:       archiveDigest,
 		PluginName:   pluginName,
 		ReleaseNotes: releaseNotes,
 	}, nil
 }
 
-func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtifact) (map[string][]byte, error) {
-	files := make(map[string][]byte, len(canonicalArtifact.Assets)+len(canonicalArtifact.Licenses)+len(canonicalArtifact.Support)+2)
+type pluginFile struct {
+	data       []byte
+	executable bool
+}
+
+func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtifact) (map[string]pluginFile, error) {
+	files := make(map[string]pluginFile, len(canonicalArtifact.Assets)+len(canonicalArtifact.Licenses)+len(canonicalArtifact.Support)+2)
 	switch value := resource.(type) {
 	case *ir.Skill:
 		frontmatter := map[string]any{
@@ -204,13 +211,13 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, err
 		}
-		files[path.Join("skills", value.Name(), "SKILL.md")] = data
+		files[path.Join("skills", value.Name(), "SKILL.md")] = pluginFile{data: data}
 		for name, content := range canonicalArtifact.Assets {
 			file, err := containedPluginPath(path.Join("skills", value.Name()), name)
 			if err != nil {
 				return nil, err
 			}
-			files[file] = bytes.Clone(content)
+			files[file] = pluginFile{data: bytes.Clone(content)}
 		}
 	case *ir.Command:
 		frontmatter := map[string]any{"name": value.Name(), "description": value.Description}
@@ -223,7 +230,7 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, err
 		}
-		files[path.Join("commands", value.Name()+".md")] = data
+		files[path.Join("commands", value.Name()+".md")] = pluginFile{data: data}
 	case *ir.Subagent:
 		frontmatter := map[string]any{"name": value.Name(), "description": value.Description}
 		if value.Model != "" {
@@ -253,7 +260,7 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, err
 		}
-		files[path.Join("agents", value.Name()+".md")] = data
+		files[path.Join("agents", value.Name()+".md")] = pluginFile{data: data}
 	case *ir.Hook:
 		entry := map[string]any{"type": value.Type}
 		if entry["type"] == "" {
@@ -283,13 +290,13 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, errors.New("encode Claude plugin hooks")
 		}
-		files["hooks/hooks.json"] = data
+		files["hooks/hooks.json"] = pluginFile{data: data}
 		for name, support := range canonicalArtifact.Support {
 			file, err := containedPluginPath(path.Join("hooks", value.Name()), name)
 			if err != nil {
 				return nil, err
 			}
-			files[file] = bytes.Clone(support.Data)
+			files[file] = pluginFile{data: bytes.Clone(support.Data), executable: support.Executable}
 		}
 	case *ir.McpServer:
 		server := map[string]any{}
@@ -309,7 +316,7 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 			server["url"] = value.URL
 		}
 		if value.Transport != "" {
-			server["transport"] = value.Transport
+			server["type"] = value.Transport
 		}
 		if len(value.Headers) > 0 {
 			server["headers"] = value.Headers
@@ -327,6 +334,9 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 			server["oauthResource"] = value.OAuthResource
 		}
 		for key, extra := range value.Extra {
+			if key == "type" || key == "transport" {
+				continue
+			}
 			if _, exists := server[key]; !exists {
 				server[key] = extra
 			}
@@ -337,7 +347,7 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, errors.New("encode Claude plugin MCP configuration")
 		}
-		files[".mcp.json"] = data
+		files[".mcp.json"] = pluginFile{data: data}
 	default:
 		return nil, errors.New("unsupported Claude delivery resource kind")
 	}
@@ -346,7 +356,7 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		if err != nil {
 			return nil, err
 		}
-		files[file] = bytes.Clone(content)
+		files[file] = pluginFile{data: bytes.Clone(content)}
 	}
 	return files, nil
 }
@@ -427,7 +437,7 @@ func containedPluginPath(base, relative string) (string, error) {
 	return path.Join(base, relative), nil
 }
 
-func encodePluginArchive(files map[string][]byte) ([]byte, error) {
+func encodePluginArchive(files map[string]pluginFile) ([]byte, error) {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	names := make([]string, 0, len(files))
@@ -439,13 +449,17 @@ func encodePluginArchive(files map[string][]byte) ([]byte, error) {
 	for _, name := range names {
 		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
 		header.Modified = fixedTime
-		header.SetMode(0o644)
+		mode := fs.FileMode(0o644)
+		if files[name].executable {
+			mode = 0o755
+		}
+		header.SetMode(mode)
 		file, err := writer.CreateHeader(header)
 		if err != nil {
 			_ = writer.Close()
 			return nil, errors.New("encode Claude plugin archive")
 		}
-		if _, err := file.Write(files[name]); err != nil {
+		if _, err := file.Write(files[name].data); err != nil {
 			_ = writer.Close()
 			return nil, errors.New("encode Claude plugin archive")
 		}
