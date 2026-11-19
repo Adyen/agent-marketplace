@@ -128,6 +128,15 @@ func TestEnsureRevocationsEnqueuesClaudeDeliveryOnChange(t *testing.T) {
 	if _, err := meta.LeaseClaudeDeliveryJob(ctx, "mp", "", "test-worker", time.Minute); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unchanged revocation enqueue: %v, want no job", err)
 	}
+	deps.Config.Revocations.Coordinates = nil
+	if err := EnsureRevocations(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	withdrawal, err := meta.LeaseClaudeDeliveryJob(ctx, "mp", "", "test-worker", time.Minute)
+	if err != nil || withdrawal.ID == job.ID || withdrawal.Kind != store.ClaudeDeliveryJobKind ||
+		!strings.HasPrefix(withdrawal.IdempotencyKey, "claude-delivery:mp:revocation-") {
+		t.Fatalf("withdrawn revocation delivery job = %+v, %v", withdrawal, err)
+	}
 }
 
 func TestRunFailsAfterRevocationReconciliationFailure(t *testing.T) {
