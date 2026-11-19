@@ -186,23 +186,45 @@ func TestReconcileRefusesFetchedPluginFromAnotherMarketplace(t *testing.T) {
 // spec: claude-enterprise-delivery/a-foreign-plugin-with-the-same-name-is-never-written-to
 func TestReconcileRefusesInventoryPluginWithoutExactMarketplace(t *testing.T) {
 	fixture := newDeliveryFixture(t, "guide", "guide text")
-	api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
-	plugin := pluginRecord("am-registry-skill-guide", testPluginID, &claudeplugins.Actor{
+	fixture.addResource(t, "next", "next resource", "commit-2", "publication-2")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-next"})
+	const foreignPluginID = "plugin_unbound"
+	plugin := pluginRecord("am-registry-skill-guide", foreignPluginID, &claudeplugins.Actor{
 		Type: "api_actor", APIKeyID: testAPIKeyID,
 	})
 	plugin.MarketplaceID = ""
 	api.addPlugin(plugin)
 
-	if _, err := fixture.reconciler(api, ReconcileTarget{
+	result, err := fixture.reconciler(api, ReconcileTarget{
 		APIKeyID: testAPIKeyID, MarketplaceID: testMarketID,
-	}).Reconcile(context.Background()); errorCode(err) != "marketplace.target-changed" {
-		t.Fatalf("Reconcile error = %v, want marketplace.target-changed", err)
+	}).Reconcile(context.Background())
+	if err != nil || result.Conflicts != 1 || result.Published != 1 {
+		t.Fatalf("Reconcile = %+v, %v; want one conflict and one publication", result, err)
 	}
-	if api.writeCount() != 0 {
-		t.Fatalf("mismatched inventory plugin received %d write requests", api.writeCount())
+	conflict, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || conflict.State != store.ClaudeDeliveryStateConflict ||
+		conflict.LastErrorCode != "plugin.foreign" || conflict.PluginID != "" {
+		t.Fatalf("unbound inventory conflict = %+v, %v", conflict, err)
+	}
+	published, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), store.ResourceCoordinate{
+		Marketplace: fixture.coordinate.Marketplace, Registry: fixture.coordinate.Registry,
+		Kind: fixture.coordinate.Kind, Name: "next",
+	})
+	if err != nil || published.State != store.ClaudeDeliveryStatePublished || published.PluginID == "" {
+		t.Fatalf("healthy sibling = %+v, %v; want published", published, err)
+	}
+	if api.createCount() != 1 || api.versionCount() != 0 || api.settingCount() != 1 {
+		t.Fatalf("sibling writes create=%d versions=%d settings=%d, want 1/0/1",
+			api.createCount(), api.versionCount(), api.settingCount())
+	}
+	for _, request := range api.requestLog() {
+		if strings.HasPrefix(request, "POST /v1/organizations/plugins/"+foreignPluginID+"/") {
+			t.Fatalf("unbound inventory plugin received write request %q", request)
+		}
 	}
 }
 
+// spec: claude-enterprise-delivery/a-foreign-plugin-with-the-same-name-is-never-written-to
 func TestReconcileRefusesCreateResultsFromAnotherMarketplace(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -218,17 +240,20 @@ func TestReconcileRefusesCreateResultsFromAnotherMarketplace(t *testing.T) {
 			if test.pending {
 				api.pendingCreate = true
 			}
-			if _, err := fixture.reconciler(api, ReconcileTarget{
+			result, err := fixture.reconciler(api, ReconcileTarget{
 				APIKeyID: testAPIKeyID, MarketplaceID: testMarketID,
-			}).Reconcile(context.Background()); errorCode(err) != "marketplace.target-changed" {
-				t.Fatalf("Reconcile error = %v, want marketplace.target-changed", err)
+			}).Reconcile(context.Background())
+			if err != nil || result.Conflicts != 1 {
+				t.Fatalf("Reconcile = %+v, %v; want one conflict", result, err)
 			}
 			if api.createCount() != 1 || api.versionCount() != 0 || api.settingCount() != 0 {
 				t.Fatalf("mismatched create wrote creates=%d versions=%d settings=%d",
 					api.createCount(), api.versionCount(), api.settingCount())
 			}
-			if _, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate); !errors.Is(err, store.ErrNotFound) {
-				t.Fatalf("mismatched create result recorded delivery state: %v", err)
+			row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+			if err != nil || row.State != store.ClaudeDeliveryStateConflict ||
+				row.LastErrorCode != "plugin.foreign" || row.PluginID != "" {
+				t.Fatalf("mismatched create conflict = %+v, %v", row, err)
 			}
 		})
 	}
@@ -519,7 +544,8 @@ func TestReconcileHandlesPluginNameTakenRaceWithOwnershipProof(t *testing.T) {
 		{
 			name:          "matching API key in another marketplace",
 			actor:         &claudeplugins.Actor{Type: "api_actor", APIKeyID: testAPIKeyID},
-			marketplaceID: "marketplace_other", wantErrorCode: "marketplace.target-changed",
+			marketplaceID: "marketplace_other", wantState: store.ClaudeDeliveryStateConflict,
+			wantErrorCode: "plugin.foreign",
 		},
 		{
 			name: "foreign API key", actor: &claudeplugins.Actor{Type: "api_actor", APIKeyID: "apikey_foreign456"},
@@ -542,19 +568,6 @@ func TestReconcileHandlesPluginNameTakenRaceWithOwnershipProof(t *testing.T) {
 			api.hideInventory = true
 			api.createNameTaken = true
 			delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
-			if test.wantErrorCode != "" {
-				if _, err := delivery.Reconcile(context.Background()); errorCode(err) != test.wantErrorCode {
-					t.Fatalf("Reconcile error = %v, want %s", err, test.wantErrorCode)
-				}
-				if api.createCount() != 1 || api.versionCount() != 0 || api.settingCount() != 0 {
-					t.Fatalf("mismatched marketplace wrote creates=%d versions=%d settings=%d",
-						api.createCount(), api.versionCount(), api.settingCount())
-				}
-				if _, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate); !errors.Is(err, store.ErrNotFound) {
-					t.Fatalf("mismatched marketplace recorded delivery state: %v", err)
-				}
-				return
-			}
 			if _, err := delivery.Reconcile(context.Background()); err != nil {
 				t.Fatalf("Reconcile: %v", err)
 			}

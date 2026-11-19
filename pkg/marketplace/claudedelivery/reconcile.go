@@ -218,9 +218,6 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		if plugin.ID == "" {
 			plugin, created, err = r.createPlugin(ctx, state, row, marketplace.ID, archive, built)
 			if err != nil {
-				if deliveryErrorCode(err) == "marketplace.target-changed" {
-					return result, err
-				}
 				if errors.Is(err, errWriteRateLimit) {
 					return result, &ReconcileError{code: "write.rate-limited"}
 				}
@@ -474,7 +471,7 @@ func (r *Reconciler) resolveOwnedPlugin(ctx context.Context, row store.ClaudeDel
 		return plugin, false, nil
 	}
 	if err := requirePluginMarketplace(plugin, marketplaceID); err != nil {
-		return plugin, false, err
+		return plugin, false, nil
 	}
 	owned := plugin.CreatedBy != nil && plugin.CreatedBy.Type == "api_actor" &&
 		plugin.CreatedBy.APIKeyID == r.options.Target.APIKeyID
@@ -495,7 +492,7 @@ func (r *Reconciler) createPlugin(ctx context.Context, state store.ClaudeDeliver
 	plugin, err := r.options.Client.CreatePlugin(ctx, archive, marketplaceID, built.ReleaseNotes)
 	if err == nil {
 		if err := requirePluginMarketplace(plugin, marketplaceID); err != nil {
-			return plugin, false, err
+			return plugin, false, &ReconcileError{code: "plugin.foreign"}
 		}
 		if plugin.CreatedBy == nil || plugin.CreatedBy.Type != "api_actor" ||
 			plugin.CreatedBy.APIKeyID != r.options.Target.APIKeyID {
@@ -523,7 +520,7 @@ func (r *Reconciler) createPlugin(ctx context.Context, state store.ClaudeDeliver
 	owned := plugin.CreatedBy != nil && plugin.CreatedBy.Type == "api_actor" &&
 		plugin.CreatedBy.APIKeyID == r.options.Target.APIKeyID
 	if err := requirePluginMarketplace(plugin, marketplaceID); err != nil {
-		return plugin, false, err
+		return plugin, false, &ReconcileError{code: "plugin.foreign"}
 	}
 	if !owned {
 		return plugin, false, &ReconcileError{code: "plugin.foreign"}
