@@ -60,6 +60,11 @@ type DiscoveryOptions struct {
 	Cache       *DiscoveryCache
 }
 
+type discoveryEvent struct {
+	outcome DiscoveryOutcome
+	final   bool
+}
+
 type DiscoveryCache struct {
 	root string
 	now  func() time.Time
@@ -131,9 +136,19 @@ func (c *DiscoveryCache) key(ep config.MarketplaceEntry, query, kind, includeKin
 	return hex.EncodeToString(sum[:])
 }
 
+func (c *DiscoveryCache) catalogKey(ep config.MarketplaceEntry, limit int) string {
+	sum := sha256.Sum256([]byte(c.key(ep, "", "", "", limit) + "\x00catalog"))
+	return hex.EncodeToString(sum[:])
+}
+
 func (c *DiscoveryCache) path(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) string {
 	epSum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID))
 	return filepath.Join(c.root, hex.EncodeToString(epSum[:]), c.key(ep, query, kind, includeKind, limit)+".json")
+}
+
+func (c *DiscoveryCache) catalogPath(ep config.MarketplaceEntry, limit int) string {
+	epSum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID))
+	return filepath.Join(c.root, hex.EncodeToString(epSum[:]), c.catalogKey(ep, limit)+".json")
 }
 
 func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, limit int) (DiscoveryOutcome, bool) {
@@ -141,11 +156,24 @@ func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, li
 }
 
 func (c *DiscoveryCache) load(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) (DiscoveryOutcome, bool) {
+	return c.loadPath(ep, query, kind, includeKind, limit, c.path(ep, query, kind, includeKind, limit), false)
+}
+
+func (c *DiscoveryCache) loadBrowse(ep config.MarketplaceEntry, limit int) (DiscoveryOutcome, bool) {
+	if c == nil || c.root == "" {
+		return DiscoveryOutcome{}, false
+	}
+	if outcome, ok := c.loadPath(ep, "", "", "", limit, c.catalogPath(ep, limit), true); ok {
+		return outcome, true
+	}
+	return c.load(ep, "", "", "", limit)
+}
+
+func (c *DiscoveryCache) loadPath(ep config.MarketplaceEntry, query, kind, includeKind string, limit int, path string, catalog bool) (DiscoveryOutcome, bool) {
 	// A cache namespace is exact evidence, never a source of endpoint identity.
 	if c == nil || c.root == "" || strings.TrimSpace(ep.InstanceID) == "" {
 		return DiscoveryOutcome{}, false
 	}
-	path := c.path(ep, query, kind, includeKind, limit)
 	for _, dir := range []string{c.root, filepath.Dir(path)} {
 		info, err := os.Lstat(dir)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -173,7 +201,13 @@ func (c *DiscoveryCache) load(ep config.MarketplaceEntry, query, kind, includeKi
 	if record.Schema != discoveryCacheSchema || record.Endpoint != ep.URL || record.InstanceID != ep.InstanceID || record.Query != query || record.Kind != kind || record.IncludeKind != includeKind || record.Limit != limit || record.ObservedAt.IsZero() {
 		return DiscoveryOutcome{}, false
 	}
-	if err := validateDiscoveryRecord(record.Items, record.Total, record.Limit, record.IncludeKind); err != nil {
+	var validationErr error
+	if catalog {
+		validationErr = validateBrowseDiscoveryRecord(record.Items, record.Total, record.Limit)
+	} else {
+		validationErr = validateDiscoveryRecord(record.Items, record.Total, record.Limit, record.IncludeKind)
+	}
+	if validationErr != nil {
 		return DiscoveryOutcome{}, false
 	}
 	age := c.now().Sub(record.ObservedAt)
@@ -192,11 +226,25 @@ func (c *DiscoveryCache) Store(out DiscoveryOutcome, query, kind string, limit i
 }
 
 func (c *DiscoveryCache) store(out DiscoveryOutcome, query, kind, includeKind string, limit int) error {
+	return c.storeRecord(out, query, kind, includeKind, limit, false)
+}
+
+func (c *DiscoveryCache) storeBrowse(out DiscoveryOutcome, limit int) error {
+	return c.storeRecord(out, "", "", "", limit, true)
+}
+
+func (c *DiscoveryCache) storeRecord(out DiscoveryOutcome, query, kind, includeKind string, limit int, catalog bool) error {
 	if c == nil || c.root == "" {
 		return nil
 	}
-	if err := validateDiscoveryRecord(out.Items, out.Total, limit, includeKind); err != nil {
-		return fmt.Errorf("invalid discovery cache page: %w", err)
+	var validationErr error
+	if catalog {
+		validationErr = validateBrowseDiscoveryRecord(out.Items, out.Total, limit)
+	} else {
+		validationErr = validateDiscoveryRecord(out.Items, out.Total, limit, includeKind)
+	}
+	if validationErr != nil {
+		return fmt.Errorf("invalid discovery cache page: %w", validationErr)
 	}
 	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: out.Endpoint.URL, InstanceID: out.Endpoint.InstanceID, Query: query, Kind: kind, IncludeKind: includeKind, Limit: limit, ObservedAt: out.ObservedAt, Items: out.Items, Total: out.Total, Truncated: out.Truncated}
 	data, err := json.Marshal(record)
@@ -207,12 +255,19 @@ func (c *DiscoveryCache) store(out DiscoveryOutcome, query, kind, includeKind st
 		return errors.New("discovery cache record exceeds size limit")
 	}
 	return c.withFilesystemLock(true, func() error {
-		return c.storeLocked(out.Endpoint, query, kind, includeKind, limit, data)
+		return c.storeLockedPath(out.Endpoint, query, kind, includeKind, limit, data, catalog)
 	})
 }
 
 func (c *DiscoveryCache) storeLocked(endpoint config.MarketplaceEntry, query, kind, includeKind string, limit int, data []byte) error {
+	return c.storeLockedPath(endpoint, query, kind, includeKind, limit, data, false)
+}
+
+func (c *DiscoveryCache) storeLockedPath(endpoint config.MarketplaceEntry, query, kind, includeKind string, limit int, data []byte, catalog bool) error {
 	path := c.path(endpoint, query, kind, includeKind, limit)
+	if catalog {
+		path = c.catalogPath(endpoint, limit)
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(c.root, 0o700); err != nil {
 		return fmt.Errorf("create discovery cache root: %w", err)
@@ -326,15 +381,21 @@ func (c *DiscoveryCache) retainLocked(dir string) error {
 		path     string
 		observed time.Time
 	}
-	var empty, nonEmpty []candidate
+	var emptyLegacy, emptyCatalog, nonEmpty []candidate
 	for _, entry := range entries {
 		record, ok := c.readRecognizedRecord(dir, entry.Name())
 		if !ok {
 			continue
 		}
+		ep := config.MarketplaceEntry{URL: record.Endpoint, InstanceID: record.InstanceID}
+		catalog := record.Query == "" && record.Kind == "" && record.IncludeKind == "" && c.catalogKey(ep, record.Limit)+".json" == entry.Name()
 		candidate := candidate{path: filepath.Join(dir, entry.Name()), observed: record.ObservedAt}
 		if record.Query == "" {
-			empty = append(empty, candidate)
+			if catalog {
+				emptyCatalog = append(emptyCatalog, candidate)
+			} else {
+				emptyLegacy = append(emptyLegacy, candidate)
+			}
 		} else {
 			nonEmpty = append(nonEmpty, candidate)
 		}
@@ -345,9 +406,14 @@ func (c *DiscoveryCache) retainLocked(dir string) error {
 		}
 		return cmp.Compare(a.path, b.path)
 	}
-	slices.SortFunc(empty, newestFirst)
+	slices.SortFunc(emptyLegacy, newestFirst)
+	slices.SortFunc(emptyCatalog, newestFirst)
 	slices.SortFunc(nonEmpty, newestFirst)
-	for _, candidates := range [][]candidate{empty[min(len(empty), 1):], nonEmpty[min(len(nonEmpty), DiscoveryQueryLimit):]} {
+	for _, candidates := range [][]candidate{
+		emptyLegacy[min(len(emptyLegacy), 1):],
+		emptyCatalog[min(len(emptyCatalog), 1):],
+		nonEmpty[min(len(nonEmpty), DiscoveryQueryLimit):],
+	} {
 		for _, old := range candidates {
 			if err := os.Remove(old.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
@@ -394,10 +460,16 @@ func (c *DiscoveryCache) readRecognizedRecord(dir, name string) (discoveryCacheR
 		return discoveryCacheRecord{}, false
 	}
 	ep := config.MarketplaceEntry{URL: record.Endpoint, InstanceID: record.InstanceID}
-	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.key(ep, record.Query, record.Kind, record.IncludeKind, record.Limit)+".json" != name || record.ObservedAt.IsZero() || c.now().Before(record.ObservedAt) {
+	legacyKey := c.key(ep, record.Query, record.Kind, record.IncludeKind, record.Limit) + ".json"
+	catalog := record.Query == "" && record.Kind == "" && record.IncludeKind == "" && c.catalogKey(ep, record.Limit)+".json" == name
+	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || (legacyKey != name && !catalog) || record.ObservedAt.IsZero() || c.now().Before(record.ObservedAt) {
 		return discoveryCacheRecord{}, false
 	}
-	if err := validateDiscoveryRecord(record.Items, record.Total, record.Limit, record.IncludeKind); err != nil {
+	if catalog {
+		if err := validateBrowseDiscoveryRecord(record.Items, record.Total, record.Limit); err != nil {
+			return discoveryCacheRecord{}, false
+		}
+	} else if err := validateDiscoveryRecord(record.Items, record.Total, record.Limit, record.IncludeKind); err != nil {
 		return discoveryCacheRecord{}, false
 	}
 	return record, true
@@ -477,6 +549,7 @@ func (c *DiscoveryCache) maintainLocked(endpoints []config.MarketplaceEntry) err
 // reports whether any endpoint needs fetching or stale revalidation.
 func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOptions) ([]DiscoveryOutcome, bool, error) {
 	query = normalizeDiscoveryQuery(query)
+	browse := isBrowseDiscovery(query, opts)
 	limit := opts.Limit
 	if limit <= 0 || limit > DiscoveryPageLimit {
 		limit = DiscoveryPageLimit
@@ -502,11 +575,17 @@ func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOpti
 	outcomes := make([]DiscoveryOutcome, 0, len(endpoints))
 	needsNetwork := false
 	for _, endpoint := range endpoints {
-		cached, hit := cache.load(endpoint.MarketplaceEntry, query, opts.Kind, opts.IncludeKind, limit)
+		var cached DiscoveryOutcome
+		var hit bool
+		if browse {
+			cached, hit = cache.loadBrowse(endpoint.MarketplaceEntry, limit)
+		} else {
+			cached, hit = cache.load(endpoint.MarketplaceEntry, query, opts.Kind, opts.IncludeKind, limit)
+		}
 		if hit {
 			outcomes = append(outcomes, cached)
 		}
-		if !hit || cached.CacheState == DiscoveryCacheStale {
+		if !hit || cached.CacheState == DiscoveryCacheStale || (browse && cached.Total > len(cached.Items)) {
 			needsNetwork = true
 		}
 	}
@@ -525,6 +604,7 @@ func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOpti
 func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query string, opts DiscoveryOptions) (<-chan []DiscoveryOutcome, error) {
 	started := time.Now()
 	query = normalizeDiscoveryQuery(query)
+	browse := isBrowseDiscovery(query, opts)
 	limit := opts.Limit
 	if limit <= 0 || limit > DiscoveryPageLimit {
 		limit = DiscoveryPageLimit
@@ -567,62 +647,107 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 		slog.Warn("marketplace discovery cache maintenance failed", "error", err)
 	}
 	updates := make(chan []DiscoveryOutcome, outcomeCapacity+1)
-	results := make(chan DiscoveryOutcome, len(endpoints))
+	events := make(chan discoveryEvent, MaxSearchConcurrency)
 	semaphore := make(chan struct{}, MaxSearchConcurrency)
 	pending := 0
 	for _, endpoint := range endpoints {
 		ep := endpoint.MarketplaceEntry
-		cached, hit := cache.load(ep, query, opts.Kind, opts.IncludeKind, limit)
+		var cached DiscoveryOutcome
+		var hit bool
+		if browse {
+			cached, hit = cache.loadBrowse(ep, limit)
+		} else {
+			cached, hit = cache.load(ep, query, opts.Kind, opts.IncludeKind, limit)
+		}
 		if hit {
 			outcomes = append(outcomes, cached)
-			if cached.CacheState == DiscoveryCacheFresh {
+			if cached.CacheState == DiscoveryCacheFresh && (!browse || cached.Total <= len(cached.Items)) {
 				continue
 			}
 		}
 		pending++
 		go func(endpoint searchEndpoint, cached DiscoveryOutcome, hit bool) {
+			send := func(event discoveryEvent) bool {
+				select {
+				case events <- event:
+					return true
+				case <-ctx.Done():
+					return false
+				}
+			}
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-ctx.Done():
-				if hit {
-					cached.Err = ctx.Err()
-					results <- cached
-				} else {
-					results <- DiscoveryOutcome{Endpoint: endpoint.MarketplaceEntry, CacheState: DiscoveryCacheMiss, Err: ctx.Err()}
-				}
 				return
 			}
-			out, fetchErr := discoverOne(ctx, endpoint.MarketplaceEntry, endpoint.verifyInstanceID, query, opts, limit)
-			if fetchErr != nil {
-				if hit {
-					cached.Err = fetchErr
-					results <- cached
-				} else {
-					if out.Endpoint.URL == "" {
-						out.Endpoint = endpoint.MarketplaceEntry
-					}
-					out.CacheState = DiscoveryCacheMiss
-					out.Err = fetchErr
-					results <- out
+			out, fetchErr := discoverOneWithProgress(ctx, endpoint.MarketplaceEntry, endpoint.verifyInstanceID, query, opts, limit, func(partial DiscoveryOutcome) bool {
+				if browse && hit {
+					partial.Items = appendUnseenItems(slices.Clone(partial.Items), discoveryItemSet(partial.Items), cached.Items)
+					partial.Total = max(partial.Total, cached.Total, len(partial.Items))
+					partial.CacheState = cached.CacheState
 				}
+				return send(discoveryEvent{outcome: partial})
+			})
+			if fetchErr != nil {
+				if hit && (cached.CacheState == DiscoveryCacheStale || browse) {
+					if browse {
+						items := appendUnseenItems(slices.Clone(out.Items), discoveryItemSet(out.Items), cached.Items)
+						cached.Items = items
+						cached.Total = max(cached.Total, out.Total, len(items))
+						cached.Truncated = true
+					}
+					cached.Err = fetchErr
+					send(discoveryEvent{outcome: cached, final: true})
+					return
+				}
+				if out.Endpoint.URL == "" {
+					out.Endpoint = endpoint.MarketplaceEntry
+				}
+				out.CacheState = DiscoveryCacheMiss
+				out.Err = fetchErr
+				send(discoveryEvent{outcome: out, final: true})
 				return
 			}
 			out.ObservedAt = cache.now()
-			if err := cache.store(out, query, opts.Kind, opts.IncludeKind, limit); err != nil {
-				slog.Warn("marketplace discovery cache write failed", "marketplace", displayName(endpoint.MarketplaceEntry), "error", err)
+			var storeErr error
+			if browse {
+				storeErr = cache.storeBrowse(out, limit)
+			} else {
+				storeErr = cache.store(out, query, opts.Kind, opts.IncludeKind, limit)
 			}
-			results <- out
+			if storeErr != nil {
+				slog.Warn("marketplace discovery cache write failed", "marketplace", displayName(endpoint.MarketplaceEntry), "error", storeErr)
+			}
+			send(discoveryEvent{outcome: out, final: true})
 		}(endpoint, cached, hit)
 	}
 	go func() {
 		defer close(updates)
-		if len(outcomes) > 0 {
-			updates <- sortedDiscoveryOutcomes(outcomes)
+		publish := func() bool {
+			select {
+			case updates <- sortedDiscoveryOutcomes(outcomes):
+				return true
+			case <-ctx.Done():
+				return false
+			}
 		}
-		for range pending {
-			outcomes = upsertDiscoveryOutcome(outcomes, <-results)
-			updates <- sortedDiscoveryOutcomes(outcomes)
+		if len(outcomes) > 0 && !publish() {
+			return
+		}
+		for pending > 0 {
+			select {
+			case event := <-events:
+				outcomes = upsertDiscoveryOutcome(outcomes, event.outcome)
+				if !publish() {
+					return
+				}
+				if event.final {
+					pending--
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
 		logDiscoveryCompletion(started, outcomes)
 	}()
@@ -639,7 +764,7 @@ func Discover(ctx context.Context, ec config.EffectiveConfig, query string, opts
 	for update := range updates {
 		outcomes = update
 	}
-	return outcomes, nil
+	return outcomes, ctx.Err()
 }
 
 func validateDiscoveryPage(items []mpapi.ResourceListItem, total, limit int) error {
@@ -653,6 +778,14 @@ func validateDiscoveryRecord(items []mpapi.ResourceListItem, total, limit int, i
 	if includeKind == "" {
 		return validateDiscoveryPage(items, total, limit)
 	}
+	return validatePaginatedDiscoveryRecord(items, total, limit)
+}
+
+func validateBrowseDiscoveryRecord(items []mpapi.ResourceListItem, total, limit int) error {
+	return validatePaginatedDiscoveryRecord(items, total, limit)
+}
+
+func validatePaginatedDiscoveryRecord(items []mpapi.ResourceListItem, total, limit int) error {
 	if limit <= 0 || limit > DiscoveryPageLimit || total < len(items) {
 		return errors.New("discovery record exceeds bounds")
 	}
@@ -664,6 +797,10 @@ func validateDiscoveryRecord(items []mpapi.ResourceListItem, total, limit int, i
 		}
 	}
 	return nil
+}
+
+func isBrowseDiscovery(query string, opts DiscoveryOptions) bool {
+	return query == "" && opts.Kind == "" && opts.IncludeKind == ""
 }
 
 func upsertDiscoveryOutcome(outcomes []DiscoveryOutcome, update DiscoveryOutcome) []DiscoveryOutcome {
@@ -710,65 +847,159 @@ func logDiscoveryCompletion(started time.Time, outcomes []DiscoveryOutcome) {
 }
 
 func discoverOne(ctx context.Context, ep config.MarketplaceEntry, verify bool, query string, opts DiscoveryOptions, limit int) (DiscoveryOutcome, error) {
+	return discoverOneWithProgress(ctx, ep, verify, query, opts, limit, nil)
+}
+
+func discoverOneWithProgress(ctx context.Context, ep config.MarketplaceEntry, verify bool, query string, opts DiscoveryOptions, limit int, progress func(DiscoveryOutcome) bool) (DiscoveryOutcome, error) {
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = DefaultSearchTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	browse := isBrowseDiscovery(query, opts)
+	requestCtx := ctx
+	cancel := func() {}
+	if !browse {
+		requestCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
 	defer cancel()
 	client, err := NewClient(ep.URL, WithUserAgent(opts.UserAgent))
 	if err != nil {
 		return DiscoveryOutcome{}, err
 	}
 	if verify {
-		ep, err = acquireMarketplaceIdentity(ctx, client, ep)
+		identityCtx, identityCancel := discoveryRequestContext(requestCtx, browse, timeout)
+		ep, err = acquireMarketplaceIdentity(identityCtx, client, ep)
+		identityCancel()
 		if err != nil {
 			return DiscoveryOutcome{}, err
 		}
-	} else if _, err := client.WellKnown(ctx); err != nil {
-		return DiscoveryOutcome{}, fmt.Errorf("well-known document: %w", err)
+	} else {
+		identityCtx, identityCancel := discoveryRequestContext(requestCtx, browse, timeout)
+		_, err = client.WellKnown(identityCtx)
+		identityCancel()
+		if err != nil {
+			return DiscoveryOutcome{}, fmt.Errorf("well-known document: %w", err)
+		}
 	}
-	resp, err := client.Search(ctx, SearchRequest{Query: query, Kind: opts.Kind, Limit: limit})
+	firstPageCtx, firstPageCancel := discoveryRequestContext(requestCtx, browse, timeout)
+	resp, err := client.Search(firstPageCtx, SearchRequest{Query: query, Kind: opts.Kind, Limit: limit})
+	firstPageCancel()
 	if err != nil {
 		return DiscoveryOutcome{}, err
 	}
 	items := slices.Clone(resp.Items)
 	truncated := resp.Total > len(items)
 	if opts.IncludeKind == "" {
-		return DiscoveryOutcome{Endpoint: ep, Items: items, Total: resp.Total, Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
+		if !browse {
+			return DiscoveryOutcome{Endpoint: ep, Items: items, Total: resp.Total, Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
+		}
+		return discoverBrowsePages(requestCtx, client, ep, limit, timeout, items, resp, progress)
 	}
-	seen := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		seen[item.RegistryID+"\x00"+item.Kind+"\x00"+item.Name] = struct{}{}
-	}
+	seen := discoveryItemSet(items)
+	kindSeen := make(map[string]struct{})
 	total := 0
 	for offset := 0; offset == 0 || offset < total; {
-		page, err := client.Search(ctx, SearchRequest{Kind: opts.IncludeKind, Limit: limit, Offset: offset})
+		page, err := client.Search(requestCtx, SearchRequest{Kind: opts.IncludeKind, Limit: limit, Offset: offset})
 		if err != nil {
-			return partialKindDiscovery(ep, items, resp.Total, truncated, err)
+			return partialDiscovery(ep, items, resp.Total, truncated, err)
 		}
 		total = max(total, page.Total)
 		if len(page.Items) == 0 {
 			if offset < total {
-				return partialKindDiscovery(ep, items, resp.Total, truncated, errors.New("marketplace kind discovery made no progress before reported total"))
+				return partialDiscovery(ep, items, resp.Total, truncated, errors.New("marketplace kind discovery made no progress before reported total"))
 			}
 			break
 		}
 		for _, item := range page.Items {
-			coordinate := item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
-			if _, ok := seen[coordinate]; ok {
-				continue
-			}
-			seen[coordinate] = struct{}{}
-			items = append(items, item)
+			kindSeen[discoveryItemCoordinate(item)] = struct{}{}
 		}
+		items = appendUnseenItems(items, seen, page.Items)
 		offset += len(page.Items)
+	}
+	if len(kindSeen) < total {
+		return partialDiscovery(ep, items, max(resp.Total, total), true, errors.New("marketplace kind discovery returned fewer distinct resources than reported total"))
 	}
 	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(resp.Total, len(items)), Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
 }
 
-// partialKindDiscovery keeps the text matches already collected when a kind
-// page fails, so the caller can show them beside the error without caching them.
-func partialKindDiscovery(ep config.MarketplaceEntry, items []mpapi.ResourceListItem, total int, truncated bool, err error) (DiscoveryOutcome, error) {
+func discoveryItemCoordinate(item mpapi.ResourceListItem) string {
+	return item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
+}
+
+func discoveryItemSet(items []mpapi.ResourceListItem) map[string]struct{} {
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		seen[discoveryItemCoordinate(item)] = struct{}{}
+	}
+	return seen
+}
+
+// appendUnseenItems appends each item whose coordinate is not yet in seen and records it.
+func appendUnseenItems(items []mpapi.ResourceListItem, seen map[string]struct{}, more []mpapi.ResourceListItem) []mpapi.ResourceListItem {
+	for _, item := range more {
+		coordinate := discoveryItemCoordinate(item)
+		if _, ok := seen[coordinate]; ok {
+			continue
+		}
+		seen[coordinate] = struct{}{}
+		items = append(items, item)
+	}
+	return items
+}
+
+func discoveryRequestContext(ctx context.Context, browse bool, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if browse {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return ctx, func() {}
+}
+
+func discoverBrowsePages(ctx context.Context, client *Client, ep config.MarketplaceEntry, limit int, timeout time.Duration, first []mpapi.ResourceListItem, firstPage SearchResponse, progress func(DiscoveryOutcome) bool) (DiscoveryOutcome, error) {
+	items := slices.Clone(first)
+	total := firstPage.Total
+	if len(firstPage.Items) == 0 && total > 0 {
+		return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery made no progress before reported total"))
+	}
+	seen := discoveryItemSet(items)
+	if progress != nil {
+		partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: total, Truncated: true, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
+		if !progress(partial) {
+			return partial, ctx.Err()
+		}
+	}
+	offset := len(firstPage.Items)
+	for offset < total {
+		pageCtx, cancel := discoveryRequestContext(ctx, true, timeout)
+		page, err := client.Search(pageCtx, SearchRequest{Limit: limit, Offset: offset})
+		cancel()
+		if err != nil {
+			return partialDiscovery(ep, items, total, true, err)
+		}
+		if len(page.Items) == 0 {
+			if offset < page.Total {
+				return partialDiscovery(ep, items, page.Total, true, errors.New("marketplace browse discovery made no progress before reported total"))
+			}
+			total = page.Total
+			break
+		}
+		items = appendUnseenItems(items, seen, page.Items)
+		offset += len(page.Items)
+		total = page.Total
+		if progress != nil {
+			partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: page.Total, Truncated: true, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
+			if !progress(partial) {
+				return partial, ctx.Err()
+			}
+		}
+	}
+	if len(items) < total {
+		return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery returned fewer distinct resources than reported total"))
+	}
+	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(total, len(items)), CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
+}
+
+// partialDiscovery retains received resources when a later discovery request
+// fails so callers can display useful rows alongside the endpoint error.
+func partialDiscovery(ep config.MarketplaceEntry, items []mpapi.ResourceListItem, total int, truncated bool, err error) (DiscoveryOutcome, error) {
 	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(total, len(items)), Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now(), Err: err}, err
 }

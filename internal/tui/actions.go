@@ -35,29 +35,30 @@ const (
 )
 
 type snapshotLoadedMsg struct {
-	generation           requestGeneration
-	stage                snapshotStage
-	stages               <-chan snapshotLoadedMsg
-	rows                 []row
-	driftReport          materialize.DriftReport
-	driftAssessment      driftAssessment
-	catalogs             map[string][]catalog.Entry
-	resolved             []resolver.ResolvedArtifact
-	mergedCfg            *config.Config
-	provisionalCfg       *config.Config
-	provisionalRows      []row
-	configuredRegistries []config.RegistryEntry
-	inventoryResult      *pipeline.ResolveResult
-	materializationModes config.MaterializationModes
-	localExcludes        []string
-	globalHarnesses      []string
-	projectHarnesses     []string
-	targetHarnesses      []hcc.Target
-	targetHarnessSource  config.Source
-	errs                 []error
-	warnings             []error
-	diagnostics          []tuiDiagnostic
-	refreshAfterLoad     bool
+	generation             requestGeneration
+	stage                  snapshotStage
+	stages                 <-chan snapshotLoadedMsg
+	rows                   []row
+	driftReport            materialize.DriftReport
+	driftAssessment        driftAssessment
+	catalogs               map[string][]catalog.Entry
+	resolved               []resolver.ResolvedArtifact
+	mergedCfg              *config.Config
+	provisionalCfg         *config.Config
+	provisionalRows        []row
+	configuredRegistries   []config.RegistryEntry
+	inventoryResult        *pipeline.ResolveResult
+	materializationModes   config.MaterializationModes
+	localExcludes          []string
+	globalHarnesses        []string
+	projectHarnesses       []string
+	targetHarnesses        []hcc.Target
+	targetHarnessSource    config.Source
+	errs                   []error
+	warnings               []error
+	diagnostics            []tuiDiagnostic
+	refreshAfterLoad       bool
+	forceMarketplaceBrowse bool
 }
 
 type reloadMsg snapshotLoadedMsg
@@ -235,9 +236,20 @@ var (
 type snapshotStreamClosedMsg struct{}
 
 func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return loadSnapshotMessage(ctx, workspace, homeDir, generation, false)
+}
+
+func loadSnapshotForReload(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return loadSnapshotMessage(ctx, workspace, homeDir, generation, true)
+}
+
+func loadSnapshotMessage(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration, reload bool) tea.Cmd {
 	return func() tea.Msg {
 		snapshot := readSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.generation = generation
+		if reload {
+			return reloadMsg(snapshot)
+		}
 		return snapshot
 	}
 }

@@ -53,7 +53,8 @@ func renderHelp(m Model) string {
 }
 
 func renderErrors(m Model) string {
-	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 && len(m.hookChanges) == 0 {
+	discoveryErrs := m.marketplaceDiscoveryErrors()
+	if len(m.errs) == 0 && len(m.warnings) == 0 && len(discoveryErrs) == 0 && len(m.hookChanges) == 0 {
 		return styleGlyphSynced.Render("No errors")
 	}
 
@@ -102,20 +103,20 @@ func renderErrors(m Model) string {
 		}
 	}
 
-	if len(m.discoveryErrs) > 0 {
+	if len(discoveryErrs) > 0 {
 		if len(m.errs) > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Marketplace discovery (%d)", len(m.discoveryErrs))))
+		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Marketplace discovery (%d)", len(discoveryErrs))))
 		b.WriteString("\n\n")
-		for _, discoveryErr := range m.discoveryErrs {
+		for _, discoveryErr := range discoveryErrs {
 			writeDiagnostic(styleWarningMsg, "• ", discoveryErr.Error())
 			writeRecovery(styleWarningMsg, discoveryErr, diagnosticCatalog)
 		}
 	}
 
 	if len(m.warnings) > 0 {
-		if len(m.errs) > 0 || len(m.discoveryErrs) > 0 {
+		if len(m.errs) > 0 || len(discoveryErrs) > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))

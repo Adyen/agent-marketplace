@@ -151,12 +151,24 @@ func TestCommandProcessCancellationAndDescendants(t *testing.T) {
 				t.Fatalf("completed child failed: %v\n%s", result.err, result.output)
 			}
 			assertCommandSandboxRemoved(t, result.root)
-			state, _ := exec.Command("/bin/ps", "-o", "stat=", "-p", string(pid)).Output()
-			if state = []byte(strings.TrimSpace(string(state))); len(state) != 0 && state[0] != 'Z' {
-				t.Fatalf("descendant %s survived: %s", pid, state)
-			}
+			waitForCommandProcessExit(t, string(pid))
 		})
 	}
+}
+
+func waitForCommandProcessExit(t *testing.T, pid string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var state string
+	for time.Now().Before(deadline) {
+		output, _ := exec.Command("/bin/ps", "-o", "stat=", "-p", pid).Output()
+		state = strings.TrimSpace(string(output))
+		if state == "" || state[0] == 'Z' {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("descendant %s survived: %s", pid, state)
 }
 
 func TestCommandProcessConcurrentIsolation(t *testing.T) {
