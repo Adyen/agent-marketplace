@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -29,7 +30,7 @@ type Diagnostic struct {
 	Code string
 }
 
-var xmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+var xmlTagPattern = regexp.MustCompile(`</?[\pL_][\pL\pN_.:-]*(?:\s+[\pL_][\pL\pN_.:-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*/?>`)
 
 func ValidateArchive(data []byte) []Diagnostic {
 	codes := make(map[string]struct{})
@@ -39,14 +40,33 @@ func ValidateArchive(data []byte) []Diagnostic {
 		return diagnostics(codes)
 	}
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if errors.Is(err, zip.ErrInsecurePath) {
+		return []Diagnostic{{Code: "archive.path-invalid"}}
+	}
 	if err != nil {
 		add("archive.invalid")
 		return diagnostics(codes)
 	}
+	var fileCount int
+	var uncompressed uint64
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		fileCount++
+		if fileCount > maxUploadFiles {
+			add("archive.too-many-files")
+			return diagnostics(codes)
+		}
+		if file.UncompressedSize64 > maxUploadBytes ||
+			uncompressed > maxUploadBytes-file.UncompressedSize64 {
+			add("archive.uncompressed-too-large")
+			return diagnostics(codes)
+		}
+		uncompressed += file.UncompressedSize64
+	}
 	var manifest *zip.File
 	manifestCount := 0
-	fileCount := 0
-	var uncompressed uint64
 	skillNames := make(map[string]struct{})
 	commandNames := make(map[string]struct{})
 	for _, file := range reader.File {
@@ -57,18 +77,7 @@ func ValidateArchive(data []byte) []Diagnostic {
 		if file.FileInfo().IsDir() {
 			continue
 		}
-		fileCount++
-		if fileCount > maxUploadFiles {
-			add("archive.too-many-files")
-		}
-		if file.UncompressedSize64 > maxUploadBytes ||
-			uncompressed > maxUploadBytes-file.UncompressedSize64 {
-			add("archive.uncompressed-too-large")
-		} else {
-			uncompressed += file.UncompressedSize64
-		}
-		canRead := file.UncompressedSize64 <= maxUploadBytes &&
-			file.Flags&1 == 0 && (file.Method == zip.Deflate || file.Method == zip.Store)
+		canRead := file.Flags&1 == 0 && (file.Method == zip.Deflate || file.Method == zip.Store)
 		if topLevelBin(name) {
 			add("archive.top-level-bin")
 		}
@@ -122,8 +131,8 @@ func ValidateArchive(data []byte) []Diagnostic {
 	} else if manifestCount > 1 {
 		add("manifest.duplicate")
 	}
-	if manifest != nil && manifest.UncompressedSize64 <= maxUploadBytes &&
-		manifest.Flags&1 == 0 && (manifest.Method == zip.Deflate || manifest.Method == zip.Store) {
+	if manifest != nil && manifest.Flags&1 == 0 &&
+		(manifest.Method == zip.Deflate || manifest.Method == zip.Store) {
 		content, readErr := readZipFile(manifest)
 		if readErr != nil {
 			add("manifest.invalid")

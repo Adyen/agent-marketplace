@@ -144,13 +144,13 @@ func TestAPIErrorTypingPreservesDocumentedFieldsAndOpaqueCodes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			ctx := context.Background()
-			cancel := func() {}
-			if test.retryAfter != "" && test.retryAfter != "0" {
-				ctx, cancel = context.WithTimeout(ctx, time.Millisecond)
+			client := testClient(t, server, "key")
+			var err error
+			if test.status == http.StatusTooManyRequests {
+				_, err = client.CreatePlugin(context.Background(), []byte("zip"), "", "")
+			} else {
+				_, err = client.GetPlugin(context.Background(), "plugin_test")
 			}
-			defer cancel()
-			_, err := testClient(t, server, "key").GetPlugin(ctx, "plugin_test")
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("error = %T %v, want *APIError", err, err)
@@ -194,7 +194,8 @@ func TestAPIErrorTypingPreservesDocumentedFieldsAndOpaqueCodes(t *testing.T) {
 	}
 }
 
-func TestCreatePluginUsesDocumentedMultipartAndRetriesThrottleOnce(t *testing.T) {
+// spec: claude-enterprise-delivery/a-write-throttle-ends-the-current-pass
+func TestCreatePluginReturnsThrottleWithoutRetryingTheWrite(t *testing.T) {
 	var attempts atomic.Int32
 	var acceptedWrites atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,13 +205,7 @@ func TestCreatePluginUsesDocumentedMultipartAndRetriesThrottleOnce(t *testing.T)
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
 		}
-		if attempts.Add(1) == 1 {
-			w.Header().Set("retry-after", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = io.WriteString(w, `{"error":{"details":{"error_code":"rate_limited"}}}`)
-			return
-		}
-		acceptedWrites.Add(1)
+		attempt := attempts.Add(1)
 
 		mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || mediaType != "multipart/form-data" {
@@ -242,18 +237,30 @@ func TestCreatePluginUsesDocumentedMultipartAndRetriesThrottleOnce(t *testing.T)
 		if !foundArchive || !foundNotes {
 			t.Errorf("multipart fields: files[]=%t release_notes=%t", foundArchive, foundNotes)
 		}
+		if attempt == 1 {
+			w.Header().Set("retry-after", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"details":{"error_code":"rate_limited"}}}`)
+			return
+		}
+		acceptedWrites.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"plugin_created","name":"example"}`)
 	}))
 	defer server.Close()
 
 	client := testClient(t, server, "key")
-	plugin, err := client.CreatePlugin(context.Background(), []byte("zip-bytes"), "", "publication provenance")
-	if err != nil {
-		t.Fatalf("CreatePlugin: %v", err)
+	_, err := client.CreatePlugin(context.Background(), []byte("zip-bytes"), "", "publication provenance")
+	var throttled *ThrottledError
+	if !errors.As(err, &throttled) {
+		t.Fatalf("CreatePlugin error = %T %v, want *ThrottledError", err, err)
 	}
-	if plugin.ID != "plugin_created" || attempts.Load() != 2 || acceptedWrites.Load() != 1 {
-		t.Fatalf("plugin=%+v request attempts=%d accepted writes=%d", plugin, attempts.Load(), acceptedWrites.Load())
+	if throttled.RetryAfter != 0 {
+		t.Fatalf("CreatePlugin RetryAfter = %s, want zero", throttled.RetryAfter)
+	}
+	if attempts.Load() != 1 || acceptedWrites.Load() != 0 {
+		t.Fatalf("request attempts=%d accepted writes=%d, want one attempt and no accepted writes",
+			attempts.Load(), acceptedWrites.Load())
 	}
 }
 
@@ -266,12 +273,10 @@ func TestClaudeDeliveryRetryAfterSaturatesDuration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err := testClient(t, server, "key").GetPlugin(ctx, "plugin_test")
+	_, err := testClient(t, server, "key").CreatePlugin(context.Background(), []byte("zip"), "", "")
 	var throttle *ThrottledError
 	if !errors.As(err, &throttle) {
-		t.Fatalf("GetPlugin error = %T %v, want *ThrottledError", err, err)
+		t.Fatalf("CreatePlugin error = %T %v, want *ThrottledError", err, err)
 	}
 	if got, want := throttle.RetryAfter, time.Duration(1<<63-1); got != want {
 		t.Fatalf("throttle RetryAfter = %s, want saturated %s", got, want)
@@ -353,7 +358,7 @@ func TestListMarketplacesPreservesFiltersAndOpaqueSource(t *testing.T) {
 			r.URL.Query().Get("source") != "future_source" {
 			t.Errorf("marketplace request = %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		_, _ = io.WriteString(w, `{"data":[{"id":"marketplace_1","source":"future_source"}],"next_page":null}`)
+		_, _ = io.WriteString(w, `{"data":[{"id":"marketplace_1","source":"future_source","default_installation_preference":"available"}],"next_page":null}`)
 	}))
 	defer server.Close()
 	client := testClient(t, server, "key")
@@ -366,6 +371,10 @@ func TestListMarketplacesPreservesFiltersAndOpaqueSource(t *testing.T) {
 	}
 	if len(marketplaces) != 1 || marketplaces[0].Source != "future_source" {
 		t.Fatalf("marketplaces = %+v", marketplaces)
+	}
+	if marketplaces[0].DefaultInstallationPreference != "available" {
+		t.Fatalf("marketplace default installation preference = %q, want available",
+			marketplaces[0].DefaultInstallationPreference)
 	}
 }
 

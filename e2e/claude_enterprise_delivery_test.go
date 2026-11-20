@@ -145,7 +145,9 @@ func TestClaudeEnterpriseDeliveryMirrorsChangesAndWithdrawsAvailabilityOnly(t *t
 		"  canonical_url: https://example.com\n",
 		"  canonical_url: https://example.com\noperations_listen: "+operations+"\n", 1)
 	env.CreateBareRepo("serve-reg-rejected", map[string]string{
-		".agents/skills/rejected/SKILL.md": "---\nname: rejected\ndescription: This license is not allowed\nlicense: GPL-3.0-only\n---\n\n# rejected\n",
+		".agents/skills/rejected/SKILL.md": (Skill{
+			Name: "rejected", Description: "This license is not allowed", License: "GPL-3.0-only",
+		}).SkillFile(),
 	})
 	rejectedURL := strings.TrimSuffix(registryURL, "/serve-reg.git") + "/serve-reg-rejected.git"
 	baseConfig = appendMetricsRegistry(baseConfig, "src-rejected", "rejected-source", rejectedURL, false)
@@ -205,16 +207,25 @@ claude_enterprise:
 	}
 	assertClaudeDeliveryStatus(t, env, store.ClaudeDeliveryStatePublished)
 
-	unchanged := waitForClaudeDeliverySnapshot(t, process, fake, func(snapshot claudePluginsSnapshot) bool {
-		return snapshot.requests >= first.requests+2
-	}, "a repeated reconcile pass over unchanged publication")
+	const reconcileMetric = "agent_marketplace_claude_delivery_reconciles_total"
+	succeeded := map[string]string{"outcome": "succeeded"}
+	_, completed, ok := waitForMetric(t, operations, reconcileMetric, succeeded, 1, workerMetricWait)
+	if !ok {
+		t.Fatal("initial Claude delivery pass did not complete")
+	}
+	if _, _, ok := waitForMetric(t, operations, reconcileMetric, succeeded, completed+1, workerMetricWait); !ok {
+		t.Fatal("unchanged Claude delivery pass did not complete")
+	}
+	unchanged := fake.snapshot()
 	if unchanged.writeRequests != first.writeRequests || unchanged.createdPlugins != first.createdPlugins ||
 		unchanged.createdVersions != 0 || !equalStrings(unchanged.preferences, first.preferences) {
 		t.Fatalf("unchanged pass wrote to Plugins API: %+v", unchanged)
 	}
 
 	env.CreateBareRepo("serve-reg-updated", map[string]string{
-		".agents/skills/review/SKILL.md": "---\nname: review\ndescription: Review changed code carefully\nlicense: MIT\n---\n\n# review\n",
+		".agents/skills/review/SKILL.md": (Skill{
+			Name: "review", Description: "Review changed code carefully", License: "MIT",
+		}).SkillFile(),
 	})
 	updatedURL := strings.TrimSuffix(registryURL, "/serve-reg.git") + "/serve-reg-updated.git"
 	config = strings.Replace(env.ReadFile("/workspace/marketplace.yaml"), registryURL, updatedURL, 1)

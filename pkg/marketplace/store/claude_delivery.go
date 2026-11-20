@@ -35,6 +35,7 @@ type ClaudeDeliveryPlugin struct {
 	PublishedVersionID     string
 	LatestVersionID        string
 	ServedVersionID        string
+	ServedVersionPinned    bool
 	ContentScanStatus      string
 	Reach                  string
 	InstallationPreference string
@@ -100,6 +101,8 @@ CREATE TABLE claude_delivery_plugins (
 CREATE INDEX claude_delivery_state ON claude_delivery_plugins(state, updated_at);
 `
 
+const ClaudeDeliveryServedVersionPinnedSchema = `ALTER TABLE claude_delivery_plugins ADD COLUMN served_version_pinned BOOLEAN NOT NULL DEFAULT FALSE;`
+
 func SelectClaudeDeliveryJob(ctx context.Context, q ManagedSQLQueries, marketplace MarketplaceID, requestedID JobID, now time.Time) (JobID, error) {
 	payload, err := json.Marshal(ClaudeDeliveryJobPayload{Marketplace: marketplace})
 	if err != nil {
@@ -143,10 +146,10 @@ func UpsertClaudeDeliveryPublished(ctx context.Context, q ManagedSQLQueries, row
 		source_marketplace_id, registry_id, kind, resource_name, plugin_name, plugin_id,
 		target_marketplace_id, published_archive_digest, published_content_digest,
 		pending_version_id, pending_archive_digest, published_version_id, latest_version_id,
-		served_version_id, content_scan_status, reach, installation_preference, state,
+		served_version_id, served_version_pinned, content_scan_status, reach, installation_preference, state,
 		last_error_code, last_error_message,
 		created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'','',$19,$20)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'','',$20,$21)
 		ON CONFLICT (source_marketplace_id, registry_id, kind, resource_name) DO UPDATE SET
 		plugin_name=CASE WHEN claude_delivery_plugins.plugin_name='' THEN excluded.plugin_name ELSE claude_delivery_plugins.plugin_name END,
 		plugin_id=excluded.plugin_id, target_marketplace_id=excluded.target_marketplace_id,
@@ -156,13 +159,14 @@ func UpsertClaudeDeliveryPublished(ctx context.Context, q ManagedSQLQueries, row
 		pending_archive_digest=excluded.pending_archive_digest,
 		published_version_id=excluded.published_version_id,
 		latest_version_id=excluded.latest_version_id, served_version_id=excluded.served_version_id,
+		served_version_pinned=excluded.served_version_pinned,
 		content_scan_status=excluded.content_scan_status, reach=excluded.reach,
 		installation_preference=excluded.installation_preference, state=excluded.state,
 		last_error_code='', last_error_message='', updated_at=excluded.updated_at`,
 		row.Coordinate.Marketplace, row.Coordinate.Registry, row.Coordinate.Kind, row.Coordinate.Name,
 		row.PluginName, row.PluginID, row.TargetMarketplaceID, row.PublishedArchiveDigest,
 		row.PublishedContentDigest, row.PendingVersionID, row.PendingArchiveDigest,
-		row.PublishedVersionID, row.LatestVersionID, row.ServedVersionID,
+		row.PublishedVersionID, row.LatestVersionID, row.ServedVersionID, row.ServedVersionPinned,
 		row.ContentScanStatus, row.Reach, row.InstallationPreference, row.State,
 		row.CreatedAt.UTC().UnixNano(), row.UpdatedAt.UTC().UnixNano())
 	if err != nil {
@@ -263,7 +267,7 @@ func GetClaudeDeliveryPlugin(ctx context.Context, q ManagedSQLQueries, coordinat
 	row := q.QueryRowContext(ctx, `SELECT source_marketplace_id,registry_id,kind,resource_name,
 		plugin_name,plugin_id,target_marketplace_id,published_archive_digest,published_content_digest,
 		pending_version_id,pending_archive_digest,published_version_id,latest_version_id,
-		served_version_id,content_scan_status,reach,
+		served_version_id,served_version_pinned,content_scan_status,reach,
 		installation_preference,state,last_error_code,last_error_message,created_at,updated_at
 		FROM claude_delivery_plugins WHERE source_marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND resource_name=$4`,
 		coordinate.Marketplace, coordinate.Registry, coordinate.Kind, coordinate.Name)
@@ -278,7 +282,7 @@ func ListClaudeDeliveryPlugins(ctx context.Context, q ManagedSQLQueries) ([]Clau
 	rows, err := q.QueryContext(ctx, `SELECT source_marketplace_id,registry_id,kind,resource_name,
 		plugin_name,plugin_id,target_marketplace_id,published_archive_digest,published_content_digest,
 		pending_version_id,pending_archive_digest,published_version_id,latest_version_id,
-		served_version_id,content_scan_status,reach,
+		served_version_id,served_version_pinned,content_scan_status,reach,
 		installation_preference,state,last_error_code,last_error_message,created_at,updated_at
 		FROM claude_delivery_plugins ORDER BY source_marketplace_id,registry_id,kind,resource_name`)
 	if err != nil {
@@ -311,7 +315,7 @@ func scanClaudeDeliveryPlugin(scanner claudeDeliveryScanner) (ClaudeDeliveryPlug
 		&row.PluginName, &row.PluginID, &row.TargetMarketplaceID, &row.PublishedArchiveDigest,
 		&row.PublishedContentDigest, &row.PendingVersionID, &row.PendingArchiveDigest,
 		&row.PublishedVersionID, &row.LatestVersionID,
-		&row.ServedVersionID, &row.ContentScanStatus, &row.Reach, &row.InstallationPreference,
+		&row.ServedVersionID, &row.ServedVersionPinned, &row.ContentScanStatus, &row.Reach, &row.InstallationPreference,
 		&row.State, &row.LastErrorCode, &row.LastErrorMessage, &created, &updated)
 	if err != nil {
 		return ClaudeDeliveryPlugin{}, err

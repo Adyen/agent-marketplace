@@ -317,6 +317,8 @@ func pluginFiles(resource ir.Resource, canonicalArtifact artifact.CanonicalArtif
 		}
 		if value.Transport != "" {
 			server["type"] = value.Transport
+		} else if transport, ok := value.Extra["type"].(string); ok && transport != "" {
+			server["type"] = transport
 		}
 		if len(value.Headers) > 0 {
 			server["headers"] = value.Headers

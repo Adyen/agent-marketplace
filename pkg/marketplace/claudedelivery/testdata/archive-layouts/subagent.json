@@ -1,0 +1,17 @@
+[
+  {
+    "Path": ".claude-plugin/plugin.json",
+    "Mode": "0644",
+    "Content": "{\"author\":{\"name\":\"Example Publisher\"},\"description\":\"Reviewer description\",\"displayName\":\"reviewer\",\"homepage\":\"https://publisher.example\",\"name\":\"am-acme-subagent-reviewer\"}"
+  },
+  {
+    "Path": "agents/reviewer.md",
+    "Mode": "0644",
+    "Content": "---\ndescription: Reviewer description\nmodel: sonnet\nname: reviewer\n---\nReview body"
+  },
+  {
+    "Path": "licenses/LICENSE",
+    "Mode": "0644",
+    "Content": "MIT"
+  }
+]

@@ -161,12 +161,12 @@ type PluginVersion struct {
 }
 
 type PluginMarketplace struct {
-	Type                               string `json:"type"`
-	ID                                 string `json:"id"`
-	Name                               string `json:"name"`
-	Source                             string `json:"source"`
-	Owner                              Owner  `json:"owner"`
-	OrganizationInstallationPreference string `json:"organization_installation_preference"`
+	Type                          string `json:"type"`
+	ID                            string `json:"id"`
+	Name                          string `json:"name"`
+	Source                        string `json:"source"`
+	Owner                         Owner  `json:"owner"`
+	DefaultInstallationPreference string `json:"default_installation_preference"`
 }
 
 type InstallationSetting struct {
@@ -418,7 +418,7 @@ func (c *Client) requestJSON(ctx context.Context, method, endpoint string, body 
 		}
 		if response.StatusCode == http.StatusTooManyRequests {
 			apiErr := apiError(response)
-			if attempt == 0 && apiErr.RetryAfter >= 0 && response.Header.Get("retry-after") != "" {
+			if method == http.MethodGet && attempt == 0 && apiErr.RetryAfter >= 0 && response.Header.Get("retry-after") != "" {
 				if err := wait(requestContext, apiErr.RetryAfter); err != nil {
 					_ = response.Body.Close()
 					return &ThrottledError{APIError: apiErr, RetryAfter: apiErr.RetryAfter}

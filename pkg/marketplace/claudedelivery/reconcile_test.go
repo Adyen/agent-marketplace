@@ -62,6 +62,76 @@ func TestReconcileResolvesExplicitMarketplace(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/parent-cancellation-does-not-mark-a-plugin-failed
+func TestReconcileStopsWhenParentContextIsCanceledDuringRead(t *testing.T) {
+	fixture := newDeliveryFixture(t, "guide", "guide text")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	before, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	readCanceled := make(chan struct{})
+	api.mu.Lock()
+	api.beforePluginRead = func() {
+		close(readCanceled)
+		cancel()
+	}
+	api.mu.Unlock()
+	if _, err := delivery.Reconcile(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Reconcile error = %v, want context.Canceled", err)
+	}
+	select {
+	case <-readCanceled:
+	default:
+		t.Fatal("parent context was not canceled during the plugin read")
+	}
+
+	after, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || after != before || after.State != store.ClaudeDeliveryStatePublished ||
+		after.LastErrorCode != "" {
+		t.Fatalf("canceled read changed delivery state: before=%+v after=%+v err=%v", before, after, err)
+	}
+}
+
+// spec: claude-enterprise-delivery/a-stale-failure-clears-after-read-only-convergence
+func TestReconcileClearsFailureWhenPreferenceAlreadyMatches(t *testing.T) {
+	fixture := newDeliveryFixture(t, "guide", "guide text")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if err := fixture.state.RecordClaudeDeliveryFailure(
+		context.Background(), fixture.coordinate, "am-registry-skill-guide", testMarketID,
+		"installation-setting.unavailable", time.Date(2026, time.November, 11, 12, 1, 0, 0, time.UTC),
+	); err != nil {
+		t.Fatalf("seed failure state: %v", err)
+	}
+	failed, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || failed.State != store.ClaudeDeliveryStateFailed ||
+		failed.LastErrorCode != "installation-setting.unavailable" {
+		t.Fatalf("seeded failure state = %+v, %v", failed, err)
+	}
+	writesBefore := api.writeCount()
+
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("unchanged Reconcile: %v", err)
+	}
+	row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || row.State != store.ClaudeDeliveryStatePublished || row.LastErrorCode != "" ||
+		api.preference(testPluginID) != "available" || api.writeCount() != writesBefore {
+		t.Fatalf("unchanged convergence row=%+v preference=%q writes=%d (before %d), err=%v",
+			row, api.preference(testPluginID), api.writeCount(), writesBefore, err)
+	}
+}
+
 func TestReconcileRejectsMemberOwnedAndAbsentExplicitMarketplaces(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -367,6 +437,10 @@ func TestReconcileCreatesSetsPreferenceSkipsUnchangedAndVersionsChangedContent(t
 	plugin.ContentScan = claudeplugins.ContentScan{Status: "completed"}
 	plugin.Reach = "workspace"
 	plugin.ServedVersionID = "version_served"
+	version := api.versionRecords[testPluginID][originalVersion]
+	version.ContentScan = plugin.ContentScan
+	version.Reach = plugin.Reach
+	api.versionRecords[testPluginID][originalVersion] = version
 	api.plugins[testPluginID] = plugin
 	api.mu.Unlock()
 	delivery = fixture.reconciler(api, ReconcileTarget{
@@ -398,6 +472,67 @@ func TestReconcileCreatesSetsPreferenceSkipsUnchangedAndVersionsChangedContent(t
 	}
 	if row.PluginName != "am-registry-skill-guide" {
 		t.Fatalf("registry slug change renamed plugin to %q", row.PluginName)
+	}
+}
+
+// spec: claude-enterprise-delivery/an-operator-pin-remains-in-place
+func TestReconcileReportsPinnedVersionAndRefreshesItsOwnScan(t *testing.T) {
+	fixture := newDeliveryFixture(t, "guide", "first revision")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+
+	api.mu.Lock()
+	plugin := api.plugins[testPluginID]
+	plugin.ServedVersionPinned = true
+	plugin.ContentScan = claudeplugins.ContentScan{Status: "completed"}
+	plugin.ServedVersionID = "version_1"
+	api.plugins[testPluginID] = plugin
+	servedVersion := api.versionRecords[testPluginID]["version_1"]
+	servedVersion.ContentScan = plugin.ContentScan
+	servedVersion.Reach = plugin.Reach
+	api.versionRecords[testPluginID]["version_1"] = servedVersion
+	api.mu.Unlock()
+
+	fixture.publish(t, "second revision", "commit-2", "publication-2")
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("changed Reconcile: %v", err)
+	}
+	row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || row.PublishedVersionID != "version_2" || row.ServedVersionID != "version_1" ||
+		StatusMessage(row) != "awaiting its content scan" {
+		t.Fatalf("changed pinned publication = %+v, message=%q, err=%v", row, StatusMessage(row), err)
+	}
+	writesAfterUpload := api.writeCount()
+
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("unchanged Reconcile: %v", err)
+	}
+	row, err = fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || row.PublishedVersionID != "version_2" || row.ServedVersionID != "version_1" ||
+		row.ContentScanStatus != "processing" || StatusMessage(row) != "awaiting its content scan" ||
+		api.writeCount() != writesAfterUpload {
+		t.Errorf("unchanged pinned publication = %+v, message=%q writes=%d (after upload %d), err=%v",
+			row, StatusMessage(row), api.writeCount(), writesAfterUpload, err)
+	}
+
+	api.mu.Lock()
+	version := api.versionRecords[testPluginID]["version_2"]
+	version.ContentScan = claudeplugins.ContentScan{Status: "completed"}
+	api.versionRecords[testPluginID]["version_2"] = version
+	api.mu.Unlock()
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("completed scan Reconcile: %v", err)
+	}
+	row, err = fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || row.PublishedVersionID != "version_2" || row.ServedVersionID != "version_1" ||
+		row.ContentScanStatus != "completed" ||
+		StatusMessage(row) != "a different version is pinned and still served" ||
+		api.writeCount() != writesAfterUpload {
+		t.Errorf("completed pinned publication = %+v, message=%q writes=%d (after upload %d), err=%v",
+			row, StatusMessage(row), api.writeCount(), writesAfterUpload, err)
 	}
 }
 
@@ -485,6 +620,37 @@ func TestReconcileConflictsOnPluginNameCollisionAcrossResources(t *testing.T) {
 		collision.LastErrorCode != "plugin.name-collision" {
 		t.Fatalf("second collision pass wrote creates=%d versions=%d, row=%+v",
 			api.createCount()-creates, api.versionCount()-versions, collision)
+	}
+}
+
+// spec: claude-enterprise-delivery/an-unavailable-archive-does-not-block-a-valid-sibling
+func TestReconcileBuildFailureDoesNotClaimCollidingName(t *testing.T) {
+	fixture := newDeliveryFixture(t, "my-skill", "unavailable first archive")
+	fixture.addResource(t, "my_skill", "available sibling", "commit-2", "publication-2")
+	if err := fixture.blobs.Delete(context.Background(), fixture.resource.ArchiveDigest); err != nil {
+		t.Fatalf("remove first archive: %v", err)
+	}
+	api := newPluginAPIFake(t, []string{"am-registry-skill-my-skill"})
+	result, err := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID}).Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	first, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), store.ResourceCoordinate{
+		Marketplace: fixture.coordinate.Marketplace, Registry: fixture.coordinate.Registry,
+		Kind: fixture.coordinate.Kind, Name: "my_skill",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Failed != 1 || result.Published != 1 || result.Conflicts != 0 ||
+		first.State != store.ClaudeDeliveryStateFailed || first.LastErrorCode != "artifact.unavailable" ||
+		sibling.State != store.ClaudeDeliveryStatePublished || sibling.PluginID == "" || api.createCount() != 1 {
+		t.Fatalf("build failure and colliding sibling = first %+v sibling %+v result %+v creates=%d",
+			first, sibling, result, api.createCount())
 	}
 }
 
@@ -927,7 +1093,7 @@ func TestReconcileResumesAfterRateLimitAndRetriesInstallation503(t *testing.T) {
 		if otherPluginID == "" {
 			t.Fatal("other desired resource was not created")
 		}
-		api.rateLimitedVersions = 2
+		api.rateLimitedVersions = 1
 		requestsBefore := api.requestLog()
 		versionsBefore := api.versionCount()
 		settingsBefore := api.settingCount()
@@ -950,10 +1116,9 @@ func TestReconcileResumesAfterRateLimitAndRetriesInstallation503(t *testing.T) {
 			"GET /v1/organizations/plugins",
 			"GET /v1/organizations/plugins/" + testPluginID,
 			"POST /v1/organizations/plugins/" + testPluginID + "/versions",
-			"POST /v1/organizations/plugins/" + testPluginID + "/versions",
 		}
 		if !reflect.DeepEqual(requestsAfterThrottle[len(requestsBefore):], wantRequests) ||
-			api.versionCount()-versionsBefore != 2 || api.settingCount() != settingsBefore {
+			api.versionCount()-versionsBefore != 1 || api.settingCount() != settingsBefore {
 			t.Fatalf("requests after rate limit = %v; version writes=%d setting writes=%d",
 				requestsAfterThrottle[len(requestsBefore):], api.versionCount()-versionsBefore, api.settingCount()-settingsBefore)
 		}
@@ -1006,9 +1171,9 @@ func TestReconcileReturnsClaudeDeliveryThrottlesWithoutStateOrFollowupRequests(t
 			fixture := newDeliveryFixture(t, "guide", "first revision")
 			api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
 			if test.failCreate {
-				api.rateLimitedCreates = 2
+				api.rateLimitedCreates = 1
 			} else if test.failSetting {
-				api.rateLimitedSettings = 2
+				api.rateLimitedSettings = 1
 			} else {
 				api.throttleReadPath = test.readPath
 				api.throttleReadRemaining = 2
@@ -1032,9 +1197,8 @@ func TestReconcileReturnsClaudeDeliveryThrottlesWithoutStateOrFollowupRequests(t
 					t.Fatalf("failed create state = %+v", rows)
 				}
 				requests := api.requestLog()
-				if got := requests[len(before):]; len(got) != 4 ||
-					got[2] != "POST /v1/organizations/plugins" ||
-					got[3] != "POST /v1/organizations/plugins" || api.writeCount() != 2 {
+				if got := requests[len(before):]; len(got) != 3 ||
+					got[2] != "POST /v1/organizations/plugins" || api.writeCount() != 1 {
 					t.Fatalf("requests after create throttle = %v", got)
 				}
 			} else if test.failSetting {
@@ -1042,10 +1206,9 @@ func TestReconcileReturnsClaudeDeliveryThrottlesWithoutStateOrFollowupRequests(t
 					t.Fatalf("failed setting state = %+v", rows)
 				}
 				requests := api.requestLog()
-				if got := requests[len(before):]; len(got) != 5 ||
+				if got := requests[len(before):]; len(got) != 4 ||
 					got[3] != "POST /v1/organizations/plugins/"+testPluginID+"/installation_settings/organization" ||
-					got[4] != "POST /v1/organizations/plugins/"+testPluginID+"/installation_settings/organization" ||
-					api.writeCount() != 3 {
+					api.writeCount() != 2 {
 					t.Fatalf("requests after installation throttle = %v", got)
 				}
 			} else if len(rows) != 0 {
@@ -1151,6 +1314,7 @@ func TestReconcileWithdrawsAndRestoresTheExistingPlugin(t *testing.T) {
 		t.Fatalf("returned state=%+v creates=%d versions=%d preference=%q err=%v",
 			row, api.createCount(), api.versionCount(), api.preference(testPluginID), err)
 	}
+	returnedVersionID := row.PublishedVersionID
 
 	returnedRevision := fixture.resource
 	returnedRevisionID := fmt.Sprintf("%s@%s", returnedRevision.Coordinate, returnedRevision.ContentDigest)
@@ -1165,17 +1329,15 @@ func TestReconcileWithdrawsAndRestoresTheExistingPlugin(t *testing.T) {
 	if err := fixture.meta.DeleteRevocation(context.Background(), store.RevocationRevision, returnedRevisionID); err != nil {
 		t.Fatal(err)
 	}
-	api.mu.Lock()
-	plugin := api.plugins[testPluginID]
-	plugin.OrganizationInstallationPreference = "available"
-	api.plugins[testPluginID] = plugin
-	api.mu.Unlock()
 	if _, err := delivery.Reconcile(context.Background()); err != nil {
 		t.Fatalf("unchanged return Reconcile: %v", err)
 	}
 	row, err = fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
-	if err != nil || row.State != store.ClaudeDeliveryStatePublished {
-		t.Fatalf("unchanged returned state=%+v, %v", row, err)
+	if err != nil || row.State != store.ClaudeDeliveryStatePublished ||
+		row.PublishedVersionID != returnedVersionID || api.preference(testPluginID) != "available" ||
+		api.createCount() != 1 || api.versionCount() != 1 {
+		t.Fatalf("unchanged returned state=%+v version=%q preference=%q creates=%d versions=%d err=%v",
+			row, returnedVersionID, api.preference(testPluginID), api.createCount(), api.versionCount(), err)
 	}
 }
 
@@ -1231,6 +1393,97 @@ func TestReconcileCompletesPendingCreateAndDoesNotDuplicateLostVersion(t *testin
 			t.Fatalf("retry stored versions=%d row=%+v, %v", api.successfulVersions, row, err)
 		}
 	})
+}
+
+// spec: claude-enterprise-delivery/an-already-served-registration-retry-is-recovered-without-writing
+func TestReconcileRecoversAuthorizedRetryUnderDifferentServedVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*claudeplugins.PluginVersion)
+		wantRecover bool
+	}{
+		{name: "matching actor and digest", wantRecover: true},
+		{
+			name: "wrong actor",
+			mutate: func(version *claudeplugins.PluginVersion) {
+				version.CreatedBy = &claudeplugins.Actor{Type: "api_actor", APIKeyID: "apikey_other"}
+			},
+		},
+		{
+			name: "wrong digest marker",
+			mutate: func(version *claudeplugins.PluginVersion) {
+				version.ReleaseNotes = "publication; archive_digest=sha256:unrelated"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newDeliveryFixture(t, "guide", "first revision")
+			api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+			delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+			if _, err := delivery.Reconcile(context.Background()); err != nil {
+				t.Fatalf("initial Reconcile: %v", err)
+			}
+			prior, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.publish(t, "second revision", "commit-2", "publication-2")
+			api.pendingVersionRemaining = 1
+			api.pendingVersionRetry = true
+			api.loseNextVersionResponse = true
+			api.failReadAfterLostVersionResponse = true
+			if _, err := delivery.Reconcile(context.Background()); err != nil {
+				t.Fatalf("interrupted changed Reconcile: %v", err)
+			}
+			pending, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			api.mu.Lock()
+			plugin := api.plugins[testPluginID]
+			version := api.versionRecords[testPluginID]["version_3"]
+			api.mu.Unlock()
+			if pending.PendingVersionID != "version_2" || pending.PendingArchiveDigest == "" ||
+				plugin.LatestVersionID != "version_3" || plugin.ServedVersionID != "version_3" ||
+				version.CreatedBy == nil || version.CreatedBy.Type != "api_actor" ||
+				version.CreatedBy.APIKeyID != testAPIKeyID || api.versionCount() != 2 {
+				t.Fatalf("interrupted pending state=%+v plugin=%+v version=%+v writes=%d",
+					pending, plugin, version, api.versionCount())
+			}
+			if test.mutate != nil {
+				api.mu.Lock()
+				version = api.versionRecords[testPluginID]["version_3"]
+				test.mutate(&version)
+				api.versionRecords[testPluginID]["version_3"] = version
+				api.mu.Unlock()
+			}
+			writesBefore := api.writeCount()
+
+			result, err := delivery.Reconcile(context.Background())
+			if err != nil {
+				t.Fatalf("pending recovery Reconcile: %v", err)
+			}
+			row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.wantRecover {
+				if result.Published != 1 || row.State != store.ClaudeDeliveryStatePublished ||
+					row.PublishedVersionID != "version_3" || row.PublishedArchiveDigest != pending.PendingArchiveDigest ||
+					row.PendingVersionID != "" || row.PendingArchiveDigest != "" {
+					t.Fatalf("authorized retry result=%+v row=%+v", result, row)
+				}
+			} else if result.Failed != 1 || row.PublishedVersionID != prior.PublishedVersionID ||
+				row.PublishedArchiveDigest != prior.PublishedArchiveDigest ||
+				row.PendingVersionID != "version_2" || row.PendingArchiveDigest != pending.PendingArchiveDigest {
+				t.Fatalf("unauthorized retry result=%+v row=%+v prior=%+v", result, row, prior)
+			}
+			if api.writeCount() != writesBefore {
+				t.Fatalf("pending recovery added %d writes", api.writeCount()-writesBefore)
+			}
+		})
+	}
 }
 
 // spec: claude-enterprise-delivery/an-interrupted-pass-resumes-rather-than-restarts
@@ -1464,44 +1717,46 @@ func errorCode(err error) string {
 }
 
 type pluginAPIFake struct {
-	t                             *testing.T
-	server                        *httptest.Server
-	mu                            sync.Mutex
-	marketplace                   claudeplugins.PluginMarketplace
-	marketplacePresent            bool
-	createMarketplaceID           string
-	organizationSettingTarget     bool
-	plugins                       map[string]claudeplugins.Plugin
-	versionRecords                map[string]map[string]claudeplugins.PluginVersion
-	failVersionReadIDs            map[string]int
-	failPluginReadIDs             map[string]int
-	mismatchedVersionReadIDs      map[string]string
-	advanceLatestAfterNextVersion *claudeplugins.PluginVersion
-	clearLatestAfterNextVersion   bool
-	clearLatestOnNextPluginRead   bool
-	names                         []string
-	creates                       int
-	successfulCreates             int
-	versions                      int
-	successfulVersions            int
-	settings                      int
-	pendingCreate                 bool
-	loseNextVersionResponse       bool
-	dropBeforeRecord              bool
-	hideInventory                 bool
-	createNameTaken               bool
-	createSkillNameTaken          bool
-	pendingVersionRemaining       int
-	pendingVersionRetry           bool
-	omitPendingVersionRetryHeader bool
-	failPendingFollowupRead       bool
-	rateLimitedCreates            int
-	rateLimitedVersions           int
-	rateLimitedSettings           int
-	throttleReadPath              string
-	throttleReadRemaining         int
-	requests                      []string
-	setting503Remaining           int
+	t                                *testing.T
+	server                           *httptest.Server
+	mu                               sync.Mutex
+	marketplace                      claudeplugins.PluginMarketplace
+	marketplacePresent               bool
+	createMarketplaceID              string
+	organizationSettingTarget        bool
+	plugins                          map[string]claudeplugins.Plugin
+	versionRecords                   map[string]map[string]claudeplugins.PluginVersion
+	failVersionReadIDs               map[string]int
+	failPluginReadIDs                map[string]int
+	mismatchedVersionReadIDs         map[string]string
+	advanceLatestAfterNextVersion    *claudeplugins.PluginVersion
+	clearLatestAfterNextVersion      bool
+	clearLatestOnNextPluginRead      bool
+	names                            []string
+	creates                          int
+	successfulCreates                int
+	versions                         int
+	successfulVersions               int
+	settings                         int
+	pendingCreate                    bool
+	loseNextVersionResponse          bool
+	dropBeforeRecord                 bool
+	hideInventory                    bool
+	createNameTaken                  bool
+	createSkillNameTaken             bool
+	pendingVersionRemaining          int
+	pendingVersionRetry              bool
+	failReadAfterLostVersionResponse bool
+	omitPendingVersionRetryHeader    bool
+	failPendingFollowupRead          bool
+	rateLimitedCreates               int
+	rateLimitedVersions              int
+	rateLimitedSettings              int
+	throttleReadPath                 string
+	throttleReadRemaining            int
+	requests                         []string
+	setting503Remaining              int
+	beforePluginRead                 func()
 }
 
 func newPluginAPIFake(t *testing.T, names []string) *pluginAPIFake {
@@ -1634,6 +1889,11 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				api.plugins[id] = plugin
 				api.clearLatestOnNextPluginRead = false
 			}
+			if api.beforePluginRead != nil {
+				beforePluginRead := api.beforePluginRead
+				api.beforePluginRead = nil
+				beforePluginRead()
+			}
 			writeJSON(w, plugin)
 		} else {
 			writeAPIError(w, http.StatusNotFound, "not_found", "")
@@ -1719,14 +1979,17 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		api.successfulVersions++
 		versionID := fmt.Sprintf("version_%d", api.successfulVersions+1)
 		plugin.LatestVersionID = versionID
-		plugin.ServedVersionID = versionID
-		plugin.ContentScan = claudeplugins.ContentScan{Status: "processing"}
-		plugin.Reach = "organization"
-		api.plugins[id] = plugin
 		version := claudeplugins.PluginVersion{
 			ID: versionID, PluginID: id, ReleaseNotes: releaseNotes,
-			ContentScan: plugin.ContentScan, Reach: plugin.Reach,
+			CreatedBy:   &claudeplugins.Actor{Type: "api_actor", APIKeyID: testAPIKeyID},
+			ContentScan: claudeplugins.ContentScan{Status: "processing"}, Reach: "organization",
 		}
+		if !plugin.ServedVersionPinned {
+			plugin.ServedVersionID = versionID
+			plugin.ContentScan = version.ContentScan
+			plugin.Reach = version.Reach
+		}
+		api.plugins[id] = plugin
 		if api.versionRecords[id] == nil {
 			api.versionRecords[id] = make(map[string]claudeplugins.PluginVersion)
 		}
@@ -1749,6 +2012,10 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if api.loseNextVersionResponse {
 			api.loseNextVersionResponse = false
+			if api.failReadAfterLostVersionResponse {
+				api.failReadAfterLostVersionResponse = false
+				api.failPluginReadIDs[id]++
+			}
 			api.dropVersionResponse(w)
 			return
 		}

@@ -1,0 +1,17 @@
+[
+  {
+    "Path": ".claude-plugin/plugin.json",
+    "Mode": "0644",
+    "Content": "{\"author\":{\"name\":\"Example Publisher\"},\"description\":\"Audit description\",\"displayName\":\"audit\",\"homepage\":\"https://publisher.example\",\"name\":\"am-acme-command-audit\"}"
+  },
+  {
+    "Path": "commands/audit.md",
+    "Mode": "0644",
+    "Content": "---\ndescription: Audit description\nname: audit\n---\nAudit body"
+  },
+  {
+    "Path": "licenses/LICENSE",
+    "Mode": "0644",
+    "Content": "MIT"
+  }
+]

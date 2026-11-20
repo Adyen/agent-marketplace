@@ -152,9 +152,8 @@ type ClaudeEnterprise struct {
 }
 
 type ClaudeEnterpriseAPIKeyReference struct {
-	File   string `yaml:"file"`
-	Env    string `yaml:"env"`
-	inline bool
+	File string `yaml:"file"`
+	Env  string `yaml:"env"`
 }
 
 func (r *ClaudeEnterpriseAPIKeyReference) UnmarshalYAML(node *yaml.Node) error {
@@ -162,16 +161,15 @@ func (r *ClaudeEnterpriseAPIKeyReference) UnmarshalYAML(node *yaml.Node) error {
 		return &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyInlineCode, field: "claude_enterprise.api_key"}
 	}
 	var raw struct {
-		File  string `yaml:"file"`
-		Env   string `yaml:"env"`
-		Value string `yaml:"value"`
+		File string `yaml:"file"`
+		Env  string `yaml:"env"`
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key := node.Content[i].Value
 		switch key {
 		case "file", "env":
 		case "value":
-			r.inline = true
+			return &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyInlineCode, field: "claude_enterprise.api_key"}
 		default:
 			return fmt.Errorf("claude_enterprise.api_key contains unknown field %q", key)
 		}
@@ -257,8 +255,6 @@ func (c *ClaudeEnterprise) validate() error {
 	hasFile := strings.TrimSpace(c.APIKey.File) != ""
 	hasEnv := strings.TrimSpace(c.APIKey.Env) != ""
 	switch {
-	case c.APIKey.inline:
-		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyInlineCode, field: "claude_enterprise.api_key"})
 	case hasFile && hasEnv:
 		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyRefCode, field: "claude_enterprise.api_key"})
 	case c.Enabled && !hasFile && !hasEnv:
