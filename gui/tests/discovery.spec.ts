@@ -1,6 +1,6 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { startHarness } from './harness'
 import { distIndexExists, launchBuiltUserApp } from './app'
@@ -187,8 +187,13 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     AM_WORK28_TELEMETRY_EVIDENCE_DIR: harnessLogDir,
   })
   const { bootstrap } = harness
+  const pageTwoStarted = bootstrap.discoveryPageTwoStarted
+  const pageTwoRelease = bootstrap.discoveryPageTwoRelease
   let released = false
   try {
+    if (pageTwoStarted == null || pageTwoRelease == null) {
+      throw new Error('paged discovery markers missing')
+    }
     await page.setViewportSize({ width: 1280, height: 800 })
     await launchBuiltUserApp(page, bootstrap)
     const first = page.getByRole('option').filter({ hasText: 'paged-first' })
@@ -196,15 +201,15 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     await expect(first).toBeVisible({ timeout: 60_000 })
     await page.screenshot({ path: testInfo.outputPath('discovery-first-page.png'), animations: 'disabled' })
 
-    await waitForMarker(bootstrap.discoveryPageTwoStarted, 10_000)
-    await expect(first).toBeVisible()
-    await expect(second).not.toBeVisible()
+    const expectFirstPageOnly = async () => {
+      await expect(first).toBeVisible()
+      await expect(second).not.toBeVisible()
+    }
+    await waitForMarker(pageTwoStarted, 10_000)
+    await expectFirstPageOnly()
     await page.screenshot({ path: testInfo.outputPath('discovery-page-two-held.png'), animations: 'disabled' })
 
-    if (bootstrap.discoveryPageTwoRelease == null) {
-      throw new Error('paged discovery release marker missing')
-    }
-    await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+    await writeFile(pageTwoRelease, 'released\n')
     released = true
 
     if (scenario.mode === 'complete') {
@@ -215,24 +220,44 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
 
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     const discoveryHealth = page.getByRole('region', { name: 'Marketplace discovery health' })
-    await expect(discoveryHealth).toContainText('Marketplace search failed', { timeout: 60_000 })
-    await expect(discoveryHealth).toContainText(
-      'Only part of the catalog is shown; search to find more',
-      { timeout: 60_000 },
-    )
+    const expectIncompleteDiscovery = async () => {
+      await expect(discoveryHealth).toContainText('Marketplace search failed', { timeout: 60_000 })
+      await expect(discoveryHealth).toContainText(
+        'Only part of the catalog is shown; search to find more',
+        { timeout: 60_000 },
+      )
+    }
+    await expectIncompleteDiscovery()
     await discoveryHealth.screenshot({
       path: testInfo.outputPath('discovery-incomplete.png'),
       animations: 'disabled',
     })
     await page.getByRole('button', { name: 'Show all groups' }).click()
-    await expect(first).toBeVisible()
-    await expect(second).not.toBeVisible()
+    await expectFirstPageOnly()
     await page.screenshot({ path: testInfo.outputPath('discovery-incomplete-list.png'), animations: 'disabled' })
+
+    await unlink(pageTwoStarted)
+    await unlink(pageTwoRelease)
+    released = false
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await page.getByRole('button', { name: 'Retry Marketplace search' }).click()
+    await waitForMarker(pageTwoStarted, 10_000)
+    const loading = discoveryHealth.getByText('Marketplace discovery is updating.')
+    await expect(loading).toBeVisible()
+    await writeFile(pageTwoRelease, 'released\n')
+    released = true
+    await expect(loading).not.toBeVisible({ timeout: 60_000 })
+    await expectIncompleteDiscovery()
+    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await expectFirstPageOnly()
   } finally {
-    if (!released && bootstrap.discoveryPageTwoRelease != null) {
-      await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+    try {
+      if (!released && pageTwoRelease != null) {
+        await writeFile(pageTwoRelease, 'released\n')
+      }
+    } finally {
+      await harness.stop()
     }
-    await harness.stop()
   }
 }
 

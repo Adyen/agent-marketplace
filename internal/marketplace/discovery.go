@@ -156,6 +156,9 @@ func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, li
 }
 
 func (c *DiscoveryCache) load(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) (DiscoveryOutcome, bool) {
+	if c == nil {
+		return DiscoveryOutcome{}, false
+	}
 	return c.loadPath(ep, query, kind, includeKind, limit, c.path(ep, query, kind, includeKind, limit), false)
 }
 
@@ -682,7 +685,7 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 				return
 			}
 			out, fetchErr := discoverOneWithProgress(ctx, endpoint.MarketplaceEntry, endpoint.verifyInstanceID, query, opts, limit, func(partial DiscoveryOutcome) bool {
-				if browse && hit {
+				if browse && hit && partial.Truncated {
 					partial.Items = appendUnseenItems(slices.Clone(partial.Items), discoveryItemSet(partial.Items), cached.Items)
 					partial.Total = max(partial.Total, cached.Total, len(partial.Items))
 					partial.CacheState = cached.CacheState
@@ -975,18 +978,16 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 		if err != nil {
 			return partialDiscovery(ep, items, total, true, err)
 		}
-		if len(page.Items) == 0 {
-			if offset < page.Total {
-				return partialDiscovery(ep, items, page.Total, true, errors.New("marketplace browse discovery made no progress before reported total"))
-			}
-			total = page.Total
-			break
-		}
 		items = appendUnseenItems(items, seen, page.Items)
+		if page.Total != total {
+			return partialDiscovery(ep, items, max(total, page.Total), true, errors.New("marketplace browse discovery total changed during paging"))
+		}
+		if len(page.Items) == 0 {
+			return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery made no progress before reported total"))
+		}
 		offset += len(page.Items)
-		total = page.Total
 		if progress != nil {
-			partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: page.Total, Truncated: len(items) < total, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
+			partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: total, Truncated: len(items) < total, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
 			if !progress(partial) {
 				return partial, ctx.Err()
 			}
