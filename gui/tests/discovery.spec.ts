@@ -258,6 +258,8 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     await page.getByRole('button', { name: 'Clear search' }).click()
     await expectFirstPageOnly()
     await page.screenshot({ path: testInfo.outputPath('discovery-incomplete-list.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expectIncompleteDiscovery()
   } finally {
     try {
       if (!released && pageTwoRelease != null) {

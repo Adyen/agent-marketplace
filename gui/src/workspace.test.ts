@@ -1687,6 +1687,39 @@ describe('Event stream reconnect', () => {
     expect(controller.state.diagnosticsDiscoveryLoading).toBe(true)
   })
 
+  // spec: gui-shell/empty-or-unavailable-source-cannot-reveal-unrelated-rows
+  it('keeps unrelated rows hidden for an unavailable Marketplace source', async () => {
+    const { client, push } = fakeClient()
+    vi.mocked(client.configuration).mockResolvedValue(configuration({
+      organizationSources: [source({ id: 'market', kind: 'marketplace', location: 'https://market.example', rowSourceId: '' })],
+    }))
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([
+        row('unavailable-row', { source: { id: '', label: '', associationId: '' } }),
+        row('normal-row'),
+      ], { stage: 'final' }),
+    }))
+    await tick()
+
+    expect(rowNames(wrapper)).toContain('unavailable-row')
+    expect(rowNames(wrapper)).toContain('normal-row')
+
+    await wrapper.get('button[aria-label="Browse source https://market.example"]').trigger('click')
+    await tick()
+
+    expect(wrapper.findAll('[role="option"]')).toHaveLength(0)
+    expect(wrapper.get('.gui-empty--muted').text()).toBe('No resources from market.example.')
+    expect(wrapper.get('button[aria-label^="Clear source filter "]').exists()).toBe(true)
+
+    await wrapper.get('button[aria-label^="Clear source filter "]').trigger('click')
+    await tick()
+
+    expect(rowNames(wrapper)).toContain('unavailable-row')
+    expect(rowNames(wrapper)).toContain('normal-row')
+  })
+
   it('reloads verified source associations after the first accepted snapshot', async () => {
     const { client, push } = fakeClient()
     const unverified = configuration({
