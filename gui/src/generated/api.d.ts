@@ -798,6 +798,8 @@ export interface components {
         SnapshotRequest: {
             /** @description True for launch and explicit Refresh; false for focus reloads. */
             checkUpdates?: boolean;
+            /** @description True only for explicit Refresh or browse retry. */
+            refreshDiscovery?: boolean;
         };
         SnapshotRow: {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */

@@ -736,7 +736,21 @@ func TestUserAPIRefreshRestartsFreshBrowseAndRejectsSupersededResponse(t *testin
 		t.Fatalf("initial browse health/count = %#v/%d", cachedBrowse.Health, searchCount.Load())
 	}
 
-	second := postSnapshot(t, api)
+	postSnapshotWithBody := func(body string) snapshotDTO {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		api.Handler().ServeHTTP(recorder, authedRequest(t, api, "/api/snapshot", body))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("snapshot status = %d, want 200; body %s", recorder.Code, recorder.Body)
+		}
+		var snapshot snapshotDTO
+		if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+
+	second := postSnapshotWithBody(`{"refreshDiscovery":true}`)
 	if second.Stage != "final" {
 		t.Fatalf("refresh snapshot stage = %q, want final", second.Stage)
 	}
@@ -745,7 +759,28 @@ func TestUserAPIRefreshRestartsFreshBrowseAndRejectsSupersededResponse(t *testin
 	case <-time.After(5 * time.Second):
 		t.Fatal("accepted refresh did not revalidate the fresh Marketplace browse cache")
 	}
-	third := postSnapshot(t, api)
+
+	api.mu.Lock()
+	obsoleteLaunch := discoveryLaunch{
+		slot:       discoveryBrowseSlot,
+		configKey:  api.discovery.browse.configKey,
+		generation: api.discovery.browse.generation,
+	}
+	currentEndpoint := api.acceptedMergedCfg.Marketplaces[0]
+	api.mu.Unlock()
+
+	passive := postSnapshotWithBody(`{"checkUpdates":false}`)
+	if passive.Stage != "final" || !passive.DiscoveryBrowseLoading {
+		t.Fatalf("passive snapshot stage/loading = %q/%v, want final/true", passive.Stage, passive.DiscoveryBrowseLoading)
+	}
+	api.mu.Lock()
+	browseGeneration, browseLoading := api.discovery.browse.generation, api.discovery.browse.loading
+	api.mu.Unlock()
+	if browseGeneration != obsoleteLaunch.generation || !browseLoading {
+		t.Fatalf("passive snapshot browse generation/loading = %d/%v, want %d/true", browseGeneration, browseLoading, obsoleteLaunch.generation)
+	}
+
+	third := postSnapshotWithBody(`{"refreshDiscovery":true}`)
 	if third.Stage != "final" {
 		t.Fatalf("superseding refresh snapshot stage = %q, want final", third.Stage)
 	}
@@ -760,6 +795,24 @@ func TestUserAPIRefreshRestartsFreshBrowseAndRejectsSupersededResponse(t *testin
 	})
 	if containsRowName(currentBrowse.Rows, "browse-initial") || containsRowName(currentBrowse.Rows, "browse-obsolete") || searchCount.Load() != 3 {
 		t.Fatalf("superseded browse state/count = %#v/%d", currentBrowse.Rows, searchCount.Load())
+	}
+
+	api.mu.Lock()
+	sseSequence, discoverySequence := api.sequence, api.discovery.sequence
+	api.mu.Unlock()
+	api.completeDiscovery(&obsoleteLaunch, []marketplace.DiscoveryOutcome{{
+		Endpoint: currentEndpoint,
+		Items:    []mpapi.ResourceListItem{item("browse-obsolete", "b")},
+		Total:    1,
+	}}, "")
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.sequence != sseSequence || api.discovery.sequence != discoverySequence {
+		t.Fatalf("stale browse completion changed event sequences from %d/%d to %d/%d",
+			sseSequence, discoverySequence, api.sequence, api.discovery.sequence)
+	}
+	if !containsRowName(api.current.Rows, "browse-current") || containsRowName(api.current.Rows, "browse-obsolete") {
+		t.Fatalf("stale browse completion replaced current rows: %#v", api.current.Rows)
 	}
 }
 

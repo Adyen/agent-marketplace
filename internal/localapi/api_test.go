@@ -1598,7 +1598,6 @@ func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 	}
 }
 
-// spec: gui-local-api/event-identity-preserves-order-and-generation
 // spec: gui-local-api/marketplace-source-association-distinguishes-equal-labels
 func TestMarketplaceEndpointAssociationProjection(t *testing.T) {
 	api := &API{token: "association-test-token"}
@@ -1729,6 +1728,7 @@ func TestMarketplaceEndpointAssociationProjection(t *testing.T) {
 	}
 }
 
+// spec: gui-local-api/event-identity-preserves-order-and-generation
 func TestSyncWarningsRetainedAcrossRefresh(t *testing.T) {
 	lifecycle := session.DependencyLifecycle{
 		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {

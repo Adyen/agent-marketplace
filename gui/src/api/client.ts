@@ -272,7 +272,7 @@ async function* bridgeEvents(bridge: EventBridge, credential: string, cursor: Ev
 }
 
 export interface Client {
-  snapshot(checkUpdates?: boolean): Promise<Snapshot>
+  snapshot(checkUpdates?: boolean, refreshDiscovery?: boolean): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
   inspection(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InspectionPayload>
@@ -322,8 +322,9 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
   }
 
   return {
-    async snapshot(checkUpdates) {
-      const response = await post('/api/snapshot', checkUpdates === undefined ? undefined : { checkUpdates })
+    async snapshot(checkUpdates, refreshDiscovery) {
+      const body = checkUpdates === undefined && refreshDiscovery === undefined ? undefined : { checkUpdates, refreshDiscovery }
+      const response = await post('/api/snapshot', body)
       return (await response.json()) as Snapshot
     },
 

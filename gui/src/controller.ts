@@ -291,7 +291,7 @@ export class WorkspaceController {
       return
     }
     if (this.currentDiscoveryQuery === '' || this.state.diagnosticsDiscoveryHealth.some((health) => health.message !== '')) {
-      void this.refresh(false)
+      void this.refresh(false, true)
       return
     }
     this.issueDiscoveryRequest(this.currentDiscoveryQuery, true)
@@ -312,13 +312,13 @@ export class WorkspaceController {
     this.dispatchDiscoveryRequest()
   }
 
-  async refresh(checkUpdates = true): Promise<void> {
+  async refresh(checkUpdates = true, refreshDiscovery = checkUpdates): Promise<void> {
     if (this.state.requesting || this.state.operation != null) {
       return
     }
     this.state.requesting = true
     try {
-      await this.client.snapshot(checkUpdates)
+      await this.client.snapshot(checkUpdates, refreshDiscovery)
       await this.loadConfiguration()
       await this.checkRelease()
     } catch {

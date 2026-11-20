@@ -556,14 +556,26 @@ func (a *API) deliverSnapshotWithUpdateCheck(generation session.RequestGeneratio
 
 func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	var checkUpdates bool
+	var refreshDiscovery bool
 	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
-		seen := false
+		seenCheckUpdates, seenRefreshDiscovery := false, false
 		if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
-			if key != "checkUpdates" || seen {
+			switch key {
+			case "checkUpdates":
+				if seenCheckUpdates {
+					return false
+				}
+				seenCheckUpdates = true
+				return decoder.Decode(&checkUpdates) == nil
+			case "refreshDiscovery":
+				if seenRefreshDiscovery {
+					return false
+				}
+				seenRefreshDiscovery = true
+				return decoder.Decode(&refreshDiscovery) == nil
+			default:
 				return false
 			}
-			seen = true
-			return decoder.Decode(&checkUpdates) == nil
 		}) {
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
 			return
@@ -598,7 +610,7 @@ func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	} else {
 		snapshot := a.readSnapshot(ctx, session.CatalogLoadRefresh)
 		snapshot.Generation = generation
-		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates, true)
+		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates, refreshDiscovery)
 	}
 	if delivered == nil {
 		a.mu.Lock()

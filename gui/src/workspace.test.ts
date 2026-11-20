@@ -1687,7 +1687,6 @@ describe('Event stream reconnect', () => {
     expect(controller.state.diagnosticsDiscoveryLoading).toBe(true)
   })
 
-  // spec: gui-shell/source-selection-filters-resources-and-clears-in-place
   it('reloads verified source associations after the first accepted snapshot', async () => {
     const { client, push } = fakeClient()
     const unverified = configuration({

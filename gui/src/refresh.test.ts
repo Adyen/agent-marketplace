@@ -25,6 +25,7 @@ describe('workspace refresh', () => {
     await tick()
 
     expect((client.snapshot as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1)
+    expect(client.snapshot).toHaveBeenCalledWith(true, true)
     expect((client.configuration as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls + 1)
     expect(controller.state.configuration?.userTargets).toEqual(['claude'])
   })
@@ -38,7 +39,19 @@ describe('workspace refresh', () => {
     window.dispatchEvent(new Event('focus'))
     await tick()
 
-    expect(client.snapshot).toHaveBeenCalledWith(false)
+    expect(client.snapshot).toHaveBeenCalledWith(false, false)
+  })
+
+  it('browse retry requests discovery without checking for updates', async () => {
+    const { client, push } = fakeClient()
+    const { controller } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { discoveryEnabled: true }) }))
+    await tick()
+
+    controller.retryDiscovery()
+    await tick()
+
+    expect(client.snapshot).toHaveBeenCalledWith(false, true)
   })
 
   it('keeps accepted rows through provisional, config, and inventory snapshots until final', async () => {

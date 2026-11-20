@@ -941,6 +941,9 @@ components:
         checkUpdates:
           type: boolean
           description: True for launch and explicit Refresh; false for focus reloads.
+        refreshDiscovery:
+          type: boolean
+          description: True only for explicit Refresh or browse retry.
     Snapshot:
       type: object
       required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, availableUpdates, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
