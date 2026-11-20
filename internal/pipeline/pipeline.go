@@ -74,10 +74,11 @@ type ResolveOptions struct {
 	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
 	// mutable registry cache for layers that have no lockfile. Present locks
 	// remain exact and malformed or stale locks still fail closed.
-	AllowMissingReadOnlyLocks   bool
-	ExactLockLease              func(context.Context) (func(), error)
-	LockMetadata                []LockMetadata
-	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
+	AllowMissingReadOnlyLocks           bool
+	ExactLockLease                      func(context.Context) (func(), error)
+	LockMetadata                        []LockMetadata
+	MarketplaceRevocationPolicy         resolver.MarketplaceRevocationPolicy
+	KeepRemovedMarketplacePinsFromCache bool
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
 	MarketplaceMode                       *resolver.MarketplaceResolveMode
@@ -673,6 +674,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 	marketplaceResolver := marketplace.NewResolver()
 	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
 	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
+	marketplaceResolver.KeepRemovedPinsFromCache = opts.KeepRemovedMarketplacePinsFromCache
 	marketplaceResolver.Verified = opts.verifiedMarketplaceRevisions
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,

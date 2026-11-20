@@ -112,6 +112,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 		}
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
+	options.KeepRemovedMarketplacePinsFromCache = upgrade
 	result = runTUIExactSync(ctx, options)
 	errs := result.Errors
 	var persistedRefreshes map[archiveRefreshKey]bool

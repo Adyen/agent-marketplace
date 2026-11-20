@@ -37,6 +37,13 @@ journey.test("update warns for a kept Marketplace pin and fails when its revisio
   });
 
   fixture.removeMarketplaceExactRevision?.();
+  await locate(terminal, "Update complete with 1 warning(s)").expect({ not: true });
+  await step("update keeps the removed pin from its verified cache", () => terminal.write("u"), async () => {
+    await locate(terminal, "Update complete with 1 warning(s)").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "⚠ 1 warnings").unique().expect();
+  });
+  assert.deepEqual(fs.readFileSync(fixture.userLockPath), lockBefore, "cache-only update changed the acquisition lock");
+
   fs.rmSync(path.join(fixture.cacheDir, "marketplace"), { recursive: true, force: true });
   await step("update fails when neither the endpoint nor verified cache has the pin", () => terminal.write("u"), async () => {
     await locate(terminal, /! \d+ errors: update/).unique().expect({ timeout: 30_000 });

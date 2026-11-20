@@ -1094,6 +1094,46 @@ func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 	}
 }
 
+// spec: update-output/cached-pinned-revision-is-usable
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
+func TestUpdateCacheOnlyRemovedMarketplacePinPassesSyncCheck(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	server := newV4UpdateServer(t, "stay", "gone")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  mp: {marketplace: "+server.URL+"}\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	for _, name := range []string{"stay", "gone"} {
+		if output, err := executeCommand("install", "--scope", "repo", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
+			t.Fatalf("install %s: %v\n%s", name, err, output)
+		}
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	goneBefore := commandLockResource(t, lockPath, "gone")
+	if goneBefore == nil {
+		t.Fatal("user lock has no gone record after install")
+	}
+
+	delete(server.resources, "gone")
+	server.setSkill(t, "stay", "stay body v2")
+	output, err := executeCommand("update")
+	if err != nil || !strings.Contains(output, "Marketplace pins updated: 1") ||
+		!strings.Contains(output, "src/skill/gone") || !strings.Contains(output, "agent-marketplace remove gone") {
+		t.Fatalf("update did not report the eligible pin and removal warning: %v\n%s", err, output)
+	}
+	goneAfter := commandLockResource(t, lockPath, "gone")
+	if goneAfter == nil || !reflect.DeepEqual(*goneAfter, *goneBefore) {
+		t.Fatalf("missing pin lock entry changed: got %#v, want %#v", goneAfter, goneBefore)
+	}
+
+	if checkOutput, checkErr := executeCommand("sync", "--check"); checkErr != nil || strings.Contains(checkOutput, "out of sync") {
+		t.Fatalf("sync --check after cache-only partial update = (%v):\n%s", checkErr, checkOutput)
+	}
+}
+
 func commandLockResource(t *testing.T, lockPath, name string) *lockfile.MarketplaceResourceLock {
 	t.Helper()
 	doc := readLockDocument(t, lockPath)
