@@ -94,7 +94,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     actions.push('Pending local row and fresh cached Marketplace row rendered while held')
     await saveActions(testInfo, actions)
     await page.screenshot({ path: testInfo.outputPath('discovery-held-cache.png'), fullPage: true, animations: 'disabled' })
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
 
     const telemetryBefore = telemetryRequests
 
@@ -133,7 +133,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(discoveryHealth).toContainText('Results are current')
     await expect(discoveryHealth).not.toContainText('miss')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     expect(discoveryRequests).toBeGreaterThan(1)
     expect(telemetryRequests).toBe(telemetryBefore)
     await expect(detail).toContainText('remote-beta')
@@ -149,7 +149,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect.poll(async () => /Drift: (ready|failed)/.test((await page.locator('.gui-diagnostics-view').innerText()) ?? ''), { timeout: 60_000 }).toBe(true)
     await expect(discoveryHealth).toContainText('Marketplace')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(remote).toBeVisible({ timeout: 60_000 })
     await expect(remote).toHaveAttribute('aria-selected', 'true')
     actions.push('Released startup verification; the authoritative final view retained the current discovery selection and health')
@@ -252,7 +252,7 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     await expect(loading).not.toBeVisible({ timeout: 60_000 })
     await expectIncompleteDiscovery()
 
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(searchResult).toBeVisible()
     await expect(first).toHaveCount(0)
     await page.getByRole('button', { name: 'Clear search' }).click()
@@ -330,10 +330,12 @@ test('built GUI keeps source-filtered browse active while Marketplace search is 
     await expect(health.getByText('Marketplace discovery is updating.')).not.toBeVisible({ timeout: 60_000 })
     await page.screenshot({ path: testInfo.outputPath('marketplace-search-with-browse-complete.png'), animations: 'disabled' })
 
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
+    await expect(clearSource).toHaveCount(0)
     await expect(searchResult).toBeVisible()
     await expect(laterPage).toHaveCount(0)
     await page.getByRole('button', { name: 'Clear search' }).click()
+    await browseSource.click()
     await expect(clearSource).toBeVisible()
     await expect(firstPage).toBeVisible()
     await expect(laterPage).toBeVisible({ timeout: 60_000 })

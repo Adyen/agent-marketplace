@@ -20,9 +20,8 @@ export type StatusFacet = 'attention' | 'required'
 
 const props = defineProps<{
   groups: SidebarGroup[]
-  pendingCount: number
-  pendingSectionId: string
-  kindOptions: { id: string; label: string }[]
+  kindOptions: { id: string; label: string; count: number }[]
+  statusCounts: { attention: number; required: number }
   selectedKind: string | null
   selectedStatus: StatusFacet | null
   mainView: 'resources' | 'diagnostics'
@@ -36,8 +35,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  search: []
-  showAll: []
   allResources: []
   toggleKind: [kind: string]
   toggleStatus: [status: StatusFacet]
@@ -59,6 +56,10 @@ defineExpose({
   focusSources: () => sourcesButton.value?.focus(),
   focusSettings: () => settingsButton.value?.focus(),
 })
+
+const visibleKindOptions = computed(() =>
+  props.kindOptions.filter((option) => option.count > 0 || option.id === props.selectedKind),
+)
 
 const harnessSummary = computed(() => {
   const shown = props.harnesses.slice(0, 2).join(' · ')
@@ -118,14 +119,39 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
     <div class="gui-sidebar__top" />
 
     <nav class="gui-sidebar__nav">
-      <button type="button" class="gui-nav-row" aria-label="Show all groups" :aria-current="mainView === 'resources' ? 'page' : undefined" @click="emit('showAll')">
+      <button
+        type="button"
+        class="gui-nav-row"
+        aria-label="All resources"
+        :aria-current="mainView === 'resources' ? 'page' : undefined"
+        @click="emit('allResources')"
+      >
         <GuiIcon name="folder" />
         <span class="gui-nav-row__label">Resources</span>
       </button>
-      <button v-if="pendingCount > 0" type="button" class="gui-nav-row" aria-label="Pending sync group" @click="emit('selectGroup', pendingSectionId)">
-        <GuiIcon name="sync" />
-        <span class="gui-nav-row__label">Pending sync</span>
-        <span class="gui-nav-row__count">{{ pendingCount }}</span>
+      <button
+        type="button"
+        class="gui-nav-row"
+        :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'attention' }"
+        aria-label="Needs attention"
+        :aria-pressed="selectedStatus === 'attention'"
+        @click="emit('toggleStatus', 'attention')"
+      >
+        <GuiIcon name="warning" />
+        <span class="gui-nav-row__label">Needs attention</span>
+        <span class="gui-nav-row__count" :class="statusCounts.attention > 0 ? 'gui-nav-row__count--warning' : ''">{{ statusCounts.attention }}</span>
+      </button>
+      <button
+        type="button"
+        class="gui-nav-row"
+        :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'required' }"
+        aria-label="Required by org"
+        :aria-pressed="selectedStatus === 'required'"
+        @click="emit('toggleStatus', 'required')"
+      >
+        <GuiIcon name="lock" />
+        <span class="gui-nav-row__label">Required by org</span>
+        <span class="gui-nav-row__count">{{ statusCounts.required }}</span>
       </button>
       <button
         type="button"
@@ -138,61 +164,26 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         <span class="gui-nav-row__label">Diagnostics</span>
         <span class="gui-nav-row__count" :class="diagnosticsTone ? `gui-nav-row__count--${diagnosticsTone}` : ''">{{ diagnosticsCount }}</span>
       </button>
-      <button type="button" class="gui-nav-row" aria-label="Open search" aria-keyshortcuts="Meta+K" @click="emit('search')">
-        <GuiIcon name="search" />
-        <span class="gui-nav-row__label">Search</span>
-        <kbd class="gui-kbd">⌘K</kbd>
-      </button>
     </nav>
 
-    <div class="gui-sidebar__browse" aria-label="Browse filters and groups">
-      <section class="gui-sidebar__facets" aria-label="Resource filters">
-        <h2 class="gui-caps">Filters</h2>
-        <button type="button" class="gui-nav-row gui-nav-row--compact" aria-label="All resources" @click="emit('allResources')">
-          <GuiIcon name="folder" />
-          <span class="gui-nav-row__label">All resources</span>
-        </button>
-        <div class="gui-sidebar__facet-status" aria-label="Status filters">
-          <button
-            type="button"
-            class="gui-nav-row gui-nav-row--compact gui-sidebar__facet-button"
-            :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'attention' }"
-            aria-label="Needs attention"
-            :aria-pressed="selectedStatus === 'attention'"
-            @click="emit('toggleStatus', 'attention')"
-          >
-            <GuiIcon name="warning" />
-            <span class="gui-nav-row__label">Needs attention</span>
-          </button>
-          <button
-            type="button"
-            class="gui-nav-row gui-nav-row--compact gui-sidebar__facet-button"
-            :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'required' }"
-            aria-label="Required by org"
-            :aria-pressed="selectedStatus === 'required'"
-            @click="emit('toggleStatus', 'required')"
-          >
-            <GuiIcon name="lock" />
-            <span class="gui-nav-row__label">Required by org</span>
-          </button>
-        </div>
-        <section class="gui-sidebar__facet-kinds" aria-label="Kind">
-          <h3 class="gui-caps">Kind</h3>
-          <div class="gui-sidebar__kind-grid">
+    <div class="gui-sidebar__browse" aria-label="Browse kinds and groups">
+      <section class="gui-sidebar__section gui-sidebar__kinds" aria-label="Kind">
+        <h2 class="gui-caps">Kind</h2>
+        <ul class="gui-sidebar__list">
+          <li v-for="option in visibleKindOptions" :key="option.id">
             <button
-              v-for="option in kindOptions"
-              :key="option.id"
               type="button"
-              class="gui-nav-row gui-nav-row--compact gui-sidebar__facet-button"
+              class="gui-nav-row gui-nav-row--compact"
               :class="{ 'gui-sidebar__facet-button--selected': selectedKind === option.id }"
               :aria-label="`Kind facet ${option.label}`"
               :aria-pressed="selectedKind === option.id"
               @click="emit('toggleKind', option.id)"
             >
               <span class="gui-nav-row__label">{{ option.label }}</span>
+              <span class="gui-nav-row__count">{{ option.count }}</span>
             </button>
-          </div>
-        </section>
+          </li>
+        </ul>
       </section>
 
       <section v-if="groups.length > 0" class="gui-sidebar__section gui-sidebar__groups" aria-label="Groups">

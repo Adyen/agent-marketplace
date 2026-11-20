@@ -101,12 +101,6 @@ textarea:focus-visible,
   background: var(--gui-signal);
 }
 
-.gui-update-count {
-  color: var(--gui-signal);
-  font-size: 11px;
-  line-height: 1;
-}
-
 .gui-main {
   background: var(--gui-canvas);
   display: flex;
@@ -315,33 +309,10 @@ textarea:focus-visible,
   scrollbar-width: thin;
 }
 
-.gui-sidebar__facets .gui-caps,
+.gui-sidebar__kinds .gui-caps,
 .gui-sidebar__groups .gui-caps {
   margin: 6px 0 2px;
   padding-left: 8px;
-}
-
-.gui-sidebar__facet-status {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.gui-sidebar__facet-kinds {
-  margin-top: 4px;
-}
-
-.gui-sidebar__kind-grid {
-  display: grid;
-  gap: 2px 4px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.gui-sidebar__facet-button {
-  font-size: 11px;
-  height: 26px;
-  min-width: 0;
-  padding: 0 6px;
 }
 
 .gui-sidebar__facet-button--selected {
@@ -349,8 +320,8 @@ textarea:focus-visible,
   color: var(--gui-ink);
 }
 
-.gui-sidebar__facet-kinds .gui-sidebar__facet-button {
-  padding-left: 8px;
+.gui-sidebar__kinds {
+  margin-top: 4px;
 }
 
 .gui-sidebar__groups {
@@ -1219,10 +1190,6 @@ textarea:focus-visible,
 
 .gui-statusbar__glyph {
   color: var(--gui-signal);
-}
-
-.gui-statusbar__pending-glyph {
-  color: var(--am-color-status-warning);
 }
 
 .gui-statusbar__hints {

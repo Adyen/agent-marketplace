@@ -199,7 +199,7 @@ async function selectedOptionDOMID(page: Page): Promise<string | null> {
   })
 }
 
-async function openPlan(page: Page, bootstrap: Work40Bootstrap, verb: 'Install' | 'Remove', actions: string[]): Promise<Locator> {
+async function openPlan(page: Page, bootstrap: Work40Bootstrap, verb: 'Install' | 'Uninstall', actions: string[]): Promise<Locator> {
   const label = `${verb} Resource`
   const button = page.getByRole('button', { name: label, exact: true })
   await expect(button).toBeEnabled({ timeout: 30_000 })
@@ -229,7 +229,7 @@ async function cancelPlan(page: Page, dialog: Locator, actions: string[]): Promi
   actions.push('Cancelled the static user registry plan with Enter')
 }
 
-async function confirmPlan(page: Page, dialog: Locator, verb: 'Install' | 'Remove', actions: string[]): Promise<void> {
+async function confirmPlan(page: Page, dialog: Locator, verb: 'Install' | 'Uninstall', actions: string[]): Promise<void> {
   const button = dialog.getByRole('button', { name: `Confirm ${verb.toLowerCase()}`, exact: true })
   await expect(button).toBeEnabled()
   await tabTo(page, button, `Confirm ${verb.toLowerCase()} button`, actions, dialog)
@@ -314,7 +314,7 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await expect.poll(() => selectedOptionDOMID(page)).toBe(reviewDOMID)
     await expect(reviewByID).toBeVisible()
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
-    const removeButton = page.getByRole('button', { name: 'Remove Resource', exact: true })
+    const removeButton = page.getByRole('button', { name: 'Uninstall Resource', exact: true })
     await expect(removeButton).toBeFocused()
     const visibleOrderBeforeRemove = await page.getByRole('option').evaluateAll((elements) => elements.map((element) => (element as HTMLElement).id))
     const reviewIndex = visibleOrderBeforeRemove.indexOf(reviewDOMID)
@@ -327,10 +327,10 @@ test('built GUI edits root-owned directory selections without SDK materializatio
       throw new Error('the root-owned fixture has no neighboring visible row for removal selection')
     }
 
-    const removeDialog = await openPlan(page, bootstrap, 'Remove', actions)
+    const removeDialog = await openPlan(page, bootstrap, 'Uninstall', actions)
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
     const beforeRemove = await captureFiles(paths)
-    await confirmPlan(page, removeDialog, 'Remove', actions)
+    await confirmPlan(page, removeDialog, 'Uninstall', actions)
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
     const afterRemove = await captureFiles(paths)
     assertFilesUnchanged(beforeRemove, afterRemove, [bootstrap.work40UserConfig])
@@ -377,15 +377,15 @@ test('built GUI refuses a directory source owned only by an included user fragme
     await launchWorkspace(page, bootstrap, actions)
     await selectReview(page, actions)
 
-    const cancelDialog = await openPlan(page, bootstrap, 'Remove', actions)
+    const cancelDialog = await openPlan(page, bootstrap, 'Uninstall', actions)
     await cancelPlan(page, cancelDialog, actions)
     assertFilesUnchanged(beforeCancel, await captureFiles(paths))
     assertActionRequestCounts(counts, 1, 0, 'cancelling the included-owner plan submitted a mutation')
     actions.push('Cancelled the included-owner removal plan without writes')
 
-    const removeDialog = await openPlan(page, bootstrap, 'Remove', actions)
+    const removeDialog = await openPlan(page, bootstrap, 'Uninstall', actions)
     const beforeRemove = await captureFiles(paths)
-    await confirmPlan(page, removeDialog, 'Remove', actions)
+    await confirmPlan(page, removeDialog, 'Uninstall', actions)
     const heldFinal = await page.request.get(bootstrap.resourceActionBarrierWaitURL)
     expect(heldFinal.status()).toBe(204)
     await expect(removeDialog).toBeHidden()
@@ -395,8 +395,8 @@ test('built GUI refuses a directory source owned only by an included user fragme
     expect(release.status()).toBe(204)
     barrierReleased = true
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText("Couldn't remove review")).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Remove Resource', exact: true })).toBeFocused()
+    await expect(page.getByLabel('Notifications').getByText("Couldn't uninstall review")).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Uninstall Resource', exact: true })).toBeFocused()
     assertFilesUnchanged(beforeRemove, await captureFiles(paths))
     assertActionRequestCounts(counts, 2, 1, 'included-owner refusal used an unexpected API endpoint')
     actions.push('Observed the included-source refusal and final error; user root, fragment, org, locks, source files, CWD, and materialized files stayed unchanged')

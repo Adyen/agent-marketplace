@@ -68,7 +68,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
 
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(sync).toBeEnabled()
     await expect(targets).not.toContainText('claude')
 
@@ -78,7 +78,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(targets).not.toContainText('claude')
     await page.screenshot({ path: artifactPath(testInfo, 'refresh-workspace-before-trigger.png'), fullPage: true })
 
@@ -88,7 +88,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     await expect(targets).toContainText('claude', { timeout: 60_000 })
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(sync).toBeEnabled()
     await settingsButton.press('Enter')
     await expect(dialog).toBeVisible()
@@ -109,7 +109,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     await expect(targets).not.toContainText('claude', { timeout: 60_000 })
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(sync).toBeEnabled()
     await settingsButton.press('Enter')
     await expect(dialog).toBeVisible()

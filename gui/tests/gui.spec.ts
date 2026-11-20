@@ -446,7 +446,7 @@ test('built GUI initializes a queued directory source only after Finish setup', 
     expect(existsSync(join(home, '.factory', 'skills'))).toBe(false)
     expect(existsSync(join(home, '.agents', 'skills'))).toBe(false)
 
-    const sourcesButton = page.getByRole('button', { name: 'Sources' })
+    const sourcesButton = page.getByRole('button', { name: 'Sources', exact: true })
     await focusAndCheckControl(page, page.locator('body'), sourcesButton)
     await page.keyboard.press('Enter')
     const sourcesDialog = page.getByRole('dialog', { name: 'Settings' })
@@ -578,7 +578,7 @@ test('built GUI keeps initialized sources on optional failure and retries from S
       expect.objectContaining({ kind: 'directory', location: sourceDir }),
     ])
 
-    const sourcesButton = page.getByRole('button', { name: 'Sources' })
+    const sourcesButton = page.getByRole('button', { name: 'Sources', exact: true })
     await focusAndCheckControl(page, page.locator('body'), sourcesButton)
     await page.keyboard.press('Enter')
     const sourcesDialog = page.getByRole('dialog', { name: 'Settings' })

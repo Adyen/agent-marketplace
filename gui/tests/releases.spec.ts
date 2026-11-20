@@ -342,7 +342,7 @@ test('organization update_check false sends no release request and shows no noti
     await expectReleaseResponse(refreshedRelease, '')
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.getByText('Drift: ready')).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     expect(await readMark(mark)).toHaveLength(0)
     await expect(page.getByText('is available.')).not.toBeVisible()
     await expect(page.locator('.workspace__error')).toHaveCount(0)

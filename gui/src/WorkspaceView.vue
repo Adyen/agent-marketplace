@@ -535,7 +535,11 @@ function selectGroup(groupID: string) {
 }
 
 const navGroups = computed<SidebarGroup[]>(() =>
-  sectionViews.value.map((section) => ({ id: section.path, title: section.title, count: section.count })),
+  viewSettings.value.groupBy === 'kind'
+    ? []
+    : sectionViews.value
+      .filter((section) => section.path !== 'attention')
+      .map((section) => ({ id: section.path, title: section.title, count: section.count })),
 )
 const pendingCount = computed(() => (view.value?.rows ?? []).filter((row) => row.group === 'pending').length)
 const rowSourceLabels = computed(() => {
@@ -548,7 +552,6 @@ const rowSourceLabels = computed(() => {
   }
   return labels
 })
-const pendingSectionId = computed(() => (viewSettings.value.groupBy === 'status' ? 'pending' : 'attention'))
 const sidebarSources = computed<SidebarSource[]>(() => {
   const config = configuration.value
   if (config == null) {
@@ -722,6 +725,14 @@ const isProblemRow = (row: Row) => row.group === 'stale' || row.group === 'broke
 const sourceProblemCount = computed(() =>
   selectedSource.value == null ? 0 : sourceRows.value.filter(isProblemRow).length,
 )
+const statusCounts = computed(() => ({
+  attention: sourceRows.value.filter(isProblemRow).length,
+  required: sourceRows.value.filter((row) => row.required).length,
+}))
+const kindCountOptions = computed(() => kindFacetOptions.map((option) => ({
+  ...option,
+  count: sourceRows.value.filter((row) => row.kind === option.id).length,
+})))
 const canRemoveSelectedSource = computed(() => {
   const source = selectedSource.value
   const config = configuration.value
@@ -1059,7 +1070,7 @@ function resourceActionLabel(action: Row['resourceAction']): string {
     case 'install':
       return 'Install Resource'
     case 'remove':
-      return 'Remove Resource'
+      return 'Uninstall Resource'
     case 'exclude':
       return 'Exclude Resource'
     case 'restore':
@@ -1266,9 +1277,8 @@ async function run(action: 'sync' | 'update') {
     <Sidebar
       ref="sidebar"
       :groups="navGroups"
-      :pending-count="pendingCount"
-      :pending-section-id="pendingSectionId"
-      :kind-options="kindFacetOptions"
+      :kind-options="kindCountOptions"
+      :status-counts="statusCounts"
       :selected-kind="selectedKind"
       :selected-status="selectedStatus"
       :main-view="mainView"
@@ -1279,8 +1289,6 @@ async function run(action: 'sync' | 'update') {
       :harnesses="view?.harnesses ?? []"
       :targets-loading="view == null || (view.harnesses.length === 0 && view.stage !== 'inventory' && view.stage !== 'final')"
       :latest-version="view?.latestVersion ?? ''"
-      @search="openSearch"
-      @show-all="showAll"
       @all-resources="showAllResources"
       @toggle-kind="toggleKindFacet"
       @toggle-status="toggleStatusFacet"

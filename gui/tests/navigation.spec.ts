@@ -72,7 +72,7 @@ test('built GUI preserves a selected resource through a real directory refresh a
     await expect(page.getByRole('option')).toHaveCount(60, { timeout: 60_000 })
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready', { timeout: 60_000 })
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
     await expect(refresh).toHaveCount(0)
     await expect.poll(() => listRoot.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
     actions.push('Startup ready: 60 resources, Detail Drift: ready, refresh has no visible control')

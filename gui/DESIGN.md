@@ -110,19 +110,23 @@ changes live.
 
 ```
 ┌──────────────┬──────────────────────────────────────┬─────────────────────┐
-│ ◧            │ Resources  user scope [⌕ ⌘K] [Update] [Sync ~2] ◨       │
+│ ◧            │ Resources  user scope [⌕ ⌘K] [Update] [Sync 2] ◨        │
 │              │                                      │ Details             │
 │ ▤ Resources  │ ▾ PENDING SYNC                     2 │                     │
-│ ◷ Pending  2 │  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
-│ ⌕ Search     │  [ ] mcp    docs-search      reg  U  │ Name     auth-pre…  │
-│              │ ▾ INSTALLED                       14 │ Registry reg        │
-│ GROUPS       │  [*] skill  oncall-triage    reg  U  │ Scope    user       │
-│  Pending   2 │  …                                   │ Status   enabled    │
-│  Installed14 │                                      │ [Remove] [Open]     │
-│ SOURCES   ＋ │                                      │ SESSION             │
-│  ▢ github…   │                                      │ DIAGNOSTICS  0      │
+│ ⚠ Needs att. 3│  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
+│ ▣ Required 2 │  [ ] mcp    docs-search      reg  U  │ Name     auth-pre…  │
+│ ⚠ Diagnostics│ ▾ INSTALLED                       14 │ Registry reg        │
+│              │  [*] skill  oncall-triage    reg  U  │ Scope    user       │
+│ KIND         │  …                                   │ Status   enabled    │
+│  Skills   13 │                                      │ [− Uninstall] [Open]│
+│  Commands  1 │                                      │ SESSION             │
+│ GROUPS       │                                      │ DIAGNOSTICS  0      │
+│  Pending   2 │                                      │                     │
+│  Installed14 │                                      │                     │
+│ SOURCES   ＋ │                                      │                     │
+│  ▢ github…   │                                      │                     │
 │  ▢ ~/code/…  │                                      │                     │
-│              │ ~ 2 pending sync   ↑↓ move · ⏎ open · s sync             │
+│              │ 2 pending sync     ↑↓ move · ⏎ open · s sync              │
 │ ◉ Claude · 3 ⚙│                                      │                     │
 └──────────────┴──────────────────────────────────────┴─────────────────────┘
   left sidebar           main column                       right inspector
@@ -143,14 +147,23 @@ alone separates it from the main column. It never folds.
 - **Top bar** (44 px): empty. On macOS, the bar leaves 72 px of inset on the
   left for the window's traffic lights, and its empty area is a window drag
   region (`--wails-draggable: drag`).
-- **Primary navigation**: icon rows that resemble Codex's "New thread",
-  "Automations", and "Skills" rows.
-  - *Resources* shows all groups.
-  - *Pending sync* appears only when its count is above zero. It scrolls to
-    that group and selects it; the count appears on the right in mono
-    `--gui-ink-3`.
-  - *Search* has a `⌘K` hint and opens the search field.
+- **Navigation**: icon rows that resemble Codex's "New thread",
+  "Automations", and "Skills" rows, in this order:
+  - *Resources* (accessible name "All resources") clears the kind, status,
+    and source filters and keeps the search. It shows the full list at the top.
+  - *Needs attention* and *Required by org* toggle the status filters. Each
+    shows its count on the right in mono `--gui-ink-3`; the Needs attention
+    count uses the warning tone when above zero. Counts cover the active
+    source only, ignoring search and the other facets.
+  - *Diagnostics* shows the diagnostics view with its count.
+  - Search and pending sync have no sidebar row. The toolbar search pill,
+    ⌘K, `/`, the Sync count, and the status bar carry them.
+- **Kind**: a caps label, then a single-column list with one row per kind
+  and its count, in the same row style as Groups. A kind with a count of zero
+  is hidden unless it is the selected kind.
 - **Groups**: a caps label, then one row per session group with its row count.
+  The pinned Needs attention group is left out, because its filter covers it.
+  The list is absent under Kind grouping, where the Kind list covers it.
   Selecting a row scrolls the main list to that group's header and moves
   selection there, using the existing section selection.
 - **Sources**: a caps label with a ＋ icon button ("Sources") that opens the
@@ -181,9 +194,10 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
        sit inside the pill.
     2. A **View** icon button (stacked rows), which opens the View menu.
     3. An **Update** button, a separate visible secondary button next to Sync,
-       with an available-update count badge when updates exist.
+       with an available-update count badge (`2`, the same neutral mono badge
+       as Sync) when updates exist.
     4. A **Sync** button, styled like Codex's "Commit" button, with a sync
-       icon and a pending badge (`~2`) in mono.
+       icon and a pending count badge (`2`) in mono.
     5. A "Set up" button, shown only during first run.
     6. A divider, then a "Toggle inspector" icon button (◨).
 - Refresh is the only action without a visible control. `⌘R` refreshes the
@@ -217,7 +231,7 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
   the top outside Status grouping.
 - **Status bar** (32 px, bottom), styled after the design's `.activity` row
   and Codex's composer footer ("Local ▾ … main"). On the left, the sync status
-  in mono, for example `~ 2 pending sync`, which changes to
+  in mono, for example a warning dot and `2 pending sync`, which changes to
   `✓ in sync` in `--gui-signal-ink`. On the right, keyboard hints:
   `↑↓ move · ⏎ open · s sync`.
 - **Toasts** stack in the bottom-right corner of the main column, above the
@@ -246,7 +260,11 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
 The inspector uses the `--gui-s0100` surface and has its own 44 px header with
 the title "Details". It holds only the selected resource: the caps eyebrow
 (kind), the display name in mono, the description in `--gui-ink-2`, and a
-`dl` with Registry, Scope, and Status. Session drift, Marketplace
+`dl` with Registry, Scope, and Status. Its actions sit in a row of outlined
+buttons, 28 px tall with 8 px radius, each with a leading icon and a text
+label: Install and Restore use `plus`, Uninstall and Exclude use `minus` and
+the danger text tone, and Open resource uses `file`. There is no icon-only
+action. Session drift, Marketplace
 discovery, and diagnostics moved to the Diagnostics view (see the fourth
 review). The empty state, "Select a resource to inspect it.", is shown
 centered in `--gui-ink-3`.

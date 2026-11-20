@@ -1598,6 +1598,74 @@ func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 	}
 }
 
+// spec: gui-local-api/installed-and-available-marketplace-rows-share-a-registry-label
+func TestMarketplaceRowsShareRegistryLabel(t *testing.T) {
+	api := &API{token: "registry-label-token"}
+	endpoint := config.MarketplaceEntry{URL: "https://one.market.example/catalog", InstanceID: "market-one", Alias: "team-tools"}
+	artifact := resolver.ResolvedArtifact{
+		Entry:                 catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+		IsMarketplace:         true,
+		MarketplaceURL:        endpoint.URL,
+		MarketplaceInstanceID: endpoint.InstanceID,
+		MarketplaceAlias:      endpoint.Alias,
+	}
+	installed := session.Row{
+		Artifact:    artifact,
+		RegistryURL: endpoint.URL,
+		MarketplaceSelections: map[config.Source]session.MarketplaceSelection{
+			config.UserPersonal: {Entry: endpoint, Pin: config.MarketplaceResourcePin{RegistrySlug: "tools"}},
+		},
+	}
+	pending := session.Row{Artifact: artifact, PendingVerification: true, RegistryURL: endpoint.URL, MarketplaceRegistrySlug: "tools"}
+	discovered := session.Row{
+		Artifact:     artifact,
+		IsAvailable:  true,
+		RegistryURL:  endpoint.URL,
+		RegistryName: session.MarketplaceRegistryLabel(endpoint, "tools"),
+		MarketplaceDiscovery: &session.MarketplaceDiscovery{
+			Endpoint: endpoint,
+			Item: mpapi.ResourceListItem{
+				RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "review",
+				Revision: "revision-one", ContentDigest: "digest-one",
+			},
+		},
+	}
+	unslugged := session.Row{Artifact: artifact, RegistryURL: endpoint.URL}
+
+	type registryRow struct {
+		ID       string `json:"id"`
+		Registry string `json:"registry"`
+		Source   struct {
+			ID string `json:"id"`
+		} `json:"source"`
+	}
+	present := func(row session.Row) registryRow {
+		body, err := json.Marshal(api.resourceRowPresentation(row))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got registryRow
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	want := "team-tools/tools"
+	for name, row := range map[string]session.Row{"installed": installed, "pending": pending, "discovered": discovered} {
+		got := present(row)
+		if got.Registry != want {
+			t.Fatalf("%s registry = %q, want %q", name, got.Registry, want)
+		}
+		if got.Source.ID != present(installed).Source.ID {
+			t.Fatalf("%s source identity changed: %q", name, got.Source.ID)
+		}
+	}
+	if got := present(unslugged).Registry; got != "team-tools" {
+		t.Fatalf("unslugged registry = %q, want endpoint alone", got)
+	}
+}
+
 // spec: gui-local-api/marketplace-source-association-distinguishes-equal-labels
 func TestMarketplaceEndpointAssociationProjection(t *testing.T) {
 	api := &API{token: "association-test-token"}
@@ -2239,7 +2307,7 @@ func TestOperationOutcomeNotificationWording(t *testing.T) {
 		{name: "source remove", kind: "mutation", subject: sourceOperationSubject("remove-source"), success: "Source removed", failure: "Couldn't remove source"},
 		{name: "configuration", kind: "mutation", subject: operationSubject{success: "Configuration saved", failure: "Couldn't save configuration"}, success: "Configuration saved", failure: "Couldn't save configuration"},
 		{name: "resource install", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionInstall, displayName), success: "Installed " + displayName, failure: "Couldn't install " + displayName},
-		{name: "resource remove", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionRemove, displayName), success: "Removed " + displayName, failure: "Couldn't remove " + displayName},
+		{name: "resource remove", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionRemove, displayName), success: "Uninstalled " + displayName, failure: "Couldn't uninstall " + displayName},
 		{name: "resource exclude", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionExclude, displayName), success: "Excluded " + displayName, failure: "Couldn't exclude " + displayName},
 		{name: "resource restore", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionRestore, displayName), success: "Restored " + displayName, failure: "Couldn't restore " + displayName},
 	}

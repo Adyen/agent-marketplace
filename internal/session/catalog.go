@@ -523,10 +523,11 @@ func forEachUserExcludedOrganizationPin(cfg *config.Config, visit func(config.Ma
 					Entry: catalog.Entry{Kind: kind, Name: name}, RegistryURL: entry.URL,
 					RegistryPath: pin.RegistryID, Ref: pin.Revision, Source: entry.Source,
 					CatalogKey: MarketplaceCatalogKey(entry, pin), IsMarketplace: true, MarketplaceURL: entry.URL,
-					MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
+					MarketplaceAlias: entry.Alias, MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
 				},
 				IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
-				RegistryURL: entry.URL, RegistryName: RegistryDisplayName(entry.URL),
+				MarketplaceRegistrySlug: pin.RegistrySlug,
+				RegistryURL:             entry.URL, RegistryName: RegistryDisplayName(entry.URL),
 			})
 		}
 	}
@@ -715,6 +716,7 @@ func BuildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 				Artifact:                  artifact,
 				PendingVerification:       true,
 				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
+				MarketplaceRegistrySlug:   pin.RegistrySlug,
 				RegistryURL:               entry.URL,
 				RegistryName:              RegistryDisplayName(entry.URL),
 			})

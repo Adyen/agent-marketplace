@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { source } from './fixtures'
-import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
+import { VIEW_STORAGE_KEY } from './grouping'
+import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 const inspectorStorageKey = 'am-gui-inspector'
 const appearanceStorageKey = 'vitepress-theme-appearance'
@@ -137,13 +138,13 @@ describe('appearance control', () => {
 })
 
 describe('sidebar navigation', () => {
-  it('Pending sync and group rows select and bring their group into view', async () => {
+  it('Group rows select and bring their group into view', async () => {
     const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => undefined)
     const { wrapper } = await mountShell([row('a'), row('p', { group: 'pending', status: 'pending' })])
     const pendingSection = () => wrapper.get('button.workspace__group-toggle[aria-label="Pending sync"]')
     expect(pendingSection().attributes('aria-current')).toBeUndefined()
 
-    await wrapper.get('button[aria-label="Pending sync group"]').trigger('click')
+    await wrapper.get('button[aria-label="Show Pending sync group"]').trigger('click')
     await tick()
     expect(pendingSection().attributes('aria-current')).toBe('true')
     expect(scrollIntoView).toHaveBeenCalled()
@@ -154,14 +155,61 @@ describe('sidebar navigation', () => {
     expect(pendingSection().attributes('aria-current')).toBeUndefined()
   })
 
-  it('the Search row opens the search field', async () => {
-    const { wrapper } = await mountShell()
-    expect(wrapper.find('input[aria-label="Search resources"]').exists()).toBe(false)
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('offers each navigation control once, with counts on filters and no search or pending-sync row', async () => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('p', { group: 'pending', status: 'pending sync' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+      row('s', { group: 'stale', status: 'stale' }),
+    ])
+    const labels = (selector: string) => wrapper.findAll(selector).map((element) => element.attributes('aria-label'))
 
-    await wrapper.get('button[aria-label="Open search"]').trigger('click')
+    expect(labels('.gui-sidebar__nav button')).toEqual(['All resources', 'Needs attention', 'Required by org', 'Show diagnostics'])
+    expect(button(wrapper, 'Needs attention').get('.gui-nav-row__count').text()).toBe('1')
+    expect(button(wrapper, 'Required by org').get('.gui-nav-row__count').text()).toBe('1')
+    expect(labels('section[aria-label="Kind"] button')).toEqual(['Kind facet Skills', 'Kind facet Commands'])
+    expect(button(wrapper, 'Kind facet Skills').get('.gui-nav-row__count').text()).toBe('3')
+    expect(button(wrapper, 'Kind facet Commands').get('.gui-nav-row__count').text()).toBe('1')
+    expect(wrapper.find('.gui-sidebar').text()).not.toContain('Filters')
+    expect(wrapper.find('button[aria-label="Open search"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Pending sync group"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Show all groups"]').exists()).toBe(false)
+  })
+
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('All resources clears the facets but keeps the search', async () => {
+    const { wrapper } = await mountShell([row('a'), row('b', { kind: 'command', required: true, group: 'required', status: 'required (org)' })])
+    await button(wrapper, 'Kind facet Commands').trigger('click')
+    await button(wrapper, 'Required by org').trigger('click')
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    const input = wrapper.get('input[aria-label="Search resources"]')
+    await input.setValue('b')
+    await input.trigger('keydown', { key: 'Enter' })
     await tick()
+    expect(rowNames(wrapper)).toEqual(['b'])
 
-    expect(wrapper.find('input[aria-label="Search resources"]').exists()).toBe(true)
+    await button(wrapper, 'All resources').trigger('click')
+    await tick()
+    expect(button(wrapper, 'Kind facet Commands').attributes('aria-pressed')).toBe('false')
+    expect(button(wrapper, 'Required by org').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('button[aria-label="Clear search"]').exists()).toBe(true)
+    expect(rowNames(wrapper)).toEqual(['b'])
+    expect(button(wrapper, 'All resources').attributes('aria-current')).toBe('page')
+  })
+
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('omits the Groups list under Kind grouping and the pinned Needs attention group under Source grouping', async () => {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, '{"version":1,"groupBy":"kind","thenBy":"none"}')
+    const byKind = await mountShell([row('a'), row('s', { group: 'stale', status: 'stale' })])
+    expect(byKind.wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)
+    byKind.wrapper.unmount()
+
+    window.localStorage.setItem(VIEW_STORAGE_KEY, '{"version":1,"groupBy":"source","thenBy":"none"}')
+    const bySource = await mountShell([row('a'), row('s', { group: 'stale', status: 'stale' })])
+    const groups = bySource.wrapper.findAll('section[aria-label="Groups"] button').map((element) => element.attributes('aria-label'))
+    expect(groups).not.toContain('Show Needs attention group')
+    expect(groups.length).toBeGreaterThan(0)
   })
 })
 
@@ -329,7 +377,7 @@ describe('diagnostics view', () => {
     expect(wrapper.get('.gui-diagnostics-view').text()).toContain('No problems found.')
     expect(wrapper.get('button[aria-label="Show diagnostics"] .gui-nav-row__count').classes()).not.toContain('gui-nav-row__count--danger')
 
-    await wrapper.get('button[aria-label="Show all groups"]').trigger('click')
+    await wrapper.get('button[aria-label="All resources"]').trigger('click')
     await tick()
     expect(wrapper.find('.gui-diagnostics-view').exists()).toBe(false)
     expect(wrapper.get('.gui-pane-title').text()).toBe('Resources')
@@ -349,21 +397,29 @@ describe('diagnostics view', () => {
   })
 })
 
-describe('inspector remove action', () => {
-  it('shows remove as a trash icon in the resource header rather than a text button', async () => {
+describe('inspector uninstall action', () => {
+  // spec: gui-shell/installed-resource-offers-a-labeled-uninstall
+  it('offers a labeled Uninstall text button instead of a trash icon and opens its dialog', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([row('a', { id: 'row-a', resourceAction: 'remove', checked: true })]) }))
+    vi.mocked(client.resourcePlan).mockResolvedValue({
+      rowId: 'row-a', generation: 1, planId: 'a'.repeat(64), action: 'remove', preview: 'Resource: skill/a', requiresRiskAcceptance: false,
+    })
     await tick()
     await wrapper.get('[role="option"][id="row-row-a"]').trigger('click')
     await tick()
 
     const detail = wrapper.get('aside[aria-label="Detail"]')
-    const trash = detail.get('button[aria-label="Remove Resource"]')
-    expect(trash.classes()).toContain('gui-icon-button--danger')
-    expect(trash.attributes('title')).toBe('Remove')
-    expect(trash.find('svg').exists()).toBe(true)
-    expect(detail.findAll('.gui-inspector__actions button').map((b) => b.text())).not.toContain('Remove')
+    const uninstall = detail.get('button[aria-label="Uninstall Resource"]')
+    expect(uninstall.text()).toBe('Uninstall')
+    expect(uninstall.classes()).toContain('gui-button--danger')
+    expect(detail.find('.gui-icon-button').exists()).toBe(false)
+
+    await uninstall.trigger('click')
+    await tick()
+    expect(document.body.querySelector('.resource-actions__copy')?.textContent).toContain('Uninstall a from ')
+    expect(document.body.querySelector('button[aria-label="Confirm uninstall"]')).not.toBeNull()
   })
 })
 

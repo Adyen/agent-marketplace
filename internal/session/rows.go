@@ -1,6 +1,7 @@
 package session
 
 import (
+	"cmp"
 	"slices"
 	"sort"
 	"strings"
@@ -74,6 +75,7 @@ type Row struct {
 	HarnessSource string
 
 	MarketplaceSelections     map[config.Source]MarketplaceSelection
+	MarketplaceRegistrySlug   string
 	MarketplaceCollectionOnly bool
 	MarketplaceDiscovery      *MarketplaceDiscovery
 
@@ -283,6 +285,37 @@ func MarketplaceEndpointDisplay(endpoint config.MarketplaceEntry) string {
 		return normalized
 	}
 	return endpoint.URL
+}
+
+// MarketplaceRegistryLabel returns the endpoint display followed by the
+// hosted registry slug when one is known.
+func MarketplaceRegistryLabel(endpoint config.MarketplaceEntry, slug string) string {
+	label := MarketplaceEndpointDisplay(endpoint)
+	if slug != "" {
+		label += "/" + slug
+	}
+	return label
+}
+
+// MarketplaceRegistry returns the shared registry label for a Marketplace
+// row, whether installed, pending verification, or discovered.
+func (r Row) MarketplaceRegistry() (string, bool) {
+	if r.MarketplaceDiscovery != nil {
+		return r.RegistryName, true
+	}
+	if !r.Artifact.IsMarketplace {
+		return "", false
+	}
+	endpoint := config.MarketplaceEntry{Alias: r.Artifact.MarketplaceAlias, URL: r.Artifact.MarketplaceURL}
+	if endpoint.Alias == "" && endpoint.URL == "" {
+		return "", false
+	}
+	slug := cmp.Or(
+		r.MarketplaceSelections[config.UserPersonal].Pin.RegistrySlug,
+		r.MarketplaceSelections[config.Organization].Pin.RegistrySlug,
+		r.MarketplaceRegistrySlug,
+	)
+	return MarketplaceRegistryLabel(endpoint, slug), true
 }
 
 // RowsHaveUnavailable reports whether any row carries an unavailable

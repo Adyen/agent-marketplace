@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Row } from './controller'
-import GuiIcon from './GuiIcon.vue'
+import GuiIcon, { type IconName } from './GuiIcon.vue'
 
 const props = defineProps<{
   folded: boolean
@@ -22,16 +22,25 @@ const resourceActionButton = ref<ButtonRef>(null)
 
 const resourceActionVerbs: Partial<Record<Row['resourceAction'], string>> = {
   install: 'Install',
-  remove: 'Remove',
+  remove: 'Uninstall',
   exclude: 'Exclude',
   restore: 'Restore',
+}
+
+const resourceActionIcons: Partial<Record<Row['resourceAction'], IconName>> = {
+  install: 'plus',
+  remove: 'minus',
+  exclude: 'minus',
+  restore: 'plus',
 }
 
 const resourceActionVerb = computed(() => resourceActionVerbs[props.selected?.resourceAction ?? 'none'] ?? '')
 
 const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} Resource` : 'Action'))
 
-const resourceActionIcon = computed(() => props.selected?.resourceAction === 'remove' || props.selected?.resourceAction === 'exclude')
+const resourceActionIcon = computed<IconName>(() => resourceActionIcons[props.selected?.resourceAction ?? 'none'] ?? 'plus')
+
+const resourceActionDanger = computed(() => props.selected?.resourceAction === 'remove' || props.selected?.resourceAction === 'exclude')
 
 const statusTone = computed(() => (props.selected?.status === 'enabled' || props.selected?.status === 'installed' ? 'signal' : 'warning'))
 
@@ -67,16 +76,6 @@ defineExpose({
                 <p class="gui-caps gui-inspector__eyebrow">{{ selected.kind }}</p>
                 <h2 class="gui-inspector__title mono">{{ selected.displayName }}</h2>
               </div>
-              <button
-                v-if="resourceActionIcon"
-                ref="resourceActionButton"
-                type="button"
-                class="gui-icon-button gui-icon-button--danger"
-                :aria-label="resourceActionLabel"
-                :title="resourceActionVerb"
-                :disabled="actionDisabled"
-                @click="emit('openResourceAction', selected)"
-              ><GuiIcon name="trash" /></button>
             </div>
             <p class="gui-inspector__description">{{ selected.description }}</p>
             <dl>
@@ -89,26 +88,33 @@ defineExpose({
             </dl>
             <div class="gui-inspector__actions">
               <UButton
-                v-if="selected.resourceAction !== 'none' && !resourceActionIcon"
+                v-if="selected.resourceAction !== 'none'"
                 ref="resourceActionButton"
                 :aria-label="resourceActionLabel"
-                class="gui-button--secondary"
-                :class="{ 'gui-button--busy': actionBusy }"
+                class="gui-inspector__action"
+                :class="{ 'gui-button--busy': actionBusy, 'gui-button--danger': resourceActionDanger }"
                 :aria-busy="actionBusy"
                 color="neutral"
-                variant="soft"
+                variant="outline"
                 :disabled="actionDisabled"
                 @click="emit('openResourceAction', selected)"
-              ><span v-if="actionBusy" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />{{ resourceActionVerb }}</UButton>
+              >
+                <span v-if="actionBusy" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />
+                <GuiIcon v-else :name="resourceActionIcon" />
+                {{ resourceActionVerb }}
+              </UButton>
               <UButton
                 v-if="selected.inspectable || selected.installedFiles"
                 ref="openResourceButton"
                 aria-label="Open resource"
-                class="gui-button--secondary"
+                class="gui-inspector__action"
                 color="neutral"
-                variant="soft"
+                variant="outline"
                 @click="emit('openInspection', selected)"
-              >Open resource</UButton>
+              >
+                <GuiIcon name="file" />
+                Open resource
+              </UButton>
             </div>
           </div>
         </template>

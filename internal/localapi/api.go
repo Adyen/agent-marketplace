@@ -149,7 +149,7 @@ type operationSubject struct {
 
 var resourceActionSubjects = map[string]operationSubject{
 	session.UserMarketplaceActionInstall: {success: "Installed", failure: "Couldn't install"},
-	session.UserMarketplaceActionRemove:  {success: "Removed", failure: "Couldn't remove"},
+	session.UserMarketplaceActionRemove:  {success: "Uninstalled", failure: "Couldn't uninstall"},
 	session.UserMarketplaceActionExclude: {success: "Excluded", failure: "Couldn't exclude"},
 	session.UserMarketplaceActionRestore: {success: "Restored", failure: "Couldn't restore"},
 }
@@ -848,9 +848,12 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 	case row.EnabledGlobal:
 		scope = "user"
 	}
-	registry := row.RegistryName
-	if registry == "" {
-		registry = row.RegistryURL
+	registry, ok := row.MarketplaceRegistry()
+	if !ok {
+		registry = row.RegistryName
+		if registry == "" {
+			registry = row.RegistryURL
+		}
 	}
 	registry = session.SanitizeTerminalData(registry, session.TerminalSingleLine)
 	description := session.SanitizeTerminalData(row.Artifact.Description, session.TerminalMarkdownBody)

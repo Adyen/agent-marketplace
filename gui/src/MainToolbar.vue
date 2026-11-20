@@ -117,12 +117,12 @@ defineExpose({
       <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
         <GuiIcon name="update" />
         Update
-        <span v-if="availableUpdates > 0" class="gui-update-count mono">{{ availableUpdates }}</span>
+        <span v-if="availableUpdates > 0" class="gui-badge mono">{{ availableUpdates }}</span>
       </UButton>
       <UButton aria-label="Sync" :disabled="!ready" @click="emit('sync')">
         <GuiIcon name="sync" />
         Sync
-        <span v-if="pendingCount > 0" class="gui-badge mono">~{{ pendingCount }}</span>
+        <span v-if="pendingCount > 0" class="gui-badge mono">{{ pendingCount }}</span>
       </UButton>
       <UButton
         v-if="showSetup"

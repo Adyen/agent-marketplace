@@ -48,7 +48,7 @@ func DiscoveryRows(outcomes []marketplace.DiscoveryOutcome) []Row {
 				},
 				IsAvailable:          true,
 				RegistryURL:          outcome.Endpoint.URL,
-				RegistryName:         MarketplaceEndpointDisplay(outcome.Endpoint) + "/" + item.RegistrySlug,
+				RegistryName:         MarketplaceRegistryLabel(outcome.Endpoint, item.RegistrySlug),
 				MarketplaceDiscovery: discovery,
 			})
 		}

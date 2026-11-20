@@ -237,7 +237,7 @@ test('Then-by status headers stay opaque and flush with the resource list while 
 
 test('Resources and Diagnostics share a visible active navigation style', async ({ page }) => {
   await openPreview(page)
-  const resources = page.getByRole('button', { name: 'Show all groups' })
+  const resources = page.getByRole('button', { name: 'All resources' })
   const diagnostics = page.getByRole('button', { name: 'Show diagnostics' })
   const background = (locator: Locator) => locator.evaluate((element) => getComputedStyle(element).backgroundColor)
 

@@ -23,7 +23,7 @@ const actionCopy = computed(() => {
     case 'restore':
       return `${actionName(action.value)} ${name} from ${registry}. After the next sync, it will be available in ${targetNames.value}.`
     case 'remove':
-      return `Remove ${name} from ${registry}. After the next sync, it will no longer be available in ${targetNames.value}.`
+      return `Uninstall ${name} from ${registry}. After the next sync, it will no longer be available in ${targetNames.value}.`
     case 'exclude':
       return `Exclude ${name} from ${registry}. It will not be available in ${targetNames.value}.`
     default:
@@ -36,7 +36,7 @@ function actionName(value: ResourceAction): string {
     case 'install':
       return 'Install'
     case 'remove':
-      return 'Remove'
+      return 'Uninstall'
     case 'exclude':
       return 'Exclude'
     case 'restore':

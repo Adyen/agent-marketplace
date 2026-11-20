@@ -180,9 +180,9 @@ async function startWork39HeldRemoval() {
   push(work39SnapshotEvent(1, 1, [removed, next]))
   await tick()
   await selectWork39Row(wrapper, removed.id)
-  await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+  await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
   await tick()
-  const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+  const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
   if (confirm == null) {
     throw new Error('resource removal confirmation was not rendered')
   }
@@ -1422,9 +1422,6 @@ describe('workspace facets and source header', () => {
     await wrapper.get('button[aria-label="Required by org"]').trigger('click')
     await tick()
     expect(rowNames(wrapper)).toEqual(['team-required needle'])
-    await wrapper.get('button[aria-label="Show all groups"]').trigger('click')
-    await tick()
-    expect(rowNames(wrapper)).toEqual(['team-required needle'])
 
     await wrapper.get('button[aria-label^="Clear source filter "]').trigger('click')
     await tick()
@@ -1704,25 +1701,6 @@ describe('workspace chrome', () => {
     const detail = wrapper.get('aside[aria-label="Detail"] dl')
     expect(detail.findAll('dt').map((term) => term.text())).toEqual(['Registry', 'Scope', 'Status'])
     expect(detail.text()).not.toContain('Harnesses')
-  })
-
-  it('hides Pending sync at zero and shows its count when positive', async () => {
-    const { client, push } = fakeClient()
-    const { wrapper } = mountWorkspace(client)
-    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
-    await tick()
-    expect(wrapper.find('button[aria-label="Pending sync group"]').exists()).toBe(false)
-
-    push(event({
-      sequence: 2,
-      payload: snapshot([
-        row('pending-a', { group: 'pending', status: 'pending sync' }),
-        row('pending-b', { group: 'pending', status: 'pending sync' }),
-      ]),
-    }))
-    await tick()
-
-    expect(wrapper.get('button[aria-label="Pending sync group"] .gui-nav-row__count').text()).toBe('2')
   })
 })
 
@@ -2932,7 +2910,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.operation).toBeNull()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
       expect(controller.state.settledMutation).toBeNull()
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall Resource')
     })
 
     // spec: session-interactions/cancel-or-stale-completion
@@ -2958,7 +2936,7 @@ describe('Event stream reconnect', () => {
       expect(firstSignal?.aborted).toBe(true)
       expect(controller.state.resourceAction).toBeNull()
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
       requests[0]?.response.resolve(work39Plan(first.id, 1, 'install'))
       await tick()
@@ -2974,7 +2952,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.resourceAction).toBeNull()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
       const generationSignal = requests[2]?.signal
       push(work39SnapshotEvent(2, 2, [first, second]))
@@ -2985,7 +2963,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.resourceAction).toBeNull()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
       const disposedSignal = requests[3]?.signal
       controller.dispose()
@@ -3119,9 +3097,9 @@ describe('Event stream reconnect', () => {
       push(work39SnapshotEvent(1, 1, [resource]))
       await tick()
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
-      const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+      const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
       expect(confirm?.disabled).toBe(false)
       confirm?.click()
       await tick()
@@ -3264,7 +3242,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.rows.find((candidate) => candidate.id === removed.id)?.resourceAction).toBe('none')
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
-      expect(document.body.querySelector('button[aria-label="Remove Resource"]')).toBeNull()
+      expect(document.body.querySelector('button[aria-label="Uninstall Resource"]')).toBeNull()
       expect(document.activeElement?.getAttribute('id')).toBe(`row-${removed.id}`)
     })
 
@@ -3283,9 +3261,9 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, removed.id)
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
-      const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+      const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
       confirm?.click()
       await tick()
       const operation: OperationRef = { id: 91, kind: 'mutation' }
@@ -3315,9 +3293,9 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, removed.id)
 
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
-      ;(document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null)?.click()
+      ;(document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null)?.click()
       await tick()
       const operation: OperationRef = { id: 91, kind: 'mutation' }
       push(work39SnapshotEvent(2, 2, [removed, next], null, operation))
@@ -3385,7 +3363,7 @@ describe('Event stream reconnect', () => {
       await tick()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
       expect(controller.state.settledMutation).toBeNull()
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall Resource')
       expect(client.inspection).not.toHaveBeenCalled()
     })
   })
@@ -3410,7 +3388,7 @@ describe('Event stream reconnect', () => {
     }
 
     async function openWork41InstallPlan(wrapper: ReturnType<typeof mountWorkspace>['wrapper']): Promise<HTMLElement> {
-      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
       await tick()
       const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
       if (dialog == null) {
@@ -3519,7 +3497,7 @@ describe('Event stream reconnect', () => {
       const actionRequest = deferred<OperationRef>()
       vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
       const dialog = await openWork41InstallPlan(wrapper)
-      const confirm = dialog.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
+      const confirm = dialog.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
       if (confirm == null) {
         throw new Error('Work41 Confirm remove button was not rendered')
       }

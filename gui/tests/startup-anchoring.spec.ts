@@ -321,7 +321,7 @@ test('built GUI preserves a keyboard-selected pending Resource and its viewport 
     await expect(detail).toContainText('Pending resource-00 details')
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: pending')
-    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await page.getByRole('button', { name: 'All resources' }).click()
 
     const first = page.getByRole('option').nth(0)
     await tabTo(page, first, 'first resource row', actions)

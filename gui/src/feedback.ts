@@ -11,7 +11,7 @@ const operationLabels = new Map<string, string>([
 
 const resourceActionProgressVerbs: Partial<Record<ResourceAction, string>> = {
   install: 'Installing',
-  remove: 'Removing',
+  remove: 'Uninstalling',
   exclude: 'Excluding',
   restore: 'Restoring',
 }

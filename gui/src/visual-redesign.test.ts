@@ -53,12 +53,28 @@ describe('update availability toolbar', () => {
     expect(sync.attributes('aria-label')).toBe('Sync')
   })
 
+  // spec: gui-shell/counts-render-as-plain-neutral-numbers
+  it('shows pending and update counts as plain neutral numbers without a tilde or signal color', async () => {
+    const { wrapper } = await mountView([row('solo'), row('p', { group: 'pending', status: 'pending sync' })], 2)
+    const toolbar = wrapper.get('[role="toolbar"][aria-label="Session actions"]')
+    const update = toolbar.get('button[aria-label="Update"]')
+
+    expect(toolbar.get('button[aria-label="Sync"] .gui-badge').text()).toBe('1')
+    expect(update.get('.gui-badge').text()).toBe('2')
+    expect(update.get('.gui-badge').classes()).not.toContain('gui-update-count')
+    expect(update.find('.gui-update-count').exists()).toBe(false)
+    expect(wrapper.get('.gui-statusbar').text()).toContain('1 pending sync')
+    expect(wrapper.get('.gui-statusbar').text()).not.toContain('~')
+    expect(wrapper.find('.gui-statusbar__pending-glyph').exists()).toBe(false)
+    expect(toolbar.text()).not.toContain('~')
+  })
+
   // spec: gui-shell/no-update-indicator-at-zero-before-a-check-or-after-a-failed-check
   it('keeps the update indicator absent at zero and shows no failed-check error', async () => {
     const { wrapper } = await mountView([row('solo')], 0)
     const update = wrapper.get('button[aria-label="Update"]')
 
-    expect(update.find('.gui-update-count').exists()).toBe(false)
+    expect(update.find('.gui-badge').exists()).toBe(false)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
 })
@@ -168,7 +184,7 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
     await tick()
 
     const dialog = document.body.querySelector('[role="dialog"]')
@@ -176,7 +192,7 @@ describe('resource action dialog', () => {
     if (dialog == null) throw new Error('install dialog was not rendered')
     expect(dialog.querySelector('.gui-modal__tile')).toBeNull()
     const copy = dialog.querySelector('.resource-actions__copy')
-    expect(copy?.textContent).toContain('Remove Review from team tools.')
+    expect(copy?.textContent).toContain('Uninstall Review from team tools.')
     expect(copy?.textContent).toContain('After the next sync, it will no longer be available in Devin.')
     expect(copy?.textContent).not.toMatch(/\b(config|configuration|lock|lockfile|harness|acquisition|materialize)\b/i)
     const details = dialog.querySelector('details')
@@ -205,7 +221,7 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
     await tick()
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog?.querySelector('.resource-actions__spinner')).not.toBeNull()
@@ -213,7 +229,7 @@ describe('resource action dialog', () => {
     resolvePlan(resourcePlan(resource.id, 'remove'))
     await tick()
     expect(dialog?.querySelector('.resource-actions__spinner')).toBeNull()
-    ;(dialog?.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement).click()
+    ;(dialog?.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement).click()
     await tick()
     expect(dialog?.querySelector('.resource-actions__spinner')).not.toBeNull()
 
@@ -243,9 +259,9 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
     await tick()
-    const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement
+    const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement
     confirm.click()
     await tick()
     expect(document.body.querySelector('.resource-actions__spinner')).not.toBeNull()

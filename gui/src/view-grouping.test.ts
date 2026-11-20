@@ -144,8 +144,7 @@ describe('View menu', () => {
     expect(wrapper.findAll('ul[aria-label="Resources: team"] [role="option"]')).toHaveLength(1)
     expect(wrapper.find('ul[aria-label="Resources: Skills"]').exists()).toBe(false)
 
-    const sidebarGroups = wrapper.findAll('section[aria-label="Groups"] button').map((button) => button.attributes('aria-label'))
-    expect(sidebarGroups).toEqual(['Show Needs attention group', 'Show Skills group', 'Show Commands group'])
+    expect(wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)
   })
 
   // spec: gui-shell/grouping-choice-persists-locally-without-workspace-writes

@@ -5,7 +5,7 @@ defineProps<{ pendingCount: number | null }>()
 <template>
   <footer class="gui-statusbar">
     <span class="gui-statusbar__status mono">
-      <span v-if="pendingCount !== null && pendingCount > 0"><span class="gui-statusbar__pending-glyph">~</span> {{ pendingCount }} pending sync</span>
+      <span v-if="pendingCount !== null && pendingCount > 0"><span class="gui-dot gui-dot--warning" aria-hidden="true" /> {{ pendingCount }} pending sync</span>
       <span v-else-if="pendingCount === 0" class="gui-statusbar__synced"><span class="gui-statusbar__glyph">✓</span> in sync</span>
     </span>
     <span class="gui-statusbar__hints mono">
