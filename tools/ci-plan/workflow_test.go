@@ -589,8 +589,18 @@ func TestBenchmarkWorkflowIndependence(t *testing.T) {
 	if _, ok := ciJobs["benchmark"]; ok {
 		t.Fatal("CI still contains the benchmark job, coupling informational benchmarks to required CI")
 	}
-	if getMap(t, ciJobs, "e2e-gates-required")["name"] != "E2E Gates" {
-		t.Fatal("required E2E check name changed")
+	for id, want := range map[string]string{
+		"build":              "Build",
+		"test":               "Test",
+		"lint":               "Lint",
+		"govulncheck":        "govulncheck",
+		"tui-qa-required":    "TUI QA Driver",
+		"e2e-gates-required": "E2E Gates",
+		"specs":              "Specs",
+	} {
+		if got := getMap(t, ciJobs, id)["name"]; got != want {
+			t.Errorf("required CI job %q reports %v, want %q", id, got, want)
+		}
 	}
 
 	benchmark := loadWorkflow(t, "benchmark.yml")

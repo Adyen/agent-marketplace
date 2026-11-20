@@ -12,6 +12,6 @@
 
 ## 3. Verify workflow integration
 
-- [x] 3.1 Add a hosted workflow witness proving E2E Gates and Benchmark run independently; run `go test ./tools/ci-plan ./tools/benchmark-report && go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 && make spec-check`
+- [ ] 3.1 Add a hosted workflow witness proving E2E Gates and Benchmark run independently; run `go test ./tools/ci-plan ./tools/benchmark-report && go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 && make spec-check`
 - [x] 3.2 Add or update spec trace annotations for every new scenario and verify the annotated test files cover the delta
 - [x] 3.3 Archive the change with `openspec archive decouple-pr-benchmarks --yes` in the same pull request as the implementation
