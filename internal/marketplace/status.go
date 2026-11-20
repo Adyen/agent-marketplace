@@ -73,6 +73,7 @@ type PinStatus struct {
 	EndpointQueried  bool
 	LatestQueried    bool
 	UpdateAvailable  bool
+	RemovedUpstream  bool
 	Detail           string
 }
 
@@ -80,6 +81,25 @@ type Inspection struct {
 	Pins      []PinStatus
 	Artifacts []resolver.ResolvedArtifact
 	Err       error
+}
+
+// RemovedMarketplacePinWarning formats the shared update and status warning
+// for a pin whose latest-revision lookup returned 404.
+func RemovedMarketplacePinWarning(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
+	name := pin.InstalledName
+	if name == "" {
+		name = pin.Name
+	}
+	message := fmt.Sprintf("marketplace %s pin %s: removed from the Marketplace; pinned revision kept",
+		QuoteTerminal(entry.URL), QuoteTerminal(pin.RegistryID+"/"+pin.Kind+"/"+pin.Name))
+	if marketplacePinRequired(entry) {
+		alias := entry.Alias
+		if alias == "" {
+			alias = "marketplace"
+		}
+		return errors.New(message + fmt.Sprintf("; change configuration entry %s to drop it", QuoteTerminal("resources."+alias+".required")))
+	}
+	return errors.New(message + fmt.Sprintf("; drop it with %s", QuoteTerminal("agent-marketplace remove "+name)))
 }
 
 // PinStatusError promotes an unhealthy required Marketplace pin to a pipeline
@@ -599,6 +619,12 @@ func queryLatestRevision(ctx context.Context, client *Client, entry config.Marke
 	if err != nil {
 		// Latest is observational. An exact pin that was successfully queried
 		// keeps its state, and LatestQueried remains false when this probe fails.
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+			status.RemovedUpstream = true
+			appendPinDetail(status, "removed from the Marketplace; pinned revision kept")
+			return
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			appendPinDetail(status, err.Error())
 		}

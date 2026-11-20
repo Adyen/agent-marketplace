@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -115,7 +116,15 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, LockMetadata: o.LockMetadata, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource, verifiedMarketplaceRevisions: o.verifiedMarketplaceRevisions}
+	resolveOpts := ResolveOptions{
+		Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode,
+		CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, LockMetadata: o.LockMetadata,
+		MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall,
+		marketplaceInstallSource:     o.marketplaceInstallSource,
+		verifiedMarketplaceRevisions: o.verifiedMarketplaceRevisions,
+		marketplacePinsToSkip:        o.marketplacePinsToSkip,
+		retainedMarketplacePins:      o.retainedMarketplacePins,
+	}
 	syncResult := Sync(ctx, resolveOpts)
 	if o.resolved != nil {
 		*o.resolved = syncResult.Resolved
@@ -142,6 +151,8 @@ type silentSyncOptions struct {
 	marketplaceInstall           *marketplace.PreparedInstall
 	marketplaceInstallSource     config.Source
 	verifiedMarketplaceRevisions *marketplace.VerifiedRevisions
+	marketplacePinsToSkip        map[marketplacePinIdentity]bool
+	retainedMarketplacePins      []materialize.RetainedMarketplacePin
 	resolved                     *[]resolver.ResolvedArtifact
 }
 
@@ -161,6 +172,14 @@ func withMarketplaceInstall(plan *marketplace.PreparedInstall, source config.Sou
 
 func withVerifiedMarketplaceRevisions(revisions *marketplace.VerifiedRevisions) silentSyncOpt {
 	return func(o *silentSyncOptions) { o.verifiedMarketplaceRevisions = revisions }
+}
+
+func withMarketplacePinsSkipped(pins map[marketplacePinIdentity]bool) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.marketplacePinsToSkip = pins }
+}
+
+func withRetainedMarketplacePins(pins []materialize.RetainedMarketplacePin) silentSyncOpt {
+	return func(o *silentSyncOptions) { o.retainedMarketplacePins = pins }
 }
 
 func withDependencyReconciler(reconciler DependencyReconciler) silentSyncOpt {

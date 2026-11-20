@@ -74,16 +74,19 @@ type ResolveOptions struct {
 	// AllowMissingReadOnlyLocks lets read-only inspection fall back to the
 	// mutable registry cache for layers that have no lockfile. Present locks
 	// remain exact and malformed or stale locks still fail closed.
-	AllowMissingReadOnlyLocks   bool
-	ExactLockLease              func(context.Context) (func(), error)
-	LockMetadata                []LockMetadata
-	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
+	AllowMissingReadOnlyLocks           bool
+	ExactLockLease                      func(context.Context) (func(), error)
+	LockMetadata                        []LockMetadata
+	MarketplaceRevocationPolicy         resolver.MarketplaceRevocationPolicy
+	KeepRemovedMarketplacePinsFromCache bool
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
 	MarketplaceMode                       *resolver.MarketplaceResolveMode
 	marketplaceInstall                    *marketplace.PreparedInstall
 	marketplaceInstallSource              config.Source
 	verifiedMarketplaceRevisions          *marketplace.VerifiedRevisions
+	marketplacePinsToSkip                 map[marketplacePinIdentity]bool
+	retainedMarketplacePins               []materialize.RetainedMarketplacePin
 	MarketplaceLockEvidenceStrict         bool
 	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
@@ -94,9 +97,12 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
-	BrowsingConfigReady     func(*config.Config)
-	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
-	ConfigReady             func(*config.Config)
+	// MarketplacePinsToSkip lists pins classified as missing by the current
+	// update.
+	MarketplacePinsToSkip  []MarketplacePinUpdate
+	BrowsingConfigReady    func(*config.Config)
+	ProvisionalConfigReady func(*config.Config, *config.LocalConfig)
+	ConfigReady            func(*config.Config)
 	// MarketplaceArtifactsFromCache resolves Marketplace selections into
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
@@ -668,6 +674,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 	marketplaceResolver := marketplace.NewResolver()
 	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
 	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
+	marketplaceResolver.KeepRemovedPinsFromCache = opts.KeepRemovedMarketplacePinsFromCache
 	marketplaceResolver.Verified = opts.verifiedMarketplaceRevisions
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
@@ -708,6 +715,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			}
 		}
 		marketplaceCfg = &filtered
+	}
+	skippedMarketplacePins := opts.marketplacePinsToSkip
+	if len(opts.MarketplacePinsToSkip) > 0 {
+		skippedMarketplacePins = make(map[marketplacePinIdentity]bool, len(opts.MarketplacePinsToSkip))
+		for _, pin := range opts.MarketplacePinsToSkip {
+			skippedMarketplacePins[marketplacePinIdentityOf(pin.Entry, pin.OldPin)] = true
+		}
+	}
+	if len(skippedMarketplacePins) > 0 {
+		mpResolver = marketplacePinSkippingResolver{delegate: mpResolver, skip: skippedMarketplacePins}
 	}
 	var selectedCollections []resolver.ResolvedArtifact
 	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
@@ -1180,6 +1197,17 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if len(opts.retainedMarketplacePins) > 0 {
+		pins := slices.Clone(opts.retainedMarketplacePins)
+		for i := range pins {
+			targets := resolved.TargetHarnesses
+			if pins[i].Source.IsMachineScope() {
+				targets = resolved.MachineTargetHarnesses
+			}
+			pins[i].Targets = resolver.HarnessTargets(targets)
+		}
+		materializeOptions = append(materializeOptions, materialize.WithRetainedMarketplacePins(pins))
+	}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}
