@@ -112,6 +112,38 @@ func TestCollectManagedPathsCoversMachineScopeOutputs(t *testing.T) {
 	}
 }
 
+// TestCollectManagedPathsCoversGeminiSubagents is the subagent counterpart of
+// TestCollectManagedPathsCoversMachineScopeOutputs: the directory a machine-scope
+// Gemini subagent installs into must be archived before sync can prune it.
+//
+// spec: materialization/machine-scope-backups-archive-gemini-subagents
+func TestCollectManagedPathsCoversGeminiSubagents(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resolved := []resolver.ResolvedArtifact{{
+		Entry:     catalog.Entry{Kind: ir.KindSubagent, Name: "managed-agent", Resource: ir.NewSubagent("managed-agent", "Test agent", "Body\n", "", nil, "", nil, "", nil, ir.SourceRef{})},
+		Source:    config.UserPersonal,
+		Harnesses: []hcc.Target{hcc.TargetGemini},
+	}}
+	if _, err := materialize.Run(context.Background(), t.TempDir(), resolved); err != nil {
+		t.Fatalf("materialize.Run: %v", err)
+	}
+
+	machineRoot, ok := harness.MachineRoot(hcc.TargetGemini)
+	if !ok {
+		t.Fatal("no machine root for gemini")
+	}
+	if _, err := os.Lstat(filepath.Join(machineRoot, "agents", "managed-agent.md")); err != nil {
+		t.Fatalf("setup: the Gemini subagent was not materialized: %v", err)
+	}
+	mp, ok := CollectManagedPaths(resolved)[hcc.TargetGemini]
+	if !ok {
+		t.Fatal("CollectManagedPaths has no entry for gemini")
+	}
+	if !slices.Contains(mp.RelPaths, "agents") {
+		t.Errorf("Gemini subagent directory is not covered by managed paths %v", mp.RelPaths)
+	}
+}
+
 // TestCollectManagedPathsWindsurfMachineComponents pins the exact machine-scope
 // Windsurf relative paths: global_workflows (not workflows), skills and hooks at
 // the Windsurf machine root, plus the managed root config file.

@@ -639,4 +639,32 @@ func init() {
 		"claude", "repo", true, files,
 		ok("sync").notOut("hook.support-reference-legacy").has(native, "/PreToolUse-command/hooks/scripts/check.sh").lacks(native, "/PreToolUse-command/hooks/hooks/scripts/check.sh"),
 	))
+
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	testTable = append(testTable, TestCase{
+		Name: "materialize/gemini_last_subagent_deselection_prunes_user_output",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deselect", Subagents: []Subagent{
+				{Name: "reviewer", Description: "Managed by agent-marketplace"},
+			}},
+		},
+		GlobalCfg: v4(
+			"harnesses: [gemini]",
+			"sources: {team: {git: '{{REG:gemini-subagent-deselect}}', ref: main}}",
+			"resources: {team: {include: [subagent/reviewer]}}",
+		),
+		Steps: []Step{
+			writeFile("~/.gemini/agents/worker.md", `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`),
+			ok("sync").exists("~/.gemini/agents/worker.md").symlinks("~/.gemini/agents/reviewer.md"),
+			writeGlobalCfg(v4("harnesses: [gemini]", "sources: {team: {git: '{{REG:gemini-subagent-deselect}}', ref: main}}")),
+			ok("sync").absent("~/.gemini/agents/reviewer.md").exists("~/.gemini/agents/worker.md").has("~/.gemini/agents/worker.md", "# worker (user-owned)"),
+			ok("sync", "--check"),
+		},
+	})
 }

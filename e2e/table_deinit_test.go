@@ -200,4 +200,56 @@ func init() {
 				absent("./.agents/config.yaml", "./.agents/lock.yaml", "./.agents/.config.yaml.dependencytxn.lock", "./.agents/.lock.yaml.dependencytxn.lock"),
 		},
 	})
+
+	// spec: materialization/deinit-removes-gemini-subagents
+	testTable = append(testTable, TestCase{
+		Name: "deinit/gemini_repo_subagent_output_is_removed",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deinit", Subagents: []Subagent{
+				{Name: "helper", Description: "Removed by deinit"},
+			}},
+		},
+		GlobalCfg: v4("harnesses: [gemini]"),
+		RepoCfg: v4(
+			"sources: {team: {git: '{{REG:gemini-subagent-deinit}}', ref: main}}",
+			"resources: {team: {include: [subagent/helper]}}",
+		),
+		Steps: []Step{
+			writeFile("./.gemini/agents/worker.md", `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`),
+			ok("sync").symlinks("./.gemini/agents/helper.md").exists("./.gemini/agents/worker.md"),
+			ok("deinit", "--scope", "repo").absent("./.gemini/agents/helper.md").exists("./.gemini/agents/worker.md").has("./.gemini/agents/worker.md", "# worker (user-owned)"),
+		},
+	})
+
+	// spec: materialization/deinit-removes-gemini-subagents
+	testTable = append(testTable, TestCase{
+		Name: "deinit/gemini_user_subagent_output_is_removed",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deinit-user", Subagents: []Subagent{
+				{Name: "helper", Description: "Removed by deinit"},
+			}},
+		},
+		GlobalCfg: v4(
+			"harnesses: [gemini]",
+			"sources: {team: {git: '{{REG:gemini-subagent-deinit-user}}', ref: main}}",
+			"resources: {team: {include: [subagent/helper]}}",
+		),
+		Steps: []Step{
+			writeFile("~/.gemini/agents/worker.md", `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`),
+			ok("sync").symlinks("~/.gemini/agents/helper.md").exists("~/.gemini/agents/worker.md"),
+			ok("deinit", "--scope", "user").absent("~/.gemini/agents/helper.md").exists("~/.gemini/agents/worker.md").has("~/.gemini/agents/worker.md", "# worker (user-owned)"),
+		},
+	})
 }
