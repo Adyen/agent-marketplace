@@ -66,6 +66,27 @@ claude_enterprise:
 	if strings.Contains(err.Error(), "scalar-secret-sentinel") {
 		t.Fatalf("validation error disclosed scalar key: %v", err)
 	}
+
+	const sentinel = "do-not-render-invalid-key"
+	_, err = ParseConfig([]byte(validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+  api_key:
+    value: !!int do-not-render-invalid-key
+`))
+	if err == nil {
+		t.Fatal("invalid typed Claude Admin API key was accepted")
+	}
+	if !errors.As(err, &coded) {
+		t.Fatalf("typed value error = %T %v, want coded Claude Enterprise validation error", err, err)
+	}
+	if coded.ErrorCode() != "claude_enterprise.api-key-inline" ||
+		coded.FieldName() != "claude_enterprise.api_key" {
+		t.Fatalf("typed value coded error = %q for %q", coded.ErrorCode(), coded.FieldName())
+	}
+	if strings.Contains(err.Error(), sentinel) {
+		t.Fatalf("typed value error disclosed inline key: %v", err)
+	}
 }
 
 func TestClaudeEnterpriseDefaultsAndReferences(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 type Skill struct {
 	Name        string
 	Description string
+	License     string
 	Tags        []string
 	Requires    []string
 }
@@ -28,6 +29,9 @@ func (s Skill) SkillFile() string {
 	b.WriteString("---\n")
 	b.WriteString("name: " + s.Name + "\n")
 	b.WriteString("description: " + desc + "\n")
+	if s.License != "" {
+		b.WriteString("license: " + s.License + "\n")
+	}
 	if len(s.Tags) > 0 || len(s.Requires) > 0 {
 		b.WriteString("metadata:\n")
 	}

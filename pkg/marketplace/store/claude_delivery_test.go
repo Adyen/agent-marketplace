@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -147,7 +146,8 @@ func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 		ContentScanStatus: "pass", Reach: "organization", InstallationPreference: "available",
 		State: store.ClaudeDeliveryStatePublished, CreatedAt: now, UpdatedAt: now,
 	}
-	setClaudeDeliveryPendingFields(t, &first, "version_pending", "sha256:pending-one")
+	first.PendingVersionID = "version_pending"
+	first.PendingArchiveDigest = "sha256:pending-one"
 	if err := delivery.UpsertClaudeDeliveryPublished(ctx, first); err != nil {
 		t.Fatalf("UpsertClaudeDeliveryPublished: %v", err)
 	}
@@ -201,30 +201,11 @@ func TestClaudeDeliveryStateKeepsRecordedNameAndBoundsFailures(t *testing.T) {
 	assertClaudeDeliveryPendingFields(t, row, "version_pending", "sha256:pending-one")
 }
 
-func setClaudeDeliveryPendingFields(t *testing.T, row *store.ClaudeDeliveryPlugin, versionID, archiveDigest string) {
-	t.Helper()
-	value := reflect.ValueOf(row).Elem()
-	for name, content := range map[string]string{
-		"PendingVersionID": versionID, "PendingArchiveDigest": archiveDigest,
-	} {
-		field := value.FieldByName(name)
-		if !field.IsValid() || !field.CanSet() {
-			t.Fatalf("ClaudeDeliveryPlugin has no writable %s field", name)
-		}
-		field.SetString(content)
-	}
-}
-
 func assertClaudeDeliveryPendingFields(t *testing.T, row store.ClaudeDeliveryPlugin, versionID, archiveDigest string) {
 	t.Helper()
-	value := reflect.ValueOf(row)
-	for name, want := range map[string]string{
-		"PendingVersionID": versionID, "PendingArchiveDigest": archiveDigest,
-	} {
-		field := value.FieldByName(name)
-		if !field.IsValid() || field.String() != want {
-			t.Errorf("ClaudeDeliveryPlugin.%s = %v, want %q", name, field, want)
-		}
+	if row.PendingVersionID != versionID || string(row.PendingArchiveDigest) != archiveDigest {
+		t.Errorf("ClaudeDeliveryPlugin pending fields = (%q, %q), want (%q, %q)",
+			row.PendingVersionID, row.PendingArchiveDigest, versionID, archiveDigest)
 	}
 }
 

@@ -1,0 +1,27 @@
+[
+  {
+    "Path": ".claude-plugin/plugin.json",
+    "Mode": "0644",
+    "Content": "{\"author\":{\"name\":\"Example Publisher\"},\"description\":\"\",\"displayName\":\"validator\",\"homepage\":\"https://publisher.example\",\"name\":\"am-acme-hook-validator\"}"
+  },
+  {
+    "Path": "hooks/hooks.json",
+    "Mode": "0644",
+    "Content": "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"command\":\"echo check\",\"type\":\"command\"}]}]}}"
+  },
+  {
+    "Path": "hooks/validator/helper.sh",
+    "Mode": "0755",
+    "Content": "echo helper"
+  },
+  {
+    "Path": "hooks/validator/readme.txt",
+    "Mode": "0644",
+    "Content": "helper documentation"
+  },
+  {
+    "Path": "licenses/LICENSE",
+    "Mode": "0644",
+    "Content": "MIT"
+  }
+]

@@ -543,7 +543,8 @@ At startup the command opens the configured stores, makes sure the Marketplace i
 Inspect Claude Enterprise delivery state or request one reconcile pass. See the [Claude Enterprise delivery operator guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/marketplace-operator.md#mirror-published-resources-to-claude-enterprise) for setup and configuration details.
 
 ```text
-agent-marketplace serve claude-delivery <status|sync> --config <path>
+agent-marketplace serve claude-delivery status --config <path>
+agent-marketplace serve claude-delivery sync --config <path> --once
 ```
 
 ### `serve claude-delivery status`

@@ -98,6 +98,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		OwnerType: "organization", MarketplaceID: marketplace.ID,
 	})
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ReconcileResult{}, ctxErr
+		}
 		if isThrottled(err) {
 			return ReconcileResult{}, err
 		}
@@ -176,7 +179,6 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 				result.Conflicts++
 				continue
 			}
-			claimedNames[row.PluginName] = row.Coordinate
 		}
 		archive, built, diagnostic, err := r.build(ctx, item, row.PluginName)
 		if diagnostic != "" {
@@ -192,6 +194,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			}
 			result.Failed++
 			continue
+		}
+		if row.PluginID == "" {
+			claimedNames[row.PluginName] = row.Coordinate
 		}
 		plugin, owned, err := r.resolveOwnedPlugin(ctx, row, hasState, marketplace.ID, byName)
 		if err != nil {
@@ -267,20 +272,38 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			result.Published++
 			continue
 		}
-		returning := hasState && existing[row.Coordinate].State == store.ClaudeDeliveryStateRetired
+		priorState := row.State
+		returning := hasState && priorState == store.ClaudeDeliveryStateRetired
 		row.PluginID = plugin.ID
 		row.TargetMarketplaceID = marketplace.ID
 		row.State = store.ClaudeDeliveryStatePublished
 		if row.PublishedArchiveDigest == store.ArchiveDigest(built.Digest) {
+			scanStatus, reach := plugin.ContentScan.Status, plugin.Reach
+			if row.PublishedVersionID != "" && row.PublishedVersionID != plugin.ServedVersionID {
+				version, err := r.readVersion(ctx, plugin.ID, row.PublishedVersionID)
+				if err != nil {
+					if stop, stopErr := r.recordThrottleFailure(ctx, state, row, marketplace.ID, &result, err); stop {
+						return result, stopErr
+					}
+					if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, "version.read"); saveErr != nil {
+						return result, saveErr
+					}
+					result.Failed++
+					continue
+				}
+				scanStatus, reach = version.ContentScan.Status, version.Reach
+			}
 			preferenceNeedsWrite := plugin.OrganizationInstallationPreference != r.options.Target.DefaultInstallationPreference ||
 				plugin.OrganizationInstallationInherited
-			if preferenceNeedsWrite || returning ||
-				row.ContentScanStatus != plugin.ContentScan.Status ||
-				row.Reach != plugin.Reach || row.ServedVersionID != plugin.ServedVersionID {
+			if preferenceNeedsWrite || returning || priorState == store.ClaudeDeliveryStateFailed ||
+				row.ContentScanStatus != scanStatus || row.Reach != reach ||
+				row.ServedVersionID != plugin.ServedVersionID ||
+				row.ServedVersionPinned != plugin.ServedVersionPinned {
 				row.InstallationPreference = r.options.Target.DefaultInstallationPreference
-				row.ContentScanStatus = plugin.ContentScan.Status
-				row.Reach = plugin.Reach
+				row.ContentScanStatus = scanStatus
+				row.Reach = reach
 				row.ServedVersionID = plugin.ServedVersionID
+				row.ServedVersionPinned = plugin.ServedVersionPinned
 				row.UpdatedAt = r.options.Now()
 				if err := state.UpsertClaudeDeliveryPublished(ctx, row); err != nil {
 					return result, &ReconcileError{code: "state.write"}
@@ -379,6 +402,9 @@ func (r *Reconciler) resolveMarketplace(ctx context.Context) (claudeplugins.Plug
 	if r.options.Target.MarketplaceID != "" {
 		marketplace, err := r.options.Client.GetMarketplace(ctx, r.options.Target.MarketplaceID)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return claudeplugins.PluginMarketplace{}, ctxErr
+			}
 			if isThrottled(err) {
 				return claudeplugins.PluginMarketplace{}, err
 			}
@@ -391,6 +417,9 @@ func (r *Reconciler) resolveMarketplace(ctx context.Context) (claudeplugins.Plug
 	}
 	marketplaces, err := r.options.Client.ListMarketplaces(ctx, claudeplugins.MarketplaceListQuery{OwnerType: "organization"})
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return claudeplugins.PluginMarketplace{}, ctxErr
+		}
 		if isThrottled(err) {
 			return claudeplugins.PluginMarketplace{}, err
 		}
@@ -552,14 +581,19 @@ func (r *Reconciler) publishVersion(ctx context.Context, state store.ClaudeDeliv
 	row.TargetMarketplaceID = marketplaceID
 
 	if row.PendingArchiveDigest == store.ArchiveDigest(built.Digest) {
-		if row.PendingVersionID == "" {
+		versionID := plugin.ServedVersionID
+		if row.PendingVersionID == "" || versionID == "" ||
+			(versionID != row.PendingVersionID && versionID != plugin.LatestVersionID) {
 			return row, pendingRegistrationError()
 		}
-		version, matches, err := r.verifiedVersion(ctx, plugin.ID, row.PendingVersionID, built.Digest)
+		version, matches, err := r.verifiedVersion(ctx, plugin.ID, versionID, built.Digest)
 		if isThrottled(err) {
 			return row, err
 		}
-		if err != nil || !matches || plugin.ServedVersionID != row.PendingVersionID {
+		if err != nil || !matches ||
+			(versionID != row.PendingVersionID &&
+				(version.CreatedBy == nil || version.CreatedBy.Type != "api_actor" ||
+					version.CreatedBy.APIKeyID != r.options.Target.APIKeyID)) {
 			return row, pendingRegistrationError()
 		}
 		row = publishedRow(row, plugin, version, built, marketplaceID,
@@ -694,13 +728,21 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 	return claudeplugins.PluginVersion{}, plugin, &ReconcileError{code: "version.retry-exhausted"}
 }
 
-func (r *Reconciler) verifiedVersion(ctx context.Context, pluginID, versionID, archiveDigest string) (claudeplugins.PluginVersion, bool, error) {
+func (r *Reconciler) readVersion(ctx context.Context, pluginID, versionID string) (claudeplugins.PluginVersion, error) {
 	version, err := r.options.Client.GetVersion(ctx, pluginID, versionID)
 	if err != nil {
-		return claudeplugins.PluginVersion{}, false, err
+		return claudeplugins.PluginVersion{}, err
 	}
-	if version.ID != versionID {
-		return claudeplugins.PluginVersion{}, false, &ReconcileError{code: "version.read-mismatch"}
+	if version.ID != versionID || (version.PluginID != "" && version.PluginID != pluginID) {
+		return claudeplugins.PluginVersion{}, &ReconcileError{code: "version.read-mismatch"}
+	}
+	return version, nil
+}
+
+func (r *Reconciler) verifiedVersion(ctx context.Context, pluginID, versionID, archiveDigest string) (claudeplugins.PluginVersion, bool, error) {
+	version, err := r.readVersion(ctx, pluginID, versionID)
+	if err != nil {
+		return claudeplugins.PluginVersion{}, false, err
 	}
 	return version, strings.HasSuffix(version.ReleaseNotes, "; archive_digest="+archiveDigest), nil
 }
@@ -722,6 +764,9 @@ func pendingRegistrationError() error {
 
 func (r *Reconciler) writeWait(ctx context.Context) error {
 	if err := r.options.Limiter.Wait(ctx, minimumWriteInterval); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return fmt.Errorf("%w: %v", errWriteRateLimit, err)
 	}
 	return nil
@@ -748,6 +793,9 @@ func (r *Reconciler) setInstallationPreference(ctx context.Context, pluginID, pr
 }
 
 func (r *Reconciler) recordFailure(ctx context.Context, state store.ClaudeDeliveryStateStore, row store.ClaudeDeliveryPlugin, marketplaceID, code string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := state.RecordClaudeDeliveryFailure(ctx, row.Coordinate, row.PluginName, marketplaceID, code, r.options.Now()); err != nil {
 		return &ReconcileError{code: "state.write"}
 	}
@@ -762,6 +810,9 @@ func (r *Reconciler) recordThrottleFailure(
 	result *ReconcileResult,
 	err error,
 ) (bool, error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return true, ctxErr
+	}
 	if !isThrottled(err) {
 		return false, nil
 	}
@@ -785,6 +836,7 @@ func createdPluginRow(row store.ClaudeDeliveryPlugin, plugin claudeplugins.Plugi
 	row.PublishedVersionID = plugin.LatestVersionID
 	row.LatestVersionID = plugin.LatestVersionID
 	row.ServedVersionID = plugin.ServedVersionID
+	row.ServedVersionPinned = plugin.ServedVersionPinned
 	row.ContentScanStatus = plugin.ContentScan.Status
 	row.Reach = plugin.Reach
 	row.InstallationPreference = preference
@@ -803,6 +855,7 @@ func publishedRow(row store.ClaudeDeliveryPlugin, plugin claudeplugins.Plugin, v
 	row.PublishedVersionID = version.ID
 	row.LatestVersionID = plugin.LatestVersionID
 	row.ServedVersionID = plugin.ServedVersionID
+	row.ServedVersionPinned = plugin.ServedVersionPinned
 	row.ContentScanStatus = version.ContentScan.Status
 	row.Reach = version.Reach
 	row.InstallationPreference = preference

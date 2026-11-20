@@ -1,0 +1,22 @@
+[
+  {
+    "Path": ".claude-plugin/plugin.json",
+    "Mode": "0644",
+    "Content": "{\"author\":{\"name\":\"Example Publisher\"},\"description\":\"Threat model description\",\"displayName\":\"threat-model\",\"homepage\":\"https://publisher.example\",\"name\":\"am-acme-skill-threat-model\",\"version\":\"1.2.3\"}"
+  },
+  {
+    "Path": "licenses/LICENSE",
+    "Mode": "0644",
+    "Content": "MIT"
+  },
+  {
+    "Path": "skills/threat-model/SKILL.md",
+    "Mode": "0644",
+    "Content": "---\ndescription: Threat model description\nname: threat-model\nversion: 1.2.3\n---\nSkill body"
+  },
+  {
+    "Path": "skills/threat-model/guide.md",
+    "Mode": "0644",
+    "Content": "asset"
+  }
+]

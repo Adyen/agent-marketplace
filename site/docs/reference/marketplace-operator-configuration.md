@@ -22,7 +22,7 @@ Changes that apply while the server runs:
 - Changing only a registry's `slug`, `aliases`, or `publisher` updates its metadata without acquisition; prior slugs are kept as aliases.
 - Removing a registry unlists it. It is no longer observed or refreshed, and its indexed revisions, assessments, and blobs are preserved. Adding it back relists it.
 - `refresh.interval` takes effect at each registry's next scheduled observation; by itself it requests no refresh.
-- `claude_enterprise` changes take effect for subsequent delivery work; enabling, disabling, or retargeting the block needs no restart.
+- Changes to `claude_enterprise`, including enabling and disabling delivery, take effect for subsequent delivery work without restarting. Changing the target after plugins have been recorded stops delivery with `marketplace.target-changed`; it does not migrate plugins.
 
 Rewrites that do not change worker-relevant meaning cause no registry work. That includes comments, whitespace, mapping order, and an explicit value equal to its default. An edit that leaves the file missing, unreadable, truncated, malformed, or failing validation is rejected as a whole and logged once per distinct content as `config candidate rejected` with a bounded reason that contains no credential value; the last valid configuration keeps running and no registry is added, unlisted, or refreshed. Secret values are never part of the comparison, so rotating the file or environment value behind an unchanged credential reference causes no reindex.
 
@@ -305,7 +305,7 @@ Queries are bounded: a POST to `<url>/api/v1/query` with the configured timeout,
 
 ## `claude_enterprise`
 
-Optional mirroring of every published Marketplace resource into a Claude Enterprise organization through the Claude Plugins API. When the block is absent or `enabled` is `false`, no Plugins API request is made and no delivery state is recorded. See the [Claude Enterprise delivery operator guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/marketplace-operator.md#mirror-published-resources-to-claude-enterprise) for prerequisites and operation.
+Optional mirroring of policy-allowed, unrevoked published Marketplace resources into a Claude Enterprise organization through the Claude Plugins API. Collections are not mirrored. When the block is absent or `enabled` is `false`, no Plugins API request is made and no delivery state is recorded. See the [Claude Enterprise delivery operator guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/marketplace-operator.md#mirror-published-resources-to-claude-enterprise) for prerequisites and operation.
 
 ```yaml
 claude_enterprise:
@@ -331,7 +331,7 @@ claude_enterprise:
 
 Changing the target marketplace after plugins have been recorded stops delivery with `marketplace.target-changed`. Keep the existing target; this service does not migrate plugins between marketplaces.
 
-Invalid values refuse with a coded `claude_enterprise.*` error naming the field, and the service does not start.
+Invalid values that parse successfully fail validation with a coded `claude_enterprise.*` error naming the field. Invalid YAML or duration syntax can fail earlier during decoding. Both prevent startup.
 
 ## `management`
 

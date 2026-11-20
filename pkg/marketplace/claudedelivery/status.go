@@ -15,5 +15,9 @@ func StatusMessage(row store.ClaudeDeliveryPlugin) string {
 	if row.PublishedVersionID != "" && strings.EqualFold(row.ContentScanStatus, "processing") {
 		return "awaiting its content scan"
 	}
+	if row.ServedVersionPinned && row.PublishedVersionID != "" && row.ServedVersionID != "" &&
+		row.PublishedVersionID != row.ServedVersionID {
+		return "a different version is pinned and still served"
+	}
 	return ""
 }

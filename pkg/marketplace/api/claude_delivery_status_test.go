@@ -18,6 +18,11 @@ func TestAdminClaudeDeliveryStatusListsSanitizedStateBehindAdminAuth(t *testing.
 	s, handler := adminHTTPFixture(t)
 	state := s.meta.(store.ClaudeDeliveryStateStore)
 	now := time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
+	if err := s.meta.PutMarketplace(context.Background(), store.Marketplace{
+		ID: "other-marketplace", Name: "Other", CanonicalURL: "https://other.marketplace.test",
+	}); err != nil {
+		t.Fatalf("register foreign marketplace: %v", err)
+	}
 	rows := []store.ClaudeDeliveryPlugin{
 		{
 			Coordinate: store.ResourceCoordinate{Marketplace: "admin-test", Registry: "registry", Kind: "skill", Name: "guide"},
@@ -35,6 +40,14 @@ func TestAdminClaudeDeliveryStatusListsSanitizedStateBehindAdminAuth(t *testing.
 			ServedVersionID: "version_old", ContentScanStatus: "completed", Reach: "remote",
 			InstallationPreference: "not_available", State: store.ClaudeDeliveryStatePublished,
 			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			Coordinate: store.ResourceCoordinate{Marketplace: "other-marketplace", Registry: "registry", Kind: "skill", Name: "foreign"},
+			PluginName: "am-registry-skill-foreign", PluginID: "plugin_foreign",
+			TargetMarketplaceID: "marketplace_1", PublishedVersionID: "version_foreign",
+			LatestVersionID: "version_foreign", ServedVersionID: "version_foreign",
+			ContentScanStatus: "completed", Reach: "organization", InstallationPreference: "available",
+			State: store.ClaudeDeliveryStatePublished, CreatedAt: now, UpdatedAt: now,
 		},
 		{
 			Coordinate: store.ResourceCoordinate{Marketplace: "admin-test", Registry: "registry", Kind: "mcpserver", Name: "failed"},
@@ -96,6 +109,9 @@ func TestAdminClaudeDeliveryStatusListsSanitizedStateBehindAdminAuth(t *testing.
 	}
 	if len(body.Plugins) != 3 {
 		t.Fatalf("delivery response has %d plugins, want 3: %s", len(body.Plugins), response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "plugin_foreign") {
+		t.Fatalf("delivery status included a plugin from another marketplace: %s", response.Body.String())
 	}
 	var withheld, withdrawn, failed *statusEntry
 	for i := range body.Plugins {

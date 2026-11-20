@@ -7,9 +7,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/claudeplugins"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+// spec: claude-enterprise-delivery/pause-does-not-withdraw-a-registry-publication
+func TestClaudeDeliveryRegistryScopeKeepsPausedButExcludesWithdrawn(t *testing.T) {
+	ctx := context.Background()
+	deps, svc := managedFixture(t)
+	containsRegistry := func(registries []store.RegistryID) bool {
+		for _, id := range registries {
+			if id == "src-test" {
+				return true
+			}
+		}
+		return false
+	}
+	apply := func(action string, revision int64) {
+		_, err := svc.Apply(ctx, "test-mp", admin.Mutation{
+			Action: action, RegistryID: "src-test", ExpectedRevision: revision,
+			Actor:  store.ManagedActor{Issuer: "test", Subject: "admin"},
+			Reason: action, RequestID: action, IdempotencyKey: action,
+		})
+		if err != nil {
+			t.Fatalf("%s registry: %v", action, err)
+		}
+	}
+	registries, err := claudeDeliveryRegistries(ctx, deps, deps.Config)
+	if err != nil || !containsRegistry(registries) {
+		t.Fatalf("initial Claude delivery registries = %v, %v; want src-test", registries, err)
+	}
+	apply("pause", 1)
+	registries, err = claudeDeliveryRegistries(ctx, deps, deps.Config)
+	if err != nil || !containsRegistry(registries) {
+		t.Fatalf("paused Claude delivery registries = %v, %v; want src-test", registries, err)
+	}
+	apply("withdraw", 2)
+	registries, err = claudeDeliveryRegistries(ctx, deps, deps.Config)
+	if err != nil || containsRegistry(registries) {
+		t.Fatalf("withdrawn Claude delivery registries = %v, %v; want src-test excluded", registries, err)
+	}
+}
 
 func TestFinishClaudeDeliveryHonorsRetryAfter(t *testing.T) {
 	ctx := context.Background()

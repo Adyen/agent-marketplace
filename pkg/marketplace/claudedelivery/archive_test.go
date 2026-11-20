@@ -6,16 +6,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	canonical "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -119,18 +122,22 @@ func TestBuildArchiveKeepsResourceNameAndUsesDerivedManifestName(t *testing.T) {
 
 // spec: claude-enterprise-delivery/the-mirrored-resource-keeps-its-own-name
 func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
+	type archiveLayoutEntry struct {
+		Path    string
+		Mode    string
+		Content string
+	}
 	tests := []struct {
 		name      string
 		kind      string
-		path      string
 		transport string
 	}{
-		{name: "skill", kind: "skill", path: "skills/threat-model/SKILL.md"},
-		{name: "command", kind: "command", path: "commands/audit.md"},
-		{name: "subagent", kind: "subagent", path: "agents/reviewer.md"},
-		{name: "hook", kind: "hook", path: "hooks/hooks.json"},
-		{name: "mcpserver stdio", kind: "mcpserver", path: ".mcp.json"},
-		{name: "mcpserver remote", kind: "mcpserver", path: ".mcp.json", transport: "http"},
+		{name: "skill", kind: "skill"},
+		{name: "command", kind: "command"},
+		{name: "subagent", kind: "subagent"},
+		{name: "hook", kind: "hook"},
+		{name: "mcpserver stdio", kind: "mcpserver"},
+		{name: "mcpserver remote", kind: "mcpserver", transport: "http"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -139,41 +146,33 @@ func TestBuildArchiveUsesClaudeSourceLayoutForEveryResourceKind(t *testing.T) {
 				t.Fatalf("BuildArchive: %v", err)
 			}
 			files := readZipFiles(t, result.Archive)
-			if _, ok := files[test.path]; !ok {
-				t.Fatalf("archive is missing %q; entries=%v", test.path, sortedKeys(files))
-			}
-			if _, ok := files[".claude-plugin/plugin.json"]; !ok {
-				t.Fatal("generated plugin manifest is missing")
-			}
-			if _, ok := files["licenses/LICENSE"]; !ok {
-				t.Fatal("canonical license file was not included")
-			}
 			archive, err := zip.NewReader(bytes.NewReader(result.Archive), int64(len(result.Archive)))
 			if err != nil {
 				t.Fatalf("open built archive: %v", err)
 			}
+			entries := make([]archiveLayoutEntry, 0, len(archive.File))
+			for _, file := range archive.File {
+				entries = append(entries, archiveLayoutEntry{
+					Path: file.Name, Mode: fmt.Sprintf("%04o", file.Mode().Perm()),
+					Content: string(files[file.Name]),
+				})
+			}
+			encoded, err := json.MarshalIndent(entries, "", "  ")
+			if err != nil {
+				t.Fatalf("marshal archive entries: %v", err)
+			}
+			got := append(encoded, '\n')
+			goldenPath := filepath.Join("testdata", "archive-layouts",
+				strings.ReplaceAll(test.name, " ", "-")+".json")
+			want, err := os.ReadFile(goldenPath)
+			if err != nil {
+				t.Fatalf("read archive golden %s: %v", goldenPath, err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("archive entries differ from %s:\ngot:\n%s\nwant:\n%s",
+					goldenPath, got, want)
+			}
 			switch test.kind {
-			case "skill":
-				if _, ok := files["skills/threat-model/guide.md"]; !ok {
-					t.Fatal("skill asset was not included beside SKILL.md")
-				}
-			case "hook":
-				if _, ok := files["hooks/validator/helper.sh"]; !ok {
-					t.Fatal("hook support file was not placed beneath hooks/<name>")
-				}
-				executableSupport, normalSupport := false, false
-				for _, file := range archive.File {
-					switch file.Name {
-					case "hooks/validator/helper.sh":
-						executableSupport = file.Mode().Perm() == 0o755
-					case "hooks/validator/readme.txt":
-						normalSupport = file.Mode().Perm() == 0o644
-					}
-				}
-				if !executableSupport || !normalSupport {
-					t.Fatalf("hook support modes executable=%t normal=%t, want 0755 and 0644",
-						executableSupport, normalSupport)
-				}
 			case "mcpserver":
 				var config struct {
 					MCPServers map[string]map[string]any `json:"mcpServers"`
@@ -234,6 +233,34 @@ func TestMCPPluginFilesReserveTypeAndTransportExtras(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/a-raw-remote-mcp-selector-survives-mirroring
+func TestBuildArchivePreservesBundleMCPType(t *testing.T) {
+	servers, err := bundle.LoadMcpServers(fstest.MapFS{
+		".mcp.json": {Data: []byte(`{"mcpServers":{"knowledge":{"type":"http","url":"https://example.invalid/mcp"}}}`)},
+	}, ".mcp.json")
+	if err != nil {
+		t.Fatalf("LoadMcpServers: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("loaded MCP servers = %d, want 1", len(servers))
+	}
+	result, err := BuildArchive(buildInputForResource(t, "mcpserver", servers[0]))
+	if err != nil {
+		t.Fatalf("BuildArchive: %v", err)
+	}
+	files := readZipFiles(t, result.Archive)
+	var config struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(files[".mcp.json"], &config); err != nil {
+		t.Fatalf("decode MCP config: %v", err)
+	}
+	server := config.MCPServers["knowledge"]
+	if server["type"] != "http" || server["url"] != "https://example.invalid/mcp" {
+		t.Fatalf("MCP server = %#v, want type http and original URL", server)
+	}
+}
+
 // spec: claude-enterprise-delivery/repeated-builds-are-byte-identical
 func TestBuildArchiveIsDeterministicAcrossProcesses(t *testing.T) {
 	if os.Getenv("CLAUDE_DELIVERY_BUILD_HELPER") == "1" {
@@ -286,6 +313,7 @@ func TestValidateArchiveReturnsStableCodeForEachUploadRule(t *testing.T) {
 		{name: "malformed skill frontmatter", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"skills/x/SKILL.md", "---\nname: [\n---\nbody"}}, code: "skill.frontmatter-invalid"},
 		{name: "xml in skill metadata", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"skills/x/SKILL.md", "---\nname: <tag>\ndescription: good\n---\nbody"}}, code: "skill.frontmatter-xml"},
 		{name: "xml in skill description", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"skills/x/SKILL.md", "---\nname: x\ndescription: <tag>\n---\nbody"}}, code: "skill.frontmatter-xml"},
+		{name: "xml tag with an attribute", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"skills/x/SKILL.md", "---\nname: x\ndescription: <tag class=\"value\">\n---\nbody"}}, code: "skill.frontmatter-xml"},
 		{name: "duplicate skills", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"skills/one/SKILL.md", validSkill}, {"skills/two/SKILL.md", validSkill}}, code: "skill.name-duplicate"},
 		{name: "duplicate commands", files: []archiveEntry{{".claude-plugin/plugin.json", validManifest}, {"commands/one.md", "x"}, {"commands/one.md", "y"}}, code: "command.name-duplicate"},
 		{name: "top-level bin", files: append(defaultFiles(), archiveEntry{"bin/tool", "x"}), code: "archive.top-level-bin"},
@@ -315,6 +343,54 @@ func TestValidateArchiveReturnsStableCodeForEachUploadRule(t *testing.T) {
 			}
 			t.Fatalf("diagnostics = %+v, want stable code %q", diagnostics, test.code)
 		})
+	}
+}
+
+// spec: claude-enterprise-delivery/archive-limits-are-checked-before-entry-bodies
+func TestValidateArchivePreflightsAggregateLimits(t *testing.T) {
+	t.Run("file count before reading bodies", func(t *testing.T) {
+		files := manyFiles(5001)
+		files[0].data = "{"
+		files[1].data = "---\nname: [\n---\n"
+		assertOnlyArchiveDiagnostic(t, makeZip(t, files), "archive.too-many-files")
+	})
+
+	t.Run("uncompressed size before reading bodies", func(t *testing.T) {
+		raw := makeZip(t, []archiveEntry{
+			{".claude-plugin/plugin.json", "{"},
+			{"skills/example/SKILL.md", "---\nname: [\n---\n"},
+		})
+		assertOnlyArchiveDiagnostic(t, oversizedCentralDirectory(raw), "archive.uncompressed-too-large")
+	})
+}
+
+// spec: claude-enterprise-delivery/strict-zip-mode-keeps-the-path-diagnostic
+func TestValidateArchiveMapsInsecurePathsToPathInvalid(t *testing.T) {
+	t.Setenv("GODEBUG", "zipinsecurepath=0")
+	raw := makeZip(t, append(defaultFiles(), archiveEntry{"assets\\invalid.txt", "x"}))
+	_, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if !errors.Is(err, zip.ErrInsecurePath) {
+		t.Fatalf("zip.NewReader error = %v, want ErrInsecurePath for strict backslash path", err)
+	}
+	assertOnlyArchiveDiagnostic(t, raw, "archive.path-invalid")
+}
+
+// spec: claude-enterprise-delivery/a-comparison-is-not-an-xml-tag
+func TestValidateArchiveAllowsComparisonOperatorsInDescription(t *testing.T) {
+	raw := makeZip(t, []archiveEntry{
+		{".claude-plugin/plugin.json", validManifest},
+		{"skills/example/SKILL.md", "---\nname: example\ndescription: Compare x < y and z > w\n---\nbody"},
+	})
+	if diagnostics := ValidateArchive(raw); len(diagnostics) != 0 {
+		t.Fatalf("comparison description diagnostics = %+v, want none", diagnostics)
+	}
+}
+
+func assertOnlyArchiveDiagnostic(t *testing.T, raw []byte, want string) {
+	t.Helper()
+	diagnostics := ValidateArchive(raw)
+	if len(diagnostics) != 1 || diagnostics[0].Code != want {
+		t.Fatalf("archive diagnostics = %+v, want only %q", diagnostics, want)
 	}
 }
 
@@ -486,6 +562,11 @@ func buildInputForKind(t *testing.T, kind, mcpTransport string) BuildInput {
 	default:
 		t.Fatalf("unsupported fixture kind %q", kind)
 	}
+	return buildInputForResource(t, kind, resource)
+}
+
+func buildInputForResource(t *testing.T, kind string, resource ir.Resource) BuildInput {
+	t.Helper()
 	artifact, err := canonical.FromIR(resource)
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)
@@ -523,13 +604,4 @@ func buildInputForKind(t *testing.T, kind, mcpTransport string) BuildInput {
 		PublisherURL:     "https://publisher.example",
 		ContentDigest:    artifact.Manifest.ContentDigest,
 	}
-}
-
-func sortedKeys(values map[string][]byte) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

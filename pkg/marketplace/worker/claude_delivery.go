@@ -262,6 +262,9 @@ func claudeDeliveryRegistries(ctx context.Context, deps Deps, cfg config.Config)
 	}
 	ids := make([]store.RegistryID, 0, len(view.Snapshot.Registries))
 	for _, registry := range view.Snapshot.Registries {
+		if registry.Withdrawn || registry.Retired {
+			continue
+		}
 		ids = append(ids, registry.ID)
 	}
 	return ids, nil
