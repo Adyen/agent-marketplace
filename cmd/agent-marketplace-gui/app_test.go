@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -450,6 +451,82 @@ func TestQuitInvokesInstalledCallbackOnce(t *testing.T) {
 	app.Quit()
 	if calls != 1 {
 		t.Fatalf("quit callback invoked %d times, want 1", calls)
+	}
+}
+
+type blockingResponseWriter struct {
+	header  http.Header
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingResponseWriter) Header() http.Header { return w.header }
+func (w *blockingResponseWriter) WriteHeader(int)     { w.block() }
+func (w *blockingResponseWriter) Write(p []byte) (int, error) {
+	w.block()
+	return len(p), nil
+}
+
+func (w *blockingResponseWriter) block() {
+	w.once.Do(func() { close(w.entered) })
+	<-w.release
+}
+
+// spec: gui-shell/quit-with-nothing-pending-exits-immediately
+func TestQuitDrainsInFlightRequestsBeforeQuitting(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	writer := &blockingResponseWriter{header: http.Header{}, entered: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(writer.release) })
+	t.Cleanup(release)
+	quitCalled := make(chan struct{})
+	app.quit = func() { close(quitCalled) }
+
+	req := httptest.NewRequest(http.MethodPost, "/api/snapshot", nil)
+	req.Header.Set("X-Agent-Marketplace-Token", app.Bootstrap().Credential)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		app.handler().ServeHTTP(writer, req)
+	}()
+	select {
+	case <-writer.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("snapshot handler never began writing its response")
+	}
+
+	go app.Quit()
+	select {
+	case <-quitCalled:
+		t.Fatal("quit ran while a request was still writing its response")
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-quitCalled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("quit did not run after the in-flight request drained")
+	}
+	<-served
+}
+
+func TestCloseWithinBoundsBlockedShutdown(t *testing.T) {
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	start := time.Now()
+	if closeWithin(func() { <-blocked }, 50*time.Millisecond) {
+		t.Fatal("blocked shutdown reported as finished")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("blocked shutdown took %s to time out", elapsed)
+	}
+	if !closeWithin(func() {}, time.Second) {
+		t.Fatal("immediate shutdown reported as timed out")
 	}
 }
 

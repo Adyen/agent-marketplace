@@ -158,6 +158,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer app.close()
+	defer closeWithin(app.close, shutdownTimeout)
 	return wails.Run(app.appOptions(lifecycleHooks{}))
 }

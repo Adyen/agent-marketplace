@@ -234,6 +234,24 @@ func (a *App) close() {
 	})
 }
 
+const shutdownTimeout = 5 * time.Second
+
+// closeWithin runs shutdown on another goroutine and waits at most timeout for it.
+func closeWithin(shutdown func(), timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		shutdown()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		slog.Warn("GUI shutdown did not finish in time; exiting")
+		return false
+	}
+}
+
 func shutdownTelemetry(runtime *telemetry.Telemetry) {
 	if runtime == nil {
 		return
@@ -253,6 +271,7 @@ func (a *App) secondLaunch(window Window, args []string) {
 
 func (a *App) Quit() {
 	a.approveClose()
+	a.close()
 	if a.quit != nil {
 		a.quit()
 	}
