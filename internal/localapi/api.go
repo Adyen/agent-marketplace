@@ -51,8 +51,9 @@ type operationRef struct {
 }
 
 type sourceDTO struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID            string `json:"id"`
+	Label         string `json:"label"`
+	AssociationID string `json:"associationId,omitempty"`
 }
 
 type rowDTO struct {
@@ -93,22 +94,24 @@ type statusGroupDTO struct {
 }
 
 type snapshotDTO struct {
-	Stage              string               `json:"stage"`
-	Drift              string               `json:"drift"`
-	Rows               []rowDTO             `json:"rows"`
-	Groups             []statusGroupDTO     `json:"groups"`
-	Diagnostics        []diagnosticDTO      `json:"diagnostics"`
-	Harnesses          []string             `json:"harnesses"`
-	PendingChanges     int                  `json:"pendingChanges"`
-	AvailableUpdates   int                  `json:"availableUpdates"`
-	DiscoveryEnabled   bool                 `json:"discoveryEnabled"`
-	DiscoveryHealth    []discoveryHealthDTO `json:"discoveryHealth"`
-	DiscoveryQuery     string               `json:"discoveryQuery"`
-	DiscoveryRequestID uint64               `json:"discoveryRequestId"`
-	DiscoverySequence  uint64               `json:"discoverySequence"`
-	DiscoveryLoading   bool                 `json:"discoveryLoading"`
-	Operation          *operationRef        `json:"operation"`
-	SettledOperation   *operationRef        `json:"settledOperation,omitempty"`
+	Stage                  string               `json:"stage"`
+	Drift                  string               `json:"drift"`
+	Rows                   []rowDTO             `json:"rows"`
+	Groups                 []statusGroupDTO     `json:"groups"`
+	Diagnostics            []diagnosticDTO      `json:"diagnostics"`
+	Harnesses              []string             `json:"harnesses"`
+	PendingChanges         int                  `json:"pendingChanges"`
+	AvailableUpdates       int                  `json:"availableUpdates"`
+	DiscoveryEnabled       bool                 `json:"discoveryEnabled"`
+	DiscoveryHealth        []discoveryHealthDTO `json:"discoveryHealth"`
+	DiscoveryBrowseHealth  []discoveryHealthDTO `json:"discoveryBrowseHealth"`
+	DiscoveryQuery         string               `json:"discoveryQuery"`
+	DiscoveryRequestID     uint64               `json:"discoveryRequestId"`
+	DiscoverySequence      uint64               `json:"discoverySequence"`
+	DiscoveryLoading       bool                 `json:"discoveryLoading"`
+	DiscoveryBrowseLoading bool                 `json:"discoveryBrowseLoading"`
+	Operation              *operationRef        `json:"operation"`
+	SettledOperation       *operationRef        `json:"settledOperation,omitempty"`
 }
 
 func statusGroupMetadata() []statusGroupDTO {
@@ -529,16 +532,16 @@ func (a *API) emitLocked(eventType string, generation session.RequestGeneration,
 }
 
 func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot session.Snapshot) *snapshotDTO {
-	return a.deliverSnapshotWithUpdateCheck(generation, snapshot, false)
+	return a.deliverSnapshotWithUpdateCheck(generation, snapshot, false, false)
 }
 
-func (a *API) deliverSnapshotWithUpdateCheck(generation session.RequestGeneration, snapshot session.Snapshot, checkUpdates bool) *snapshotDTO {
+func (a *API) deliverSnapshotWithUpdateCheck(generation session.RequestGeneration, snapshot session.Snapshot, checkUpdates, refreshBrowse bool) *snapshotDTO {
 	a.mu.Lock()
 	if a.closed || generation == 0 || a.requests.Active(session.RequestSnapshot) != generation || snapshot.Generation != generation {
 		a.mu.Unlock()
 		return nil
 	}
-	launch := a.acceptSnapshotStateLocked(snapshot)
+	launch := a.acceptSnapshotStateLocked(snapshot, refreshBrowse)
 	op := activeOperation(a.gate)
 	a.diag.ReplaceSnapshot(snapshot.Diagnostics)
 	dto := a.snapshotPresentationLocked(snapshot, op)
@@ -588,14 +591,14 @@ func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	var delivered *snapshotDTO
 	if staged {
 		for snapshot := range a.readSnapshotStages(ctx, session.CatalogLoadRefresh, generation) {
-			if dto := a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates); dto != nil {
+			if dto := a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates, false); dto != nil {
 				delivered = dto
 			}
 		}
 	} else {
 		snapshot := a.readSnapshot(ctx, session.CatalogLoadRefresh)
 		snapshot.Generation = generation
-		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates)
+		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates, true)
 	}
 	if delivered == nil {
 		a.mu.Lock()
@@ -630,23 +633,26 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		drift = "failed"
 	}
 	health := append([]discoveryHealthDTO{}, a.discovery.health...)
+	browseHealth := append([]discoveryHealthDTO{}, a.discovery.browse.health...)
 	dto := snapshotDTO{
-		Stage:              stage,
-		Drift:              drift,
-		Rows:               []rowDTO{},
-		Groups:             statusGroupMetadata(),
-		Diagnostics:        []diagnosticDTO{},
-		Harnesses:          []string{},
-		PendingChanges:     snapshot.DriftReport.PendingCount(),
-		AvailableUpdates:   a.availableUpdates,
-		DiscoveryEnabled:   a.discovery.enabled,
-		DiscoveryHealth:    health,
-		DiscoveryQuery:     a.discovery.query,
-		DiscoveryRequestID: a.discovery.requestID,
-		DiscoverySequence:  a.discovery.sequence,
-		DiscoveryLoading:   a.discovery.loading,
-		Operation:          op,
-		SettledOperation:   a.lastSettledOperation,
+		Stage:                  stage,
+		Drift:                  drift,
+		Rows:                   []rowDTO{},
+		Groups:                 statusGroupMetadata(),
+		Diagnostics:            []diagnosticDTO{},
+		Harnesses:              []string{},
+		PendingChanges:         snapshot.DriftReport.PendingCount(),
+		AvailableUpdates:       a.availableUpdates,
+		DiscoveryEnabled:       a.discovery.enabled,
+		DiscoveryHealth:        health,
+		DiscoveryBrowseHealth:  browseHealth,
+		DiscoveryQuery:         a.discovery.query,
+		DiscoveryRequestID:     a.discovery.requestID,
+		DiscoverySequence:      a.discovery.sequence,
+		DiscoveryLoading:       a.discovery.loading,
+		DiscoveryBrowseLoading: a.discovery.browse.loading,
+		Operation:              op,
+		SettledOperation:       a.lastSettledOperation,
 	}
 	var rows []session.Row
 	if a.snapshotRowsKnown {
@@ -932,7 +938,7 @@ func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, on
 		go func() {
 			defer a.wg.Done()
 			for snapshot := range a.readSnapshotStages(a.ctx, session.CatalogLoadRefresh, startInitial) {
-				a.deliverSnapshotWithUpdateCheck(startInitial, snapshot, true)
+				a.deliverSnapshotWithUpdateCheck(startInitial, snapshot, true, false)
 			}
 		}()
 	}
@@ -1164,7 +1170,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 		a.diag.RecordOperationSuccess(kind)
 	}
 	a.lastSettledOperation = op
-	launch := a.acceptSnapshotStateLocked(final)
+	launch := a.acceptSnapshotStateLocked(final, false)
 	dto := a.snapshotPresentationLocked(final, nil)
 	a.gate.Finish(operation)
 	a.emitLocked("snapshot", generation, nil, &dto)

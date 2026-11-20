@@ -394,6 +394,21 @@ textarea:focus-visible,
   margin-left: 12px;
 }
 
+.gui-sidebar__source-actions {
+  align-items: center;
+  display: flex;
+  gap: 2px;
+}
+
+.gui-sidebar__source-actions .gui-source-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gui-source-row__manage {
+  flex: 0 0 auto;
+}
+
 .gui-nav-row .gui-dot {
   margin: 0;
 }
@@ -703,6 +718,25 @@ textarea:focus-visible,
 .workspace__search-status {
   color: var(--gui-ink-2);
   font-size: 12px;
+}
+
+.workspace__source-filter {
+  align-items: center;
+  border-bottom: 1px solid var(--gui-line);
+  display: flex;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.workspace__source-filter-label {
+  color: var(--gui-ink-2);
+  flex: 1 1 auto;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace__notice,

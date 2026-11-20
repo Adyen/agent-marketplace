@@ -35,7 +35,8 @@ const emit = defineEmits<{
   showAll: []
   selectGroup: [id: string]
   openSources: []
-  revealSource: [id: string]
+  selectSource: [id: string]
+  manageSource: [id: string]
   openSettings: []
   showDiagnostics: []
   quit: []
@@ -182,26 +183,39 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
             <span class="gui-nav-row__count">{{ entry.entry.sources.length }}</span>
             <span v-if="entry.entry.layer === 'organization'" class="gui-tag">ORG</span>
           </button>
-          <UTooltip v-else :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
+          <div v-else class="gui-sidebar__source-actions">
+            <UTooltip :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
+              <button
+                type="button"
+                class="gui-nav-row gui-nav-row--compact gui-source-row"
+                :data-source-id="entry.source.id"
+                :aria-label="
+                  entry.groupKey == null
+                    ? `Browse source ${entry.source.location}`
+                    : `Browse source ${entry.source.location} ${entry.source.path || '/'}`
+                "
+                @click="emit('selectSource', entry.source.id)"
+              >
+                <GuiIcon :name="sourceIcons[entry.source.kind]" />
+                <span class="gui-source-row__location">
+                  {{ entry.groupKey == null ? sourceName(entry.source) : entry.source.path || '/' }}
+                  <template v-if="entry.groupKey != null && entry.source.ref"> · {{ entry.source.ref }}</template>
+                </span>
+                <span v-if="entry.layer === 'organization'" class="gui-tag">ORG</span>
+              </button>
+            </UTooltip>
             <button
               type="button"
-              class="gui-nav-row gui-nav-row--compact gui-source-row"
+              class="gui-icon-button gui-source-row__manage"
               :data-source-id="entry.source.id"
               :aria-label="
                 entry.groupKey == null
-                  ? `Open source ${entry.source.location}`
-                  : `Open source ${entry.source.location} ${entry.source.path || '/'}`
+                  ? `Manage source ${entry.source.location}`
+                  : `Manage source ${entry.source.location} ${entry.source.path || '/'}`
               "
-              @click="emit('revealSource', entry.source.id)"
-            >
-              <GuiIcon :name="sourceIcons[entry.source.kind]" />
-              <span class="gui-source-row__location">
-                {{ entry.groupKey == null ? sourceName(entry.source) : entry.source.path || '/' }}
-                <template v-if="entry.groupKey != null && entry.source.ref"> · {{ entry.source.ref }}</template>
-              </span>
-              <span v-if="entry.layer === 'organization'" class="gui-tag">ORG</span>
-            </button>
-          </UTooltip>
+              @click="emit('manageSource', entry.source.id)"
+            ><GuiIcon name="gear" /></button>
+          </div>
         </li>
       </ul>
     </section>

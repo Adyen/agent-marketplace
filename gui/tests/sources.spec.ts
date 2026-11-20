@@ -884,25 +884,37 @@ test('built GUI keeps a failed Git source mutation in the Add source section', a
 })
 
 // spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings
+// spec: gui-shell/revealing-a-source-unfolds-its-folded-group
 // spec: gui-shell/sidebar-add-control-focuses-the-add-source-form
 test('built GUI reveals a sidebar source and focuses the add-source location field', async ({ page }) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
-  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
   const { bootstrap } = harness
   try {
     await launchBuiltUserApp(page, bootstrap)
     await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
 
-    const sidebarSource = page.getByRole('button', { name: /^Open source / }).first()
-    const location = (await sidebarSource.getAttribute('aria-label'))!.slice('Open source '.length)
-    await sidebarSource.click()
-
+    const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+    await page.getByRole('button', { name: 'Sources', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
+    const settingsGroup = dialog.getByRole('button', { name: `Source group ${sharedDirectory}` })
+    await expect(settingsGroup).toHaveAttribute('aria-expanded', 'true')
+    await settingsGroup.click()
+    await expect(settingsGroup).toHaveAttribute('aria-expanded', 'false')
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+
+    const sidebarBrowse = page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()
+    const sourceID = await sidebarBrowse.getAttribute('data-source-id')
+    expect(sourceID).not.toBeNull()
+    const manageSource = page.locator(`button[data-source-id="${sourceID}"][aria-label^="Manage source"]`)
+    await manageSource.click()
+    await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
-    const card = dialog.locator('.source-card').filter({ hasText: location })
+    await expect(dialog.getByRole('button', { name: `Source group ${sharedDirectory}` })).toHaveAttribute('aria-expanded', 'true')
+    const card = dialog.locator(`.source-card[data-source-id="${sourceID}"]`)
     await expect(card).toBeInViewport()
     await expect(card).toBeFocused()
     await expect(card).toHaveAttribute('data-highlighted', 'true')
@@ -912,6 +924,79 @@ test('built GUI reveals a sidebar source and focuses the add-source location fie
     await page.getByRole('button', { name: 'Sources', exact: true }).click()
     await expect(dialog).toBeVisible()
     await expect(dialog.getByLabel('Source location')).toBeFocused()
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/source-selection-filters-resources-and-clears-in-place
+// spec: gui-shell/clearing-the-source-retains-the-current-search
+// spec: gui-shell/empty-or-unavailable-source-cannot-reveal-unrelated-rows
+test('built GUI filters configured sources in Resources and clears without changing the query', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the source browse journey')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  const configPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  try {
+    const configBefore = await readFile(configPath)
+    await launchBuiltUserApp(page, bootstrap)
+    const solo = page.getByRole('option').filter({ hasText: 'solo' })
+    const fragment = page.getByRole('option').filter({ hasText: 'fragment' })
+    await expect(solo).toBeVisible({ timeout: 60_000 })
+    await expect(fragment).toBeVisible()
+    const detail = page.getByRole('complementary', { name: 'Detail' })
+    await fragment.click()
+    await expect(detail.getByRole('heading', { name: 'fragment', exact: true })).toBeVisible()
+
+    const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+    const browseSource = page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await browseSource.focus()
+    await page.keyboard.press('Enter')
+
+    const clearSource = page.getByRole('button', { name: /^Clear source filter / })
+    await expect(clearSource).toBeVisible()
+    await expect(clearSource).toHaveAccessibleName(/Clear source filter/)
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
+    await expect(solo).toBeVisible()
+    await expect(fragment).toHaveCount(0)
+    await expect(detail.getByRole('heading', { name: 'solo', exact: true })).toBeVisible()
+    await expect(detail.getByRole('heading', { name: 'fragment', exact: true })).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('source-filter-active.png'), animations: 'disabled' })
+
+    await clearSource.click()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toBeVisible()
+
+    await browseSource.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await search.fill('fragment')
+    await search.press('Enter')
+    await expect(page.getByText('No resources match “fragment”.')).toBeVisible()
+    await expect(clearSource).toBeVisible()
+    await clearSource.click()
+    await expect(fragment).toBeVisible()
+    await expect(solo).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toBeVisible()
+
+    const emptyDirectory = join(bootstrap.home!, 'browse-empty')
+    await page.getByRole('button', { name: `Browse source ${emptyDirectory}` }).focus()
+    await page.keyboard.press('Enter')
+    await expect(clearSource).toBeVisible()
+    await expect(solo).toHaveCount(0)
+    await expect(fragment).toHaveCount(0)
+    await expect(detail.getByRole('heading')).toHaveCount(0)
+    await expect(page.getByText(/No resources from/)).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('source-filter-empty.png'), animations: 'disabled' })
+
+    expect((await readFile(configPath)).equals(configBefore)).toBe(true)
   } finally {
     await harness.stop()
   }

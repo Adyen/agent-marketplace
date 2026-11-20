@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/giturl"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -44,7 +45,19 @@ func (a *API) sourceID(scope string, desc config.SourceDescription) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func (a *API) projectSources(scope string, descs []config.SourceDescription) []sourceDescriptionDTO {
+func (a *API) marketplaceSourceAssociation(endpoint config.MarketplaceEntry) string {
+	key, ok := discoveryEndpointKey(endpoint)
+	if !ok || strings.TrimSpace(endpoint.InstanceID) != endpoint.InstanceID ||
+		redact.URL(endpoint.URL) != endpoint.URL ||
+		len(config.ValidateMarketplaceEntries([]config.MarketplaceEntry{endpoint})) != 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(a.token))
+	_, _ = mac.Write([]byte("marketplace-source\x00" + key))
+	return "marketplace:" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *API) projectSources(scope string, descs []config.SourceDescription, accepted *config.Config) []sourceDescriptionDTO {
 	out := make([]sourceDescriptionDTO, 0, len(descs))
 	for _, desc := range descs {
 		dto := sourceDescriptionDTO{
@@ -63,10 +76,44 @@ func (a *API) projectSources(scope string, descs []config.SourceDescription) []s
 				entry := sourceEntry(desc)
 				dto.RowSourceID = session.RegistryIdentityKey(entry.URL, entry.Ref, entry.Path)
 			}
+		case config.V4SourceMarketplace:
+			instanceID := desc.InstanceID
+			if instanceID == "" {
+				instanceID = marketplaceInstanceIDForSource(accepted, desc.Location)
+			}
+			dto.RowSourceID = a.marketplaceSourceAssociation(config.MarketplaceEntry{
+				URL: desc.Location, InstanceID: instanceID,
+			})
 		}
 		out = append(out, dto)
 	}
 	return out
+}
+
+func marketplaceInstanceIDForSource(cfg *config.Config, location string) string {
+	if cfg == nil {
+		return ""
+	}
+	url, err := marketplace.NormalizeMarketplaceURL(location)
+	if err != nil {
+		return ""
+	}
+	instanceID := ""
+	for _, endpoint := range cfg.Marketplaces {
+		key, ok := discoveryEndpointKey(endpoint)
+		if !ok {
+			continue
+		}
+		endpointURL, _, _ := strings.Cut(key, "\x00")
+		if endpointURL != url {
+			continue
+		}
+		if instanceID != "" && instanceID != endpoint.InstanceID {
+			return ""
+		}
+		instanceID = endpoint.InstanceID
+	}
+	return instanceID
 }
 
 type configurationDTO struct {
@@ -102,7 +149,7 @@ func (a *API) configurationIntent(ctx context.Context, overlays map[string][]byt
 	})
 }
 
-func (a *API) configurationMetadata(ctx context.Context) configurationDTO {
+func (a *API) configurationMetadata(ctx context.Context, accepted *config.Config) configurationDTO {
 	dto := configurationDTO{
 		UserTargets:          []string{},
 		OrganizationTargets:  []string{},
@@ -124,8 +171,8 @@ func (a *API) configurationMetadata(ctx context.Context) configurationDTO {
 	dto.UserTargets = append(dto.UserTargets, user.Settings().Harnesses...)
 	org := intent.Layers[config.Organization]
 	dto.OrganizationTargets = append(dto.OrganizationTargets, org.Settings().Harnesses...)
-	dto.UserSources = a.projectSources("user", user.DescribeSources())
-	dto.OrganizationSources = a.projectSources("organization", org.DescribeSources())
+	dto.UserSources = a.projectSources("user", user.DescribeSources(), accepted)
+	dto.OrganizationSources = a.projectSources("organization", org.DescribeSources(), accepted)
 
 	if len(user.Reads) > 1 {
 		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "included files")
@@ -196,7 +243,10 @@ func (a *API) handleConfiguration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeInvalidRequest)
 		return
 	}
-	dto := a.configurationMetadata(r.Context())
+	a.mu.Lock()
+	accepted := a.acceptedMergedCfg
+	a.mu.Unlock()
+	dto := a.configurationMetadata(r.Context(), accepted)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(dto)
 }
@@ -702,7 +752,8 @@ func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets 
 		return
 	}
 	ready := a.current != nil && a.current.Stage != "provisional" && a.current.Stage != "config"
-	metadata := a.configurationMetadata(r.Context())
+	accepted := a.acceptedMergedCfg
+	metadata := a.configurationMetadata(r.Context(), accepted)
 	a.mu.Unlock()
 	if !ready || !metadata.Editable {
 		a.gate.Finish(operation)
@@ -750,9 +801,10 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
+	accepted := a.acceptedMergedCfg
 	a.mu.Unlock()
 
-	metadata := a.configurationMetadata(r.Context())
+	metadata := a.configurationMetadata(r.Context(), accepted)
 	if !metadata.FirstRun || !metadata.CanInitialize {
 		reject(http.StatusBadRequest, codeNotReady)
 		return

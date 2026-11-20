@@ -450,6 +450,10 @@ export interface components {
         DiscoveryEvent: components["schemas"]["EventBase"] & {
             operation?: null;
             payload: {
+                /** @description Query-independent health for the empty-query browse inventory, including while query results are active. */
+                browseHealth?: components["schemas"]["DiscoveryHealth"][];
+                /** @description Whether the query-independent empty-query browse inventory is still loading. */
+                browseLoading?: boolean;
                 /**
                  * Format: uint64
                  * @description API-lifetime discovery sequence, distinct from the stream sequence and core snapshot generation.
@@ -746,6 +750,10 @@ export interface components {
             /** @description Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check. */
             availableUpdates: number;
             diagnostics: components["schemas"]["Diagnostic"][];
+            /** @description Query-independent health for the empty-query browse inventory, including while search results are active. */
+            discoveryBrowseHealth?: components["schemas"]["DiscoveryHealth"][];
+            /** @description Whether the query-independent empty-query browse inventory is still loading. */
+            discoveryBrowseLoading?: boolean;
             /** @description Whether a validated accepted user-scope configuration enables Marketplace discovery. */
             discoveryEnabled: boolean;
             discoveryHealth: components["schemas"]["DiscoveryHealth"][];
@@ -827,6 +835,8 @@ export interface components {
             /** @description Sorted, deduplicated lowercased name and metadata words used for local prefix matching. */
             searchWords: string[];
             source: {
+                /** @description Opaque verified Marketplace endpoint identity for source filtering; omitted when no safe association is available. */
+                associationId?: string;
                 /** @description Raw source identity (normalized URL, ref, and registry subpath) used to group rows by source; "local" for rows without a registry URL. */
                 id: string;
                 /** @description Sanitized single-line source label, the registry display name with its subpath, or "(local)". */
@@ -852,7 +862,7 @@ export interface components {
             path: string;
             /** @description Declared Git ref, or empty. */
             ref: string;
-            /** @description Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries. */
+            /** @description Identity that attributable snapshot rows from this source carry. Marketplace values are opaque endpoint associations. */
             rowSourceId: string;
             /** @description Declared source layout, or empty. */
             sourceHarness: string;

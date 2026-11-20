@@ -846,3 +846,20 @@ Where a rule here conflicts with an earlier section, this section wins.
   matches and shows only matching children. No match shows
   "No sources match “{query}”." Clearing the field restores the full list,
   and the query resets each time Settings opens.
+
+### Browse by source
+
+- *Observed*: activating a sidebar source opened Settings and left Resources
+  mixed across sources.
+- *Rule*: activating a source selects it in Resources. A named, clearable
+  filter stays visible while its descriptor is unavailable, and clearing it
+  changes only the source filter. Search, grouping, counts, and configuration
+  stay unchanged. Source labels are display text, not identity. A Marketplace
+  row matches only its opaque verified endpoint association; a missing
+  descriptor or association shows no rows. Manage source remains a separate
+  action that opens and focuses the matching Settings entry.
+- Eligible Marketplace browse loads cached rows first and fetches later pages
+  in the background, independent of search. Search changes the visible rows
+  but not browse. Diagnostics keeps browse health while a query is active.
+  Clearing search restores the latest browse rows. A later-page failure keeps
+  received rows and marks the catalog incomplete.

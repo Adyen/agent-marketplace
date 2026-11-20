@@ -37,7 +37,9 @@ type discoveryEventPayload struct {
 	DiscoverySequence uint64               `json:"discoverySequence"`
 	Rows              []rowDTO             `json:"rows"`
 	Health            []discoveryHealthDTO `json:"health"`
+	BrowseHealth      []discoveryHealthDTO `json:"browseHealth"`
 	Loading           bool                 `json:"loading"`
+	BrowseLoading     bool                 `json:"browseLoading"`
 }
 
 type discoveryState struct {
@@ -54,6 +56,19 @@ type discoveryState struct {
 	generation         session.RequestGeneration
 	snapshotGeneration session.RequestGeneration
 	configKey          string
+	nextGeneration     uint64
+	browse             discoverySlot
+}
+
+type discoverySlot struct {
+	outcomes           []marketplace.DiscoveryOutcome
+	rows               []session.Row
+	health             []discoveryHealthDTO
+	cancel             context.CancelFunc
+	generation         uint64
+	snapshotGeneration session.RequestGeneration
+	configKey          string
+	loading            bool
 }
 
 type discoveryLaunch struct {
@@ -64,8 +79,11 @@ type discoveryLaunch struct {
 	configKey  string
 	query      string
 	requestID  uint64
-	generation session.RequestGeneration
+	generation uint64
+	slot       string
 	debounce   bool
+	refresh    bool
+	next       *discoveryLaunch
 }
 
 type discoveryRequest struct {
@@ -73,7 +91,7 @@ type discoveryRequest struct {
 	requestID uint64
 }
 
-func (a *API) acceptSnapshotStateLocked(snapshot session.Snapshot) *discoveryLaunch {
+func (a *API) acceptSnapshotStateLocked(snapshot session.Snapshot, refreshBrowse bool) *discoveryLaunch {
 	a.snapshotRowsKnown = true
 	switch snapshot.Stage {
 	case session.SnapshotStageConfig:
@@ -82,13 +100,13 @@ func (a *API) acceptSnapshotStateLocked(snapshot session.Snapshot) *discoveryLau
 			return nil
 		}
 		if snapshot.MergedCfg != nil {
-			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation)
+			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation, refreshBrowse)
 		}
 	case session.SnapshotStageInventory:
 		a.authoritativeRows = cloneSessionRowsNonNil(snapshot.Rows)
 		a.provisionalRows = nil
 		if snapshot.MergedCfg != nil {
-			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation)
+			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation, refreshBrowse)
 		}
 		a.acceptedMergedCfg = nil
 		a.acceptedConfigKey = ""
@@ -97,7 +115,7 @@ func (a *API) acceptSnapshotStateLocked(snapshot session.Snapshot) *discoveryLau
 		a.authoritativeRows = cloneSessionRowsNonNil(snapshot.Rows)
 		a.provisionalRows = nil
 		if snapshot.MergedCfg != nil {
-			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation)
+			return a.reconcileDiscoveryConfigLocked(snapshot.MergedCfg, snapshot.Generation, refreshBrowse)
 		}
 		if a.acceptedMergedCfg == nil {
 			a.disableDiscoveryLocked(snapshot.Generation)
@@ -187,15 +205,33 @@ func (a *API) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 		return
 	}
-	a.cancelDiscoveryLocked()
+	previousQuery := a.discovery.query
+	a.cancelSearchDiscoveryLocked()
 	a.discovery.query = request.query
 	a.discovery.requestID = request.requestID
-	launch := a.beginDiscoveryLocked(ctx, cancel, session.EffectiveMarketplaceConfig(a.acceptedMergedCfg), a.acceptedConfigKey, request.query, request.requestID, true)
+	var launch *discoveryLaunch
+	if request.query != "" {
+		if request.query != previousQuery {
+			a.discovery.health = []discoveryHealthDTO{}
+			if previousQuery != "" {
+				a.discovery.outcomes = nil
+				a.discovery.rows = nil
+			}
+		}
+		launch = a.beginDiscoveryLocked(ctx, cancel, session.EffectiveMarketplaceConfig(a.acceptedMergedCfg), a.acceptedConfigKey, request.query, request.requestID, true)
+	} else {
+		a.discovery.outcomes = nil
+		a.discovery.rows = nil
+		a.syncVisibleBrowseLocked()
+	}
 	a.publishDiscoveryLocked()
+	endpointCount := len(a.acceptedMergedCfg.Marketplaces)
 	a.mu.Unlock()
 
-	logDiscoveryRequest(request.query, request.requestID, len(launch.config.Marketplaces))
-	a.runDiscovery(launch)
+	logDiscoveryRequest(request.query, request.requestID, endpointCount)
+	if launch != nil {
+		a.runDiscovery(launch)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -245,7 +281,7 @@ func discoveryEndpointKey(endpoint config.MarketplaceEntry) (string, bool) {
 	return url + "\x00" + endpoint.InstanceID, true
 }
 
-func (a *API) reconcileDiscoveryConfigLocked(cfg *config.Config, snapshotGeneration session.RequestGeneration) *discoveryLaunch {
+func (a *API) reconcileDiscoveryConfigLocked(cfg *config.Config, snapshotGeneration session.RequestGeneration, refreshBrowse bool) *discoveryLaunch {
 	effective, configKey, valid := discoveryConfiguration(cfg, a.userOnly)
 	if !valid {
 		a.acceptedMergedCfg = nil
@@ -259,14 +295,29 @@ func (a *API) reconcileDiscoveryConfigLocked(cfg *config.Config, snapshotGenerat
 	a.acceptedConfigKey = configKey
 	a.discovery.enabled = true
 	a.discovery.snapshotGeneration = snapshotGeneration
-	a.retainConfiguredDiscoveryLocked(cfg)
-	if a.closed || (a.discovery.started && previousKey == configKey) {
+	changed := !a.discovery.started || previousKey != configKey
+	if a.closed {
 		a.discovery.configKey = configKey
 		return nil
 	}
-	a.cancelDiscoveryLocked()
+	if !changed && !refreshBrowse {
+		a.discovery.browse.snapshotGeneration = snapshotGeneration
+		return nil
+	}
+	if changed {
+		a.cancelDiscoveryLocked()
+		a.retainConfiguredDiscoveryLocked(cfg)
+	} else {
+		a.cancelBrowseDiscoveryLocked()
+	}
 	a.discovery.configKey = configKey
-	return a.startDiscoveryWorkerLocked(effective, configKey, snapshotGeneration, a.discovery.query, a.discovery.requestID)
+	launch := a.startDiscoveryWorkerLocked(effective, configKey, snapshotGeneration, refreshBrowse)
+	if changed && a.discovery.query != "" && launch != nil {
+		launch.next = a.startSearchDiscoveryWorkerLocked(
+			effective, configKey, snapshotGeneration, a.discovery.query, a.discovery.requestID,
+		)
+	}
+	return launch
 }
 
 func (a *API) disableDiscoveryLocked(snapshotGeneration session.RequestGeneration) {
@@ -278,25 +329,60 @@ func (a *API) disableDiscoveryLocked(snapshotGeneration session.RequestGeneratio
 	a.discovery.loading = false
 	a.discovery.outcomes = nil
 	a.discovery.rows = nil
+	a.discovery.browse = discoverySlot{health: []discoveryHealthDTO{}}
 	a.discovery.health = []discoveryHealthDTO{}
 }
 
 func (a *API) cancelDiscoveryLocked() {
+	a.cancelSearchDiscoveryLocked()
+	a.cancelBrowseDiscoveryLocked()
+}
+
+func (a *API) cancelSearchDiscoveryLocked() {
 	if a.discovery.cancel != nil {
 		a.discovery.cancel()
 		a.discovery.cancel = nil
 	}
 	a.requests.Cancel(session.RequestDiscovery)
+	a.discovery.generation = 0
 }
 
-func (a *API) startDiscoveryWorkerLocked(effective config.EffectiveConfig, configKey string, snapshotGeneration session.RequestGeneration, query string, requestID uint64) *discoveryLaunch {
+func (a *API) cancelBrowseDiscoveryLocked() {
+	if a.discovery.browse.cancel != nil {
+		a.discovery.browse.cancel()
+		a.discovery.browse.cancel = nil
+	}
+	a.discovery.browse.generation = 0
+	a.discovery.browse.loading = false
+}
+
+func (a *API) startDiscoveryWorkerLocked(effective config.EffectiveConfig, configKey string, snapshotGeneration session.RequestGeneration, refresh bool) *discoveryLaunch {
 	if a.closed {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
+	a.discovery.nextGeneration++
+	a.discovery.browse.cancel = cancel
+	a.discovery.browse.generation = a.discovery.nextGeneration
+	a.discovery.browse.configKey = configKey
+	a.discovery.browse.snapshotGeneration = snapshotGeneration
+	a.discovery.browse.loading = true
+	a.discovery.snapshotGeneration = snapshotGeneration
+	a.discovery.started = true
+	a.discovery.browse.health = discoveryHealthForConfig(a.acceptedMergedCfg, a.discovery.browse.outcomes, "")
+	a.syncVisibleBrowseLocked()
+	a.wg.Add(1)
+	return &discoveryLaunch{
+		ctx: ctx, cancel: cancel, effective: effective, config: a.acceptedMergedCfg,
+		configKey: configKey, query: "", requestID: a.discovery.requestID,
+		generation: a.discovery.nextGeneration, slot: discoveryBrowseSlot, refresh: refresh,
+	}
+}
+
+func (a *API) startSearchDiscoveryWorkerLocked(effective config.EffectiveConfig, configKey string, snapshotGeneration session.RequestGeneration, query string, requestID uint64) *discoveryLaunch {
+	ctx, cancel := context.WithCancel(a.ctx)
 	launch := a.beginDiscoveryLocked(ctx, cancel, effective, configKey, query, requestID, false)
 	a.discovery.snapshotGeneration = snapshotGeneration
-	a.discovery.health = discoveryHealthForConfig(a.acceptedMergedCfg, a.discovery.outcomes, "")
 	a.wg.Add(1)
 	return launch
 }
@@ -310,10 +396,10 @@ func (a *API) beginDiscoveryLocked(ctx context.Context, cancel context.CancelFun
 	a.discovery.query = query
 	a.discovery.requestID = requestID
 	a.discovery.loading = true
-	a.discovery.started = true
 	return &discoveryLaunch{
 		ctx: ctx, cancel: cancel, effective: effective, config: a.acceptedMergedCfg,
-		configKey: configKey, query: query, requestID: requestID, generation: generation, debounce: debounce,
+		configKey: configKey, query: query, requestID: requestID, generation: uint64(generation),
+		slot: discoverySearchSlot, debounce: debounce,
 	}
 }
 
@@ -324,28 +410,51 @@ func (a *API) retainConfiguredDiscoveryLocked(cfg *config.Config) {
 			endpoints[key] = struct{}{}
 		}
 	}
-	outcomes := make([]marketplace.DiscoveryOutcome, 0, len(a.discovery.outcomes))
-	for _, outcome := range a.discovery.outcomes {
-		if key, ok := discoveryEndpointKey(outcome.Endpoint); ok {
-			if _, retained := endpoints[key]; retained {
-				outcomes = append(outcomes, outcome)
+	filter := func(slot *discoverySlot) {
+		outcomes := make([]marketplace.DiscoveryOutcome, 0, len(slot.outcomes))
+		for _, outcome := range slot.outcomes {
+			if key, ok := discoveryEndpointKey(outcome.Endpoint); ok {
+				if _, retained := endpoints[key]; retained {
+					outcomes = append(outcomes, outcome)
+				}
 			}
 		}
-	}
-	rows := make([]session.Row, 0, len(a.discovery.rows))
-	for _, row := range a.discovery.rows {
-		if row.MarketplaceDiscovery == nil {
-			continue
-		}
-		if key, ok := discoveryEndpointKey(row.MarketplaceDiscovery.Endpoint); ok {
-			if _, retained := endpoints[key]; retained {
-				rows = append(rows, row)
+		rows := make([]session.Row, 0, len(slot.rows))
+		for _, row := range slot.rows {
+			if row.MarketplaceDiscovery == nil {
+				continue
+			}
+			if key, ok := discoveryEndpointKey(row.MarketplaceDiscovery.Endpoint); ok {
+				if _, retained := endpoints[key]; retained {
+					rows = append(rows, row)
+				}
 			}
 		}
+		slot.outcomes, slot.rows = outcomes, rows
 	}
-	a.discovery.outcomes = outcomes
-	a.discovery.rows = rows
-	a.discovery.health = discoveryHealthForConfig(cfg, outcomes, "")
+	browse := discoverySlot{outcomes: a.discovery.browse.outcomes, rows: a.discovery.browse.rows}
+	search := discoverySlot{outcomes: a.discovery.outcomes, rows: a.discovery.rows}
+	filter(&browse)
+	filter(&search)
+	a.discovery.browse.outcomes, a.discovery.browse.rows = browse.outcomes, browse.rows
+	a.discovery.outcomes, a.discovery.rows = search.outcomes, search.rows
+	a.discovery.browse.health = discoveryHealthForConfig(cfg, a.discovery.browse.outcomes, "")
+	a.discovery.health = discoveryHealthForConfig(cfg, a.discovery.outcomes, "")
+	a.syncVisibleBrowseLocked()
+}
+
+const (
+	discoveryBrowseSlot = "browse"
+	discoverySearchSlot = "search"
+)
+
+func (a *API) syncVisibleBrowseLocked() {
+	if a.discovery.query == "" {
+		a.discovery.outcomes = slices.Clone(a.discovery.browse.outcomes)
+		a.discovery.rows = slices.Clone(a.discovery.browse.rows)
+		a.discovery.loading = a.discovery.browse.loading
+		a.discovery.health = append([]discoveryHealthDTO{}, a.discovery.browse.health...)
+	}
 }
 
 func discoveryHealthForConfig(cfg *config.Config, outcomes []marketplace.DiscoveryOutcome, requestFailure string) []discoveryHealthDTO {
@@ -400,15 +509,21 @@ func (a *API) launchDiscovery(launch *discoveryLaunch) {
 	if launch == nil {
 		return
 	}
+	next := launch.next
+	launch.next = nil
 	go func() {
 		defer a.wg.Done()
 		a.runDiscovery(launch)
 	}()
+	a.launchDiscovery(next)
 }
 
 func (a *API) runDiscovery(launch *discoveryLaunch) {
 	defer launch.cancel()
-	options := marketplace.DiscoveryOptions{Limit: marketplace.DiscoveryPageLimit, Timeout: marketplace.DefaultSearchTimeout}
+	options := marketplace.DiscoveryOptions{
+		Limit: marketplace.DiscoveryPageLimit, Timeout: marketplace.DefaultSearchTimeout,
+		Refresh: launch.refresh,
+	}
 	outcomes, needsNetwork, err := marketplace.CachedDiscovery(launch.effective, launch.query, options)
 	if launch.ctx.Err() != nil {
 		a.finishCancelledDiscovery(launch)
@@ -454,11 +569,17 @@ func (a *API) runDiscovery(launch *discoveryLaunch) {
 }
 
 func (a *API) discoveryLaunchCurrentLocked(launch *discoveryLaunch) bool {
-	return !a.closed && a.discovery.enabled && a.currentG != 0 &&
-		a.requests.Active(session.RequestDiscovery) == launch.generation &&
-		a.discovery.generation == launch.generation &&
-		a.discovery.snapshotGeneration == a.currentG &&
-		a.discovery.configKey == launch.configKey &&
+	if a.closed || !a.discovery.enabled || a.currentG == 0 || a.acceptedConfigKey != launch.configKey {
+		return false
+	}
+	if launch.slot == discoveryBrowseSlot {
+		slot := &a.discovery.browse
+		return slot.generation == launch.generation && slot.configKey == launch.configKey &&
+			slot.snapshotGeneration == a.currentG
+	}
+	return a.requests.Active(session.RequestDiscovery) == session.RequestGeneration(launch.generation) &&
+		a.discovery.generation == session.RequestGeneration(launch.generation) &&
+		a.discovery.snapshotGeneration == a.currentG && a.discovery.configKey == launch.configKey &&
 		a.discovery.query == launch.query && a.discovery.requestID == launch.requestID
 }
 
@@ -468,10 +589,18 @@ func (a *API) updateDiscovery(launch *discoveryLaunch, outcomes []marketplace.Di
 	if !a.discoveryLaunchCurrentLocked(launch) {
 		return
 	}
-	a.discovery.outcomes = slices.Clone(outcomes)
-	a.discovery.rows = session.DiscoveryRows(outcomes)
-	a.discovery.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
-	a.discovery.loading = loading
+	if launch.slot == discoveryBrowseSlot {
+		a.discovery.browse.outcomes = slices.Clone(outcomes)
+		a.discovery.browse.rows = session.DiscoveryRows(outcomes)
+		a.discovery.browse.loading = loading
+		a.discovery.browse.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
+		a.syncVisibleBrowseLocked()
+	} else {
+		a.discovery.outcomes = slices.Clone(outcomes)
+		a.discovery.rows = session.DiscoveryRows(outcomes)
+		a.discovery.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
+		a.discovery.loading = loading
+	}
 	a.publishDiscoveryLocked()
 }
 
@@ -481,12 +610,21 @@ func (a *API) completeDiscovery(launch *discoveryLaunch, outcomes []marketplace.
 	if !a.discoveryLaunchCurrentLocked(launch) {
 		return
 	}
-	a.discovery.outcomes = slices.Clone(outcomes)
-	a.discovery.rows = session.DiscoveryRows(outcomes)
-	a.discovery.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
-	a.discovery.loading = false
-	a.discovery.cancel = nil
-	a.requests.Cancel(session.RequestDiscovery)
+	if launch.slot == discoveryBrowseSlot {
+		a.discovery.browse.outcomes = slices.Clone(outcomes)
+		a.discovery.browse.rows = session.DiscoveryRows(outcomes)
+		a.discovery.browse.loading = false
+		a.discovery.browse.cancel = nil
+		a.discovery.browse.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
+		a.syncVisibleBrowseLocked()
+	} else {
+		a.discovery.outcomes = slices.Clone(outcomes)
+		a.discovery.rows = session.DiscoveryRows(outcomes)
+		a.discovery.health = discoveryHealthForConfig(a.acceptedMergedCfg, outcomes, requestFailure)
+		a.discovery.loading = false
+		a.discovery.cancel = nil
+		a.requests.Cancel(session.RequestDiscovery)
+	}
 	a.publishDiscoveryLocked()
 }
 
@@ -496,33 +634,44 @@ func (a *API) finishCancelledDiscovery(launch *discoveryLaunch) {
 	if !a.discoveryLaunchCurrentLocked(launch) {
 		return
 	}
-	a.discovery.loading = false
-	a.discovery.cancel = nil
-	a.requests.Cancel(session.RequestDiscovery)
+	if launch.slot == discoveryBrowseSlot {
+		a.discovery.browse.loading = false
+		a.discovery.browse.cancel = nil
+		a.syncVisibleBrowseLocked()
+	} else {
+		a.discovery.loading = false
+		a.discovery.cancel = nil
+		a.requests.Cancel(session.RequestDiscovery)
+	}
 	a.publishDiscoveryLocked()
 }
 
 func (a *API) publishDiscoveryLocked() {
+	a.syncVisibleBrowseLocked()
 	rows := session.MergeDiscoveryRows(a.authoritativeRows, a.provisionalRows, a.discovery.rows)
 	projected := make([]rowDTO, 0, len(rows))
 	for _, row := range rows {
 		projected = append(projected, a.resourceRowPresentation(row))
 	}
 	health := append([]discoveryHealthDTO{}, a.discovery.health...)
+	browseHealth := append([]discoveryHealthDTO{}, a.discovery.browse.health...)
 	payload := discoveryEventPayload{
 		RequestID: a.discovery.requestID, Query: a.discovery.query, DiscoverySequence: a.discovery.sequence + 1,
-		Rows: projected, Health: health, Loading: a.discovery.loading,
+		Rows: projected, Health: health, BrowseHealth: browseHealth, Loading: a.discovery.loading,
+		BrowseLoading: a.discovery.browse.loading,
 	}
 	a.discovery.sequence = payload.DiscoverySequence
 	if a.current != nil {
 		current := *a.current
 		current.Rows = projected
 		current.DiscoveryEnabled = a.discovery.enabled
-		current.DiscoveryHealth = health
+		current.DiscoveryHealth = append([]discoveryHealthDTO{}, health...)
+		current.DiscoveryBrowseHealth = append([]discoveryHealthDTO{}, browseHealth...)
 		current.DiscoveryQuery = a.discovery.query
 		current.DiscoveryRequestID = a.discovery.requestID
 		current.DiscoverySequence = a.discovery.sequence
 		current.DiscoveryLoading = a.discovery.loading
+		current.DiscoveryBrowseLoading = a.discovery.browse.loading
 		a.current = &current
 	}
 	a.emitLocked("discovery", a.currentG, nil, &payload)

@@ -180,8 +180,14 @@ func TestUserAPIResourcePlanKeepsAvailableUpdateCount(t *testing.T) {
 	handler := state.api.Handler()
 	handler.ServeHTTP(httptest.NewRecorder(), authedRequest(t, state.api, "/api/snapshot", `{"checkUpdates":true}`))
 	waitForAvailableUpdates(t, state.api, 3)
+	refreshedRowID, _, _ := waitForWork39ResourceRow(t, state.api, state.events, func(row session.Row) bool {
+		return row.Artifact.IsMarketplace && row.Artifact.Name == "review"
+	})
+	if refreshedRowID != state.rowID {
+		t.Fatalf("refreshed resource row ID = %q, want original %q", refreshedRowID, state.rowID)
+	}
 
-	status, body := postWork39(t, state.api, "/api/resource-plan", work39PlanRequestBody(state.rowID))
+	status, body := postWork39(t, state.api, "/api/resource-plan", work39PlanRequestBody(refreshedRowID))
 	if status != http.StatusOK {
 		t.Fatalf("resource plan status/code = %d/%s", status, decodeWork39ErrorCode(t, body))
 	}

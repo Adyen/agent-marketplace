@@ -16,7 +16,8 @@ import {
   SOURCE_FILES_UNAVAILABLE_MESSAGE,
   WorkspaceController,
 } from './controller'
-import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
+import { source } from './fixtures'
+import { configuration, event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
 
 function testRect(left: number, top: number, width: number, height: number): DOMRect {
   return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height, toJSON: () => ({}) } as DOMRect
@@ -1644,6 +1645,67 @@ describe('Event stream reconnect', () => {
 
     expect(controller.state.diagnosticsDiscoveryHealth).toEqual(health)
     expect(wrapper.get('[aria-label="Marketplace endpoint health"]').text()).toBe(before)
+  })
+
+  // spec: gui-shell/later-marketplace-page-failure-leaves-an-honest-partial-catalog
+  it('uses browse health from an active-query snapshot without replacing query health', async () => {
+    const { client, push } = fakeClient()
+    const initialHealth: Snapshot['discoveryHealth'] = [
+      { id: 'initial', label: 'Initial', total: 0, truncated: false, cacheState: 'miss', checked: false, message: '' },
+    ]
+    const queryHealth: Snapshot['discoveryHealth'] = [
+      { id: 'query', label: 'Search', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' },
+    ]
+    const browseHealth: Snapshot['discoveryHealth'] = [
+      { id: 'browse', label: 'Browse', total: 2, truncated: true, cacheState: 'stale', checked: true, message: 'Marketplace search failed' },
+    ]
+    const { controller } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([], { discoveryEnabled: true, discoveryHealth: initialHealth, discoverySequence: 1 }),
+    }))
+    await tick()
+    controller.setDiscoveryQuery('paged-search')
+    await tick()
+
+    push(event({
+      sequence: 2,
+      payload: snapshot([], {
+        discoveryEnabled: true,
+        discoveryHealth: queryHealth,
+        discoveryBrowseHealth: browseHealth,
+        discoveryBrowseLoading: true,
+        discoveryQuery: 'paged-search',
+        discoveryRequestId: 1,
+        discoverySequence: 2,
+      }),
+    }))
+    await tick()
+
+    expect(controller.state.discoveryHealth).toEqual(queryHealth)
+    expect(controller.state.diagnosticsDiscoveryHealth).toEqual(browseHealth)
+    expect(controller.state.diagnosticsDiscoveryLoading).toBe(true)
+  })
+
+  // spec: gui-shell/source-selection-filters-resources-and-clears-in-place
+  it('reloads verified source associations after the first accepted snapshot', async () => {
+    const { client, push } = fakeClient()
+    const unverified = configuration({
+      organizationSources: [source({ id: 'market', kind: 'marketplace', rowSourceId: '' })],
+    })
+    const verified = configuration({
+      organizationSources: [source({ id: 'market', kind: 'marketplace', rowSourceId: 'marketplace:verified' })],
+    })
+    vi.mocked(client.configuration).mockResolvedValueOnce(unverified).mockResolvedValueOnce(verified)
+    const { controller } = mountWorkspace(client)
+    await tick()
+    expect(controller.state.configuration?.organizationSources[0]?.rowSourceId).toBe('')
+
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'final' }) }))
+    await tick()
+
+    expect(client.configuration).toHaveBeenCalledTimes(2)
+    expect(controller.state.configuration?.organizationSources[0]?.rowSourceId).toBe('marketplace:verified')
   })
 
   // spec: gui-shell/discovery-health-uses-plain-wording
