@@ -108,7 +108,7 @@ test('source tooltips show the full location with readable contrast in both them
     const location = `${bootstrap.home}/keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines`
     await seedLightThemeOnce(page)
     await launchBuiltUserApp(page, bootstrap)
-    const row = page.getByRole('button', { name: `Open source ${location}` })
+    const row = page.getByRole('button', { name: `Browse source ${location}` })
     const tooltip = page.locator('.gui-source-row__tooltip')
     const tooltipText = tooltip.locator('[data-slot="text"]')
 
@@ -161,7 +161,7 @@ test('source tooltip of the last row in a scrolled source list stays inside the 
     await seedLightThemeOnce(page)
     await launchBuiltUserApp(page, bootstrap)
     const list = page.locator('.gui-sidebar__list--scroll')
-    const lastRow = list.locator('button[aria-label^="Open source "]').last()
+    const lastRow = list.locator('button[aria-label^="Browse source "]').last()
     await expect(lastRow).toBeAttached({ timeout: 60_000 })
     await expect.poll(() => list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
     await list.evaluate((element) => {
