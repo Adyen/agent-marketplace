@@ -40,6 +40,7 @@ const KIND_TITLES = new Map([
   ['collection', 'Collections'],
   ['rule', 'Rules'],
 ])
+export const kindFacetOptions = [...KIND_TITLES].map(([id, label]) => ({ id, label }))
 
 interface Bucket {
   segment: string

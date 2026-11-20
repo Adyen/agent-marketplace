@@ -162,7 +162,7 @@ export class WorkspaceController {
   private quitHandler: (() => void) | null = null
   private pendingQuitId: number | null = null
   private quitEpoch = 0
-  private configurationSeq = 0
+  private configurationLoad = Promise.resolve(false)
   private releaseSeq = 0
   private accepted = false
   private nextNotificationId = 1
@@ -328,19 +328,24 @@ export class WorkspaceController {
     }
   }
 
-  async loadConfiguration(): Promise<void> {
-    const seq = ++this.configurationSeq
-    try {
-      const configuration = await this.client.configuration()
-      if (seq !== this.configurationSeq) {
-        return
-      }
-      this.state.configuration = configuration
-    } catch {
-      if (seq === this.configurationSeq && this.state.configuration == null) {
-        this.state.error ??= 'Settings could not be loaded'
-      }
-    }
+  loadConfiguration(): Promise<boolean> {
+    const load = this.client.configuration()
+      .catch(() => null)
+      .then((configuration): boolean | Promise<boolean> => {
+        if (load !== this.configurationLoad) {
+          return this.configurationLoad
+        }
+        if (configuration == null) {
+          if (this.state.configuration == null) {
+            this.state.error ??= 'Settings could not be loaded'
+          }
+          return false
+        }
+        this.state.configuration = configuration
+        return true
+      })
+    this.configurationLoad = load
+    return load
   }
 
   async runAction(action: Action): Promise<boolean> {

@@ -866,3 +866,27 @@ Where a rule here conflicts with an earlier section, this section wins.
   but not browse. Diagnostics keeps browse health while a query is active.
   Clearing search restores the latest browse rows. A later-page failure keeps
   received rows and marks the catalog incomplete.
+
+### Workspace facets and source context
+
+- *Rule*: the sidebar offers one kind facet and one status facet at a time.
+  Needs attention means stale, broken, or malformed rows; Required by org
+  means rows marked required. The facets intersect with the source and search
+  filters. Their chips clear independently. The separate "All resources"
+  action clears source and facets without clearing search; the existing
+  Resources and group navigation keep their current filter behavior.
+- *Rule*: facets use the existing sidebar row and token styling. The facet
+  and group region is bounded and scrollable; Sources keeps its own
+  nonzero-height scroll list, and the footer remains fixed when the window is
+  short. Kind choices form a compact grid rather than extending the sidebar
+  into a long fixed list.
+- *Rule*: while a source is selected in Resources, a compact header shows its
+  projected kind, location, and any ref or subpath. Its problem count includes
+  only attributable stale, broken, or malformed rows. "View source problems"
+  applies Needs attention without clearing other filters. The header actions
+  copy only the projected location, offer browser opening only for safe
+  absolute HTTP(S) locations, and offer removal only for editable user
+  sources.
+- *Rule*: source removal from the header opens Settings → Sources and the
+  existing confirmation for the same source. Settings remains the only place
+  that confirms and performs the removal.

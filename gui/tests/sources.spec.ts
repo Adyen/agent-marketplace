@@ -957,6 +957,16 @@ test('built GUI filters configured sources in Resources and clears without chang
     await page.keyboard.press('Enter')
 
     const clearSource = page.getByRole('button', { name: /^Clear source filter / })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    const skillsFacet = page.getByRole('button', { name: 'Kind facet Skills' })
+    await skillsFacet.press('Enter')
+    await expect(skillsFacet).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('heading', { name: 'Resources', level: 1 })).toBeVisible()
+    await expect(clearSource).toBeVisible()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toHaveCount(0)
+    await skillsFacet.click()
+
     await expect(clearSource).toBeVisible()
     await expect(clearSource).toHaveAccessibleName(/Clear source filter/)
     await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
@@ -997,6 +1007,54 @@ test('built GUI filters configured sources in Resources and clears without chang
     await page.screenshot({ path: testInfo.outputPath('source-filter-empty.png'), animations: 'disabled' })
 
     expect((await readFile(configPath)).equals(configBefore)).toBe(true)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/source-shortcut-preserves-removal-confirmation-and-scope
+test('built GUI confirms removal requested from the source header', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the source removal journey')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  const configPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  const fragmentDirectory = join(bootstrap.home!, 'browse-fragment')
+  const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+  try {
+    const configBefore = await readFile(configPath)
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: `Browse source ${fragmentDirectory}` }).click()
+
+    const sourceActions = page.getByRole('button', { name: 'Source actions' })
+    await expect(sourceActions).toBeVisible({ timeout: 3_000 })
+    await sourceActions.click()
+    await page.getByRole('button', { name: 'Remove source', exact: true }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    await expect(confirmation).toContainText(`Remove source ${fragmentDirectory}?`)
+    expect(await readFile(configPath)).toEqual(configBefore)
+    await dialog.getByRole('button', { name: 'Cancel remove' }).click()
+    await expect(confirmation).toHaveCount(0)
+    expect(await readFile(configPath)).toEqual(configBefore)
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await sourceActions.click()
+    await page.getByRole('button', { name: 'Remove source', exact: true }).click()
+    await expect(dialog.getByRole('region', { name: 'Confirm removal' })).toContainText(`Remove source ${fragmentDirectory}?`)
+    await dialog.getByRole('button', { name: 'Confirm remove' }).click()
+
+    await expect.poll(async () => await readFile(configPath, 'utf8'), { timeout: 60_000 }).not.toContain(fragmentDirectory)
+    const configAfter = await readFile(configPath, 'utf8')
+    expect(configAfter).toContain(sharedDirectory)
+    await expect(page.getByRole('button', { name: `Browse source ${fragmentDirectory}` })).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()).toBeVisible()
   } finally {
     await harness.stop()
   }

@@ -11,11 +11,16 @@ import SourceList from './SourceList.vue'
 import { groupSources } from './source-groups'
 
 export type SettingsTab = 'general' | 'targets' | 'sources'
+export interface SourceRevealRequest {
+  sourceId: string
+  sequence: number
+  remove?: true
+}
 
 const props = defineProps<{
   controller: WorkspaceController
   tab: SettingsTab
-  revealRequest: { sourceId: string; sequence: number } | null
+  revealRequest: SourceRevealRequest | null
   addSourceFocusRequest: number
 }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -42,6 +47,7 @@ const sourceLists = computed(() => ({
   ),
 }))
 const loading = ref(false)
+const sourceRemovalConfigLoaded = ref(false)
 const actionError = ref<string | null>(null)
 const draft = ref<Set<string>>(new Set())
 const formEpoch = ref(0)
@@ -53,6 +59,7 @@ const sourceLocationError = computed(() => {
   return props.controller.state.sourceError ?? undefined
 })
 let openEpoch = 0
+let handledRemoveSourceSequence = 0
 
 const { preference, setPreference } = useAppearance()
 const appearanceOptions: { value: AppearancePreference; label: string }[] = [
@@ -104,6 +111,7 @@ let handledAddSourceFocusRequest = 0
 function resetDrafts() {
   draft.value = new Set<string>()
   pendingRemove.value = null
+  sourceRemovalConfigLoaded.value = false
   formEpoch.value += 1
 }
 
@@ -118,10 +126,11 @@ watch(open, () => {
   sourceQuery.value = ''
   actionError.value = null
   loading.value = true
-  void props.controller.loadConfiguration().then(() => {
+  void props.controller.loadConfiguration().then((loaded) => {
     if (epoch !== openEpoch) {
       return
     }
+    sourceRemovalConfigLoaded.value = loaded
     loading.value = false
     if (configuration.value == null) {
       actionError.value = 'Settings could not be loaded'
@@ -141,6 +150,30 @@ watch(
     sourceQuery.value = ''
     highlightedSourceId.value = request.sourceId
   },
+)
+
+watch(
+  [() => props.revealRequest, loading, busy],
+  async ([request, isLoading, isBusy]) => {
+    if (request == null || !request.remove || isLoading || isBusy || !open.value || request.sequence <= handledRemoveSourceSequence) {
+      return
+    }
+    handledRemoveSourceSequence = request.sequence
+    if (!sourceRemovalConfigLoaded.value) {
+      actionError.value = 'Could not verify the source. Close Settings and try again.'
+      return
+    }
+    const source = configuration.value?.userSources.find((candidate) => candidate.id === request.sourceId)
+    if (fieldsDisabled.value || source == null || !removable(source)) {
+      return
+    }
+    pendingRemove.value = source
+    await nextTick()
+    document
+      .querySelector<HTMLElement>('#settings-panel-sources [aria-label="Confirm removal"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  },
+  { flush: 'post' },
 )
 
 watch(
