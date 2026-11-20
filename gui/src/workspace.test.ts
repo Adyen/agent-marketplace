@@ -1628,6 +1628,63 @@ describe('workspace facets and source header', () => {
     expect(document.body.querySelector('[aria-label="Confirm removal"]')).toBeNull()
     expect(client.configure).not.toHaveBeenCalled()
   })
+
+  // spec: gui-shell/source-shortcut-preserves-removal-confirmation-and-scope
+  it('shows source removal confirmation after a superseding configuration refresh', async () => {
+    const teamSource = source({
+      id: 'team-source',
+      name: 'Team',
+      kind: 'git',
+      location: 'https://git.example.test/team.git',
+      rowSourceId: 'team-identity',
+    })
+    const { client, push } = fakeClient()
+    vi.mocked(client.configuration).mockResolvedValue(configuration({ userSources: [teamSource] }))
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([row('team-resource', { source: { id: 'team-identity', label: 'Team' } })]),
+    }))
+    await tick()
+
+    const browseTeam = wrapper.findAll('button').find(
+      (button) => button.attributes('aria-label') === `Browse source ${teamSource.location}`,
+    )!
+    await browseTeam.trigger('click')
+    await tick()
+    const header = wrapper.get('.source-browse-header')
+    await header.get('summary[aria-label="Source actions"]').trigger('click')
+    const removeSource = header.findAll('button').find((button) => button.text() === 'Remove source')
+    expect(removeSource).toBeDefined()
+
+    const settingsLoad = deferred<ReturnType<typeof configuration>>()
+    const focusLoad = deferred<ReturnType<typeof configuration>>()
+    const release = deferred<Awaited<ReturnType<Client['release']>>>()
+    const notice = await client.release()
+    vi.mocked(client.configuration)
+      .mockReturnValueOnce(settingsLoad.promise)
+      .mockReturnValueOnce(focusLoad.promise)
+    vi.mocked(client.release).mockReturnValueOnce(release.promise)
+
+    await removeSource!.trigger('click')
+    await tick()
+    window.dispatchEvent(new Event('focus'))
+    await tick()
+
+    settingsLoad.resolve(configuration({ userSources: [] }))
+    await tick()
+    expect(document.body.querySelector('[aria-label="Confirm removal"]')).toBeNull()
+
+    focusLoad.resolve(configuration({ userSources: [teamSource] }))
+    await tick()
+    expect(document.body.querySelector('[aria-label="Confirm removal"]')).toBeNull()
+
+    release.resolve(notice)
+    await tick()
+    await tick()
+    expect(document.body.textContent).toContain(`Remove source ${teamSource.location}?`)
+    expect(client.configure).not.toHaveBeenCalled()
+  })
 })
 
 describe('workspace chrome', () => {

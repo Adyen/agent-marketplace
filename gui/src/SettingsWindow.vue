@@ -153,9 +153,9 @@ watch(
 )
 
 watch(
-  [() => props.revealRequest, loading],
-  async ([request, isLoading]) => {
-    if (request == null || !request.remove || isLoading || !open.value || request.sequence <= handledRemoveSourceSequence) {
+  [() => props.revealRequest, loading, busy],
+  async ([request, isLoading, isBusy]) => {
+    if (request == null || !request.remove || isLoading || isBusy || !open.value || request.sequence <= handledRemoveSourceSequence) {
       return
     }
     handledRemoveSourceSequence = request.sequence
