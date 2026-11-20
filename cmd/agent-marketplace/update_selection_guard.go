@@ -241,12 +241,13 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 		desiredOverlays[path] = data
 	}
 	desired := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		Workspace:             ws,
-		SkipInventory:         true,
-		CatalogOption:         []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(lookup(desiredSet, nil), desiredSet.catalogs)},
-		LockMetadata:          snapshotLockMetadata(desiredJobs),
-		EffectiveOpts:         config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: desiredOverlays},
-		MarketplacePinsToSkip: marketplacePinsToSkip,
+		Workspace:                           ws,
+		SkipInventory:                       true,
+		CatalogOption:                       []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(lookup(desiredSet, nil), desiredSet.catalogs)},
+		LockMetadata:                        snapshotLockMetadata(desiredJobs),
+		EffectiveOpts:                       config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: desiredOverlays},
+		MarketplacePinsToSkip:               marketplacePinsToSkip,
+		KeepRemovedMarketplacePinsFromCache: priorMarketplaceFromCache,
 	})
 	return resolvedUpdateSides{prior: prior, desired: desired, priorSet: priorSet, desiredSet: desiredSet, loadErrors: loadErrors}, nil
 }

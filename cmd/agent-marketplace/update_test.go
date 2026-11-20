@@ -1096,6 +1096,8 @@ func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 
 // spec: update-output/cached-pinned-revision-is-usable
 // spec: update-output/lock-and-outputs-agree-after-a-partial-update
+// spec: update-output/missing-resource-preview-retains-state-and-reports-other-candidates
+// spec: update-output/applied-diffs-retain-partial-update-behavior
 func TestUpdateCacheOnlyRemovedMarketplacePinPassesSyncCheck(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -1119,9 +1121,31 @@ func TestUpdateCacheOnlyRemovedMarketplacePinPassesSyncCheck(t *testing.T) {
 
 	delete(server.resources, "gone")
 	server.setSkill(t, "stay", "stay body v2")
-	output, err := executeCommand("update")
+	before := snapshotConsumerTree(t, repo)
+	for _, args := range [][]string{nil, {"--include-diff"}} {
+		output, err := updateDryRun(t, args...)
+		if err != nil {
+			t.Fatalf("update preview %v failed: %v\n%s", args, err, output)
+		}
+		for _, want := range []string{
+			"Marketplace pins proposed for update: 1",
+			"pinned revision kept",
+			"agent-marketplace remove gone",
+		} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("update preview %v does not contain %q:\n%s", args, want, output)
+			}
+		}
+		if len(args) > 0 && !strings.Contains(output, "+stay body v2") {
+			t.Fatalf("update preview %v omitted the content diff:\n%s", args, output)
+		}
+		assertTreesIdentical(t, "consumer", before, snapshotConsumerTree(t, repo))
+	}
+
+	output, err := executeCommand("update", "--include-diff")
 	if err != nil || !strings.Contains(output, "Marketplace pins updated: 1") ||
-		!strings.Contains(output, "src/skill/gone") || !strings.Contains(output, "agent-marketplace remove gone") {
+		!strings.Contains(output, "src/skill/gone") || !strings.Contains(output, "agent-marketplace remove gone") ||
+		!strings.Contains(output, "+stay body v2") {
 		t.Fatalf("update did not report the eligible pin and removal warning: %v\n%s", err, output)
 	}
 	goneAfter := commandLockResource(t, lockPath, "gone")
