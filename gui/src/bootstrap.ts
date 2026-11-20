@@ -21,6 +21,7 @@ declare global {
       EventsOn?: (event: string, callback: (...data: unknown[]) => void) => (() => void) | void
       EventsEmit?: (event: string, ...data: unknown[]) => void
       ClipboardSetText?: (text: string) => Promise<boolean>
+      BrowserOpenURL?: (url: string) => void
     }
   }
 }

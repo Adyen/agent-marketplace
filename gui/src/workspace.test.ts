@@ -1314,6 +1314,322 @@ describe('WorkspaceView', () => {
   })
 })
 
+describe('workspace facets and source header', () => {
+  // spec: gui-shell/workspace-facets-intersect-and-clear-independently
+  it('workspace facets intersect and clear independently while retaining search', async () => {
+    const teamSource = source({
+      id: 'team-source',
+      name: 'Team',
+      kind: 'git',
+      location: 'https://git.example.test/team.git',
+      path: 'packages/core',
+      ref: 'main',
+      rowSourceId: 'team-identity',
+    })
+    const organizationSource = source({
+      id: 'organization-source',
+      name: 'Organization',
+      kind: 'directory',
+      location: '/org/resources',
+      rowSourceId: 'organization-identity',
+    })
+    const { client, push } = fakeClient()
+    vi.mocked(client.configuration).mockResolvedValue(configuration({
+      userSources: [teamSource],
+      organizationSources: [organizationSource],
+    }))
+    const team = { id: 'team-identity', label: 'Team registry' }
+    const organization = { id: 'organization-identity', label: 'Organization registry' }
+    const rows = [
+      row('team-skill needle', { source: team }),
+      row('team-command needle', { kind: 'command', source: team }),
+      row('other-skill needle', { source: organization }),
+      row('team-broken needle', { source: team, group: 'broken', status: 'broken' }),
+      row('team-required needle', { kind: 'command', source: team, group: 'required', required: true, status: 'required (org)' }),
+      row('team-pending needle', { source: team, group: 'pending', status: 'pending' }),
+      row('other-required needle', { kind: 'command', source: organization, group: 'required', required: true, status: 'required (org)' }),
+      row('unknown-kind needle', { kind: 'future-kind', source: organization }),
+      row('team-no-match', { source: team }),
+    ]
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot(rows) }))
+    await tick()
+
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    await wrapper.get('input[aria-label="Search resources"]').setValue('needle')
+    await tick()
+    expect(rowNames(wrapper).sort()).toEqual([
+      'other-required needle',
+      'other-skill needle',
+      'team-broken needle',
+      'team-command needle',
+      'team-pending needle',
+      'team-required needle',
+      'team-skill needle',
+      'unknown-kind needle',
+    ].sort())
+
+    const commandOption = wrapper.findAll('[role="option"]').find((option) => option.text().includes('team-command needle'))
+    expect(commandOption).toBeDefined()
+    await commandOption!.trigger('click')
+    await tick()
+    expect(wrapper.get('aside[aria-label="Detail"] .gui-inspector__title').text()).toContain('team-command needle')
+
+    await openDiagnostics(wrapper)
+    expect(wrapper.find('.gui-diagnostics-view').exists()).toBe(true)
+
+    const skills = wrapper.find('button[aria-label="Kind facet Skills"]')
+    expect(skills.exists()).toBe(true)
+    await skills.trigger('click')
+    await tick()
+    expect(wrapper.find('.gui-diagnostics-view').exists()).toBe(false)
+    const selectedSkill = wrapper.find('[role="option"][aria-selected="true"]')
+    expect(selectedSkill.exists()).toBe(true)
+    const selectedSkillName = selectedSkill.find('.workspace__name').text()
+    expect(selectedSkill.text()).toMatch(/^skill/)
+    expect(selectedSkillName).not.toBe('team-command needle')
+    expect(wrapper.get('aside[aria-label="Detail"] .gui-inspector__title').text()).toBe(selectedSkillName)
+    expect(rowNames(wrapper).sort()).toEqual([
+      'other-skill needle',
+      'team-broken needle',
+      'team-pending needle',
+      'team-skill needle',
+    ].sort())
+
+    const browseTeam = wrapper.findAll('button').find(
+      (button) => button.attributes('aria-label') === `Browse source ${teamSource.location}`,
+    )!
+    await browseTeam.trigger('click')
+    await wrapper.get('button[aria-label="Needs attention"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper)).toEqual(['team-broken needle'])
+
+    await wrapper.get('button[aria-label="Clear kind filter Skills"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper)).toEqual(['team-broken needle'])
+    expect(wrapper.find('button[aria-label="Clear status filter Needs attention"]').exists()).toBe(true)
+
+    await wrapper.get('button[aria-label="Needs attention"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper).sort()).toEqual([
+      'team-broken needle',
+      'team-command needle',
+      'team-pending needle',
+      'team-required needle',
+      'team-skill needle',
+    ].sort())
+
+    await wrapper.get('button[aria-label="Required by org"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper)).toEqual(['team-required needle'])
+    await wrapper.get('button[aria-label="Show all groups"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper)).toEqual(['team-required needle'])
+
+    await wrapper.get('button[aria-label^="Clear source filter "]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper).sort()).toEqual(['other-required needle', 'team-required needle'].sort())
+
+    await wrapper.get('button[aria-label="All resources"]').trigger('click')
+    await tick()
+    expect(rowNames(wrapper).sort()).toEqual([
+      'other-required needle',
+      'other-skill needle',
+      'team-broken needle',
+      'team-command needle',
+      'team-pending needle',
+      'team-required needle',
+      'team-skill needle',
+      'unknown-kind needle',
+    ].sort())
+    expect(wrapper.find('button[aria-label="Clear search"]').exists()).toBe(true)
+    expect(rowNames(wrapper)).not.toContain('team-no-match')
+  })
+
+  // spec: gui-shell/workspace-facets-intersect-and-clear-independently
+  it('shows a filter-specific empty state when active facets match no resources', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([
+        row('ordinary-skill'),
+        row('required-command', { kind: 'command', group: 'required', required: true, status: 'required (org)' }),
+      ]),
+    }))
+    await tick()
+
+    const skills = wrapper.find('button[aria-label="Kind facet Skills"]')
+    expect(skills.exists()).toBe(true)
+    await skills.trigger('click')
+    await wrapper.get('button[aria-label="Required by org"]').trigger('click')
+    await tick()
+
+    expect(wrapper.text()).toContain('No resources match these filters.')
+  })
+
+  // spec: gui-shell/source-header-exposes-attributable-problems-and-safe-actions
+  // spec: gui-shell/source-shortcut-preserves-removal-confirmation-and-scope
+  it('source header shows projected metadata and attributable problems with safe actions', async () => {
+    const location = 'https://git.example.test/team.git'
+    const teamSource = source({
+      id: 'team-source',
+      name: 'Team',
+      kind: 'git',
+      location,
+      path: 'packages/core',
+      ref: 'main',
+      rowSourceId: 'team-identity',
+    })
+    const organizationSource = source({
+      id: 'organization-marketplace',
+      name: 'Organization catalog',
+      kind: 'marketplace',
+      location: 'https://market.example.test/catalog?redacted#redacted',
+      rowSourceId: 'organization-endpoint',
+    })
+    const browserOpenURL = vi.fn()
+    const clipboardSetText = vi.fn(async () => true)
+    const previousRuntime = Object.getOwnPropertyDescriptor(window, 'runtime')
+    Object.defineProperty(window, 'runtime', {
+      configurable: true,
+      value: { BrowserOpenURL: browserOpenURL, ClipboardSetText: clipboardSetText },
+    })
+
+    try {
+      const { client, push } = fakeClient()
+      vi.mocked(client.configuration).mockResolvedValue(configuration({
+        userSources: [teamSource],
+        organizationSources: [organizationSource],
+      }))
+      const { wrapper } = mountWorkspace(client)
+      push(event({
+        sequence: 1,
+        payload: snapshot([
+          row('team-broken', { source: { id: 'team-identity', label: 'Team registry' }, group: 'broken', status: 'broken' }),
+          row('team-stale', { source: { id: 'team-identity', label: 'Team registry' }, group: 'stale', status: 'stale' }),
+          row('team-malformed', { source: { id: 'team-identity', label: 'Team registry' }, group: 'malformed', status: 'malformed' }),
+          row('team-pending', { source: { id: 'team-identity', label: 'Team registry' }, group: 'pending', status: 'pending' }),
+          row('organization-stale', {
+            source: { id: 'organization-row', label: 'Organization catalog', associationId: 'organization-endpoint' },
+            group: 'stale',
+            status: 'stale',
+          }),
+        ], {
+          diagnostics: [{
+            severity: 'warning',
+            category: 'catalog',
+            code: 'unassociated',
+            message: 'Unassociated global diagnostic',
+          }],
+        }),
+      }))
+      await tick()
+
+      const browseTeam = wrapper.findAll('button').find(
+        (button) => button.attributes('aria-label') === `Browse source ${location}`,
+      )!
+      await browseTeam.trigger('click')
+      await tick()
+
+      expect(wrapper.find('.source-browse-header').exists()).toBe(true)
+      const header = wrapper.get('.source-browse-header')
+      expect(header.find('h2').text()).toBe('Team registry')
+      expect(header.text()).toContain('Git repository')
+      expect(header.text()).toContain(location)
+      expect(header.text()).toContain('main')
+      expect(header.text()).toContain('packages/core')
+      expect(header.get('button[aria-label="View source problems"]').text()).toContain('3')
+
+      const summary = header.get('summary[aria-label="Source actions"]')
+      const details = header.get('.source-browse-header__menu')
+      ;(details.element as HTMLDetailsElement).open = true
+      await details.trigger('keydown', { key: 'Escape' })
+      await tick()
+      expect((details.element as HTMLDetailsElement).open).toBe(false)
+      expect(document.activeElement).toBe(summary.element)
+
+      await summary.trigger('click')
+      const openButton = header.findAll('button').find((button) => button.text() === 'Open in browser')
+      expect(openButton).toBeDefined()
+      await openButton!.trigger('click')
+      await tick()
+      expect(browserOpenURL).toHaveBeenCalledWith(location)
+      expect((details.element as HTMLDetailsElement).open).toBe(false)
+
+      await summary.trigger('click')
+      const copyButton = header.findAll('button').find((button) => button.text() === 'Copy location')
+      expect(copyButton).toBeDefined()
+      await copyButton!.trigger('click')
+      await tick()
+      expect(clipboardSetText).toHaveBeenCalledWith(location)
+      expect(header.get('[role="status"]').text()).toBe('Location copied')
+      expect(wrapper.get('button[aria-label="Needs attention"]').attributes('aria-pressed')).toBe('false')
+      await wrapper.get('button[aria-label="View source problems"]').trigger('click')
+      await tick()
+      expect(wrapper.get('button[aria-label="Needs attention"]').attributes('aria-pressed')).toBe('true')
+      expect(rowNames(wrapper).sort()).toEqual(['team-broken', 'team-malformed', 'team-stale'].sort())
+
+      const browseOrganization = wrapper.findAll('button').find(
+        (button) => button.attributes('aria-label') === `Browse source ${organizationSource.location}`,
+      )!
+      await browseOrganization.trigger('click')
+      await tick()
+      const organizationHeader = wrapper.get('.source-browse-header')
+      expect(organizationHeader.find('[role="status"]').text()).toBe('')
+      expect(organizationHeader.find('button[aria-label="View source problems"]').text()).toContain('1')
+      await organizationHeader.get('.source-browse-header__menu summary').trigger('click')
+      expect(organizationHeader.findAll('button').some((button) => button.text() === 'Open in browser')).toBe(false)
+      expect(organizationHeader.findAll('button').some((button) => button.text() === 'Remove source')).toBe(false)
+      expect(browserOpenURL).toHaveBeenCalledTimes(1)
+    } finally {
+      if (previousRuntime == null) {
+        Reflect.deleteProperty(window, 'runtime')
+      } else {
+        Object.defineProperty(window, 'runtime', previousRuntime)
+      }
+    }
+  })
+
+  // spec: gui-shell/source-shortcut-preserves-removal-confirmation-and-scope
+  it('does not offer source removal confirmation after a failed configuration refresh', async () => {
+    const teamSource = source({
+      id: 'team-source',
+      name: 'Team',
+      kind: 'git',
+      location: 'https://git.example.test/team.git',
+      rowSourceId: 'team-identity',
+    })
+    const { client, push } = fakeClient()
+    vi.mocked(client.configuration).mockResolvedValue(configuration({ userSources: [teamSource] }))
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([row('team-resource', { source: { id: 'team-identity', label: 'Team' } })]),
+    }))
+    await tick()
+
+    const browseTeam = wrapper.findAll('button').find(
+      (button) => button.attributes('aria-label') === `Browse source ${teamSource.location}`,
+    )!
+    await browseTeam.trigger('click')
+    await tick()
+    const header = wrapper.get('.source-browse-header')
+    await header.get('summary[aria-label="Source actions"]').trigger('click')
+    const removeSource = header.findAll('button').find((button) => button.text() === 'Remove source')
+    expect(removeSource).toBeDefined()
+
+    vi.mocked(client.configuration).mockRejectedValueOnce(new Error('fixture'))
+    await removeSource!.trigger('click')
+    await tick()
+    await tick()
+
+    expect(document.body.textContent).toContain('Could not verify the source. Close Settings and try again.')
+    expect(document.body.querySelector('[aria-label="Confirm removal"]')).toBeNull()
+    expect(client.configure).not.toHaveBeenCalled()
+  })
+})
+
 describe('workspace chrome', () => {
   it('keeps the other status hints and limits inspector metadata', async () => {
     const { client, push } = fakeClient()
@@ -1711,7 +2027,7 @@ describe('Event stream reconnect', () => {
 
     expect(wrapper.findAll('[role="option"]')).toHaveLength(0)
     expect(wrapper.get('.gui-empty--muted').text()).toBe('No resources from market.example.')
-    expect(wrapper.get('button[aria-label^="Clear source filter "]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label^="Clear source filter "]').exists()).toBe(true)
 
     await wrapper.get('button[aria-label^="Clear source filter "]').trigger('click')
     await tick()

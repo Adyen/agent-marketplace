@@ -328,18 +328,20 @@ export class WorkspaceController {
     }
   }
 
-  async loadConfiguration(): Promise<void> {
+  async loadConfiguration(): Promise<boolean> {
     const seq = ++this.configurationSeq
     try {
       const configuration = await this.client.configuration()
       if (seq !== this.configurationSeq) {
-        return
+        return false
       }
       this.state.configuration = configuration
+      return true
     } catch {
       if (seq === this.configurationSeq && this.state.configuration == null) {
         this.state.error ??= 'Settings could not be loaded'
       }
+      return false
     }
   }
 

@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Snapshot } from './api/client'
 import type { Diagnostic } from './controller'
+import { copyText } from './clipboard'
 import { groupDiagnostics } from './diagnostics'
 import GuiIcon from './GuiIcon.vue'
 
@@ -63,13 +64,7 @@ function expandLabel(group: { key: string; severity: string }): string {
 async function copyDiagnostics() {
   copied.value = false
   try {
-    const runtime = window.runtime
-    if (runtime?.ClipboardSetText != null) {
-      copied.value = await runtime.ClipboardSetText(copiedText.value)
-      return
-    }
-    await navigator.clipboard.writeText(copiedText.value)
-    copied.value = true
+    copied.value = await copyText(copiedText.value)
   } catch {
     copied.value = false
   }

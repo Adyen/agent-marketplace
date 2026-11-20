@@ -3,21 +3,22 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { createClient } from './api/client'
 import { closeRequestEvent, launchRequestEvent, nativeEventBridge, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, WorkspaceController, type Row } from './controller'
-import { buildSections, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
+import { buildSections, kindFacetOptions, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
 import { notificationPresentation, operationDetail, operationLabel } from './feedback'
 import { hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
 import { readStoredValue, writeStoredValue } from './storage'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import GuiIcon from './GuiIcon.vue'
-import SettingsWindow, { type SettingsTab } from './SettingsWindow.vue'
+import SettingsWindow, { type SettingsTab, type SourceRevealRequest } from './SettingsWindow.vue'
 import Inspector from './Inspector.vue'
 import MainToolbar from './MainToolbar.vue'
 import ResourceActions from './ResourceActions.vue'
 import ResourceInspection from './ResourceInspection.vue'
 import DiagnosticsView from './DiagnosticsView.vue'
 import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
-import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
+import Sidebar, { type SidebarGroup, type SidebarSource, type StatusFacet } from './Sidebar.vue'
+import SourceBrowseHeader from './SourceBrowseHeader.vue'
 import StatusBar from './StatusBar.vue'
 import { sourceLabel } from './source-label'
 
@@ -45,10 +46,12 @@ const searchEditing = ref(false)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsTab = ref<SettingsTab>('general')
-const sourceRevealRequest = ref<{ sourceId: string; sequence: number } | null>(null)
+const sourceRevealRequest = ref<SourceRevealRequest | null>(null)
 const addSourceFocusRequest = ref(0)
 const selectedSourceId = ref<string | null>(null)
 const lastSelectedSourceLabel = ref('')
+const selectedKind = ref<string | null>(null)
+const selectedStatus = ref<StatusFacet | null>(null)
 let sourceRevealSequence = 0
 let settingsOpener: 'settings' | 'sources' = 'settings'
 const setupOpen = ref(false)
@@ -235,6 +238,15 @@ function clearSourceFilter() {
 function openSidebarAddSource() {
   openSettingsWindow('sources')
   addSourceFocusRequest.value += 1
+}
+
+function requestSidebarSourceRemoval() {
+  const source = selectedSource.value
+  if (source == null || !canRemoveSelectedSource.value) {
+    return
+  }
+  openSettingsWindow('sources')
+  sourceRevealRequest.value = { sourceId: source.id, sequence: ++sourceRevealSequence, remove: true }
 }
 
 watch(settingsOpen, (isOpen, wasOpen) => {
@@ -481,6 +493,27 @@ function showAll() {
   }
 }
 
+function showAllResources() {
+  clearSourceFilter()
+  selectedKind.value = null
+  selectedStatus.value = null
+  showAll()
+}
+
+function toggleKindFacet(kind: string) {
+  selectedKind.value = selectedKind.value === kind ? null : kind
+  showResources()
+}
+
+function toggleStatusFacet(status: StatusFacet) {
+  selectedStatus.value = selectedStatus.value === status ? null : status
+  showResources()
+}
+
+function showSourceProblems() {
+  selectedStatus.value = 'attention'
+}
+
 function selectGroup(groupID: string) {
   showResources()
   const group = sectionViews.value.find((candidate) => candidate.path === groupID)
@@ -657,6 +690,12 @@ const resourceActionOpen = computed({
 })
 
 const selectedSource = computed(() => sidebarSources.value.find(({ source }) => source.id === selectedSourceId.value)?.source)
+const selectedKindLabel = computed(() => kindFacetOptions.find((option) => option.id === selectedKind.value)?.label ?? selectedKind.value ?? '')
+const selectedStatusLabel = computed(() => selectedStatus.value === 'attention'
+  ? 'Needs attention'
+  : selectedStatus.value === 'required'
+    ? 'Required by org'
+    : '')
 const activeSourceLabel = computed(() => {
   const source = selectedSource.value
   if (source == null) {
@@ -679,16 +718,35 @@ const sourceRows = computed(() => {
       : row.source.id === source.rowSourceId,
   )
 })
-const searchMatches = computed<SearchMatch[]>(() => rankRows(sourceRows.value, activeQuery.value))
+const isProblemRow = (row: Row) => row.group === 'stale' || row.group === 'broken' || row.group === 'malformed'
+const sourceProblemCount = computed(() =>
+  selectedSource.value == null ? 0 : sourceRows.value.filter(isProblemRow).length,
+)
+const canRemoveSelectedSource = computed(() => {
+  const source = selectedSource.value
+  const config = configuration.value
+  return source != null &&
+    config?.editable === true &&
+    config.userSources.some((candidate) => candidate.id === source.id) &&
+    !busy.value
+})
+const facetedRows = computed(() => sourceRows.value.filter((row) =>
+  (selectedKind.value == null || row.kind === selectedKind.value) &&
+  (selectedStatus.value == null || (selectedStatus.value === 'attention' ? isProblemRow(row) : row.required)),
+))
+const searchMatches = computed<SearchMatch[]>(() => rankRows(facetedRows.value, activeQuery.value))
 const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
 const filteredSearch = computed(() => hasSearchTerms(activeQuery.value))
 const localMatchCount = computed(() => searchMatches.value.filter((match) => !match.row.discovery).length)
-const emptyState = computed<'resources' | 'search' | 'source' | null>(() => {
+const emptyState = computed<'resources' | 'search' | 'source' | 'filters' | null>(() => {
   if (view.value?.stage !== 'final') {
     return null
   }
   if (filteredSearch.value) {
     return searchMatches.value.length === 0 ? 'search' : null
+  }
+  if (selectedKind.value != null || selectedStatus.value != null) {
+    return searchMatches.value.length === 0 ? 'filters' : null
   }
   if (selectedSourceId.value != null) {
     return searchMatches.value.length === 0 ? 'source' : null
@@ -893,7 +951,7 @@ watch(
 )
 
 watch(
-  [() => view.value?.rows, () => view.value?.stage, selectedSourceId, selectedSource],
+  [() => view.value?.rows, () => view.value?.stage, selectedSourceId, selectedSource, selectedKind, selectedStatus],
   ([rows, stage], previous) => {
     if (rows == null || stage == null) {
       return
@@ -1210,6 +1268,9 @@ async function run(action: 'sync' | 'update') {
       :groups="navGroups"
       :pending-count="pendingCount"
       :pending-section-id="pendingSectionId"
+      :kind-options="kindFacetOptions"
+      :selected-kind="selectedKind"
+      :selected-status="selectedStatus"
       :main-view="mainView"
       :diagnostics-count="diagnosticsCount"
       :diagnostics-tone="diagnosticsTone"
@@ -1220,6 +1281,9 @@ async function run(action: 'sync' | 'update') {
       :latest-version="view?.latestVersion ?? ''"
       @search="openSearch"
       @show-all="showAll"
+      @all-resources="showAllResources"
+      @toggle-kind="toggleKindFacet"
+      @toggle-status="toggleStatusFacet"
       @show-diagnostics="showDiagnostics"
       @select-group="selectGroup"
       @open-sources="openSidebarAddSource"
@@ -1272,16 +1336,54 @@ async function run(action: 'sync' | 'update') {
         @setup="setupOpen = true"
       />
 
-      <div v-if="selectedSourceId != null" class="workspace__source-filter" role="group" aria-label="Active source filter">
-        <span class="gui-tag">Source</span>
-        <span class="workspace__source-filter-label">{{ activeSourceLabel }}</span>
-        <button
-          type="button"
-          class="gui-icon-button"
-          :aria-label="`Clear source filter ${activeSourceLabel}`"
-          @click="clearSourceFilter"
-        ><GuiIcon name="close" /></button>
+      <div
+        v-if="selectedSourceId != null || selectedKind != null || selectedStatus != null"
+        class="workspace__source-filter"
+        role="group"
+        aria-label="Active resource filters"
+      >
+        <div v-if="selectedSourceId != null" class="workspace__filter-chip">
+          <span class="gui-tag">Source</span>
+          <span class="workspace__source-filter-label">{{ activeSourceLabel }}</span>
+          <button
+            type="button"
+            class="gui-icon-button"
+            :aria-label="`Clear source filter ${activeSourceLabel}`"
+            @click="clearSourceFilter"
+          ><GuiIcon name="close" /></button>
+        </div>
+        <div v-if="selectedKind != null" class="workspace__filter-chip">
+          <span class="gui-tag">Kind</span>
+          <span class="workspace__source-filter-label">{{ selectedKindLabel }}</span>
+          <button
+            type="button"
+            class="gui-icon-button"
+            :aria-label="`Clear kind filter ${selectedKindLabel}`"
+            @click="selectedKind = null"
+          ><GuiIcon name="close" /></button>
+        </div>
+        <div v-if="selectedStatus != null" class="workspace__filter-chip">
+          <span class="gui-tag">Status</span>
+          <span class="workspace__source-filter-label">{{ selectedStatusLabel }}</span>
+          <button
+            type="button"
+            class="gui-icon-button"
+            :aria-label="`Clear status filter ${selectedStatusLabel}`"
+            @click="selectedStatus = null"
+          ><GuiIcon name="close" /></button>
+        </div>
       </div>
+
+      <SourceBrowseHeader
+        v-if="mainView === 'resources' && selectedSource != null"
+        :key="selectedSource.id"
+        :source="selectedSource"
+        :label="activeSourceLabel"
+        :problem-count="sourceProblemCount"
+        :can-remove="canRemoveSelectedSource"
+        @show-problems="showSourceProblems"
+        @remove="requestSidebarSourceRemoval"
+      />
 
       <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
       <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
@@ -1380,6 +1482,7 @@ async function run(action: 'sync' | 'update') {
         />
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
+      <p v-else-if="mainView === 'resources' && emptyState === 'filters'" class="gui-empty gui-empty--muted">No resources match these filters.</p>
       <p v-else-if="mainView === 'resources' && emptyState === 'source'" class="gui-empty gui-empty--muted">No resources from {{ activeSourceLabel }}.</p>
 
       <ResourceList
