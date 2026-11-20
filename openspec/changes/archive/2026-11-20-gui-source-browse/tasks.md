@@ -11,5 +11,5 @@
 
 ## 3. Verify and archive
 
-- [ ] 3.1 Run local API tests, the GUI check and built-GUI Playwright suites, the repository validation and spec gates, and capture matched desktop evidence for the source and later-page journeys. Report unrelated baseline failures separately.
-- [ ] 3.2 Run `openspec archive gui-source-browse --yes` as the final commit of the implementation PR.
+- [x] 3.1 Run local API tests, the GUI check and built-GUI Playwright suites, the repository validation and spec gates, and capture matched desktop evidence for the source and later-page journeys. Report unrelated baseline failures separately.
+- [x] 3.2 Run `openspec archive gui-source-browse --yes` as the final commit of the implementation PR.
