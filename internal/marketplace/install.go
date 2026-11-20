@@ -153,7 +153,7 @@ func (r *Resolver) VerifyPinnedRevision(ctx context.Context, entry config.Market
 		}
 		if pin.RegistryCommit != "" && prepared.Revision.Occurrence.Commit != pin.RegistryCommit ||
 			pin.RegistryManifestDigest != "" && string(prepared.Revision.Occurrence.ManifestDigest) != pin.RegistryManifestDigest {
-			return false, fmt.Errorf("locked registry occurrence does not match the pinned revision")
+			return false, nil
 		}
 		if pin.LockCollectionManifestDigest != "" && prepared.CollectionManifest.ContentDigest != pin.LockCollectionManifestDigest {
 			return false, fmt.Errorf("locked collection manifest digest does not match the pinned revision")

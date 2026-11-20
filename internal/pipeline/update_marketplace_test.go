@@ -907,6 +907,51 @@ func TestUpdateContinuesPastUnusableMissingMarketplacePin(t *testing.T) {
 }
 
 // spec: update-output/unusable-pinned-revision-remains-an-error
+func TestUpdateContinuesPastMissingMarketplacePinWithMismatchedOccurrence(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "stay")
+	fake.addSkill(t, registry, "gone")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry,
+		layerPreparePins(t, fake, "skill", "stay"), layerPreparePins(t, fake, "skill", "gone"))
+	doc := layerMarketplaceLockDoc(t, env.lockPath)
+	goneRecord := marketplaceLockResource(doc, "skill", "gone")
+	if goneRecord == nil {
+		t.Fatal("missing pin lock record")
+	}
+	lockedRevision := fake.resources["source/skill/gone"].revision
+	goneRecord.Acquisition = lockfile.MarketplaceAcquisitionIndexOnly
+	goneRecord.RegistryCommit = lockedRevision.Occurrence.Commit
+	goneRecord.RegistryManifestDigest = lockfile.Digest(lockedRevision.Occurrence.ManifestDigest)
+	goneRecord.SourcePath = "skills/gone"
+	lockBytes, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatalf("encode index-only pin lock: %v", err)
+	}
+	writeFileMode(t, env.lockPath, string(lockBytes), 0o600)
+	gone := fake.resources["source/skill/gone"]
+	gone.revision.Occurrence.SourcePath = "skills/gone"
+	gone.revision.Occurrence.Commit = strings.Repeat("c", 40)
+	gone.revision.Occurrence.ManifestDigest = store.RevisionDigest("sha256:" + strings.Repeat("d", 64))
+	fake.resources["source/skill/gone"] = gone
+	fake.missing["skill/gone"] = true
+	fake.setSkill(t, registry, "stay", "stay body v2")
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 1 || result.UpdatedMarketplacePins != 1 ||
+		!strings.Contains(err.Error(), "agent-marketplace remove gone") || !strings.Contains(err.Error(), "install the new name") {
+		t.Fatalf("update = (%#v, %v), want one missing-resource error after updating other pins", result, err)
+	}
+	if got := marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "gone"); got == nil || !reflect.DeepEqual(*got, *goneRecord) {
+		t.Fatalf("unusable pin lock record changed: got %#v, want %#v", got, *goneRecord)
+	}
+	stay := marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "stay")
+	if want := fake.resources["source/skill/stay"].revision.ContentDigest; stay == nil || stay.ContentDigest != lockfile.Digest(want) {
+		t.Fatalf("updated stay pin = %#v, want digest %s", stay, want)
+	}
+}
+
+// spec: update-output/unusable-pinned-revision-remains-an-error
 func TestUpdatePreservesCachedRevocationErrorForMissingPin(t *testing.T) {
 	env := seedMissingPinEnv(t)
 	fake, registry, entry := env.fake, env.registry, env.entry
