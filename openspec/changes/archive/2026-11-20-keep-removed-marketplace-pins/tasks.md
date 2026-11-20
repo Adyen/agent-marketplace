@@ -10,8 +10,8 @@
 - [x] 2.2 Emit the warning (with the remove hint, or the required-entry hint for required pins) on applying and preview updates, and exit 0 when no other error occurs.
 - [x] 2.3 Note a 404 latest lookup in Marketplace status inspection without changing STATE.
 - [x] 2.4 Surface the warning in the TUI update completion and diagnostics view.
-- [ ] 2.5 Update `site/docs/how-to/handle-renamed-or-removed-resources.md`.
+- [x] 2.5 Update `site/docs/how-to/handle-renamed-or-removed-resources.md`.
 
 ## 3. Verification
 
-- [ ] 3.1 Run focused pipeline, marketplace, command and TUI tests, `make spec-check`, `make tui-qa`, and `make validate`.
+- [x] 3.1 Run focused pipeline, marketplace, command and TUI tests, `make spec-check`, `make tui-qa`, and `make validate`.

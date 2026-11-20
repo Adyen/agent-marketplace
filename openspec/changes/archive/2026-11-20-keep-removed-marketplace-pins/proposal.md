@@ -26,3 +26,7 @@ None.
 ## Impact
 
 Marketplace update planning and reporting (`internal/pipeline`, `internal/marketplace`, `cmd/agent-marketplace`), Marketplace status inspection (`internal/marketplace/status.go`), TUI update warning handling (`internal/tui`), a TUI QA journey, and `site/docs/how-to/handle-renamed-or-removed-resources.md`. No configuration, lock, or Marketplace API format change. Git registry update refusal is unchanged. Revoked revisions remain errors.
+
+## Release note
+
+Breaking: `agent-marketplace update` now warns and exits successfully when a Marketplace resource is removed upstream but its pinned revision is still usable. If a script relied on exit 1 to detect removal, check the warning instead. An unusable pinned revision still makes `update` exit 1.
