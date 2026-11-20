@@ -142,6 +142,7 @@ Read routes (`GET` or `HEAD`, responses use `Cache-Control: no-store`):
 - `/api/v1/admin/configuration`: the managed configuration. The `ETag` header carries the current revision.
 - `/api/v1/admin/profiles`: credential profile keys with their allowed origins, plus the accepted source harnesses.
 - `/api/v1/admin/instance`: instance name, version, management mode, and revision.
+- `/api/v1/admin/claude-delivery`: Claude Enterprise delivery state for this instance's resources. Each entry names the resource coordinate, plugin name and ID, state, published and served version IDs, content-scan status, reach, installation preference, and last failure code, plus an optional operator-facing `status_message`. Entries never contain the Admin API key, resource bodies, or raw failure text; a withdrawn plugin's entry states that installed copies and stored version history are unaffected.
 - `/api/v1/admin/attempts`: refresh attempt history. Parameters `before`, `limit` (1 to 100), `registry_id`, and `job_id`. Failed and superseded attempts may carry `failure_code`, a stable machine-readable classification, and `failure_cause`, a sanitized cause that never contains raw command output or credentials; both are omitted on started and succeeded attempts, and historical records may lack them.
 - `/api/v1/admin/activity`: audited changes, newest first. Parameters `before` and `limit` (1 to 100, default 50).
 - `/api/v1/admin/jobs/{id}`: status of one managed job.

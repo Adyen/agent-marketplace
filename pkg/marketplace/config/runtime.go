@@ -112,12 +112,13 @@ func IndexingGeneration(cfg Config, registry Registry) (string, error) {
 // Classification describes the worker-safe effects of a valid configuration
 // candidate relative to the currently running configuration.
 type Classification struct {
-	Added                  []string
-	Removed                []string
-	IndexingChanged        []string
-	MetadataChanged        []string
-	RefreshIntervalChanged bool
-	RestartRequired        []string
+	Added                   []string
+	Removed                 []string
+	IndexingChanged         []string
+	MetadataChanged         []string
+	ClaudeEnterpriseChanged bool
+	RefreshIntervalChanged  bool
+	RestartRequired         []string
 }
 
 // normalizeCollections returns cfg with nil collections replaced by empty ones,
@@ -165,7 +166,8 @@ func nonNilMap[M ~map[K]V, K comparable, V any](values M) M {
 func Classify(startup, running, candidate Config) (Classification, error) {
 	startup, running, candidate = normalizeCollections(startup), normalizeCollections(running), normalizeCollections(candidate)
 	classification := Classification{
-		RefreshIntervalChanged: running.Refresh.Interval != candidate.Refresh.Interval,
+		ClaudeEnterpriseChanged: !reflect.DeepEqual(running.ClaudeEnterprise, candidate.ClaudeEnterprise),
+		RefreshIntervalChanged:  running.Refresh.Interval != candidate.Refresh.Interval,
 	}
 	startupOwned := []struct {
 		name string

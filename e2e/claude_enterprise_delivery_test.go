@@ -1,0 +1,472 @@
+package e2e_test
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
+const claudeDeliveryEndpointEnv = "AGENT_MARKETPLACE_E2E_CLAUDE_PLUGINS_ENDPOINT"
+const claudeDeliveryKeyEnv = "CLAUDE_ENTERPRISE_TEST_KEY"
+const claudeDeliveryTestAPIKey = "sk-ant-e2e-secret"
+
+// spec: claude-enterprise-delivery/disabled-delivery-makes-no-outbound-request
+func TestClaudeEnterpriseDeliveryDisabledMakesNoOutboundRequest(t *testing.T) {
+	env, _ := newServeReindexEnvWithURL(t)
+	fake := newClaudePluginsAPIFake(t)
+	result := runClaudeDeliveryOnce(env, fake.URL())
+	if result.ExitCode != 0 {
+		t.Fatalf("disabled delivery sync exited %d:\n%s", result.ExitCode, result.Combined)
+	}
+	if got := fake.requestCount(); got != 0 {
+		t.Fatalf("disabled delivery made %d Plugins API requests", got)
+	}
+	process := startServeTestProcess(t, env, env.mustResolvePath("/workspace/marketplace.yaml"), "worker", map[string]string{
+		claudeDeliveryEndpointEnv: fake.URL(),
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
+	})
+	metadata := openServeMetadata(t, env)
+	defer func() { _ = metadata.Close() }()
+	waitForServeCondition(t, func() bool {
+		desired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-serve"})
+		return err == nil && len(desired) == 1
+	}, "registry publication with disabled Claude delivery")
+	if got := fake.requestCount(); got != 0 {
+		t.Fatalf("disabled worker made %d Plugins API requests", got)
+	}
+	rows, err := metadata.ListClaudeDeliveryPlugins(t.Context())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("disabled delivery created rows: %+v %v", rows, err)
+	}
+	jobDB, err := sql.Open("sqlite", env.mustResolvePath("/workspace/marketplace.db"))
+	if err != nil {
+		t.Fatalf("open metadata database for job check: %v", err)
+	}
+	defer func() { _ = jobDB.Close() }()
+	var deliveryJobs int
+	if err := jobDB.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM jobs WHERE kind = ?", "claude-delivery").Scan(&deliveryJobs); err != nil {
+		t.Fatalf("count Claude delivery jobs: %v", err)
+	}
+	if deliveryJobs != 0 {
+		t.Fatalf("disabled delivery created %d Claude delivery jobs", deliveryJobs)
+	}
+	process.stop(t)
+}
+
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
+func TestClaudeEnterpriseDeliveryDoesNotOverlapOperatorPasses(t *testing.T) {
+	env, _ := newServeReindexEnvWithURL(t)
+	fake := &claudePluginsAPIFake{t: t}
+	firstRequest := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(firstRequest)
+			select {
+			case <-releaseFirst:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		fake.serveHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	config := env.ReadFile("/workspace/marketplace.yaml") + `
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_TEST_KEY
+  api_key_id: apikey_e2e
+  marketplace_id: marketplace_e2e
+  interval: 2s
+`
+	replaceServeConfig(t, env, config)
+	reindex := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
+	if reindex.ExitCode != 0 {
+		t.Fatalf("serve reindex exited %d:\n%s", reindex.ExitCode, reindex.Combined)
+	}
+
+	firstDone := make(chan ExecResult, 1)
+	go func() {
+		firstDone <- runClaudeDeliveryOnce(env, server.URL)
+	}()
+	firstJoined := false
+	defer func() {
+		releaseOnce.Do(func() { close(releaseFirst) })
+		if !firstJoined {
+			select {
+			case <-firstDone:
+			case <-time.After(10 * time.Second):
+				t.Error("first Claude delivery process did not exit after releasing the fake API")
+			}
+		}
+	}()
+
+	select {
+	case <-firstRequest:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first operator pass did not reach the fake Plugins API")
+	}
+
+	second := runClaudeDeliveryOnce(env, server.URL)
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("second operator pass made another Plugins API request: got %d requests before releasing the first", got)
+	}
+	if second.ExitCode == 0 || !strings.Contains(second.Combined, "delivery job remains queued") {
+		t.Fatalf("second operator pass result = %d:\n%s, want it to remain queued", second.ExitCode, second.Combined)
+	}
+
+	releaseOnce.Do(func() { close(releaseFirst) })
+	first := <-firstDone
+	firstJoined = true
+	if first.ExitCode != 0 {
+		t.Fatalf("first operator pass exited %d:\n%s", first.ExitCode, first.Combined)
+	}
+}
+
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
+// spec: claude-enterprise-delivery/a-revocation-withdraws-a-mirrored-resource
+func TestClaudeEnterpriseDeliveryMirrorsChangesAndWithdrawsAvailabilityOnly(t *testing.T) {
+	env, registryURL := newServeReindexEnvWithURL(t)
+	fake := newClaudePluginsAPIFake(t)
+	operations := publicGateEphemeralAddress(t)
+	baseConfig := strings.Replace(env.ReadFile("/workspace/marketplace.yaml"),
+		"  canonical_url: https://example.com\n",
+		"  canonical_url: https://example.com\noperations_listen: "+operations+"\n", 1)
+	env.CreateBareRepo("serve-reg-rejected", map[string]string{
+		".agents/skills/rejected/SKILL.md": (Skill{
+			Name: "rejected", Description: "This license is not allowed", License: "GPL-3.0-only",
+		}).SkillFile(),
+	})
+	rejectedURL := strings.TrimSuffix(registryURL, "/serve-reg.git") + "/serve-reg-rejected.git"
+	baseConfig = appendMetricsRegistry(baseConfig, "src-rejected", "rejected-source", rejectedURL, false)
+	config := baseConfig + `
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_TEST_KEY
+  api_key_id: apikey_e2e
+  marketplace_id: marketplace_e2e
+  interval: 2s
+`
+	replaceServeConfig(t, env, config)
+	configPath := env.mustResolvePath("/workspace/marketplace.yaml")
+	process := startServeTestProcess(t, env, configPath, "worker", map[string]string{
+		claudeDeliveryEndpointEnv: fake.URL(),
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
+	})
+	metadata := openServeMetadata(t, env)
+	defer func() { _ = metadata.Close() }()
+	coordinate := store.ResourceCoordinate{
+		Marketplace: "e2e-serve-mp", Registry: "src-serve", Kind: "skill", Name: "review",
+	}
+	waitForServeCondition(t, func() bool {
+		desired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-serve"})
+		return err == nil && len(desired) == 1
+	}, "initial current delivery resource")
+	desired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-serve"})
+	if err != nil || len(desired) != 1 {
+		t.Fatalf("initial current delivery set = %+v, %v", desired, err)
+	}
+	rejectedCoordinate := store.ResourceCoordinate{
+		Marketplace: "e2e-serve-mp", Registry: "src-rejected", Kind: "skill", Name: "rejected",
+	}
+	waitForServeCondition(t, func() bool {
+		_, err := metadata.GetLatestResourceRevision(t.Context(), rejectedCoordinate)
+		return err == nil
+	}, "rejected registry resource")
+	rejected, err := metadata.GetLatestResourceRevision(t.Context(), rejectedCoordinate)
+	if err != nil || rejected.Assessment.Decision != store.AssessmentDecisionReject {
+		t.Fatalf("rejected fixture assessment = %+v, %v", rejected.Assessment, err)
+	}
+	rejectedDesired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-rejected"})
+	if err != nil || len(rejectedDesired) != 0 {
+		t.Fatalf("rejected current resource entered delivery set: %+v, %v", rejectedDesired, err)
+	}
+	first := waitForClaudeDeliverySnapshot(t, process, fake, func(snapshot claudePluginsSnapshot) bool {
+		return snapshot.createdPlugins == 1 && equalStrings(snapshot.preferences, []string{"available"})
+	}, "initial plugin mirror")
+	if first.createdVersions != 0 || first.deletes != 0 || first.writeRequests != 2 {
+		t.Fatalf("first mirror did not only create one plugin and set its availability: %+v", first)
+	}
+	waitForClaudeDeliveryState(t, metadata, coordinate, store.ClaudeDeliveryStatePublished)
+	group := env.RunAM("serve", "claude-delivery")
+	if group.ExitCode != 0 || !strings.Contains(group.Combined, "status") || !strings.Contains(group.Combined, "sync") {
+		t.Fatalf("serve claude-delivery help exited %d or omitted a subcommand:\n%s", group.ExitCode, group.Combined)
+	}
+	assertClaudeDeliveryStatus(t, env, store.ClaudeDeliveryStatePublished)
+
+	const reconcileMetric = "agent_marketplace_claude_delivery_reconciles_total"
+	succeeded := map[string]string{"outcome": "succeeded"}
+	_, completed, ok := waitForMetric(t, operations, reconcileMetric, succeeded, 1, workerMetricWait)
+	if !ok {
+		t.Fatal("initial Claude delivery pass did not complete")
+	}
+	if _, _, ok := waitForMetric(t, operations, reconcileMetric, succeeded, completed+1, workerMetricWait); !ok {
+		t.Fatal("unchanged Claude delivery pass did not complete")
+	}
+	unchanged := fake.snapshot()
+	if unchanged.writeRequests != first.writeRequests || unchanged.createdPlugins != first.createdPlugins ||
+		unchanged.createdVersions != 0 || !equalStrings(unchanged.preferences, first.preferences) {
+		t.Fatalf("unchanged pass wrote to Plugins API: %+v", unchanged)
+	}
+
+	env.CreateBareRepo("serve-reg-updated", map[string]string{
+		".agents/skills/review/SKILL.md": (Skill{
+			Name: "review", Description: "Review changed code carefully", License: "MIT",
+		}).SkillFile(),
+	})
+	updatedURL := strings.TrimSuffix(registryURL, "/serve-reg.git") + "/serve-reg-updated.git"
+	config = strings.Replace(env.ReadFile("/workspace/marketplace.yaml"), registryURL, updatedURL, 1)
+	replaceServeConfig(t, env, config)
+	if result := env.RunAM("serve", "reindex", "--config", "marketplace.yaml"); result.ExitCode != 0 {
+		t.Fatalf("changed publication exited %d:\n%s", result.ExitCode, result.Combined)
+	}
+	changed := waitForClaudeDeliverySnapshot(t, process, fake, func(snapshot claudePluginsSnapshot) bool {
+		return snapshot.createdVersions == 1
+	}, "delivery of the changed publication")
+	if changed.createdPlugins != 1 || changed.createdVersions != 1 || changed.deletes != 0 ||
+		changed.writeRequests != unchanged.writeRequests+1 || !equalStrings(changed.preferences, first.preferences) {
+		t.Fatalf("changed resource did not create exactly one version: %+v", changed)
+	}
+
+	config = env.ReadFile("/workspace/marketplace.yaml") + `
+revocations:
+  coordinates:
+    - e2e-serve-mp/src-serve/skill/review
+`
+	replaceServeConfig(t, env, config)
+	if result := env.RunAM("serve", "reindex", "--config", "marketplace.yaml"); result.ExitCode != 0 {
+		t.Fatalf("revocation publication exited %d:\n%s", result.ExitCode, result.Combined)
+	}
+	withdrawn := waitForClaudeDeliverySnapshot(t, process, fake, func(snapshot claudePluginsSnapshot) bool {
+		return equalStrings(snapshot.preferences, []string{"available", "not_available"})
+	}, "revocation withdrawal")
+	if withdrawn.createdPlugins != 1 || withdrawn.createdVersions != 1 || withdrawn.deletes != 0 ||
+		withdrawn.writeRequests != changed.writeRequests+1 ||
+		!equalStrings(withdrawn.preferences, []string{"available", "not_available"}) {
+		t.Fatalf("withdrawal was not availability-only: %+v", withdrawn)
+	}
+	waitForClaudeDeliveryState(t, metadata, coordinate, store.ClaudeDeliveryStateRetired)
+	assertClaudeDeliveryStatus(t, env, store.ClaudeDeliveryStateRetired)
+}
+
+func waitForClaudeDeliveryState(t *testing.T, metadata store.ClaudeDeliveryStateStore, coordinate store.ResourceCoordinate, state store.ClaudeDeliveryState) {
+	t.Helper()
+	waitForServeCondition(t, func() bool {
+		row, err := metadata.GetClaudeDeliveryPlugin(t.Context(), coordinate)
+		return err == nil && row.State == state
+	}, string(state)+" Claude delivery state")
+}
+
+func assertClaudeDeliveryStatus(t *testing.T, env *Env, state store.ClaudeDeliveryState) {
+	t.Helper()
+	result := env.RunAM("serve", "claude-delivery", "status", "--config", "marketplace.yaml")
+	if result.ExitCode != 0 {
+		t.Fatalf("serve claude-delivery status exited %d:\n%s", result.ExitCode, result.Combined)
+	}
+	for _, want := range []string{
+		"Resource: src-serve/skill/review",
+		"Plugin: am-serve-source-skill-review (plugin_e2e)",
+		"State: " + string(state),
+	} {
+		if !strings.Contains(result.Combined, want) {
+			t.Errorf("serve claude-delivery status omitted %q:\n%s", want, result.Combined)
+		}
+	}
+	if state == store.ClaudeDeliveryStateRetired &&
+		!strings.Contains(result.Combined, "Previously installed copies and stored version history are unaffected.") {
+		t.Errorf("withdrawn status omitted its availability-only notice:\n%s", result.Combined)
+	}
+	for _, forbidden := range []string{claudeDeliveryTestAPIKey, "# review"} {
+		if strings.Contains(result.Combined, forbidden) {
+			t.Errorf("serve claude-delivery status exposed %q:\n%s", forbidden, result.Combined)
+		}
+	}
+}
+
+func waitForClaudeDeliverySnapshot(t *testing.T, process *serveTestProcess, fake *claudePluginsAPIFake, ready func(claudePluginsSnapshot) bool, description string) claudePluginsSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(workerMetricWait)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-process.done:
+			process.waitErr = err
+			process.stopped = true
+			process.cancel()
+			t.Fatalf("serve worker exited before %s: %v\n%s", description, err, process.logs())
+		default:
+		}
+		snapshot := fake.snapshot()
+		if ready(snapshot) {
+			return snapshot
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	logs := process.stop(t)
+	t.Fatalf("timed out waiting for %s; latest Plugins API state: %+v\n%s", description, fake.snapshot(), logs)
+	return claudePluginsSnapshot{}
+}
+
+func runClaudeDeliveryOnce(env *Env, endpoint string) ExecResult {
+	return env.RunAMWithEnv(map[string]string{
+		claudeDeliveryEndpointEnv: endpoint,
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
+	}, "serve", "claude-delivery", "sync", "--config", "marketplace.yaml", "--once")
+}
+
+type claudePluginsAPIFake struct {
+	t *testing.T
+
+	mu              sync.Mutex
+	plugin          map[string]any
+	createdPlugins  int
+	createdVersions int
+	writeRequests   int
+	preferences     []string
+	deletes         int
+	requests        int
+	server          *httptest.Server
+}
+
+func newClaudePluginsAPIFake(t *testing.T) *claudePluginsAPIFake {
+	t.Helper()
+	fake := &claudePluginsAPIFake{t: t}
+	fake.server = httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
+	t.Cleanup(fake.server.Close)
+	return fake
+}
+
+func (f *claudePluginsAPIFake) URL() string { return f.server.URL }
+
+func (f *claudePluginsAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests++
+	if r.Method != http.MethodGet {
+		f.writeRequests++
+	}
+	if r.Header.Get("x-api-key") != claudeDeliveryTestAPIKey ||
+		r.Header.Get("anthropic-version") != "2026-10-21" ||
+		r.Header.Get("anthropic-beta") != "ce-plugins-2026-09-01" {
+		http.Error(w, `{"error":"unexpected headers"}`, http.StatusUnauthorized)
+		return
+	}
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/plugin_marketplaces/marketplace_e2e":
+		writeClaudeJSON(w, map[string]any{
+			"type": "plugin_marketplace", "id": "marketplace_e2e", "name": "E2E",
+			"source": "manual", "owner": map[string]any{"type": "organization"},
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/plugins":
+		data := []map[string]any{}
+		if f.plugin != nil {
+			data = append(data, f.plugin)
+		}
+		writeClaudeJSON(w, map[string]any{"data": data, "next_page": nil})
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/plugins":
+		f.createdPlugins++
+		f.plugin = claudePluginRecord("version_1", "not_available", true)
+		writeClaudeJSON(w, f.plugin)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/plugins/plugin_e2e/versions":
+		f.createdVersions++
+		versionID := fmt.Sprintf("version_%d", f.createdVersions+1)
+		f.plugin = claudePluginRecord(versionID, "available", false)
+		writeClaudeJSON(w, map[string]any{
+			"type": "plugin_version", "id": versionID, "plugin_id": "plugin_e2e",
+			"content_scan": map[string]any{"status": "completed"},
+			"reach":        "organization",
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/plugins/plugin_e2e":
+		writeClaudeJSON(w, f.plugin)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/organizations/plugins/plugin_e2e/installation_settings/organization":
+		var setting struct {
+			InstallationPreference string `json:"installation_preference"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&setting); err != nil {
+			http.Error(w, `{"error":"invalid setting"}`, http.StatusBadRequest)
+			return
+		}
+		f.preferences = append(f.preferences, setting.InstallationPreference)
+		f.plugin["organization_installation_preference"] = setting.InstallationPreference
+		f.plugin["organization_installation_preference_inherited"] = false
+		writeClaudeJSON(w, map[string]any{"installation_preference": setting.InstallationPreference})
+	case r.Method == http.MethodDelete && r.URL.Path == "/v1/organizations/plugins/plugin_e2e/installation_settings/organization":
+		f.deletes++
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, `{"error":"unexpected endpoint"}`, http.StatusNotFound)
+	}
+}
+
+func claudePluginRecord(versionID, preference string, inherited bool) map[string]any {
+	return map[string]any{
+		"type": "plugin", "id": "plugin_e2e", "name": "am-serve-source-skill-review",
+		"display_name": "Review", "description": "Review code carefully",
+		"served_version_id": versionID, "served_version_pinned": false,
+		"latest_version_id": versionID, "manifest_version": "",
+		"owner":                                map[string]any{"type": "organization"},
+		"marketplace_id":                       "marketplace_e2e",
+		"created_by":                           map[string]any{"type": "api_actor", "api_key_id": "apikey_e2e"},
+		"organization_installation_preference": preference,
+		"organization_installation_preference_inherited": inherited,
+		"content_scan": map[string]any{"status": "completed", "assessment": "pass", "reason": nil},
+		"components":   []map[string]any{{"type": "skill", "name": "review", "description": "Review code carefully"}},
+		"reach":        "organization",
+	}
+}
+
+func writeClaudeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		http.Error(w, `{"error":"encode response"}`, http.StatusInternalServerError)
+	}
+}
+
+type claudePluginsSnapshot struct {
+	createdPlugins  int
+	createdVersions int
+	requests        int
+	writeRequests   int
+	preferences     []string
+	deletes         int
+}
+
+func (f *claudePluginsAPIFake) snapshot() claudePluginsSnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return claudePluginsSnapshot{
+		createdPlugins: f.createdPlugins, createdVersions: f.createdVersions,
+		requests: f.requests, writeRequests: f.writeRequests,
+		preferences: append([]string(nil), f.preferences...), deletes: f.deletes,
+	}
+}
+
+func (f *claudePluginsAPIFake) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -134,7 +134,11 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 	}
 
 	slog.Info("refreshed registry", "registry", registry.ID, "commit", res.Commit, "resources", len(rev.Resources))
-	return recordRefreshSuccess(ctx, deps.MetadataStore, merged.ID)
+	if err := recordRefreshSuccess(ctx, deps.MetadataStore, merged.ID); err != nil {
+		return err
+	}
+	enqueueClaudeDeliveryAfterChange(ctx, deps, "publication-"+uuid.NewString())
+	return nil
 }
 
 // EnsureMarketplace loads or creates the Marketplace instance record.
@@ -196,22 +200,31 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 	}
 	now := time.Now().UTC()
 	slog.Info("reconciling Marketplace revocations", "desired", len(desired))
-	return deps.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+	changed := false
+	activeByKey := make(map[string]store.Revocation)
+	err = deps.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
 		for _, kind := range []store.RevocationKind{store.RevocationRegistry, store.RevocationCoordinate, store.RevocationRevision} {
 			active, listErr := tx.ListRevocations(txCtx, kind)
 			if listErr != nil {
 				return fmt.Errorf("list active %s revocations: %w", kind, listErr)
 			}
 			for _, current := range active {
+				key := revocationStoreKey(current)
+				activeByKey[key] = current
 				if _, wanted := desiredByKey[revocationStoreKey(current)]; wanted {
 					continue
 				}
+				changed = true
 				if deleteErr := tx.DeleteRevocation(txCtx, current.Kind, current.TargetID); deleteErr != nil {
 					return fmt.Errorf("withdraw %s revocation %q: %w", current.Kind, current.TargetID, deleteErr)
 				}
 			}
 		}
 		for _, item := range desired {
+			current, exists := activeByKey[revocationStoreKey(item)]
+			if !exists || current.Reason != item.Reason {
+				changed = true
+			}
 			item.AppliedAt = now
 			if putErr := tx.PutRevocation(txCtx, item); putErr != nil {
 				return fmt.Errorf("apply %s revocation %q: %w", item.Kind, item.TargetID, putErr)
@@ -219,6 +232,13 @@ func EnsureRevocations(ctx context.Context, deps Deps) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		enqueueClaudeDeliveryAfterChange(ctx, deps, "revocation-"+uuid.NewString())
+	}
+	return nil
 }
 
 func revocationStoreKey(r store.Revocation) string { return string(r.Kind) + "\x00" + r.TargetID }
@@ -238,7 +258,29 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 		return err
 	}
 
+	deliveryCtx, stopDelivery := context.WithCancel(ctx)
+	deliveryDone := make(chan struct{})
+	go func() {
+		defer close(deliveryDone)
+		runClaudeDeliveryWorker(deliveryCtx, deps)
+	}()
+	var deliveryRuntimeDone chan struct{}
+	defer func() {
+		stopDelivery()
+		<-deliveryDone
+		if deliveryRuntimeDone != nil {
+			<-deliveryRuntimeDone
+		}
+	}()
+
 	if deps.Config.Management.Mode == "database" {
+		if deps.RuntimeSource != nil {
+			deliveryRuntimeDone = make(chan struct{})
+			go func() {
+				defer close(deliveryRuntimeDone)
+				_ = deps.RuntimeSource.RunClaudeDelivery(deliveryCtx, config.RuntimePollInterval)
+			}()
+		}
 		return runManaged(ctx, deps)
 	}
 	if err := initializeObservationState(ctx, deps, cfg); err != nil {

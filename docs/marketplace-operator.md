@@ -14,7 +14,7 @@ The API and worker can start at the same time. The SQLite and PostgreSQL migrati
 
 Public catalog APIs have no built-in user authentication or authorization. Put them behind a TLS-terminating, authenticated network boundary, or keep them on a private network, and restrict the proxy port with firewall or security-group policy. The optional administration API authorizes identities through exactly one configured mode: a signed session cookie issued by native OIDC Authorization Code + PKCE sign-in (`admin.authentication.mode: oidc`), or identity asserted by an explicitly trusted immediate proxy (`trusted_proxy`, which is inferred when the complete set of proxy fields is present). [Enable and use the admin panel](../site/docs/how-to/operator/enable-and-use-the-admin-panel.md) describes the operator contract.
 
-`operations_listen` serves `/readyz` and `/metrics`. It defaults to loopback. Do not publish it through a container port or reverse proxy; the public listener returns 404 for both paths. Collect metrics from a private sidecar or network path with its own access controls. `/metrics` exposes `agent_marketplace_requests_total` (labels `listener`, `method`, `route`, `code`), `agent_marketplace_request_duration_seconds`, and `agent_marketplace_active_requests`, plus a full public request stack histogram, a per-phase histogram, and metadata connection pool wait counters, plus the standard Go and process collectors. The [Marketplace health and metrics reference](../site/docs/reference/marketplace-health-and-metrics.md) lists every series and label value. It has no queue or job metrics.
+`operations_listen` serves `/readyz` and `/metrics`. It defaults to loopback. Do not publish it through a container port or reverse proxy; the public listener returns 404 for both paths. Collect metrics from a private sidecar or network path with its own access controls. `/metrics` exposes `agent_marketplace_requests_total` (labels `listener`, `method`, `route`, `code`), `agent_marketplace_request_duration_seconds`, and `agent_marketplace_active_requests`, plus a full public request stack histogram, a per-phase histogram, and metadata connection pool wait counters, plus the standard Go and process collectors. When `claude_enterprise` is enabled, the worker also exports `agent_marketplace_claude_delivery_*` reconcile, plugin-state, and pass-duration series and `agent_marketplace_claude_plugins_api_*` request and throttle counters. The [Marketplace health and metrics reference](../site/docs/reference/marketplace-health-and-metrics.md) lists every series and label value.
 
 `/healthz` is a liveness endpoint and does not prove storage readiness. `/readyz` returns 200 only when configuration authority is available, live revocations are reconciled, the instance record exists, and a blob-store probe succeeds. The container healthcheck, `/app/marketplace-healthcheck`, calls `http://127.0.0.1:9090/readyz`, so keep `operations_listen` on port 9090 and reachable on loopback inside the container when you use it.
 
@@ -67,6 +67,38 @@ registries:
     roots:
       - path: .agents
 ```
+
+### Mirror published resources to Claude Enterprise
+
+Claude Enterprise delivery requires a Claude Enterprise organization and an Admin API key with both `read:plugins` and `write:plugins`. The primary owner creates the key under **claude.ai → Organization settings → API**. Put its secret in a secret manager and expose it to the Marketplace worker through a file or environment variable; never put the secret in operator YAML or a command argument.
+
+Configure the key's stable identifier as `api_key_id` as well as the secret reference. Find the `apikey_…` ID in the key's creation or key-details record in the organization's API-key management page. For an existing key, an administrator with API-key management access can use the organization's API-key inventory to look up its ID; the Plugins API cannot reveal an API key's own ID. This non-secret identifier lets the service adopt only plugins whose `created_by.api_key_id` exactly matches the configured key. Do not substitute the `sk-ant-…` secret.
+
+Prefer a dedicated organization-owned `manual` marketplace so administrator-uploaded plugins and organization-level skill names remain separate. The library marketplace is shared with administrator uploads; use it only when that sharing is intended. Set `marketplace_id` to the chosen marketplace ID. When it is omitted, delivery requires exactly one organization-owned manual marketplace and uses it.
+
+Changing the target marketplace after plugins have been recorded stops delivery with `marketplace.target-changed`. Keep the existing target; this service does not migrate plugins between marketplaces.
+
+```yaml
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_ADMIN_KEY
+  api_key_id: apikey_0123456789abcdef
+  marketplace_id: marketplace_0123456789abcdef
+  plugin_name_prefix: am
+  default_installation_preference: available
+  interval: 24h
+```
+
+The API key reference may use `file` instead of `env`. Rotate by creating a replacement key with the same scopes, updating the secret reference and `api_key_id` together, confirming a successful delivery pass, then revoking the old key. Worker-safe configuration changes apply without restarting `serve`.
+
+Run `agent-marketplace serve claude-delivery status --config marketplace.yaml` to inspect each resource's plugin name and ID, state, published and served versions, scan status, reach, installation preference, and failure code. The authenticated HTTP endpoint, `/api/v1/admin/claude-delivery`, requires adopted database management. It returns `503 managed_configuration_required` in file mode; use the CLI status command instead. Run one operator-requested pass with `agent-marketplace serve claude-delivery sync --config marketplace.yaml --once`; omitting `--once` is a usage error. If another pass is active or waiting for a rate-limit cooldown, the command exits with an error and leaves the request queued for the worker.
+
+Delivery does not pin plugins or change their served version. If an operator pins a different version, delivery status reports the pin and leaves it in place. A new upload becomes the latest version immediately; when organization content scanning is enabled, members may lose access to that plugin while the version is `processing`, until its scan completes with `pass` or `warn`. Status reports a version awaiting its content scan. There is no served-version rollback; publish a corrected resource revision if an upload is rejected.
+
+If Claude reports `registration_pending` for a version and delivery cannot complete the follow-up read, the update can remain pending. A later pass can recover a matching version already served by Claude, but it does not carry the earlier resend permission forward.
+
+Withdrawal only sets the plugin's organization-wide installation preference to `not_available`. A group's explicit installation setting still applies to its members. Withdrawal does not delete the plugin, remove stored version history, or recall copies already installed on member devices. Status states that installed copies and stored version history are unaffected. If the resource returns, the service reuses its existing plugin and restores the configured preference.
 
 When different registry paths publish the same kind and registry-local name, ingestion keeps the first occurrence in configured root order and logs `marketplace.ingest.duplicate-resource` with both paths and a remediation: give the resources distinct registry-local names. Listing the same path twice is an operator configuration error.
 

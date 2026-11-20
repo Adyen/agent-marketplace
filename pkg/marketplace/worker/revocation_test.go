@@ -96,6 +96,49 @@ func TestEnsureRevocationsWithdrawsStaleDeclarations(t *testing.T) {
 	}
 }
 
+func TestEnsureRevocationsEnqueuesClaudeDeliveryOnChange(t *testing.T) {
+	ctx := t.Context()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	deps := Deps{
+		Config: config.Config{
+			Instance:         config.Instance{ID: "mp"},
+			ClaudeEnterprise: &config.ClaudeEnterprise{Enabled: true},
+			Revocations:      config.Revocations{Coordinates: []string{"mp/src/skill/review"}},
+		},
+		MetadataStore: meta,
+	}
+	if err := EnsureRevocations(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	job, err := meta.LeaseClaudeDeliveryJob(ctx, "mp", "", "test-worker", time.Minute)
+	if err != nil || job.Kind != store.ClaudeDeliveryJobKind ||
+		!strings.HasPrefix(job.IdempotencyKey, "claude-delivery:mp:revocation-") {
+		t.Fatalf("revocation delivery job = %+v, %v", job, err)
+	}
+	if err := meta.CompleteJob(ctx, job.ID, "test-worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureRevocations(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meta.LeaseClaudeDeliveryJob(ctx, "mp", "", "test-worker", time.Minute); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unchanged revocation enqueue: %v, want no job", err)
+	}
+	deps.Config.Revocations.Coordinates = nil
+	if err := EnsureRevocations(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	withdrawal, err := meta.LeaseClaudeDeliveryJob(ctx, "mp", "", "test-worker", time.Minute)
+	if err != nil || withdrawal.ID == job.ID || withdrawal.Kind != store.ClaudeDeliveryJobKind ||
+		!strings.HasPrefix(withdrawal.IdempotencyKey, "claude-delivery:mp:revocation-") {
+		t.Fatalf("withdrawn revocation delivery job = %+v, %v", withdrawal, err)
+	}
+}
+
 func TestRunFailsAfterRevocationReconciliationFailure(t *testing.T) {
 	ctx := context.Background()
 	base := sqlite.New(":memory:")
