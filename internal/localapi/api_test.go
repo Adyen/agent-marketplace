@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1593,6 +1595,136 @@ func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 		if got := project(variant.row).ID; got == baseID {
 			t.Errorf("discovery row id did not distinguish %s", variant.name)
 		}
+	}
+}
+
+// spec: gui-local-api/marketplace-source-association-distinguishes-equal-labels
+func TestMarketplaceEndpointAssociationProjection(t *testing.T) {
+	api := &API{token: "association-test-token"}
+	endpoints := []config.MarketplaceEntry{
+		{URL: "HTTPS://ONE.MARKET.EXAMPLE/catalog/", InstanceID: "market-one", Alias: "team-tools"},
+		{URL: "https://two.market.example/catalog", InstanceID: "market-two", Alias: "team-tools"},
+	}
+	descriptions := make([]config.SourceDescription, len(endpoints))
+	for i, endpoint := range endpoints {
+		descriptions[i] = config.SourceDescription{
+			Name: endpoint.Alias, Kind: config.V4SourceMarketplace, Location: endpoint.URL,
+		}
+	}
+	sources := api.projectSources("user", descriptions, &config.Config{Marketplaces: endpoints})
+	if len(sources) != len(endpoints) {
+		t.Fatalf("projected Marketplace sources = %d, want %d", len(sources), len(endpoints))
+	}
+
+	type rowSource struct {
+		ID            string `json:"id"`
+		Label         string `json:"label"`
+		AssociationID string `json:"associationId"`
+	}
+	type projectedRow struct {
+		Source rowSource `json:"source"`
+	}
+	rowFor := func(endpoint config.MarketplaceEntry) session.Row {
+		return session.Row{
+			Artifact: resolver.ResolvedArtifact{
+				Entry:                 catalog.Entry{Kind: ir.KindSkill, Name: "review"},
+				IsMarketplace:         true,
+				MarketplaceURL:        endpoint.URL,
+				MarketplaceInstanceID: endpoint.InstanceID,
+			},
+			RegistryURL:  endpoint.URL,
+			RegistryName: "team-tools",
+			MarketplaceDiscovery: &session.MarketplaceDiscovery{
+				Endpoint: endpoint,
+				Item: mpapi.ResourceListItem{
+					RegistryID: "tools", Kind: "skill", Name: "review",
+					Revision: "revision-one", ContentDigest: "digest-one",
+				},
+			},
+		}
+	}
+
+	for i, endpoint := range endpoints {
+		row := api.resourceRowPresentation(rowFor(endpoint))
+		body, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got projectedRow
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		canonical := "https://one.market.example/catalog\x00market-one"
+		if i == 1 {
+			canonical = "https://two.market.example/catalog\x00market-two"
+		}
+		mac := hmac.New(sha256.New, []byte(api.token))
+		_, _ = mac.Write([]byte("marketplace-source\x00" + canonical))
+		want := "marketplace:" + hex.EncodeToString(mac.Sum(nil))
+		if got.Source.AssociationID != want || sources[i].RowSourceID != want {
+			t.Fatalf("source association row=%q configuration=%q, want %q", got.Source.AssociationID, sources[i].RowSourceID, want)
+		}
+		if got.Source.ID != session.RegistryIdentityKey(endpoint.URL, "", "") || got.Source.Label != "team-tools" {
+			t.Fatalf("Marketplace grouping changed: source=%+v", got.Source)
+		}
+		if strings.Contains(got.Source.AssociationID, endpoint.URL) || !strings.HasPrefix(got.Source.AssociationID, "marketplace:") {
+			t.Fatalf("association exposed endpoint data or lacked its namespace: %q", got.Source.AssociationID)
+		}
+	}
+	if sources[0].RowSourceID == sources[1].RowSourceID {
+		t.Fatal("equal Marketplace labels shared an endpoint association")
+	}
+
+	verifiedArtifact := rowFor(endpoints[0])
+	verifiedArtifact.MarketplaceDiscovery = nil
+	verifiedArtifactDTO := api.resourceRowPresentation(verifiedArtifact)
+	artifactBody, err := json.Marshal(verifiedArtifactDTO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verifiedArtifactRow projectedRow
+	if err := json.Unmarshal(artifactBody, &verifiedArtifactRow); err != nil {
+		t.Fatal(err)
+	}
+	if verifiedArtifactRow.Source.AssociationID != sources[0].RowSourceID {
+		t.Fatalf("verified Marketplace artifact association = %q, want %q", verifiedArtifactRow.Source.AssociationID, sources[0].RowSourceID)
+	}
+
+	for _, test := range []struct {
+		name     string
+		endpoint config.MarketplaceEntry
+		pending  bool
+	}{
+		{name: "missing instance", endpoint: config.MarketplaceEntry{URL: "https://one.market.example"}},
+		{name: "malformed endpoint identity", endpoint: config.MarketplaceEntry{URL: "https://one.market.example/%2f", InstanceID: "market-one"}},
+		{name: "malformed instance", endpoint: config.MarketplaceEntry{URL: "https://one.market.example", InstanceID: "market/one"}},
+		{name: "redacted endpoint", endpoint: config.MarketplaceEntry{URL: "https://user:secret@one.market.example/catalog?token=private", InstanceID: "market-one"}},
+		{name: "provisional row", endpoint: endpoints[0], pending: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row := rowFor(test.endpoint)
+			row.PendingVerification = test.pending
+			body, err := json.Marshal(api.resourceRowPresentation(row))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got projectedRow
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Source.AssociationID != "" {
+				t.Fatalf("unverified source association = %q, want none", got.Source.AssociationID)
+			}
+			var sourceOnly struct {
+				Source map[string]any `json:"source"`
+			}
+			if err := json.Unmarshal(body, &sourceOnly); err != nil {
+				t.Fatal(err)
+			}
+			if _, exposed := sourceOnly.Source["associationId"]; exposed {
+				t.Fatalf("unverified identity serialized associationId: %s", body)
+			}
+		})
 	}
 }
 

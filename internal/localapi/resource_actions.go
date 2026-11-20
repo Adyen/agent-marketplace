@@ -52,6 +52,15 @@ type preparedResourceActionPlan struct {
 
 func (a *API) resourceRowPresentation(row session.Row) rowDTO {
 	dto := rowPresentationForUser(row, a.userOnly)
+	if !row.PendingVerification {
+		if discovery := row.MarketplaceDiscovery; discovery != nil {
+			dto.Source.AssociationID = a.marketplaceSourceAssociation(discovery.Endpoint)
+		} else if row.Artifact.IsMarketplace {
+			dto.Source.AssociationID = a.marketplaceSourceAssociation(config.MarketplaceEntry{
+				URL: row.Artifact.MarketplaceURL, InstanceID: row.Artifact.MarketplaceInstanceID,
+			})
+		}
+	}
 	if a.userOnly {
 		if action, err := session.UserResourceAction(row); err == nil {
 			dto.ResourceAction = action

@@ -158,8 +158,10 @@ alone separates it from the main column. It never folds.
   Below it, one icon row per configured source shows the source label (see
   the sidebar rules below), with an ORG tag where it applies; sources that
   share a layer, kind, and location collapse under one foldable group row.
-  Selecting a row opens the same tab and reveals that source. The list is
-  read-only; the Settings window performs all edits.
+  Selecting a row browses that source's resources in place (see "Browse by
+  source"); a gear button on each row ("Manage source …") opens the same
+  Settings tab and reveals that source. The list is read-only; the Settings
+  window performs all edits.
 - **Footer**: the configured Harness targets as a compact mono summary (for
   example `Claude · Codex +1`), a newer-version notice when there is one (a
   green dot and "v4.3 available"), and a ⚙ icon button ("Settings").
@@ -828,7 +830,8 @@ Where a rule here conflicts with an earlier section, this section wins.
 - *Observed*: a sidebar source row opened only the Sources tab, so the user
   still had to find the source in the list, and the ＋ left focus on the
   tab rather than in the form.
-- *Rule*: selecting a sidebar source row opens Settings → Sources, clears
+- *Rule*: the "Manage source" gear on a sidebar source row opens
+  Settings → Sources, clears
   any active source search, unfolds the group that holds the source,
   scrolls its card into view, focuses it, and marks it highlighted
   (`data-highlighted` and `aria-current`). The highlight clears when
@@ -846,3 +849,20 @@ Where a rule here conflicts with an earlier section, this section wins.
   matches and shows only matching children. No match shows
   "No sources match “{query}”." Clearing the field restores the full list,
   and the query resets each time Settings opens.
+
+### Browse by source
+
+- *Observed*: activating a sidebar source opened Settings and left Resources
+  mixed across sources.
+- *Rule*: activating a source selects it in Resources. A named, clearable
+  filter stays visible while its descriptor is unavailable, and clearing it
+  changes only the source filter. Search, grouping, counts, and configuration
+  stay unchanged. Source labels are display text, not identity. A Marketplace
+  row matches only its opaque verified endpoint association; a missing
+  descriptor or association shows no rows. Manage source remains a separate
+  action that opens and focuses the matching Settings entry.
+- Eligible Marketplace browse loads cached rows first and fetches later pages
+  in the background, independent of search. Search changes the visible rows
+  but not browse. Diagnostics keeps browse health while a query is active.
+  Clearing search restores the latest browse rows. A later-page failure keeps
+  received rows and marks the catalog incomplete.

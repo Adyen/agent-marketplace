@@ -357,6 +357,48 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
 })
 
 // spec: gui-shell/all-actions-are-keyboard-reachable-and-named
+test('built GUI exposes separate keyboard browse and manage source actions', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the keyboard source journey')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByRole('option').filter({ hasText: 'solo' })).toBeVisible({ timeout: 60_000 })
+
+    const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+    const browse = page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()
+    const sourceID = await browse.getAttribute('data-source-id')
+    expect(sourceID).not.toBeNull()
+    const manage = page.locator(`button[data-source-id="${sourceID}"][aria-label^="Manage source"]`)
+
+    await browse.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('button', { name: /^Clear source filter / })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Resources' })).toBeVisible()
+    await page.keyboard.press('Tab')
+    await expect(manage).toBeFocused()
+    await page.keyboard.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    const card = dialog.locator(`.source-card[data-source-id="${sourceID}"]`)
+    await expect(card).toBeInViewport()
+    await expect(card).toBeFocused()
+    await expect(card).toHaveAttribute('data-highlighted', 'true')
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    const addSources = page.getByRole('button', { name: 'Sources', exact: true })
+    await addSources.focus()
+    await page.keyboard.press('Enter')
+    await expect(dialog.getByLabel('Source location')).toBeFocused()
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/all-actions-are-keyboard-reachable-and-named
 test('built GUI cancels and completes first-run setup using keyboard only', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run the GUI build before the accessibility journey')

@@ -1136,7 +1136,7 @@ describe('Source settings', () => {
     group.click()
     await tick()
     expect(group.getAttribute('aria-expanded')).toBe('false')
-    await wrapper.find('button[data-source-id="git-alpha"]').trigger('click')
+    await wrapper.find('button[data-source-id="git-alpha"][aria-label^="Manage source"]').trigger('click')
     await tick()
 
     const search = dialog().querySelector<HTMLInputElement>('input[aria-label="Search sources"]')

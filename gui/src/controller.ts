@@ -82,6 +82,7 @@ export interface WorkspaceState {
   discoveryEnabled: boolean
   discoveryHealth: Snapshot['discoveryHealth']
   diagnosticsDiscoveryHealth: Snapshot['discoveryHealth']
+  diagnosticsDiscoveryLoading: boolean
   discoveryQuery: string
   discoveryRequestId: number
   discoverySequence: number
@@ -132,6 +133,7 @@ export class WorkspaceController {
     discoveryEnabled: false,
     discoveryHealth: [],
     diagnosticsDiscoveryHealth: [],
+    diagnosticsDiscoveryLoading: false,
     discoveryQuery: '',
     discoveryRequestId: 0,
     discoverySequence: 0,
@@ -285,9 +287,14 @@ export class WorkspaceController {
   }
 
   retryDiscovery(): void {
-    if (this.state.discoveryEnabled) {
-      this.issueDiscoveryRequest(this.currentDiscoveryQuery, true)
+    if (!this.state.discoveryEnabled) {
+      return
     }
+    if (this.currentDiscoveryQuery === '' || this.state.diagnosticsDiscoveryHealth.some((health) => health.message !== '')) {
+      void this.refresh(false, true)
+      return
+    }
+    this.issueDiscoveryRequest(this.currentDiscoveryQuery, true)
   }
 
   private issueDiscoveryRequest(query: string, retry: boolean): void {
@@ -305,13 +312,13 @@ export class WorkspaceController {
     this.dispatchDiscoveryRequest()
   }
 
-  async refresh(checkUpdates = true): Promise<void> {
+  async refresh(checkUpdates = true, refreshDiscovery = checkUpdates): Promise<void> {
     if (this.state.requesting || this.state.operation != null) {
       return
     }
     this.state.requesting = true
     try {
-      await this.client.snapshot(checkUpdates)
+      await this.client.snapshot(checkUpdates, refreshDiscovery)
       await this.loadConfiguration()
       await this.checkRelease()
     } catch {
@@ -801,9 +808,10 @@ export class WorkspaceController {
     if (currentDiscovery) {
       this.state.discoverySequence = Math.max(this.state.discoverySequence, snapshot.discoverySequence)
       this.state.discoveryHealth = snapshot.discoveryHealth
-      if (snapshot.discoveryQuery === '') {
-        this.state.diagnosticsDiscoveryHealth = snapshot.discoveryHealth
+      if (snapshot.discoveryBrowseHealth != null || snapshot.discoveryQuery === '') {
+        this.state.diagnosticsDiscoveryHealth = snapshot.discoveryBrowseHealth ?? snapshot.discoveryHealth
       }
+      this.state.diagnosticsDiscoveryLoading = snapshot.discoveryBrowseLoading ?? (snapshot.discoveryQuery === '' && snapshot.discoveryLoading)
       this.state.discoveryLoading = snapshot.discoveryLoading
       this.state.discoveryError = null
     } else {
@@ -813,6 +821,7 @@ export class WorkspaceController {
     if (!this.state.discoveryEnabled) {
       this.state.discoveryHealth = []
       this.state.diagnosticsDiscoveryHealth = []
+      this.state.diagnosticsDiscoveryLoading = false
       this.cancelDiscoveryRequest()
       this.lastDispatchedDiscoveryRequestId = 0
     }
@@ -823,9 +832,15 @@ export class WorkspaceController {
     this.cancelResourceActionIfRowChanged()
     if (snapshot.stage === 'final') {
       this.cancelInspectionIfRowMissing()
+      const firstAcceptedSnapshot = !this.accepted
       this.accepted = true
       if (this.state.error === EVENT_OUTAGE_MESSAGE) {
         this.state.error = null
+      }
+      const missingMarketplaceAssociation = [...(this.state.configuration?.userSources ?? []), ...(this.state.configuration?.organizationSources ?? [])]
+        .some((source) => source.kind === 'marketplace' && source.rowSourceId === '')
+      if (firstAcceptedSnapshot && missingMarketplaceAssociation) {
+        void this.loadConfiguration()
       }
     }
     if (this.state.discoveryEnabled && !wasDiscoveryEnabled && pendingDiscoveryIntent) {
@@ -847,9 +862,10 @@ export class WorkspaceController {
     this.cancelInspectionIfRowMissing()
     this.cancelResourceActionIfRowChanged()
     this.state.discoveryHealth = payload.health
-    if (payload.query === '') {
-      this.state.diagnosticsDiscoveryHealth = payload.health
+    if (payload.browseHealth != null || payload.query === '') {
+      this.state.diagnosticsDiscoveryHealth = payload.browseHealth ?? payload.health
     }
+    this.state.diagnosticsDiscoveryLoading = payload.browseLoading ?? (payload.query === '' && payload.loading)
     this.state.discoveryQuery = payload.query
     this.state.discoveryRequestId = payload.requestId
     this.state.discoverySequence = payload.discoverySequence

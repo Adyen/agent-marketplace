@@ -19,6 +19,7 @@ import DiagnosticsView from './DiagnosticsView.vue'
 import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
 import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
 import StatusBar from './StatusBar.vue'
+import { sourceLabel } from './source-label'
 
 type SectionView = Omit<Section, 'children'> & { collapsed: boolean; children: SectionView[] }
 type VisibleEntry =
@@ -46,6 +47,8 @@ const settingsOpen = ref(false)
 const settingsTab = ref<SettingsTab>('general')
 const sourceRevealRequest = ref<{ sourceId: string; sequence: number } | null>(null)
 const addSourceFocusRequest = ref(0)
+const selectedSourceId = ref<string | null>(null)
+const lastSelectedSourceLabel = ref('')
 let sourceRevealSequence = 0
 let settingsOpener: 'settings' | 'sources' = 'settings'
 const setupOpen = ref(false)
@@ -210,9 +213,23 @@ function openSettingsWindow(tab: SettingsTab) {
   settingsOpen.value = true
 }
 
-function openSidebarSource(sourceId: string) {
+function manageSidebarSource(sourceId: string) {
   openSettingsWindow('sources')
   sourceRevealRequest.value = { sourceId, sequence: ++sourceRevealSequence }
+}
+
+function selectSidebarSource(sourceId: string) {
+  const entry = sidebarSources.value.find(({ source }) => source.id === sourceId)
+  selectedSourceId.value = sourceId
+  if (entry != null) {
+    lastSelectedSourceLabel.value = rowSourceLabels.value.get(entry.source.rowSourceId) || sourceLabel(entry.source)
+  }
+  showResources()
+}
+
+function clearSourceFilter() {
+  selectedSourceId.value = null
+  lastSelectedSourceLabel.value = ''
 }
 
 function openSidebarAddSource() {
@@ -488,7 +505,16 @@ const navGroups = computed<SidebarGroup[]>(() =>
   sectionViews.value.map((section) => ({ id: section.path, title: section.title, count: section.count })),
 )
 const pendingCount = computed(() => (view.value?.rows ?? []).filter((row) => row.group === 'pending').length)
-const rowSourceLabels = computed(() => new Map((view.value?.rows ?? []).map((row) => [row.source.id, row.source.label])))
+const rowSourceLabels = computed(() => {
+  const labels = new Map<string, string>()
+  for (const row of view.value?.rows ?? []) {
+    labels.set(row.source.id, row.source.label)
+    if (row.source.associationId != null && row.source.associationId !== '') {
+      labels.set(row.source.associationId, row.source.label)
+    }
+  }
+  return labels
+})
 const pendingSectionId = computed(() => (viewSettings.value.groupBy === 'status' ? 'pending' : 'attention'))
 const sidebarSources = computed<SidebarSource[]>(() => {
   const config = configuration.value
@@ -630,20 +656,50 @@ const resourceActionOpen = computed({
   },
 })
 
-const searchMatches = computed<SearchMatch[]>(() => rankRows(view.value?.rows ?? [], activeQuery.value))
+const selectedSource = computed(() => sidebarSources.value.find(({ source }) => source.id === selectedSourceId.value)?.source)
+const activeSourceLabel = computed(() => {
+  const source = selectedSource.value
+  if (source == null) {
+    return lastSelectedSourceLabel.value
+  }
+  return rowSourceLabels.value.get(source.rowSourceId) || sourceLabel(source) || lastSelectedSourceLabel.value
+})
+const sourceRows = computed(() => {
+  const rows = view.value?.rows ?? []
+  const source = selectedSource.value
+  if (selectedSourceId.value == null) {
+    return rows
+  }
+  if (source == null || source.rowSourceId === '') {
+    return []
+  }
+  return rows.filter((row) =>
+    source.kind === 'marketplace'
+      ? row.source.associationId === source.rowSourceId
+      : row.source.id === source.rowSourceId,
+  )
+})
+const searchMatches = computed<SearchMatch[]>(() => rankRows(sourceRows.value, activeQuery.value))
 const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
 const filteredSearch = computed(() => hasSearchTerms(activeQuery.value))
 const localMatchCount = computed(() => searchMatches.value.filter((match) => !match.row.discovery).length)
-const emptyState = computed<'resources' | 'search' | null>(() => {
+const emptyState = computed<'resources' | 'search' | 'source' | null>(() => {
   if (view.value?.stage !== 'final') {
     return null
   }
   if (filteredSearch.value) {
     return searchMatches.value.length === 0 ? 'search' : null
   }
+  if (selectedSourceId.value != null) {
+    return searchMatches.value.length === 0 ? 'source' : null
+  }
   return (view.value.rows ?? []).length === 0 ? 'resources' : null
 })
-const discoveryFailed = computed(() => view.value?.discoveryError != null || (view.value?.discoveryHealth ?? []).some((health) => health.message !== ''))
+const discoveryFailed = computed(() =>
+  view.value?.discoveryError != null ||
+  (view.value?.diagnosticsDiscoveryHealth ?? []).some((health) => health.message !== '') ||
+  (view.value?.discoveryQuery !== '' && (view.value?.discoveryHealth ?? []).some((health) => health.message !== '')),
+)
 const diagnosticsCount = computed(() => view.value?.diagnostics.length ?? 0)
 const diagnosticsTone = computed<'danger' | 'warning' | 'info' | null>(() => {
   const severities = new Set((view.value?.diagnostics ?? []).map((diagnostic) => diagnostic.severity))
@@ -709,7 +765,7 @@ const selected = computed(() => {
     return null
   }
   const rowID = key.slice('row:'.length)
-  return (view.value?.rows ?? []).find((row) => row.id === rowID) ?? null
+  return sourceRows.value.find((row) => row.id === rowID) ?? null
 })
 const resourceActionBusy = computed(() => {
   const action = view.value?.resourceAction
@@ -837,7 +893,7 @@ watch(
 )
 
 watch(
-  [() => view.value?.rows, () => view.value?.stage],
+  [() => view.value?.rows, () => view.value?.stage, selectedSourceId, selectedSource],
   ([rows, stage], previous) => {
     if (rows == null || stage == null) {
       return
@@ -1167,7 +1223,8 @@ async function run(action: 'sync' | 'update') {
       @show-diagnostics="showDiagnostics"
       @select-group="selectGroup"
       @open-sources="openSidebarAddSource"
-      @reveal-source="openSidebarSource"
+      @select-source="selectSidebarSource"
+      @manage-source="manageSidebarSource"
       @open-settings="openSettingsWindow('general')"
       @quit="requestQuit"
     />
@@ -1214,6 +1271,17 @@ async function run(action: 'sync' | 'update') {
         @update="run('update')"
         @setup="setupOpen = true"
       />
+
+      <div v-if="selectedSourceId != null" class="workspace__source-filter" role="group" aria-label="Active source filter">
+        <span class="gui-tag">Source</span>
+        <span class="workspace__source-filter-label">{{ activeSourceLabel }}</span>
+        <button
+          type="button"
+          class="gui-icon-button"
+          :aria-label="`Clear source filter ${activeSourceLabel}`"
+          @click="clearSourceFilter"
+        ><GuiIcon name="close" /></button>
+      </div>
 
       <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
       <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
@@ -1290,7 +1358,7 @@ async function run(action: 'sync' | 'update') {
         v-if="mainView === 'diagnostics'"
         :drift="view?.drift ?? ''"
         :discovery-enabled="view?.discoveryEnabled === true"
-        :discovery-loading="view?.discoveryLoading === true"
+        :discovery-loading="view?.diagnosticsDiscoveryLoading === true"
         :discovery-error="view?.discoveryError ?? null"
         :discovery-health="view?.diagnosticsDiscoveryHealth ?? []"
         :discovery-failed="discoveryFailed"
@@ -1312,6 +1380,7 @@ async function run(action: 'sync' | 'update') {
         />
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
+      <p v-else-if="mainView === 'resources' && emptyState === 'source'" class="gui-empty gui-empty--muted">No resources from {{ activeSourceLabel }}.</p>
 
       <ResourceList
         v-show="mainView === 'resources' && emptyState == null"

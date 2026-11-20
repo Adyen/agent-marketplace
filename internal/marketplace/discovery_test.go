@@ -274,11 +274,13 @@ func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T)
 }
 
 func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t *testing.T) {
+	var searches atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			writeTestWellKnown(w, "partial-browse")
 			return
 		}
+		searches.Add(1)
 		offset, limit := 0, DiscoveryPageLimit
 		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
@@ -308,6 +310,14 @@ func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t 
 	}
 	if _, err := os.Stat(cache.catalogPath(ep, DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial catalog record was cached: %v", err)
+	}
+
+	again, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil || len(again) != 1 || again[0].Err == nil || len(again[0].Items) != DiscoveryPageLimit {
+		t.Fatalf("new load after partial browse = %#v, err=%v", again, err)
+	}
+	if searches.Load() != 4 {
+		t.Fatalf("partial browse made %d page requests across two loads, want 4", searches.Load())
 	}
 }
 

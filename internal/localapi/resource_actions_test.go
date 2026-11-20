@@ -367,7 +367,8 @@ func waitForWork39ResourceRow(t *testing.T, api *API, events <-chan sessionEvent
 	for {
 		api.mu.Lock()
 		rowsKnown := api.snapshotRowsKnown
-		currentFinal := api.current != nil && api.current.Stage == "final" && !api.current.DiscoveryLoading
+		currentFinal := api.current != nil && api.current.Stage == "final" &&
+			!api.current.DiscoveryLoading && !api.current.DiscoveryBrowseLoading
 		generation := api.currentG
 		sequence := api.sequence
 		rows := session.MergeDiscoveryRows(api.authoritativeRows, api.provisionalRows, api.discovery.rows)

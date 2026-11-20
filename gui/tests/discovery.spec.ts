@@ -209,17 +209,24 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     await expectFirstPageOnly()
     await page.screenshot({ path: testInfo.outputPath('discovery-page-two-held.png'), animations: 'disabled' })
 
-    await writeFile(pageTwoRelease, 'released\n')
-    released = true
-
     if (scenario.mode === 'complete') {
+      await writeFile(pageTwoRelease, 'released\n')
+      released = true
       await expect(second).toBeVisible({ timeout: 60_000 })
       await page.screenshot({ path: testInfo.outputPath('discovery-complete.png'), animations: 'disabled' })
       return
     }
 
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await search.fill('paged-search')
+    await search.press('Enter')
+    const searchResult = page.getByRole('option').filter({ hasText: 'paged-search' })
+    await expect(searchResult).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     const discoveryHealth = page.getByRole('region', { name: 'Marketplace discovery health' })
+    await writeFile(pageTwoRelease, 'released\n')
+    released = true
     const expectIncompleteDiscovery = async () => {
       await expect(discoveryHealth).toContainText('Marketplace search failed', { timeout: 60_000 })
       await expect(discoveryHealth).toContainText(
@@ -232,14 +239,10 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
       path: testInfo.outputPath('discovery-incomplete.png'),
       animations: 'disabled',
     })
-    await page.getByRole('button', { name: 'Show all groups' }).click()
-    await expectFirstPageOnly()
-    await page.screenshot({ path: testInfo.outputPath('discovery-incomplete-list.png'), animations: 'disabled' })
 
     await unlink(pageTwoStarted)
     await unlink(pageTwoRelease)
     released = false
-    await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await page.getByRole('button', { name: 'Retry Marketplace search' }).click()
     await waitForMarker(pageTwoStarted, 10_000)
     const loading = discoveryHealth.getByText('Marketplace discovery is updating.')
@@ -248,8 +251,15 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     released = true
     await expect(loading).not.toBeVisible({ timeout: 60_000 })
     await expectIncompleteDiscovery()
+
     await page.getByRole('button', { name: 'Show all groups' }).click()
+    await expect(searchResult).toBeVisible()
+    await expect(first).toHaveCount(0)
+    await page.getByRole('button', { name: 'Clear search' }).click()
     await expectFirstPageOnly()
+    await page.screenshot({ path: testInfo.outputPath('discovery-incomplete-list.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expectIncompleteDiscovery()
   } finally {
     try {
       if (!released && pageTwoRelease != null) {
@@ -266,7 +276,76 @@ for (const scenario of pagedDiscoveryCases) {
     // spec: gui-shell/empty-query-discovery-receives-multiple-marketplace-pages
     test(scenario.name, async ({ page }, testInfo) => runPagedDiscoveryCase(page, testInfo, scenario))
   } else {
+    // spec: gui-shell/later-marketplace-page-failure-leaves-an-honest-partial-catalog
     // spec: gui-shell/a-failed-later-page-leaves-empty-query-discovery-incomplete
     test(scenario.name, async ({ page }, testInfo) => runPagedDiscoveryCase(page, testInfo, scenario))
   }
 }
+
+// spec: gui-shell/later-marketplace-pages-are-browsable-during-and-after-search
+test('built GUI keeps source-filtered browse active while Marketplace search is open', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the discovery journey')
+  }
+  const harness = await startHarness('user', {
+    AM_LOCALAPI_USER_FIXTURE: 'work41-paged-discovery',
+    AM_LOCALAPI_USER_DISCOVERY_MODE: 'complete',
+  })
+  const { bootstrap } = harness
+  let browseReleased = false
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    const firstPage = page.getByRole('option').filter({ hasText: 'paged-first' })
+    const laterPage = page.getByRole('option').filter({ hasText: 'paged-second' })
+    const localResource = page.getByRole('option').filter({ hasText: 'browse-local' })
+    await expect(localResource).toBeVisible({ timeout: 60_000 })
+    await expect(firstPage).toBeVisible({ timeout: 60_000 })
+    await waitForMarker(bootstrap.discoveryPageTwoStarted)
+
+    if (bootstrap.marketplaceEndpoint == null || bootstrap.discoveryPageTwoRelease == null) {
+      throw new Error('paged Marketplace fixture markers are missing')
+    }
+    const browseSource = page.getByRole('button', { name: `Browse source ${bootstrap.marketplaceEndpoint}` })
+    await browseSource.focus()
+    await page.keyboard.press('Enter')
+    const clearSource = page.getByRole('button', { name: /^Clear source filter / })
+    await expect(clearSource).toBeVisible()
+    await expect(localResource).toHaveCount(0)
+    await expect(firstPage).toBeVisible()
+
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await search.fill('paged-search')
+    await search.press('Enter')
+    const searchResult = page.getByRole('option').filter({ hasText: 'paged-search' })
+    await expect(searchResult).toBeVisible({ timeout: 60_000 })
+    await expect(laterPage).toHaveCount(0)
+
+    const diagnostics = page.getByRole('button', { name: 'Show diagnostics' })
+    await diagnostics.click()
+    const health = page.getByRole('region', { name: 'Marketplace discovery health' })
+    await expect(health.getByText('Marketplace discovery is updating.')).toBeVisible()
+    await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+    browseReleased = true
+    await expect(health.getByText('Marketplace discovery is updating.')).not.toBeVisible({ timeout: 60_000 })
+    await page.screenshot({ path: testInfo.outputPath('marketplace-search-with-browse-complete.png'), animations: 'disabled' })
+
+    await page.getByRole('button', { name: 'Show all groups' }).click()
+    await expect(searchResult).toBeVisible()
+    await expect(laterPage).toHaveCount(0)
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await expect(clearSource).toBeVisible()
+    await expect(firstPage).toBeVisible()
+    await expect(laterPage).toBeVisible({ timeout: 60_000 })
+    await expect(localResource).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('marketplace-browse-restored.png'), animations: 'disabled' })
+  } finally {
+    try {
+      if (!browseReleased && bootstrap.discoveryPageTwoRelease != null) {
+        await writeFile(bootstrap.discoveryPageTwoRelease, 'released\n')
+      }
+    } finally {
+      await harness.stop()
+    }
+  }
+})

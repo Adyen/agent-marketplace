@@ -699,6 +699,9 @@ components:
             label:
               type: string
               description: Sanitized single-line source label, the registry display name with its subpath, or "(local)".
+            associationId:
+              type: string
+              description: Opaque verified Marketplace endpoint identity for source filtering; omitted when no safe association is available.
         scope:
           type: string
           enum: [organization, user, project, local, available]
@@ -938,6 +941,9 @@ components:
         checkUpdates:
           type: boolean
           description: True for launch and explicit Refresh; false for focus reloads.
+        refreshDiscovery:
+          type: boolean
+          description: True only for explicit Refresh or browse retry.
     Snapshot:
       type: object
       required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, availableUpdates, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
@@ -975,6 +981,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DiscoveryHealth'
+        discoveryBrowseHealth:
+          type: array
+          description: Query-independent health for the empty-query browse inventory, including while search results are active.
+          items:
+            $ref: '#/components/schemas/DiscoveryHealth'
+        discoveryBrowseLoading:
+          type: boolean
+          description: Whether the query-independent empty-query browse inventory is still loading.
         discoveryQuery:
           type: string
           description: Current server discovery query retained for event-stream reconnection.
@@ -1025,7 +1039,7 @@ components:
           description: The configured name from the v4 sources mapping.
         rowSourceId:
           type: string
-          description: Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries.
+          description: Identity that attributable snapshot rows from this source carry. Marketplace values are opaque endpoint associations.
         kind:
           type: string
           enum: [git, directory, marketplace]
@@ -1450,4 +1464,12 @@ components:
                   type: array
                   items:
                     $ref: '#/components/schemas/DiscoveryHealth'
+                browseHealth:
+                  type: array
+                  description: Query-independent health for the empty-query browse inventory, including while query results are active.
+                  items:
+                    $ref: '#/components/schemas/DiscoveryHealth'
+                browseLoading:
+                  type: boolean
+                  description: Whether the query-independent empty-query browse inventory is still loading.
                 loading: { type: boolean }

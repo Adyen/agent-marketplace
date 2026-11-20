@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -397,6 +398,12 @@ func TestUserAPIDiscoveryDebouncesAndCancelsSupersededSearches(t *testing.T) {
 	}
 
 	closeDone := postDiscoveryAsync(t, apiServer, api, context.Background(), "close", 4)
+	_, closeOpening := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 4 && payload.Query == "close" && payload.Loading
+	})
+	if len(closeOpening.Rows) != 1 || closeOpening.Rows[0].Name != "pending-local" {
+		t.Fatalf("new query opening rows = %#v, want only the retained local row", closeOpening.Rows)
+	}
 	select {
 	case <-closeStarted:
 	case <-time.After(5 * time.Second):
@@ -489,6 +496,7 @@ func TestUserAPIDiscoveryRapidSupersessionSkipsFirstRemoteCall(t *testing.T) {
 	}
 }
 
+// spec: gui-shell/superseded-marketplace-browse-cannot-replace-current-results
 func TestUserAPIDiscoveryRequiresValidatedMarketplaceConfiguration(t *testing.T) {
 	unboundLock, err := lockfile.Encode(lockfile.Document{
 		APIVersion: lockfile.APIVersionV2,
@@ -513,8 +521,10 @@ func TestUserAPIDiscoveryRequiresValidatedMarketplaceConfiguration(t *testing.T)
 			home, _ := newUserAPIFixture(t, true)
 			const instanceID = "validated-marketplace"
 			var searchCount atomic.Int32
+			var endpointRequests atomic.Int32
 			searchStarted := make(chan struct{}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				endpointRequests.Add(1)
 				switch r.URL.Path {
 				case "/.well-known/agent-marketplace.json":
 					_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
@@ -568,6 +578,9 @@ func TestUserAPIDiscoveryRequiresValidatedMarketplaceConfiguration(t *testing.T)
 			}
 			if final.DiscoveryEnabled || searchCount.Load() != 0 {
 				t.Fatal("rejected Marketplace configuration enabled discovery or reached search")
+			}
+			if tc.allowlist && endpointRequests.Load() != 0 {
+				t.Fatalf("denied Marketplace endpoint received %d requests", endpointRequests.Load())
 			}
 			select {
 			case <-searchStarted:
@@ -640,6 +653,166 @@ func TestAPIStartupDiscoveryDoesNotApplyUserQueryDebounce(t *testing.T) {
 				t.Fatal("initial SDK cache miss or stale revalidation did not reach the endpoint before the user query debounce")
 			}
 		})
+	}
+}
+
+// spec: gui-shell/superseded-marketplace-browse-cannot-replace-current-results
+func TestUserAPIRefreshRestartsFreshBrowseAndRejectsSupersededResponse(t *testing.T) {
+	home, _ := newUserAPIFixture(t, true)
+	const instanceID = "refresh-browse-instance"
+	obsoleteStarted := make(chan struct{}, 1)
+	obsoleteCanceled := make(chan struct{}, 1)
+	var searchCount atomic.Int32
+	item := func(name string, digestRune string) mpapi.ResourceListItem {
+		return mpapi.ResourceListItem{
+			RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: name,
+			Revision:      "sha256:" + strings.Repeat(digestRune, 64),
+			ContentDigest: "sha256:" + strings.Repeat(digestRune, 64),
+			Availability:  mpapi.AvailabilityAvailable,
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+		case "/api/v1/search":
+			switch searchCount.Add(1) {
+			case 1:
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+					Items: []mpapi.ResourceListItem{item("browse-initial", "a")}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+				})
+			case 2:
+				obsoleteStarted <- struct{}{}
+				<-r.Context().Done()
+				obsoleteCanceled <- struct{}{}
+			case 3:
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+					Items: []mpapi.ResourceListItem{item("browse-current", "c")}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+				})
+			default:
+				t.Errorf("unexpected Marketplace search request %d", searchCount.Load())
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	writeFile(t, userConfig,
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin]\n"+
+			"allowed_marketplaces: ['^http://127\\.0\\.0\\.1:[0-9]+$']\n"+
+			"sources:\n  catalog: {marketplace: "+server.URL+"}\n")
+	paths, err := config.ResolveConfigLockPathsTolerateMissing(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeUser,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: server.URL, InstanceID: instanceID,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, paths.CanonicalLock, string(lock))
+
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+	events := streamEvents(t, api)
+	first := postSnapshot(t, api)
+	if first.Stage != "final" {
+		t.Fatalf("initial snapshot stage = %q, want final", first.Stage)
+	}
+	_, cachedBrowse := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.Query == "" && payload.RequestID == 0 && !payload.Loading &&
+			containsRowName(payload.Rows, "browse-initial")
+	})
+	if cachedBrowse.Health[0].CacheState != string(marketplace.DiscoveryCacheMiss) || searchCount.Load() != 1 {
+		t.Fatalf("initial browse health/count = %#v/%d", cachedBrowse.Health, searchCount.Load())
+	}
+
+	postSnapshotWithBody := func(body string) snapshotDTO {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		api.Handler().ServeHTTP(recorder, authedRequest(t, api, "/api/snapshot", body))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("snapshot status = %d, want 200; body %s", recorder.Code, recorder.Body)
+		}
+		var snapshot snapshotDTO
+		if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+
+	second := postSnapshotWithBody(`{"refreshDiscovery":true}`)
+	if second.Stage != "final" {
+		t.Fatalf("refresh snapshot stage = %q, want final", second.Stage)
+	}
+	select {
+	case <-obsoleteStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("accepted refresh did not revalidate the fresh Marketplace browse cache")
+	}
+
+	api.mu.Lock()
+	obsoleteLaunch := discoveryLaunch{
+		slot:       discoveryBrowseSlot,
+		configKey:  api.discovery.browse.configKey,
+		generation: api.discovery.browse.generation,
+	}
+	currentEndpoint := api.acceptedMergedCfg.Marketplaces[0]
+	api.mu.Unlock()
+
+	passive := postSnapshotWithBody(`{"checkUpdates":false}`)
+	if passive.Stage != "final" || !passive.DiscoveryBrowseLoading {
+		t.Fatalf("passive snapshot stage/loading = %q/%v, want final/true", passive.Stage, passive.DiscoveryBrowseLoading)
+	}
+	api.mu.Lock()
+	browseGeneration, browseLoading := api.discovery.browse.generation, api.discovery.browse.loading
+	api.mu.Unlock()
+	if browseGeneration != obsoleteLaunch.generation || !browseLoading {
+		t.Fatalf("passive snapshot browse generation/loading = %d/%v, want %d/true", browseGeneration, browseLoading, obsoleteLaunch.generation)
+	}
+
+	third := postSnapshotWithBody(`{"refreshDiscovery":true}`)
+	if third.Stage != "final" {
+		t.Fatalf("superseding refresh snapshot stage = %q, want final", third.Stage)
+	}
+	select {
+	case <-obsoleteCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("superseding refresh did not cancel the obsolete browse request")
+	}
+	_, currentBrowse := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.Query == "" && payload.RequestID == 0 && !payload.Loading &&
+			containsRowName(payload.Rows, "browse-current")
+	})
+	if containsRowName(currentBrowse.Rows, "browse-initial") || containsRowName(currentBrowse.Rows, "browse-obsolete") || searchCount.Load() != 3 {
+		t.Fatalf("superseded browse state/count = %#v/%d", currentBrowse.Rows, searchCount.Load())
+	}
+
+	api.mu.Lock()
+	sseSequence, discoverySequence := api.sequence, api.discovery.sequence
+	api.mu.Unlock()
+	api.completeDiscovery(&obsoleteLaunch, []marketplace.DiscoveryOutcome{{
+		Endpoint: currentEndpoint,
+		Items:    []mpapi.ResourceListItem{item("browse-obsolete", "b")},
+		Total:    1,
+	}}, "")
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.sequence != sseSequence || api.discovery.sequence != discoverySequence {
+		t.Fatalf("stale browse completion changed event sequences from %d/%d to %d/%d",
+			sseSequence, discoverySequence, api.sequence, api.discovery.sequence)
+	}
+	if !containsRowName(api.current.Rows, "browse-current") || containsRowName(api.current.Rows, "browse-obsolete") {
+		t.Fatalf("stale browse completion replaced current rows: %#v", api.current.Rows)
 	}
 }
 
@@ -893,6 +1066,7 @@ func TestAPIDiscoveryRowsSurviveAuthoritativeStagesAndDropOnlyRemovedEndpoint(t 
 	}
 }
 
+// spec: gui-shell/superseded-marketplace-browse-cannot-replace-current-results
 func TestAPIDiscoveryConfigChangeCancelsRemovedEndpointWorker(t *testing.T) {
 	api, _, _ := newUserAPI(t, session.DependencyLifecycle{})
 	const instanceA = "market-a"
@@ -978,7 +1152,9 @@ func TestAPIDiscoveryConfigChangeCancelsRemovedEndpointWorker(t *testing.T) {
 		Generation: generation, Stage: session.SnapshotStageFinal, DriftAssessment: session.DriftReady,
 		Rows: []session.Row{local}, MergedCfg: &config.Config{Marketplaces: []config.MarketplaceEntry{endpointB}},
 	})
-	if final == nil || final.DiscoveryQuery != "needle" || final.DiscoveryRequestID != 1 || len(final.DiscoveryHealth) != 1 || final.DiscoveryHealth[0].Label != "b" {
+	if final == nil || final.DiscoveryQuery != "needle" || final.DiscoveryRequestID != 1 ||
+		len(final.DiscoveryHealth) != 1 || final.DiscoveryHealth[0].Label != "b" ||
+		len(final.DiscoveryBrowseHealth) != 1 || final.DiscoveryBrowseHealth[0].Label != "b" {
 		t.Fatal("validated endpoint removal did not preserve the active query on the remaining endpoint")
 	}
 	select {
@@ -987,7 +1163,9 @@ func TestAPIDiscoveryConfigChangeCancelsRemovedEndpointWorker(t *testing.T) {
 		t.Fatal("endpoint removal did not cancel the removed endpoint request")
 	}
 	_, retained := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
-		return payload.RequestID == 1 && payload.Query == "needle" && !payload.Loading && len(payload.Health) == 1 && payload.Health[0].Label == "b"
+		return payload.RequestID == 1 && payload.Query == "needle" && !payload.Loading &&
+			len(payload.Health) == 1 && payload.Health[0].Label == "b" &&
+			len(payload.BrowseHealth) == 1 && payload.BrowseHealth[0].Label == "b"
 	})
 	if len(retained.Rows) != 2 || retained.Rows[0].Name != "pending-local" || retained.Rows[1].Name != "needle-market-b" || searchCountA.Load() != 1 || searchCountB.Load() != 0 {
 		t.Fatal("removed endpoint worker replaced the accepted result or remaining endpoint cache")
@@ -996,6 +1174,236 @@ func TestAPIDiscoveryConfigChangeCancelsRemovedEndpointWorker(t *testing.T) {
 	if response.err != nil || response.status != http.StatusNoContent || len(response.body) != 0 {
 		t.Fatal("cancelled config-stage discovery trigger did not complete with empty 204")
 	}
+}
+
+// spec: gui-shell/superseded-marketplace-browse-cannot-replace-current-results
+func TestUserAPIBrowseIsCanceledOnClose(t *testing.T) {
+	api, _, _ := newUserAPI(t, session.DependencyLifecycle{})
+	const instanceID = "browse-close-instance"
+	pageTwoStarted := make(chan struct{}, 1)
+	pageTwoCanceled := make(chan struct{})
+	var canceledOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+			return
+		}
+		if r.URL.Path != "/api/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		if offset == 0 {
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{{
+					RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "browse-first",
+					Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64),
+					Availability: mpapi.AvailabilityAvailable,
+				}},
+				Total: 2, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+			})
+			return
+		}
+		select {
+		case pageTwoStarted <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+		canceledOnce.Do(func() { close(pageTwoCanceled) })
+	}))
+	t.Cleanup(func() {
+		api.Close()
+		server.Close()
+	})
+
+	events := prepareDiscoveryAPISession(t, api, &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: server.URL, InstanceID: instanceID, Alias: "browse",
+	}}}, nil)
+	nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 0 && payload.Query == "" && containsRowName(payload.Rows, "browse-first")
+	})
+	select {
+	case <-pageTwoStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("browse did not reach its held later page")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		api.Close()
+		close(closed)
+	}()
+	select {
+	case <-pageTwoCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("API close did not cancel the pending browse page")
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("API close waited on a leaked browse worker")
+	}
+}
+
+// spec: gui-shell/later-marketplace-pages-are-browsable-during-and-after-search
+func TestUserAPIBrowseContinuesDuringSearchAndClearUsesCurrentBrowse(t *testing.T) {
+	api, _, _ := newUserAPI(t, session.DependencyLifecycle{})
+	const instanceID = "browse-search-instance"
+	pageTwoStarted := make(chan struct{}, 1)
+	pageTwoRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBrowse := func() {
+		releaseOnce.Do(func() { close(pageTwoRelease) })
+	}
+	var browsePageOneCount atomic.Int32
+	item := func(name, digestRune string) mpapi.ResourceListItem {
+		return mpapi.ResourceListItem{
+			RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: name,
+			Revision:      "sha256:" + strings.Repeat(digestRune, 64),
+			ContentDigest: "sha256:" + strings.Repeat(digestRune, 64),
+			Availability:  mpapi.AvailabilityAvailable,
+		}
+	}
+	browseFirst := item("browse-first", "a")
+	browseSecond := item("browse-second", "b")
+	searchMatch := item("needle-match", "c")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
+			return
+		}
+		if r.URL.Path != "/api/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		if r.URL.Query().Get("q") != "" {
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{searchMatch}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+			})
+			return
+		}
+		switch offset {
+		case 0:
+			browsePageOneCount.Add(1)
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{browseFirst}, Total: 2, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+			})
+		case 1:
+			select {
+			case pageTwoStarted <- struct{}{}:
+			default:
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-pageTwoRelease:
+			}
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{browseSecond}, Total: 2, Offset: 1, Limit: marketplace.DiscoveryPageLimit,
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+				Items: []mpapi.ResourceListItem{}, Total: 2, Offset: offset, Limit: marketplace.DiscoveryPageLimit,
+			})
+		}
+	}))
+	t.Cleanup(func() {
+		releaseBrowse()
+		api.Close()
+		server.Close()
+	})
+
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: instanceID, Alias: "shared"}
+	events := prepareDiscoveryAPISession(t, api, &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}, nil)
+	_, firstBrowse := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 0 && payload.Query == "" && containsRowName(payload.Rows, "browse-first")
+	})
+	if containsRowName(firstBrowse.Rows, "browse-second") {
+		t.Fatal("later browse page appeared before its held response")
+	}
+	select {
+	case <-pageTwoStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("browse did not request its held later page")
+	}
+
+	apiServer := httptest.NewServer(api.Handler())
+	t.Cleanup(apiServer.Close)
+	searchRequest := postDiscoveryAsync(t, apiServer, api, context.Background(), "needle", 1)
+	_, searched := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 1 && payload.Query == "needle" && containsRowName(payload.Rows, "needle-match")
+	})
+	if containsRowName(searched.Rows, "browse-second") {
+		t.Fatal("active search exposed the pending browse page")
+	}
+	if !searched.BrowseLoading {
+		t.Fatal("active search did not retain the pending browse loading state")
+	}
+	if response := <-searchRequest; response.err != nil || response.status != http.StatusNoContent {
+		t.Fatalf("search request = %d, err=%v, want 204", response.status, response.err)
+	}
+
+	releaseBrowse()
+	_, browsedWhileSearching := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 1 && payload.Query == "needle" &&
+			containsRowName(payload.Rows, "needle-match") &&
+			len(payload.Health) == 1 && payload.Health[0].Total == 1 &&
+			len(payload.BrowseHealth) == 1 && payload.BrowseHealth[0].Total == 2 &&
+			!payload.BrowseHealth[0].Truncated && !payload.Loading && !payload.BrowseLoading
+	})
+	if containsRowName(browsedWhileSearching.Rows, "browse-second") {
+		t.Fatal("browse completion replaced the active query rows")
+	}
+	if len(browsedWhileSearching.Health) != 1 || browsedWhileSearching.Health[0].Total != 1 {
+		t.Fatalf("active query health = %#v, want query total 1", browsedWhileSearching.Health)
+	}
+	if len(browsedWhileSearching.BrowseHealth) != 1 || browsedWhileSearching.BrowseHealth[0].Total != 2 {
+		t.Fatalf("background browse health = %#v, want browse total 2", browsedWhileSearching.BrowseHealth)
+	}
+	api.mu.Lock()
+	snapshotBytes, err := json.Marshal(api.current)
+	api.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentSnapshot struct {
+		DiscoveryHealth        []testDiscoveryHealth `json:"discoveryHealth"`
+		DiscoveryBrowseHealth  []testDiscoveryHealth `json:"discoveryBrowseHealth"`
+		DiscoveryBrowseLoading bool                  `json:"discoveryBrowseLoading"`
+	}
+	if err := json.Unmarshal(snapshotBytes, &currentSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(currentSnapshot.DiscoveryHealth) != 1 || currentSnapshot.DiscoveryHealth[0].Total != 1 ||
+		len(currentSnapshot.DiscoveryBrowseHealth) != 1 || currentSnapshot.DiscoveryBrowseHealth[0].Total != 2 ||
+		currentSnapshot.DiscoveryBrowseLoading {
+		t.Fatalf("current snapshot query/browse health = %#v/%#v", currentSnapshot.DiscoveryHealth, currentSnapshot.DiscoveryBrowseHealth)
+	}
+
+	clearRequest := postDiscoveryAsync(t, apiServer, api, context.Background(), "", 2)
+	_, restored := nextTestDiscovery(t, events, func(payload testDiscoveryPayload) bool {
+		return payload.RequestID == 2 && payload.Query == "" && !payload.Loading &&
+			containsRowName(payload.Rows, "browse-first") && containsRowName(payload.Rows, "browse-second")
+	})
+	if response := <-clearRequest; response.err != nil || response.status != http.StatusNoContent {
+		t.Fatalf("clear request = %d, err=%v, want 204", response.status, response.err)
+	}
+	if browsePageOneCount.Load() != 1 {
+		t.Fatalf("empty-query browse requested its first page %d times, want one shared browse worker", browsePageOneCount.Load())
+	}
+	if !containsRowName(restored.Rows, "browse-second") {
+		t.Fatal("clearing search did not restore the completed browse")
+	}
+}
+
+func containsRowName(rows []rowDTO, name string) bool {
+	for _, row := range rows {
+		if row.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func prepareDiscoveryAPISession(t *testing.T, api *API, merged *config.Config, provisional []session.Row) <-chan sessionEvent {
@@ -1038,6 +1446,8 @@ type testDiscoveryPayload struct {
 	DiscoverySequence uint64                `json:"discoverySequence"`
 	Rows              []rowDTO              `json:"rows"`
 	Health            []testDiscoveryHealth `json:"health"`
+	BrowseHealth      []testDiscoveryHealth `json:"browseHealth"`
+	BrowseLoading     bool                  `json:"browseLoading"`
 	Loading           bool                  `json:"loading"`
 }
 

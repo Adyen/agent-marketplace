@@ -224,7 +224,7 @@ describe('createClient', () => {
     ])
   })
 
-  it('sends update-check intent only when a snapshot caller specifies it', async () => {
+  it('sends update-check and discovery-refresh intent only when specified', async () => {
     const bodies: (string | undefined)[] = []
     const fetcher: typeof fetch = async (_input, init) => {
       bodies.push(typeof init?.body === 'string' ? init.body : undefined)
@@ -235,8 +235,16 @@ describe('createClient', () => {
     await client.snapshot(true)
     await client.snapshot(false)
     await client.snapshot()
+    await client.snapshot(false, true)
+    await client.snapshot(undefined, true)
 
-    expect(bodies).toEqual(['{"checkUpdates":true}', '{"checkUpdates":false}', undefined])
+    expect(bodies).toEqual([
+      '{"checkUpdates":true}',
+      '{"checkUpdates":false}',
+      undefined,
+      '{"checkUpdates":false,"refreshDiscovery":true}',
+      '{"refreshDiscovery":true}',
+    ])
   })
 
   it('parses fragmented SSE bytes into ordered events', async () => {

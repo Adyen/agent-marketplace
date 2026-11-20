@@ -410,6 +410,22 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			bootstrap["addSourceDir"] = addDir
 		}
 	}
+	if fixture == "source-browse" {
+		sharedDir := filepath.Join(home, "browse-shared")
+		fragmentDir := filepath.Join(home, "browse-fragment")
+		emptyDir := filepath.Join(home, "browse-empty")
+		writeFile(t, filepath.Join(sharedDir, "solo", "SKILL.md"), fixtureSkillBody)
+		writeFile(t, filepath.Join(fragmentDir, "fragment", "SKILL.md"),
+			"---\nname: fragment\ndescription: Fragment skill\n---\n# Fragment\n")
+		if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+			fmt.Sprintf(
+				"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  keep: {directory: %q}\n  sibling: {directory: %q, source_harness: claude}\n  fragment: {directory: %q}\n  empty: {directory: %q}\nresources:\n  keep: {all: true}\n  fragment: {all: true}\n",
+				sharedDir, sharedDir, fragmentDir, emptyDir,
+			))
+	}
 	if fixture == "marketplace" {
 		marketplace := newMarketplaceEndpointTestServer(t, "/playwright/catalog", "playwright-marketplace", "", 0)
 		bootstrap["marketplaceEndpoint"] = marketplace.endpoint
@@ -775,11 +791,22 @@ func setupWork41PagedDiscoveryFixture(t *testing.T, home string, bootstrap map[s
 			Availability: mpapi.AvailabilityAvailable, Score: 2,
 		},
 	}
+	searchItem := mpapi.ResourceListItem{
+		RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "paged-search",
+		Revision: "sha256:" + strings.Repeat("c", 64), ContentDigest: "sha256:" + strings.Repeat("c", 64),
+		Availability: mpapi.AvailabilityAvailable, Score: 1,
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "http://"+r.Host))
 		case "/api/v1/search":
+			if r.URL.Query().Get("q") != "" {
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{
+					Items: []mpapi.ResourceListItem{searchItem}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit,
+				})
+				return
+			}
 			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 			if offset == 1 {
 				_ = os.WriteFile(pageStarted, []byte("1"), 0o600)
@@ -807,7 +834,11 @@ func setupWork41PagedDiscoveryFixture(t *testing.T, home string, bootstrap map[s
 	t.Cleanup(server.Close)
 
 	orgPath := filepath.Join(t.TempDir(), "config.yaml")
-	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	localSource := filepath.Join(home, "paged-local")
+	writeFile(t, filepath.Join(localSource, "browse-local", "SKILL.md"),
+		"---\nname: browse-local\ndescription: Local browse fixture\n---\n# Browse local\n")
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: "+localSource+"}\nresources:\n  local: {all: true}\n")
 	organization := "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nallowed_marketplaces: ['^http://127\\.0\\.0\\.1:[0-9]+$']\nsources:\n  paged: {marketplace: " + server.URL + "}\n"
 	if err := os.WriteFile(orgPath, []byte(organization), 0o600); err != nil {
 		t.Fatal(err)

@@ -58,6 +58,7 @@ type DiscoveryOptions struct {
 	Timeout     time.Duration
 	UserAgent   string
 	Cache       *DiscoveryCache
+	Refresh     bool
 }
 
 type discoveryEvent struct {
@@ -588,7 +589,7 @@ func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOpti
 		if hit {
 			outcomes = append(outcomes, cached)
 		}
-		if !hit || cached.CacheState == DiscoveryCacheStale || (browse && cached.Total > len(cached.Items)) {
+		if opts.Refresh || !hit || cached.CacheState == DiscoveryCacheStale || (browse && cached.Total > len(cached.Items)) {
 			needsNetwork = true
 		}
 	}
@@ -664,7 +665,7 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 		}
 		if hit {
 			outcomes = append(outcomes, cached)
-			if cached.CacheState == DiscoveryCacheFresh && (!browse || cached.Total <= len(cached.Items)) {
+			if cached.CacheState == DiscoveryCacheFresh && (!browse || cached.Total <= len(cached.Items)) && !opts.Refresh {
 				continue
 			}
 		}
