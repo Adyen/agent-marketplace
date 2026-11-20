@@ -14,6 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +30,10 @@ import (
 
 func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 	var searches atomic.Int32
+	items := make([]mpapi.ResourceListItem, 72)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry-a", "skill", fmt.Sprintf("review-%02d", i), float64(len(items)-i))
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
@@ -36,7 +43,11 @@ func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 			if got := r.URL.Query().Get("limit"); got != "50" {
 				t.Errorf("limit = %q, want 50", got)
 			}
-			_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{canonicalSearchItem("registry-a", "skill", "review", 1)}, Total: 72, Limit: 50})
+			offset, limit := 0, DiscoveryPageLimit
+			_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+			_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+			end := min(offset+limit, len(items))
+			_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:end], Total: len(items), Offset: offset, Limit: limit})
 		default:
 			http.NotFound(w, r)
 		}
@@ -54,14 +65,431 @@ func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := searches.Load(); got != 1 {
-		t.Fatalf("search requests = %d, want 1", got)
+	if got := searches.Load(); got != 2 {
+		t.Fatalf("search requests = %d, want two pages in the complete browse", got)
 	}
-	if len(first) != 1 || first[0].Total != 72 || !first[0].Truncated {
+	if len(first) != 1 || len(first[0].Items) != len(items) || first[0].Total != len(items) || first[0].Truncated {
 		t.Fatalf("first outcome = %#v", first)
 	}
-	if len(second) != 1 || second[0].CacheState != DiscoveryCacheFresh || second[0].Items[0].Name != "review" {
+	if len(second) != 1 || second[0].CacheState != DiscoveryCacheFresh || len(second[0].Items) != len(items) || second[0].Items[len(items)-1].Name != "review-71" {
 		t.Fatalf("second outcome = %#v", second)
+	}
+}
+
+func TestDiscoverBrowsePaginatesAndPublishesCumulativeSnapshots(t *testing.T) {
+	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+13)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+	}
+	var mu sync.Mutex
+	offsets := []int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "paged-browse")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		mu.Lock()
+		offsets = append(offsets, offset)
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:min(offset+limit, len(items))], Total: len(items), Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "paged-browse", Alias: "paged"}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}}
+	cache := NewDiscoveryCache(t.TempDir())
+	updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshots [][]DiscoveryOutcome
+	for update := range updates {
+		snapshots = append(snapshots, update)
+	}
+	if len(snapshots) < 3 {
+		t.Fatalf("snapshots = %d, want a cumulative snapshot after both pages and a completed result", len(snapshots))
+	}
+	firstPage := snapshots[0][0]
+	if len(firstPage.Items) != DiscoveryPageLimit || firstPage.Total != len(items) || !firstPage.Truncated {
+		t.Fatalf("first-page snapshot = %d items, total %d, truncated %t", len(firstPage.Items), firstPage.Total, firstPage.Truncated)
+	}
+	finalPage := snapshots[len(snapshots)-1][0]
+	if len(finalPage.Items) != len(items) || finalPage.Truncated || finalPage.Err != nil {
+		t.Fatalf("completed snapshot = %d items, truncated %t, error %v", len(finalPage.Items), finalPage.Truncated, finalPage.Err)
+	}
+	mu.Lock()
+	gotOffsets := slices.Clone(offsets)
+	mu.Unlock()
+	if !slices.Equal(gotOffsets, []int{0, DiscoveryPageLimit}) {
+		t.Fatalf("page offsets = %v, want [0 %d]", gotOffsets, DiscoveryPageLimit)
+	}
+	cached, ok := cache.loadBrowse(endpoint, DiscoveryPageLimit)
+	if !ok || len(cached.Items) != len(items) || cached.Total != len(items) || cached.Truncated {
+		t.Fatalf("complete browse cache = %d items, total %d, truncated %t, hit %t", len(cached.Items), cached.Total, cached.Truncated, ok)
+	}
+}
+
+func TestDiscoverBrowseEmptyEndpointMakesOneSearchRequest(t *testing.T) {
+	var searches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "empty-browse")
+			return
+		}
+		searches.Add(1)
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{}, Total: 0, Offset: 0, Limit: DiscoveryPageLimit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "empty-browse"}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if err != nil || len(outcomes) != 1 || len(outcomes[0].Items) != 0 || outcomes[0].Err != nil {
+		t.Fatalf("empty browse = %#v, err=%v", outcomes, err)
+	}
+	if got := searches.Load(); got != 1 {
+		t.Fatalf("empty endpoint search requests = %d, want one", got)
+	}
+}
+
+func TestDiscoverBrowseEndpointsProgressIndependently(t *testing.T) {
+	laterPageStarted := make(chan struct{}, 1)
+	releaseLaterPage := make(chan struct{}, 1)
+	heldItems := make([]mpapi.ResourceListItem, DiscoveryPageLimit+1)
+	for i := range heldItems {
+		heldItems[i] = canonicalSearchItem("held-registry", "skill", fmt.Sprintf("held-%02d", i), 0)
+	}
+	held := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "held-endpoint")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		if offset > 0 {
+			select {
+			case laterPageStarted <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseLaterPage:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: heldItems[offset:min(offset+limit, len(heldItems))], Total: len(heldItems), Offset: offset, Limit: limit})
+	}))
+	defer held.Close()
+	defer func() {
+		select {
+		case releaseLaterPage <- struct{}{}:
+		default:
+		}
+	}()
+	completed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "completed-endpoint")
+			return
+		}
+		items := []mpapi.ResourceListItem{canonicalSearchItem("complete-registry", "skill", "complete", 0)}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Offset: 0, Limit: DiscoveryPageLimit})
+	}))
+	defer completed.Close()
+	endpoints := []config.MarketplaceEntry{
+		{URL: held.URL, InstanceID: "held-endpoint"},
+		{URL: completed.URL, InstanceID: "completed-endpoint"},
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: endpoints}}
+	updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-laterPageStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("held endpoint did not start its later page")
+	}
+	gotHeldPage, gotCompletedEndpoint := false, false
+	deadline := time.After(2 * time.Second)
+	for !gotHeldPage || !gotCompletedEndpoint {
+		select {
+		case snapshot, ok := <-updates:
+			if !ok {
+				t.Fatal("discovery stream closed before independent endpoint progress arrived")
+			}
+			for _, outcome := range snapshot {
+				switch outcome.Endpoint.InstanceID {
+				case "held-endpoint":
+					gotHeldPage = len(outcome.Items) == DiscoveryPageLimit && outcome.Truncated && outcome.Err == nil
+				case "completed-endpoint":
+					gotCompletedEndpoint = len(outcome.Items) == 1 && !outcome.Truncated && outcome.Err == nil
+				}
+			}
+		case <-deadline:
+			t.Fatalf("progress while one endpoint was held = held page %t, completed endpoint %t", gotHeldPage, gotCompletedEndpoint)
+		}
+	}
+	releaseLaterPage <- struct{}{}
+	for range updates {
+	}
+}
+
+func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T) {
+	var offsets []int
+	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+3)
+	for i := range items {
+		items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "truncated-cache")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		offsets = append(offsets, offset)
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items[offset:min(offset+limit, len(items))], Total: len(items), Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "truncated-cache"}
+	cache := NewDiscoveryCache(t.TempDir())
+	page := items[:DiscoveryPageLimit]
+	if err := cache.Store(DiscoveryOutcome{Endpoint: ep, Items: page, Total: len(items), Truncated: true, ObservedAt: time.Now()}, "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || len(outcomes[0].Items) != len(items) || outcomes[0].Truncated {
+		t.Fatalf("browse after truncated cache = %#v", outcomes)
+	}
+	if !slices.Equal(offsets, []int{0, DiscoveryPageLimit}) {
+		t.Fatalf("refreshed offsets = %v, want [0 %d]", offsets, DiscoveryPageLimit)
+	}
+}
+
+func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "partial-browse")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		if offset > 0 {
+			http.Error(w, "later page unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		items := make([]mpapi.ResourceListItem, DiscoveryPageLimit)
+		for i := range items {
+			items[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: DiscoveryPageLimit + 4, Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "partial-browse"}
+	cache := NewDiscoveryCache(t.TempDir())
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil || len(outcomes) != 1 {
+		t.Fatalf("partial browse = %#v, err=%v", outcomes, err)
+	}
+	if len(outcomes[0].Items) != DiscoveryPageLimit || outcomes[0].Err == nil || !outcomes[0].Truncated {
+		t.Fatalf("partial browse outcome = %d items, truncated %t, error %v", len(outcomes[0].Items), outcomes[0].Truncated, outcomes[0].Err)
+	}
+	if _, err := os.Stat(cache.path(ep, "", "", "", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial catalog was cached: %v", err)
+	}
+	if _, err := os.Stat(cache.catalogPath(ep, DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial catalog record was cached: %v", err)
+	}
+}
+
+func TestDiscoverReturnsCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{{
+		URL: "https://market.example", InstanceID: "market",
+	}}}}
+	outcomes, err := Discover(ctx, ec, "needle", DiscoveryOptions{Cache: NewDiscoveryCache(t.TempDir())})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("discovery error = %v, want caller cancellation; outcomes=%#v", err, outcomes)
+	}
+}
+
+func TestDiscoverBrowseStaleCacheMergesReceivedRowsAfterLaterPageFailure(t *testing.T) {
+	staleItems := make([]mpapi.ResourceListItem, DiscoveryPageLimit+10)
+	for i := range staleItems {
+		staleItems[i] = canonicalSearchItem("registry", "skill", fmt.Sprintf("resource-%02d", i), 0)
+		staleItems[i].Description = "cached"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "stale-partial-browse")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		if offset >= DiscoveryPageLimit {
+			http.Error(w, "later page unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		items := make([]mpapi.ResourceListItem, 0, min(limit, len(staleItems)-offset))
+		for i := offset; i < min(offset+limit, len(staleItems)); i++ {
+			item := staleItems[i]
+			item.Description = "received"
+			items = append(items, item)
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(staleItems), Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "stale-partial-browse"}
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := cache.storeBrowse(DiscoveryOutcome{
+		Endpoint:   ep,
+		Items:      staleItems,
+		Total:      len(staleItems),
+		ObservedAt: time.Now().Add(-time.Hour),
+	}, DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := cache.catalogPath(ep, DiscoveryPageLimit)
+	before, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+
+	outcomes, err := Discover(context.Background(), effective, "", DiscoveryOptions{Cache: cache})
+	if err != nil || len(outcomes) != 1 {
+		t.Fatalf("partial browse = %#v, err=%v", outcomes, err)
+	}
+	out := outcomes[0]
+	if out.Total != len(staleItems) || len(out.Items) != len(staleItems) {
+		t.Fatalf("partial stale browse has total/items %d/%d, want %d/%d", out.Total, len(out.Items), len(staleItems), len(staleItems))
+	}
+	for i, item := range out.Items {
+		wantDescription := "cached"
+		if i < DiscoveryPageLimit {
+			wantDescription = "received"
+		}
+		if item.Name != fmt.Sprintf("resource-%02d", i) || item.Description != wantDescription {
+			t.Fatalf("merged item %d = %#v, want resource-%02d with %q description", i, item, i, wantDescription)
+		}
+	}
+	if out.Err == nil || !out.Truncated || out.CacheState != DiscoveryCacheStale {
+		t.Fatalf("partial stale browse state = %q, truncated=%t, error=%v; want stale, truncated, and failed", out.CacheState, out.Truncated, out.Err)
+	}
+	after, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("partial merged browse replaced the stale cache record")
+	}
+}
+
+func TestDiscoverStaleBrowseCachePrecedesHeldRefreshAndDoesNotRepeat(t *testing.T) {
+	release := make(chan struct{})
+	searchRequests := make(chan struct{}, 4)
+	var searches atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "stale-before-refresh")
+			return
+		}
+		searches.Add(1)
+		select {
+		case searchRequests <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "fresh-remote", 1)}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: 1, Limit: DiscoveryPageLimit})
+	}))
+	defer server.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "stale-before-refresh"}
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := cache.Store(DiscoveryOutcome{
+		Endpoint:   ep,
+		Items:      []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "cached-local", 1)},
+		Total:      1,
+		ObservedAt: time.Now().Add(-time.Hour),
+	}, "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	effective := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	updates, err := DiscoverUpdates(context.Background(), effective, "", DiscoveryOptions{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case snapshot, ok := <-updates:
+		if !ok || len(snapshot) != 1 || snapshot[0].CacheState != DiscoveryCacheStale || len(snapshot[0].Items) != 1 || snapshot[0].Items[0].Name != "cached-local" {
+			t.Fatalf("first snapshot = %#v, open=%t; want stale cached rows", snapshot, ok)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stale cached rows were not published while refresh was held")
+	}
+	select {
+	case <-searchRequests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh request did not start")
+	}
+	close(release)
+	for range updates {
+	}
+	if got := searches.Load(); got != 1 {
+		t.Fatalf("search requests after refresh = %d, want one", got)
+	}
+	select {
+	case <-searchRequests:
+		t.Fatal("an additional browse request arrived after refresh completion")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestDiscoverBrowseDeniedEndpointReceivesNoRequests(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "denied-browse"}
+	ec := config.EffectiveConfig{
+		Merged:              &config.Config{Marketplaces: []config.MarketplaceEntry{ep}},
+		AllowedMarketplaces: []string{"^https://allowed\\.example$"},
+	}
+	cache := NewDiscoveryCache(t.TempDir())
+	outcomes, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	var blocked *config.MarketplaceURLBlockedError
+	if !errors.As(err, &blocked) || len(outcomes) != 0 {
+		t.Fatalf("denied browse = %#v, err=%v; want MarketplaceURLBlockedError before outcomes", outcomes, err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("denied endpoint received %d requests", got)
 	}
 }
 
@@ -115,7 +543,7 @@ func TestDiscoveryCacheSchemaOwnsDistinctPath(t *testing.T) {
 	if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	currentKey := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
+	currentKey := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
 	currentPath := filepath.Join(cache.root, discoveryEndpointDirectoryName(ep), hex.EncodeToString(currentKey[:])+".json")
 	if currentPath == priorPath {
 		t.Fatal("schema versions share a cache path")
@@ -161,7 +589,7 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	if _, ok := cache.Load(ep, "query-51", "", DiscoveryPageLimit); !ok {
 		t.Fatal("newest non-empty query was evicted")
 	}
-	dir := filepath.Dir(cache.path(ep, "", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "", "", "", DiscoveryPageLimit))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +690,7 @@ func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.Marketp
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := cache.path(ep, query, "", DiscoveryPageLimit)
+	path := cache.path(ep, query, "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +703,7 @@ func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.Marketp
 func TestDiscoveryCacheStoreDoesNotOpenFIFO(t *testing.T) {
 	cache := NewDiscoveryCache(t.TempDir())
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "stored", "", DiscoveryPageLimit)
+	path := cache.path(ep, "stored", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +751,7 @@ func TestDiscoveryCacheRetentionPreservesArbitraryNameJSON(t *testing.T) {
 	for i := 0; i < DiscoveryQueryLimit; i++ {
 		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%02d", i), now.Add(time.Duration(i)*time.Second))
 	}
-	dir := filepath.Dir(cache.path(ep, "query-00", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "query-00", "", "", DiscoveryPageLimit))
 	arbitrary := filepath.Join(dir, "arbitrary.json")
 	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: ep.URL, InstanceID: ep.InstanceID, Query: "arbitrary", Limit: DiscoveryPageLimit, ObservedAt: now.Add(-time.Hour), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "arbitrary", 1)}, Total: 1}
 	data, err := json.Marshal(record)
@@ -342,7 +770,7 @@ func TestDiscoveryCacheRetentionPreservesArbitraryNameJSON(t *testing.T) {
 			t.Fatalf("retention removed %s: %v", preserved, err)
 		}
 	}
-	oldest := cache.path(ep, "query-00", "", DiscoveryPageLimit)
+	oldest := cache.path(ep, "query-00", "", "", DiscoveryPageLimit)
 	if _, err := os.Lstat(oldest); !os.IsNotExist(err) {
 		t.Fatalf("retention did not evict the oldest recognized record: %v", err)
 	}
@@ -387,7 +815,7 @@ func TestDiscoveryCacheStoreRejectsOverCapEndpointBeforeMutation(t *testing.T) {
 	for i := 0; i < DiscoveryQueryLimit; i++ {
 		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%03d", i), now.Add(time.Duration(i)*time.Second))
 	}
-	dir := filepath.Dir(cache.path(ep, "query-000", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "query-000", "", "", DiscoveryPageLimit))
 	for i := DiscoveryQueryLimit; i <= maxDiscoveryDirEntries; i++ {
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("unknown-%03d", i)), []byte("preserve"), 0o600); err != nil {
 			t.Fatal(err)
@@ -403,7 +831,7 @@ func TestDiscoveryCacheStoreRejectsOverCapEndpointBeforeMutation(t *testing.T) {
 		if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err == nil {
 			t.Fatalf("Store(%q) succeeded in over-cap endpoint directory", query)
 		}
-		if _, err := os.Lstat(cache.path(ep, query, "", DiscoveryPageLimit)); !os.IsNotExist(err) {
+		if _, err := os.Lstat(cache.path(ep, query, "", "", DiscoveryPageLimit)); !os.IsNotExist(err) {
 			t.Fatalf("Store(%q) created a record: %v", query, err)
 		}
 	}
@@ -479,7 +907,7 @@ func TestDiscoveryCacheStoreDoesNotReplaceCorruptExactPathAtCapacity(t *testing.
 	cache := NewDiscoveryCache(t.TempDir())
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "same", "", DiscoveryPageLimit)
+	path := cache.path(ep, "same", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +940,7 @@ func TestDiscoveryCacheStoreSerializesInProcessCapacityChecks(t *testing.T) {
 	root := t.TempDir()
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
 	cache := NewDiscoveryCache(root)
-	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
+	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -583,7 +1011,7 @@ func TestDiscoveryCacheStoreChildProcess(t *testing.T) {
 				}
 				time.Sleep(time.Millisecond)
 			}
-			return cache.storeLocked(ep, query, "", DiscoveryPageLimit, data)
+			return cache.storeLocked(ep, query, "", "", DiscoveryPageLimit, data)
 		})
 	} else {
 		err = cache.Store(outcome, query, "", DiscoveryPageLimit)
@@ -597,7 +1025,7 @@ func TestDiscoveryCacheStoreSerializesTwoProcessesAtCapacity(t *testing.T) {
 	root := t.TempDir()
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
 	cache := NewDiscoveryCache(root)
-	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
+	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
 	rendezvous := t.TempDir()
 	held, release := filepath.Join(rendezvous, "held"), filepath.Join(rendezvous, "release")
 	results := make(chan error, 2)
@@ -688,7 +1116,7 @@ func TestDiscoveryCacheStoreRejectsFullRootBeforeCreatingEndpoint(t *testing.T) 
 	if err := cache.Store(outcome, "new", "", DiscoveryPageLimit); err == nil {
 		t.Fatal("Store succeeded with a full discovery root")
 	}
-	if _, err := os.Lstat(filepath.Dir(cache.path(ep, "new", "", DiscoveryPageLimit))); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Dir(cache.path(ep, "new", "", "", DiscoveryPageLimit))); !os.IsNotExist(err) {
 		t.Fatalf("endpoint directory was created: %v", err)
 	}
 	entries, err := os.ReadDir(cache.root)
@@ -710,7 +1138,7 @@ func TestDiscoveryCacheMaintenanceExpiresRecognizedRecordsAndPreservesUnknownAnd
 	if err := cache.Store(expired, "expired", "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	expiredPath := cache.path(ep, "expired", "", DiscoveryPageLimit)
+	expiredPath := cache.path(ep, "expired", "", "", DiscoveryPageLimit)
 	dir := filepath.Dir(expiredPath)
 	unknown := filepath.Join(dir, "notes.txt")
 	if err := os.WriteFile(unknown, []byte("preserve"), 0o600); err != nil {
@@ -758,7 +1186,7 @@ func TestDiscoveryCacheMaintenanceRemovesOnlySafelyRecognizedRetiredEndpoints(t 
 	if err := cache.Store(outcome, "", "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	retiredDir := filepath.Dir(cache.path(retired, "", "", DiscoveryPageLimit))
+	retiredDir := filepath.Dir(cache.path(retired, "", "", "", DiscoveryPageLimit))
 	ambiguousDir := filepath.Join(cache.root, strings.Repeat("a", 64))
 	if err := os.Mkdir(ambiguousDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -796,7 +1224,7 @@ func TestDiscoveryCacheRejectsOversizedRecordBeforeCreatingTemporaryFile(t *test
 	if err := cache.Store(outcome, "oversized", "", DiscoveryPageLimit); err == nil {
 		t.Fatal("oversized discovery cache record was stored")
 	}
-	path := cache.path(ep, "oversized", "", DiscoveryPageLimit)
+	path := cache.path(ep, "oversized", "", "", DiscoveryPageLimit)
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("published cache exists after oversized record: %v", err)
 	}
@@ -887,7 +1315,7 @@ func TestDiscoveryRejectsTrailingNetworkJSON(t *testing.T) {
 func TestDiscoveryCacheRejectsSemanticCorruptionAndTrailingJSON(t *testing.T) {
 	cache := NewDiscoveryCache(t.TempDir())
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "", "", DiscoveryPageLimit)
+	path := cache.path(ep, "", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -942,5 +1370,453 @@ func TestDiscoverRetainsStaleEndpointAfterPartialFailure(t *testing.T) {
 	}
 	if outcomes[1].Endpoint.Alias != "good" || outcomes[1].Err != nil || outcomes[1].Items[0].Name != "healthy" {
 		t.Fatalf("good outcome = %#v", outcomes[1])
+	}
+}
+
+func TestDiscoverIncludesEveryKindAcrossPagesAndCachesTheUnion(t *testing.T) {
+	for _, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
+		t.Run(kind, func(t *testing.T) {
+			type searchRequest struct {
+				query, kind string
+				offset      int
+			}
+			var mu sync.Mutex
+			requests := map[string][]searchRequest{}
+			servers := make([]*httptest.Server, 2)
+			endpoints := make([]config.MarketplaceEntry, 2)
+			for i := range servers {
+				index := i
+				alias := fmt.Sprintf("market-%d", index)
+				instanceID := "kind-search-" + alias
+				registryID := "registry-" + alias
+				servers[index] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/.well-known/agent-marketplace.json" {
+						writeTestWellKnown(w, instanceID)
+						return
+					}
+					if r.URL.Path != "/api/v1/search" {
+						http.NotFound(w, r)
+						return
+					}
+					query, requestedKind := r.URL.Query().Get("q"), r.URL.Query().Get("kind")
+					offset, limit := 0, DiscoveryPageLimit
+					_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+					_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+					mu.Lock()
+					requests[alias] = append(requests[alias], searchRequest{query: query, kind: requestedKind, offset: offset})
+					mu.Unlock()
+
+					var all []mpapi.ResourceListItem
+					total := 0
+					switch {
+					case query == "needle" && requestedKind == "":
+						total = 60
+						all = make([]mpapi.ResourceListItem, DiscoveryPageLimit)
+						for j := range all {
+							name := fmt.Sprintf("text-%02d", j)
+							if j == 0 {
+								name = "shared"
+							}
+							all[j] = canonicalSearchItem(registryID, kind, name, float64(DiscoveryPageLimit-j))
+							all[j].Description = "needle appears only in metadata"
+						}
+					case query == "" && requestedKind == kind:
+						total = 61
+						all = make([]mpapi.ResourceListItem, total)
+						for j := range all {
+							name := fmt.Sprintf("opaque-%02d", j)
+							if j == 0 {
+								name = "shared"
+							}
+							all[j] = canonicalSearchItem(registryID, kind, name, 0)
+							all[j].Description = "opaque resource details"
+						}
+					}
+					end := min(offset+limit, len(all))
+					items := []mpapi.ResourceListItem{}
+					if offset < end {
+						items = all[offset:end]
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: total, Offset: offset, Limit: limit})
+				}))
+				endpoints[index] = config.MarketplaceEntry{URL: servers[index].URL, InstanceID: instanceID, Alias: alias}
+				t.Cleanup(servers[index].Close)
+			}
+			ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: endpoints}}
+			cache := NewDiscoveryCache(t.TempDir())
+			opts := DiscoveryOptions{Limit: DiscoveryPageLimit, IncludeKind: kind, Cache: cache}
+			outcomes, err := Discover(context.Background(), ec, "needle", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(outcomes) != len(endpoints) {
+				t.Fatalf("outcomes = %d, want %d", len(outcomes), len(endpoints))
+			}
+			for _, outcome := range outcomes {
+				if outcome.Err != nil {
+					t.Fatalf("%s discovery: %v", outcome.Endpoint.Alias, outcome.Err)
+				}
+				if len(outcome.Items) != 110 || !outcome.Truncated {
+					t.Fatalf("%s result count/truncation = %d/%t, want 110/true", outcome.Endpoint.Alias, len(outcome.Items), outcome.Truncated)
+				}
+				if outcome.Items[0].Name != "shared" || outcome.Items[1].Name != "text-01" || outcome.Items[49].Name != "text-49" || outcome.Items[50].Name != "opaque-01" || outcome.Items[109].Name != "opaque-60" {
+					t.Fatalf("%s union order = first %q/%q, boundary %q/%q, last %q", outcome.Endpoint.Alias, outcome.Items[0].Name, outcome.Items[1].Name, outcome.Items[49].Name, outcome.Items[50].Name, outcome.Items[109].Name)
+				}
+				coordinates := map[string]bool{}
+				for _, item := range outcome.Items {
+					coordinate := item.RegistryID + "\x00" + item.Kind + "\x00" + item.Name
+					if coordinates[coordinate] {
+						t.Fatalf("%s duplicate coordinate %q", outcome.Endpoint.Alias, coordinate)
+					}
+					coordinates[coordinate] = true
+				}
+			}
+			for alias, observed := range requests {
+				if len(observed) != 3 {
+					t.Fatalf("%s requests = %#v, want free-text plus kind pages at offsets 0 and 50", alias, observed)
+				}
+			}
+			cached, needsNetwork, err := CachedDiscovery(ec, "needle", opts)
+			if err != nil || needsNetwork || len(cached) != len(outcomes) {
+				t.Fatalf("cached kind discovery = %d outcomes, network=%t, err=%v", len(cached), needsNetwork, err)
+			}
+			for i := range outcomes {
+				if !reflect.DeepEqual(cached[i].Items, outcomes[i].Items) || cached[i].Truncated != outcomes[i].Truncated {
+					t.Fatalf("cached outcome %d differs from live union: cached=%#v live=%#v", i, cached[i], outcomes[i])
+				}
+			}
+			textOnly, needsNetwork, err := CachedDiscovery(ec, "needle", DiscoveryOptions{Limit: DiscoveryPageLimit, Cache: cache})
+			if err != nil || !needsNetwork || len(textOnly) != 0 {
+				t.Fatalf("text-only cache lookup collided with kind results: outcomes=%#v network=%t err=%v", textOnly, needsNetwork, err)
+			}
+		})
+	}
+}
+
+func TestDiscoverKindPaginationRejectsNonProgressingPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "kind-stalled")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		items := []mpapi.ResourceListItem{}
+		total := 0
+		if r.URL.Query().Get("kind") == "mcpserver" {
+			total = 51
+			if offset == 0 {
+				items = make([]mpapi.ResourceListItem, DiscoveryPageLimit)
+				for i := range items {
+					items[i] = canonicalSearchItem("registry", "mcpserver", fmt.Sprintf("opaque-%02d", i), 0)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: total, Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "kind-stalled", Alias: "stalled"}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}}
+	outcomes, err := Discover(context.Background(), ec, "mcp", DiscoveryOptions{IncludeKind: "mcpserver", Cache: NewDiscoveryCache(t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || outcomes[0].Err == nil || !strings.Contains(outcomes[0].Err.Error(), "no progress") {
+		t.Fatalf("stalled pagination outcome = %#v, want endpoint no-progress error", outcomes)
+	}
+}
+
+func TestDiscoverUpdatesKeepsAllowedEndpointWhenAnotherIsDenied(t *testing.T) {
+	var allowedRequests, deniedRequests atomic.Int32
+	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedRequests.Add(1)
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "allowed-market")
+			return
+		}
+		if r.URL.Path != "/api/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		items := []mpapi.ResourceListItem{}
+		if r.URL.Query().Get("kind") == "mcpserver" {
+			items = []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "allowed-opaque", 0)}
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Limit: DiscoveryPageLimit})
+	}))
+	defer allowed.Close()
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deniedRequests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer denied.Close()
+
+	allowedEndpoint := config.MarketplaceEntry{URL: allowed.URL, InstanceID: "allowed-market", Alias: "allowed"}
+	deniedEndpoint := config.MarketplaceEntry{URL: denied.URL, InstanceID: "denied-market", Alias: "denied"}
+	cache := NewDiscoveryCache(t.TempDir())
+	cached := DiscoveryOutcome{
+		Endpoint:   deniedEndpoint,
+		Items:      []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "cached-denied", 0)},
+		Total:      1,
+		ObservedAt: time.Now(),
+	}
+	if err := cache.store(cached, "mcp", "", "mcpserver", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := cache.path(deniedEndpoint, "mcp", "", "mcpserver", DiscoveryPageLimit)
+	cacheBefore, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{allowedEndpoint, deniedEndpoint}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(allowed.URL) + "$",
+		},
+	}
+	outcomes, err := Discover(context.Background(), effective, "mcp", DiscoveryOptions{
+		IncludeKind: "mcpserver",
+		Cache:       cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("outcomes = %d, want one per configured endpoint: %#v", len(outcomes), outcomes)
+	}
+	var allowedOutcome, deniedOutcome *DiscoveryOutcome
+	for i := range outcomes {
+		switch outcomes[i].Endpoint.URL {
+		case allowed.URL:
+			allowedOutcome = &outcomes[i]
+		case denied.URL:
+			deniedOutcome = &outcomes[i]
+		}
+	}
+	if allowedOutcome == nil || allowedOutcome.Err != nil || len(allowedOutcome.Items) != 1 || allowedOutcome.Items[0].Name != "allowed-opaque" {
+		t.Fatalf("allowed endpoint outcome = %#v", allowedOutcome)
+	}
+	var blocked *config.MarketplaceURLBlockedError
+	if deniedOutcome == nil || !errors.As(deniedOutcome.Err, &blocked) || len(blocked.BlockedURLs) != 1 || blocked.BlockedURLs[0] != denied.URL {
+		t.Fatalf("denied endpoint outcome = %#v, want its own MarketplaceURLBlockedError", deniedOutcome)
+	}
+	if len(deniedOutcome.Items) != 0 {
+		t.Fatalf("denied endpoint exposed cached resources: %#v", deniedOutcome.Items)
+	}
+	if allowedRequests.Load() == 0 || deniedRequests.Load() != 0 {
+		t.Fatalf("request counts = allowed %d, denied %d; want allowed requests and no denied requests", allowedRequests.Load(), deniedRequests.Load())
+	}
+	cacheAfter, err := os.ReadFile(cachePath)
+	if err != nil || !reflect.DeepEqual(cacheAfter, cacheBefore) {
+		t.Fatalf("denied endpoint cache changed: err=%v", err)
+	}
+}
+
+func TestDiscoverUpdatesMaintainsCacheWhenAnotherEndpointIsDenied(t *testing.T) {
+	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "allowed-market")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{}, Limit: DiscoveryPageLimit})
+	}))
+	defer allowed.Close()
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer denied.Close()
+
+	allowedEndpoint := config.MarketplaceEntry{URL: allowed.URL, InstanceID: "allowed-market", Alias: "allowed"}
+	deniedEndpoint := config.MarketplaceEntry{URL: denied.URL, InstanceID: "denied-market", Alias: "denied"}
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := cache.store(DiscoveryOutcome{Endpoint: allowedEndpoint, ObservedAt: time.Now().Add(-DiscoveryStaleTTL - time.Hour)}, "old", "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.store(DiscoveryOutcome{Endpoint: deniedEndpoint, ObservedAt: time.Now()}, "old", "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	staleAllowedPath := cache.path(allowedEndpoint, "old", "", "", DiscoveryPageLimit)
+	deniedPath := cache.path(deniedEndpoint, "old", "", "", DiscoveryPageLimit)
+
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{allowedEndpoint, deniedEndpoint}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(allowed.URL) + "$",
+		},
+	}
+	if _, err := Discover(context.Background(), effective, "fresh", DiscoveryOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(staleAllowedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale allowed endpoint record was not pruned: err=%v", err)
+	}
+	if _, err := os.Stat(deniedPath); err != nil {
+		t.Fatalf("denied endpoint record was not retained: %v", err)
+	}
+}
+
+func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "partial-market")
+		case "/api/v1/search":
+			if r.URL.Query().Get("kind") != "" {
+				http.Error(w, "kind search unavailable", http.StatusInternalServerError)
+				return
+			}
+			items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "widget-match", 0)}
+			_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Limit: DiscoveryPageLimit})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ep := config.MarketplaceEntry{URL: server.URL, Alias: "partial"}
+	acquired := ep
+	acquired.InstanceID = "partial-market"
+	cache := NewDiscoveryCache(t.TempDir())
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(server.URL) + "$",
+		},
+	}
+	outcomes, err := Discover(context.Background(), effective, "widget", DiscoveryOptions{
+		IncludeKind: "mcpserver",
+		Cache:       cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes = %d, want one: %#v", len(outcomes), outcomes)
+	}
+	if outcomes[0].Err == nil {
+		t.Fatal("kind failure outcome has no error")
+	}
+	if len(outcomes[0].Items) != 1 || outcomes[0].Items[0].Name != "widget-match" {
+		t.Fatalf("kind failure dropped usable text matches: %#v", outcomes[0].Items)
+	}
+	if outcomes[0].Endpoint.InstanceID != acquired.InstanceID {
+		t.Fatalf("kind failure endpoint = %#v, want acquired identity %#v", outcomes[0].Endpoint, acquired)
+	}
+	if _, err := os.Stat(cache.path(acquired, "widget", "", "mcpserver", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial kind results were cached: err=%v", err)
+	}
+}
+
+func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
+	kindPageStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "kind-timeout")
+		case "/api/v1/search":
+			if r.URL.Query().Get("kind") == "" {
+				items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "text-match", 1)}
+				_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Limit: DiscoveryPageLimit})
+				return
+			}
+			offset := 0
+			_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+			if offset == 0 {
+				time.Sleep(350 * time.Millisecond)
+				items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "kind-match", 1)}
+				_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: 2, Offset: offset, Limit: DiscoveryPageLimit})
+				return
+			}
+			close(kindPageStarted)
+			<-r.Context().Done()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "kind-timeout"}
+	effective := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}}}
+	timeout := 600 * time.Millisecond
+	cache := NewDiscoveryCache(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		outcomes []DiscoveryOutcome
+		err      error
+	}
+	done := make(chan result, 1)
+	started := time.Now()
+	go func() {
+		outcomes, err := Discover(ctx, effective, "widget", DiscoveryOptions{
+			IncludeKind: "mcpserver",
+			Timeout:     timeout,
+			Cache:       cache,
+		})
+		done <- result{outcomes: outcomes, err: err}
+	}()
+	select {
+	case <-kindPageStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("kind pagination did not reach its later page")
+	}
+	select {
+	case got := <-done:
+		elapsed := time.Since(started)
+		if elapsed > timeout+150*time.Millisecond {
+			t.Fatalf("kind discovery returned after %s, beyond its shared %s deadline", elapsed, timeout)
+		}
+		if got.err != nil || len(got.outcomes) != 1 || got.outcomes[0].Err == nil {
+			t.Fatalf("kind timeout outcome = %#v, err=%v; want an endpoint error", got.outcomes, got.err)
+		}
+		if len(got.outcomes[0].Items) == 0 || got.outcomes[0].Items[0].Name != "text-match" {
+			t.Fatalf("kind timeout dropped text matches: %#v", got.outcomes[0].Items)
+		}
+	case <-time.After(timeout + 500*time.Millisecond):
+		t.Fatalf("kind discovery did not return within %s after its later page blocked", timeout+500*time.Millisecond)
+	}
+}
+
+func BenchmarkDiscoverKindQueryAndUnion(b *testing.B) {
+	kindItems := make([]mpapi.ResourceListItem, 51)
+	kindItems[0] = canonicalSearchItem("registry", "mcpserver", "shared", 1)
+	for i := 1; i < len(kindItems); i++ {
+		kindItems[i] = canonicalSearchItem("registry", "mcpserver", fmt.Sprintf("opaque-%02d", i-1), 0)
+		kindItems[i].Description = "opaque resource details"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "bench-market")
+			return
+		}
+		offset, limit := 0, DiscoveryPageLimit
+		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+		items := []mpapi.ResourceListItem{
+			canonicalSearchItem("registry", "mcpserver", "shared", 1),
+			canonicalSearchItem("registry", "command", "text-match", 0),
+		}
+		total := len(items)
+		if r.URL.Query().Get("kind") == "mcpserver" {
+			total = len(kindItems)
+			end := min(offset+limit, total)
+			items = kindItems[offset:end]
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: total, Offset: offset, Limit: limit})
+	}))
+	defer server.Close()
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "bench-market"}
+	opts := DiscoveryOptions{Limit: DiscoveryPageLimit, IncludeKind: "mcpserver"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		outcome, err := discoverOne(context.Background(), endpoint, false, "needle", opts, DiscoveryPageLimit)
+		if err != nil || len(outcome.Items) != 52 {
+			b.Fatalf("kind discovery = %d items, err=%v", len(outcome.Items), err)
+		}
 	}
 }

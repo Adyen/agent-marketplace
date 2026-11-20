@@ -7,19 +7,31 @@ app_pid=
 stub_pid=
 control=
 control_ready=
+stop_pid() {
+  local pid=$1
+  kill "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.5 || true
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
 cleanup() {
   if [[ $control_ready == yes ]]; then
     curl -fsS -X POST "$control/__e2e/quit" >/dev/null 2>&1 || true
   fi
   if [[ -n "$app_pid" ]]; then
-    kill "$app_pid" 2>/dev/null || true
-    wait "$app_pid" 2>/dev/null || true
+    stop_pid "$app_pid"
   fi
   if [[ -n "$stub_pid" ]]; then
-    kill "$stub_pid" 2>/dev/null || true
-    wait "$stub_pid" 2>/dev/null || true
+    stop_pid "$stub_pid"
   fi
-  rm -rf "$work"
+  rm -rf "$work" || true
 }
 trap cleanup EXIT
 
@@ -123,6 +135,7 @@ for _ in $(seq 1 180); do
   fi
   if [[ $phase == failed ]]; then
     printf '%s\\n' "$status" >&2
+    cat "$work/gui.log" >&2 || true
     exit 1
   fi
   sleep 1
@@ -140,6 +153,13 @@ for _ in $(seq 1 60); do
 done
 if kill -0 "$app_pid" 2>/dev/null; then
   echo "updated app did not exit" >&2
+  echo "=== GUI log ===" >&2 || true
+  cat "$work/gui.log" >&2 || true
+  echo "=== GUI process group ===" >&2 || true
+  ps -o pid,ppid,stat,etime,command -g "$(ps -o pgid= -p "$app_pid" | tr -d ' ')" >&2 || true
+  echo "=== GUI process sample ===" >&2 || true
+  /usr/bin/sample "$app_pid" 5 -file "$work/sample.txt" >&2 || true
+  cat "$work/sample.txt" >&2 || true
   exit 1
 fi
 wait "$app_pid" || true
