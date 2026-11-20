@@ -956,24 +956,95 @@ func TestUpdatePreservesCachedRevocationErrorForMissingPin(t *testing.T) {
 	env := seedMissingPinEnv(t)
 	fake, registry, entry := env.fake, env.registry, env.entry
 	fake.addSkill(t, registry, "gone")
-	installV4MarketplaceLayer(t, env.repo, env.configPath, entry, layerPreparePins(t, fake, "skill", "gone"))
-	record := *marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "gone")
+	fake.addSkill(t, registry, "stay")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry,
+		layerPreparePins(t, fake, "skill", "gone"), layerPreparePins(t, fake, "skill", "stay"))
+	goneRecord := *marketplaceLockResource(layerMarketplaceLockDoc(t, env.lockPath), "skill", "gone")
 	cache := marketplace.DefaultCache()
-	revision, found, err := cache.ReadResourceRevision(fake.URL, string(record.RegistryID), "skill", "gone", string(record.ContentDigest))
+	revision, found, err := cache.ReadResourceRevision(fake.URL, string(goneRecord.RegistryID), "skill", "gone", string(goneRecord.ContentDigest))
 	if err != nil || !found {
 		t.Fatalf("cached revision = (%#v, %t, %v), want installed metadata", revision, found, err)
 	}
 	revision.Revocation = &store.Revocation{
 		Kind: store.RevocationRevision, TargetID: string(revision.ContentDigest), Reason: "withdrawn",
 	}
-	if _, err := cache.WriteResourceRevision(fake.URL, string(record.RegistryID), "skill", "gone", string(record.ContentDigest), revision); err != nil {
+	if _, err := cache.WriteResourceRevision(fake.URL, string(goneRecord.RegistryID), "skill", "gone", string(goneRecord.ContentDigest), revision); err != nil {
 		t.Fatal(err)
 	}
 	delete(fake.resources, "source/skill/gone")
+	fake.setSkill(t, registry, "stay", "stay body v2")
 
-	_, err = Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
 	if err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("update error = %v, want cached revocation error", err)
+	}
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 1 || result.UpdatedMarketplacePins != 1 {
+		t.Fatalf("update = (%#v, %v), want one missing-resource error after updating other pins", result, err)
+	}
+	for _, want := range []string{"skill/gone", "agent-marketplace remove gone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing-resource error %q does not name %q", err, want)
+		}
+	}
+	doc := layerMarketplaceLockDoc(t, env.lockPath)
+	if got := marketplaceLockResource(doc, "skill", "gone"); got == nil || !reflect.DeepEqual(*got, goneRecord) {
+		t.Fatalf("revoked pin lock record changed: got %#v, want %#v", got, goneRecord)
+	}
+	stay := marketplaceLockResource(doc, "skill", "stay")
+	if want := fake.resources["source/skill/stay"].revision.ContentDigest; stay == nil || stay.ContentDigest != lockfile.Digest(want) {
+		t.Fatalf("updated stay pin = %#v, want digest %s", stay, want)
+	}
+}
+
+// spec: update-output/unusable-pinned-revision-remains-an-error
+func TestUpdateDoesNotMaterializeMembersOfUnusableRemovedCollection(t *testing.T) {
+	env := seedMissingPinEnv(t)
+	fake, registry, entry := env.fake, env.registry, env.entry
+	fake.addSkill(t, registry, "stay")
+	installV4MarketplaceLayer(t, env.repo, env.configPath, entry,
+		layerCollectionPins(t, fake, "review", "bundle"), layerPreparePins(t, fake, "skill", "stay"))
+
+	before := layerMarketplaceLockDoc(t, env.lockPath)
+	bundleRecord := *marketplaceLockResource(before, "collection", "bundle")
+	reviewRecord := *marketplaceLockResource(before, "skill", "review")
+	reviewPath := filepath.Join(env.home, ".config", "devin", "skills", "review", "SKILL.md")
+	if _, err := os.Stat(reviewPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("review output before update: %v, want no output", err)
+	}
+	fake.missing["collection/bundle"] = true
+	bundle := fake.resources["source/collection/bundle"]
+	bundle.revision.Revocation = &store.Revocation{
+		Kind: store.RevocationRevision, TargetID: string(bundle.revision.ContentDigest), Reason: "withdrawn",
+	}
+	fake.resources["source/collection/bundle"] = bundle
+	fake.setSkill(t, registry, "stay", "stay body v2")
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: env.repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err == nil || !strings.Contains(err.Error(), "bundle") || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("update error = %v, want bundle revocation error", err)
+	}
+	var missing *MissingMarketplaceResourcesError
+	if result == nil || !errors.As(err, &missing) || len(missing.Pins) != 1 || result.UpdatedMarketplacePins != 1 {
+		t.Fatalf("update = (%#v, %v), want one missing-resource error after updating stay", result, err)
+	}
+	after := layerMarketplaceLockDoc(t, env.lockPath)
+	for _, record := range []struct {
+		kind, name string
+		want       lockfile.MarketplaceResourceLock
+	}{
+		{"collection", "bundle", bundleRecord},
+		{"skill", "review", reviewRecord},
+	} {
+		if got := marketplaceLockResource(after, record.kind, record.name); got == nil || !reflect.DeepEqual(*got, record.want) {
+			t.Fatalf("%s/%s lock record = %#v, want %#v", record.kind, record.name, got, record.want)
+		}
+	}
+	if got := marketplaceLockResource(after, "skill", "stay"); got == nil || got.ContentDigest != lockfile.Digest(fake.resources["source/skill/stay"].revision.ContentDigest) {
+		t.Fatalf("updated stay pin = %#v, want latest digest", got)
+	}
+	if _, err := os.Stat(reviewPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("review output after update: %v, want no output", err)
 	}
 }
 
