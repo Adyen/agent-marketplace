@@ -5,7 +5,12 @@
 // target identity and user-facing metadata free of import cycles.
 package target
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+)
 
 // Target identifies a harness layout used as a compilation destination or
 // source format.
@@ -32,6 +37,7 @@ type Definition struct {
 	RepoRoot         string
 	UserRoot         string
 	PartitionedRoots bool
+	AcceptedKinds    []ir.ResourceKind
 	Compiler         bool
 	Ingester         bool
 	Conversion       bool
@@ -45,8 +51,8 @@ type Definition struct {
 	HookProjection *NativeHookProjection
 }
 
-// ValidateDefinition rejects target metadata that mixes or omits the legacy
-// single-root and partitioned-root models.
+// ValidateDefinition rejects invalid root models and incomplete accepted-kind
+// declarations.
 func ValidateDefinition(definition Definition) error {
 	hasRepoRoot := definition.RepoRoot != ""
 	hasUserRoot := definition.UserRoot != ""
@@ -56,23 +62,54 @@ func ValidateDefinition(definition Definition) error {
 	if definition.PartitionedRoots == hasRepoRoot {
 		return fmt.Errorf("target %q must declare exactly one root model", definition.Target)
 	}
+	if len(definition.AcceptedKinds) == 0 {
+		return fmt.Errorf("target %q must declare at least one accepted kind", definition.Target)
+	}
+	seenKinds := make(map[ir.ResourceKind]bool, len(definition.AcceptedKinds))
+	for _, kind := range definition.AcceptedKinds {
+		if kind == ir.KindCollection {
+			return fmt.Errorf("target %q cannot accept kind %q", definition.Target, kind)
+		}
+		if seenKinds[kind] {
+			return fmt.Errorf("target %q declares accepted kind %q more than once", definition.Target, kind)
+		}
+		seenKinds[kind] = true
+		if !definition.Compiler {
+			return fmt.Errorf("target %q accepts kind %q but does not declare a compiler", definition.Target, kind)
+		}
+	}
 	return nil
 }
 
+func commonAcceptedKinds() []ir.ResourceKind {
+	return []ir.ResourceKind{
+		ir.KindSkill,
+		ir.KindCommand,
+		ir.KindSubagent,
+		ir.KindHook,
+		ir.KindMcpServer,
+		ir.KindPlugin,
+	}
+}
+
+func acceptedKindsWithRules() []ir.ResourceKind {
+	return append(commonAcceptedKinds(), ir.KindRule)
+}
+
 var definitions = []Definition{
-	{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
-	{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
-	{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2},
-	{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
-	{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
+	{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", AcceptedKinds: commonAcceptedKinds(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
+	{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", AcceptedKinds: acceptedKindsWithRules(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
+	{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", AcceptedKinds: acceptedKindsWithRules(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2},
+	{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", AcceptedKinds: acceptedKindsWithRules(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
+	{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", AcceptedKinds: commonAcceptedKinds(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
 	// D8 registered the canonical Devin ingester, so Ingester and Conversion are
 	// true: `convert --from devin`, `convert --to devin`, and registry
 	// `source_harness: devin` are all valid. UI became true in work package D11.
 	// UIOrder 5 preserves the display order of the five targets that shipped
 	// before it.
-	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
-	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
-	{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
+	{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", AcceptedKinds: commonAcceptedKinds(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
+	{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, AcceptedKinds: commonAcceptedKinds(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+	{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", AcceptedKinds: commonAcceptedKinds(), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 }
 
 // Definitions returns all target declarations in stable display order.
@@ -89,6 +126,7 @@ func derivedDefinitions() []Definition {
 }
 
 func definitionWithHookProjection(definition Definition) Definition {
+	definition.AcceptedKinds = slices.Clone(definition.AcceptedKinds)
 	definition.HookProjection = nativeHookProjectionForLayout(definition.Target)
 	return definition
 }

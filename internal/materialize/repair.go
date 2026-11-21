@@ -188,7 +188,7 @@ func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.Re
 	if err != nil {
 		return nil, err
 	}
-	targets := composition.registry.Targets()
+	targets := composition.registry.AdapterTargets()
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
 	out := make([]TargetRepairPreview, 0, len(targets))
 	for _, target := range targets {

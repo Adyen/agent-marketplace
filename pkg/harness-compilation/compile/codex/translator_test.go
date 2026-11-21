@@ -334,6 +334,7 @@ func TestMCPPreservesWorkingDirectory(t *testing.T) {
 	}
 }
 
+// spec: application-target-model/rule-diagnostics-keep-their-codes
 func TestUnsupportedRuleAndHookProduceStableDiagnostics(t *testing.T) {
 	resources := []ir.Resource{
 		ir.NewRule("rule", "", "Body", nil, false, nil, ir.SourceRef{}),

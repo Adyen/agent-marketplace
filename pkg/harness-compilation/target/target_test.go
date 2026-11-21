@@ -8,6 +8,21 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func expectedAcceptedKinds(withRules bool) []ir.ResourceKind {
+	kinds := []ir.ResourceKind{
+		ir.KindSkill,
+		ir.KindCommand,
+		ir.KindSubagent,
+		ir.KindHook,
+		ir.KindMcpServer,
+		ir.KindPlugin,
+	}
+	if withRules {
+		kinds = append(kinds, ir.KindRule)
+	}
+	return kinds
+}
+
 func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 	if TargetCodex != "codex" {
 		t.Fatalf("TargetCodex = %q, want codex", TargetCodex)
@@ -20,7 +35,7 @@ func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 		t.Fatal("Codex hook projection is not derived")
 	}
 	definition.HookProjection = nil
-	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
+	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
 	if !reflect.DeepEqual(definition, want) {
 		t.Fatalf("Lookup(codex) = %#v, want %#v", definition, want)
 	}
@@ -110,56 +125,56 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 
 func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 	want := []Definition{
-		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1,
+		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
 			}},
-		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0,
+		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", AcceptedKinds: expectedAcceptedKinds(true), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: "hooks.json"},
 				User:       NativeHookProjectionFile{Path: "hooks.json"},
 			}},
-		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2,
+		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", AcceptedKinds: expectedAcceptedKinds(true), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeEventHandlers,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
 				User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
 			}},
-		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3,
+		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", AcceptedKinds: expectedAcceptedKinds(true), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeEventHandlers,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: ".devin/hooks.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks"},
 			}},
-		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4,
+		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
 			}},
-		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5,
+		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: "hook-support",
 				Project:    NativeHookProjectionFile{Path: "hooks.v1.json"},
 				User:       NativeHookProjectionFile{Path: "config.json", Member: "hooks"},
 			}},
-		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6,
+		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6,
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: ".codex/hook-support",
 				Project:    NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
 			}},
-		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
+		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", AcceptedKinds: expectedAcceptedKinds(false), Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 	}
 	got := Definitions()
 	for i := range got {
@@ -179,8 +194,8 @@ func TestValidateDefinitionRootModels(t *testing.T) {
 		def     Definition
 		wantErr bool
 	}{
-		{name: "legacy", def: Definition{Target: "legacy", RepoRoot: ".legacy", UserRoot: ".legacy"}},
-		{name: "partitioned", def: Definition{Target: "split", PartitionedRoots: true}},
+		{name: "legacy", def: Definition{Target: "legacy", RepoRoot: ".legacy", UserRoot: ".legacy", AcceptedKinds: expectedAcceptedKinds(false), Compiler: true}},
+		{name: "partitioned", def: Definition{Target: "split", PartitionedRoots: true, AcceptedKinds: expectedAcceptedKinds(false), Compiler: true}},
 		{name: "neither", def: Definition{Target: "missing"}, wantErr: true},
 		{name: "mixed", def: Definition{Target: "mixed", RepoRoot: ".mixed", UserRoot: ".mixed", PartitionedRoots: true}, wantErr: true},
 		{name: "partial legacy", def: Definition{Target: "partial", RepoRoot: ".partial"}, wantErr: true},

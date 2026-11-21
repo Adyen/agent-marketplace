@@ -147,6 +147,7 @@ func TestCompilerRejectsUnknownKind(t *testing.T) {
 // Devin capability limit. The D12 probe
 // (internal/devinprobe.TestProbeRulesDiscoveryUnderDevinRoots) falsified the
 // capability claim on 3000.3.27, so the message must not restate it.
+// spec: application-target-model/rule-diagnostics-keep-their-codes
 func TestCompilerDropsRulesAsAnOutOfScopeWarning(t *testing.T) {
 	tests := []struct {
 		name string

@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
+// spec: harness-compilation/plugins-compile-only-as-packages
 func TestCompileRefusesPlugin(t *testing.T) {
 	p := &ir.Plugin{Manifest: ir.Manifest{Name: "demo"}}
 	_, err := harnesscompile.Compile(p, harnesscompile.TargetClaude)
@@ -32,6 +33,7 @@ func TestCompileRefusesPlugin(t *testing.T) {
 	}
 }
 
+// spec: harness-compilation/plugins-compile-only-as-packages
 func TestCompilePackageProjects(t *testing.T) {
 	skill := ir.NewSkill("ok", "fine skill", "Do the thing.", nil, nil, ir.SourceRef{})
 	p := &ir.Plugin{

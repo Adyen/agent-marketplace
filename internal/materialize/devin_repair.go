@@ -87,7 +87,7 @@ func DevinRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 	if err != nil {
 		return nil, fmt.Errorf("construct Devin repair adapter: %w", err)
 	}
-	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	adapter, ok := registry.LookupAdapter(hcc.TargetDevin)
 	if !ok {
 		return nil, fmt.Errorf("devin repair adapter is not registered")
 	}

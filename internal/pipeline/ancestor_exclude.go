@@ -145,7 +145,7 @@ func skillDir(target hcc.Target, root, name string) string {
 		if harness.IsInstallationAdapterTarget(target) {
 			return ""
 		}
-	} else if _, migrated := registry.Lookup(target); migrated {
+	} else if _, migrated := registry.LookupAdapter(target); migrated {
 		destinations, err := harness.ResolveDestinations(target, false, root)
 		if err != nil {
 			return ""

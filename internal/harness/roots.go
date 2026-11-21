@@ -325,10 +325,13 @@ var TargetInfoMap map[hcc.Target]TargetInfo
 var targetInfoErr error
 
 func init() {
-	TargetInfoMap, targetInfoErr = MakeTargetInfo()
-	if targetInfoErr != nil {
+	registry, err := NewInstallationAdapterRegistry()
+	if err != nil {
+		targetInfoErr = err
 		TargetInfoMap = make(map[hcc.Target]TargetInfo)
+		return
 	}
+	TargetInfoMap = registry.legacyTargetInfoMap()
 }
 
 // TargetInfoError reports a target metadata initialization failure, if any.
@@ -485,11 +488,11 @@ func MachineRoot(target hcc.Target) (string, bool) {
 		if err != nil {
 			return "", false
 		}
-		adapter, ok := registry.Lookup(target)
-		if !ok || adapter.Info().Roots.Machine == "" {
+		appTarget, ok := registry.Lookup(string(target))
+		if !ok || !appTarget.hasAdapter || appTarget.Info().Roots.Machine == "" {
 			return "", false
 		}
-		return adapter.Info().Roots.Machine, true
+		return appTarget.Info().Roots.Machine, true
 	}
 	roots, ok := MakeInstallRoots()[target]
 	return roots.Machine, ok
