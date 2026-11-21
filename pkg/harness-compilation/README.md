@@ -195,8 +195,8 @@ one resource. They suppress both named producers as whole resources. See
 | OpenCode | `TargetOpenCode` | Project `.opencode/`; machine XDG `opencode/`; native MCP file resolved by the consumer |
 
 [`target/target.go`](target/target.go) is the authoritative declaration of
-every target: its identity, label, both roots, and its compiler, ingester,
-conversion, and UI capabilities. Read targets from it instead of hardcoding a
+every target: its identity, label, both roots, its accepted resource kinds,
+and its compiler, ingester, conversion, and UI capabilities. Read targets from it instead of hardcoding a
 list. `ValidateTargetRegistrations()` checks the registry and the actual
 compiler and ingester registrations against each other in both directions.
 
