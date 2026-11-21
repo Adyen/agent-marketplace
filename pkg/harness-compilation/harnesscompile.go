@@ -77,23 +77,22 @@ func Targets() []Target { return targetmeta.Targets() }
 func IsValidTarget(name string) bool { return targetmeta.IsValid(name) }
 
 func validateKindRegistrations(definitions []targetmeta.Definition, hasCompiler, hasIngester func(targetmeta.Target) bool) []error {
-	var errs []error
+	var compilerDefinitions, ingesterDefinitions []targetmeta.Definition
 	for _, definition := range definitions {
-		t := Target(definition.Target)
-		if definition.Compiler && !hasCompiler(definition.Target) {
-			for _, kind := range definition.AcceptedKinds {
-				errs = append(errs, fmt.Errorf("target %q kind %q declares a compiler but none is registered", t, kind))
-			}
+		if definition.Compiler {
+			compilerDefinitions = append(compilerDefinitions, definition)
 		}
-		if definition.Ingester && !hasIngester(definition.Target) {
-			for _, kind := range definition.AcceptedKinds {
-				if kind == ir.KindPlugin {
-					continue
-				}
-				errs = append(errs, fmt.Errorf("target %q kind %q declares an ingester but none is registered", t, kind))
-			}
+		if definition.Ingester {
+			ingesterDefinitions = append(ingesterDefinitions, definition)
 		}
 	}
+	errs := targetmeta.MissingKindRegistrations(compilerDefinitions, nil, "a compiler", hasCompiler)
+	errs = append(errs, targetmeta.MissingKindRegistrations(
+		ingesterDefinitions,
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule},
+		"an ingester",
+		hasIngester,
+	)...)
 	return errs
 }
 

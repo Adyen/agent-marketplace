@@ -55,20 +55,16 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, definition := range target.Definitions() {
-		var acceptedKinds []ir.ResourceKind
-		for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook} {
-			if slices.Contains(definition.AcceptedKinds, kind) {
-				acceptedKinds = append(acceptedKinds, kind)
-			}
-		}
-		if len(acceptedKinds) == 0 {
-			continue
-		}
-		tg := definition.Target
-		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("target %s kind(s) %v require a tool catalog", tg, acceptedKinds)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook},
+		"a tool catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 }
 

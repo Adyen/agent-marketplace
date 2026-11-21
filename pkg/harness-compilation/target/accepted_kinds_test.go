@@ -84,3 +84,69 @@ func TestDeclaredKindWithoutAnImplementationFailsValidation(t *testing.T) {
 		})
 	}
 }
+
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
+func TestMissingKindRegistrations(t *testing.T) {
+	tests := []struct {
+		name          string
+		acceptedKinds []ir.ResourceKind
+		required      []ir.ResourceKind
+		registered    bool
+		wantErrors    []string
+		wantCalls     int
+	}{
+		{
+			name:          "declared hook needs a catalog",
+			acceptedKinds: []ir.ResourceKind{ir.KindHook},
+			required:      []ir.ResourceKind{ir.KindHook},
+			wantErrors:    []string{`target "partial" kind "hook" requires a hook catalog but none is registered`},
+			wantCalls:     1,
+		},
+		{
+			name:          "undeclared hook needs no catalog",
+			acceptedKinds: []ir.ResourceKind{ir.KindSkill},
+			required:      []ir.ResourceKind{ir.KindHook},
+		},
+		{
+			name:          "nil requires every accepted kind",
+			acceptedKinds: []ir.ResourceKind{ir.KindSkill, ir.KindHook},
+			wantErrors: []string{
+				`target "partial" kind "skill" requires a hook catalog but none is registered`,
+				`target "partial" kind "hook" requires a hook catalog but none is registered`,
+			},
+			wantCalls: 1,
+		},
+		{
+			name:          "registered catalog passes",
+			acceptedKinds: []ir.ResourceKind{ir.KindHook},
+			required:      []ir.ResourceKind{ir.KindHook},
+			registered:    true,
+			wantCalls:     1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			errs := MissingKindRegistrations(
+				[]Definition{{Target: Target("partial"), AcceptedKinds: tt.acceptedKinds}},
+				tt.required,
+				"a hook catalog",
+				func(Target) bool {
+					calls++
+					return tt.registered
+				},
+			)
+			if calls != tt.wantCalls {
+				t.Errorf("registration checks = %d, want %d", calls, tt.wantCalls)
+			}
+			if len(errs) != len(tt.wantErrors) {
+				t.Fatalf("MissingKindRegistrations returned %d errors, want %d: %v", len(errs), len(tt.wantErrors), errs)
+			}
+			for i, want := range tt.wantErrors {
+				if errs[i].Error() != want {
+					t.Errorf("error %d = %q, want %q", i, errs[i], want)
+				}
+			}
+		})
+	}
+}
