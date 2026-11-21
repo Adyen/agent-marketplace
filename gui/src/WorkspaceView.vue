@@ -546,9 +546,6 @@ const rowSourceLabels = computed(() => {
   const labels = new Map<string, string>()
   for (const row of view.value?.rows ?? []) {
     labels.set(row.source.id, row.source.label)
-    if (row.source.associationId != null && row.source.associationId !== '') {
-      labels.set(row.source.associationId, row.source.label)
-    }
   }
   return labels
 })

@@ -153,7 +153,6 @@ func configurationSources(t *testing.T, decoded map[string]any, key string) []co
 }
 
 // spec: gui-configuration/organization-sources-are-read-only
-// spec: gui-shell/named-marketplace-source-shows-its-name
 func TestUserConfigurationSourceProjection(t *testing.T) {
 	home, repo := newUserAPIFixture(t, false)
 	userDir := t.TempDir()

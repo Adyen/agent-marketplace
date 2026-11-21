@@ -18,14 +18,11 @@ describe('sourceLabel', () => {
     expect(sourceLabel(source('directory', '/regs'))).toBe('regs')
   })
 
-  // spec: gui-shell/named-marketplace-source-shows-its-name
-  it('uses a configured Marketplace source name', () => {
-    expect(sourceLabel(source('marketplace', 'https://tools.example.com/acme', 'team-tools'))).toBe('team-tools')
-  })
-
-  // spec: gui-shell/generic-or-missing-name-falls-back-to-the-host
-  it('falls back from missing or generic Marketplace names to the full endpoint host', () => {
+  // spec: gui-shell/marketplace-source-shows-its-endpoint-regardless-of-name
+  it('labels a Marketplace source by its endpoint whatever its configured name', () => {
+    expect(sourceLabel(source('marketplace', 'https://tools.example.com/acme', 'team-tools'))).toBe('tools.example.com/acme')
     expect(sourceLabel(source('marketplace', 'https://agent-marketplace.is.example.com'))).toBe('agent-marketplace.is.example.com')
+    expect(sourceLabel(source('marketplace', 'https://agent-marketplace.is.example.com', 'marketplace'))).toBe('agent-marketplace.is.example.com')
     expect(sourceLabel(source('marketplace', 'https://mp.example.com:8443/acme/', 'marketplace-2'))).toBe('mp.example.com:8443/acme')
     expect(sourceLabel(source('marketplace', 'https://marketplace.example/services/catalog', 'marketplace'))).toBe('marketplace.example/catalog')
     expect(sourceLabel(source('marketplace', 'http://localhost:8443/api'))).toBe('localhost:8443/api')

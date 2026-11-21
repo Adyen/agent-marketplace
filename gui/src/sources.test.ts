@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { mount } from '@vue/test-utils'
 import { RequestError, type Configuration, type OperationRef, type SourceInput } from './api/client'
-import { configuration, event, fakeClient, mountWorkspace, snapshot, tick } from './test-support'
+import { configuration, event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
 
 const dirSource = {
   id: 'user-dir-id',
@@ -1181,5 +1181,37 @@ describe('Source settings', () => {
     expect(dialog().querySelectorAll('.source-card')).toHaveLength(0)
     await setInput('Search sources', '')
     expect(sourceIds()).toEqual(['search-alpha', 'search-beta', 'org-only'])
+  })
+})
+
+describe('Sidebar source labels', () => {
+  const endpoint = 'https://agent-marketplace.is.example.com'
+  const endpointAssociation = 'endpoint-association'
+  const userGeneric = { ...marketplaceSource, id: 'user-mp', name: 'marketplace', location: endpoint, rowSourceId: endpointAssociation }
+  const orgNamed = { ...marketplaceSource, id: 'org-mp', name: 'adyen', location: endpoint, rowSourceId: endpointAssociation }
+
+  // spec: gui-shell/marketplace-source-shows-its-endpoint-regardless-of-name
+  it('labels Marketplace sources by endpoint, not by configured name or resource registry labels', async () => {
+    const { client, push } = fakeClient({
+      configuration: configuration({ userSources: [userGeneric], organizationSources: [orgNamed] }),
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([
+        row('xpl', { source: { id: 'xpl-registry', label: 'adyen/xpl', associationId: endpointAssociation } }),
+      ]),
+    }))
+    await tick()
+
+    const sidebar = wrapper.find('[aria-label="Sources list"]')
+    const labelOf = (id: string) => sidebar.find(`button[data-source-id="${id}"] .gui-source-row__location`).text()
+    expect(labelOf('user-mp')).toBe('agent-marketplace.is.example.com')
+    expect(labelOf('org-mp')).toBe('agent-marketplace.is.example.com')
+    expect(sidebar.text()).not.toContain('adyen/xpl')
+
+    wrapper.find('button[aria-label^="Browse source"][data-source-id="org-mp"]').trigger('click')
+    await tick()
+    expect(wrapper.find('.source-browse-header__title h2').text()).toBe('agent-marketplace.is.example.com')
   })
 })
