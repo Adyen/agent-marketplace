@@ -123,7 +123,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         type="button"
         class="gui-nav-row"
         aria-label="All resources"
-        :aria-current="mainView === 'resources' ? 'page' : undefined"
+        :aria-current="mainView === 'resources' && selectedStatus == null && selectedKind == null ? 'page' : undefined"
         @click="emit('allResources')"
       >
         <GuiIcon name="folder" />

@@ -387,6 +387,29 @@ describe('diagnostics view', () => {
     expect(select(wrapper).attributes('aria-pressed')).toBe('false')
   })
 
+  it.each([
+    { name: 'status', facet: (wrapper: Mounted) => button(wrapper, 'Required by org'), clear: 'Clear status filter' },
+    { name: 'kind', facet: (wrapper: Mounted) => wrapper.get('.gui-sidebar__kinds button'), clear: 'Clear kind filter' },
+  ])('moves the active navigation highlight to the $name facet and back', async ({ facet, clear }) => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+    ])
+    const resources = button(wrapper, 'All resources')
+    expect(resources.attributes('aria-current')).toBe('page')
+
+    await facet(wrapper).trigger('click')
+    await tick()
+    expect(facet(wrapper).attributes('aria-pressed')).toBe('true')
+    expect(facet(wrapper).classes()).toContain('gui-sidebar__facet-button--selected')
+    expect(resources.attributes('aria-current')).toBeUndefined()
+
+    await wrapper.get(`button[aria-label^="${clear}"]`).trigger('click')
+    await tick()
+    expect(facet(wrapper).attributes('aria-pressed')).toBe('false')
+    expect(resources.attributes('aria-current')).toBe('page')
+  })
+
   it('returns to resources from the Resources row and shows no problems when clean', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)

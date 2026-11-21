@@ -315,11 +315,6 @@ textarea:focus-visible,
   padding-left: 8px;
 }
 
-.gui-sidebar__facet-button--selected {
-  background: var(--gui-layer);
-  color: var(--gui-ink);
-}
-
 .gui-sidebar__kinds {
   margin-top: 4px;
 }
@@ -386,7 +381,8 @@ textarea:focus-visible,
   color: var(--gui-ink);
 }
 
-.gui-nav-row[aria-current="page"] {
+.gui-nav-row[aria-current="page"],
+.gui-nav-row.gui-sidebar__facet-button--selected {
   background: var(--gui-layer);
   color: var(--gui-ink);
 }

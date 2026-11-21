@@ -260,6 +260,39 @@ test('Resources and Diagnostics share a visible active navigation style', async 
   }
 })
 
+test('an active sidebar facet shows the same highlight as the active Resources row', async ({ page }) => {
+  await openPreview(page)
+  const resources = page.getByRole('button', { name: 'All resources' })
+  const required = page.locator('.gui-sidebar__nav').getByRole('button', { name: 'Required by org', exact: true })
+  const kind = page.locator('.gui-sidebar__kinds button').first()
+  const diagnostics = page.getByRole('button', { name: 'Show diagnostics' })
+  const background = (locator: Locator) => locator.evaluate((element) => getComputedStyle(element).backgroundColor)
+  const idle = () => page.mouse.move(0, 0)
+
+  await idle()
+  const activeResources = await background(resources)
+  expect(activeResources).not.toBe('rgba(0, 0, 0, 0)')
+
+  await required.click()
+  await idle()
+  await expect(required).toHaveAttribute('aria-pressed', 'true')
+  await expect(resources).not.toHaveAttribute('aria-current')
+  await expect.poll(() => background(required)).toBe(activeResources)
+  await expect.poll(() => background(diagnostics)).toBe('rgba(0, 0, 0, 0)')
+  await required.click()
+  await idle()
+  await expect(resources).toHaveAttribute('aria-current', 'page')
+
+  await kind.click()
+  await idle()
+  await expect(kind).toHaveAttribute('aria-pressed', 'true')
+  await expect(resources).not.toHaveAttribute('aria-current')
+  await expect.poll(() => background(kind)).toBe(activeResources)
+  await kind.click()
+  await idle()
+  await expect(resources).toHaveAttribute('aria-current', 'page')
+})
+
 test('diagnostic messages are selectable apart from their keyboard-operable expand control', async ({ page }) => {
   await openPreview(page)
   await page.getByRole('button', { name: 'Show diagnostics' }).click()
