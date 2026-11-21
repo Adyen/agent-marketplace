@@ -15,5 +15,5 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Run `vue-tsc`, Vitest, the affected Playwright specs, the affected Go packages, and `make spec-check`.
-- [ ] 3.2 Archive `gui-feedback-polish` as the final commit.
+- [x] 3.1 Run `vue-tsc`, Vitest, the affected Playwright specs, the affected Go packages, and `make spec-check`.
+- [x] 3.2 Archive `gui-feedback-polish` as the final commit.

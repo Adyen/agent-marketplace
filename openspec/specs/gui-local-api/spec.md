@@ -108,8 +108,8 @@ Every local API notification payload SHALL include an outcome of success, warnin
 Operation notifications SHALL name the completed action or its failure without the word "mutation". Resource messages SHALL include the display name. Successful operations with warnings SHALL append " with N warning(s)" to their success message and carry the warning outcome. Failed operations SHALL carry the failure outcome even when warnings are present.
 
 #### Scenario: Resource notifications name action and resource
-- **WHEN** an install, remove, exclude or restore finishes successfully, fails, or succeeds with warnings
-- **THEN** its message SHALL be "Installed <displayName>", "Removed <displayName>", "Excluded <displayName>" or "Restored <displayName>" on success, and "Couldn't install <displayName>", "Couldn't remove <displayName>", "Couldn't exclude <displayName>" or "Couldn't restore <displayName>" on failure
+- **WHEN** an install, uninstall, exclude or restore finishes successfully, fails, or succeeds with warnings
+- **THEN** its message SHALL be "Installed <displayName>", "Uninstalled <displayName>", "Excluded <displayName>" or "Restored <displayName>" on success, and "Couldn't install <displayName>", "Couldn't uninstall <displayName>", "Couldn't exclude <displayName>" or "Couldn't restore <displayName>" on failure
 - **AND** success with warnings SHALL append " with N warning(s)"
 
 #### Scenario: Configuration and lifecycle notifications name what changed
@@ -126,3 +126,13 @@ The local API SHALL provide a consistent source association between a configured
 
 - **WHEN** two distinct configured Marketplace endpoints have the same display label and each contributes resources
 - **THEN** the local API MUST allow the GUI to associate each attributable resource only with its own endpoint, without exposing redacted endpoint data or relying on display labels
+
+### Requirement: Consistent Marketplace registry label
+
+Every Marketplace resource row SHALL carry the registry label `<endpoint>/<registry>`: the endpoint alias (or normalized URL without one) and the hosted registry slug, whether installed, pending verification, or discovered. Without a known slug the label SHALL be `<endpoint>`. The label SHALL NOT change row identity, source association, or source grouping.
+
+#### Scenario: Installed and available Marketplace rows share a registry label
+
+- **WHEN** one resource from a Marketplace registry is installed, another is pending verification, and a third is only available from discovery
+- **THEN** all three rows MUST carry the same `<endpoint>/<registry>` registry label
+- **AND** their row identities and source associations MUST be unchanged
