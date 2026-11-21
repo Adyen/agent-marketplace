@@ -775,6 +775,9 @@ const diagnosticsTone = computed<'danger' | 'warning' | 'info' | null>(() => {
 })
 
 function showDiagnostics() {
+  clearSourceFilter()
+  selectedKind.value = null
+  selectedStatus.value = null
   mainView.value = 'diagnostics'
 }
 

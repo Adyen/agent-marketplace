@@ -366,6 +366,27 @@ describe('diagnostics view', () => {
     expect(wrapper.get('[role="option"]').isVisible()).toBe(false)
   })
 
+  it.each([
+    { name: 'status', select: (wrapper: Mounted) => button(wrapper, 'Required by org') },
+    { name: 'kind', select: (wrapper: Mounted) => wrapper.get('.gui-sidebar__kinds button') },
+  ])('clears the $name resource filter when opening diagnostics', async ({ select }) => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+    ])
+    const facet = select(wrapper)
+    await facet.trigger('click')
+    await tick()
+    expect(facet.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(true)
+
+    await button(wrapper, 'Show diagnostics').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(false)
+    expect(select(wrapper).attributes('aria-pressed')).toBe('false')
+  })
+
   it('returns to resources from the Resources row and shows no problems when clean', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
