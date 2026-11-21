@@ -5,7 +5,6 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -36,18 +35,6 @@ func TestEveryDeclaredTargetHasItsRegistrations(t *testing.T) {
 			_, hasIngester := ingest.For(definition.Target)
 			if hasIngester != definition.Ingester {
 				t.Errorf("ingester registered = %t, declared Ingester = %t", hasIngester, definition.Ingester)
-			}
-			if definition.Compiler && !hasCompiler {
-				for _, kind := range definition.AcceptedKinds {
-					t.Errorf("target %q kind %q has no compiler registration", definition.Target, kind)
-				}
-			}
-			if definition.Ingester && !hasIngester {
-				for _, kind := range definition.AcceptedKinds {
-					if kind != ir.KindPlugin {
-						t.Errorf("target %q kind %q has no ingester registration", definition.Target, kind)
-					}
-				}
 			}
 		})
 	}

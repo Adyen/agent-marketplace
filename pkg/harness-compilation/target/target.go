@@ -81,6 +81,28 @@ func ValidateDefinition(definition Definition) error {
 	return nil
 }
 
+// MissingKindRegistrations reports, for each definition, every accepted kind
+// in required (all accepted kinds when required is nil) whose registration is
+// missing.
+func MissingKindRegistrations(definitions []Definition, required []ir.ResourceKind, registration string, registered func(Target) bool) []error {
+	var errs []error
+	for _, definition := range definitions {
+		var relevantKinds []ir.ResourceKind
+		for _, kind := range definition.AcceptedKinds {
+			if required == nil || slices.Contains(required, kind) {
+				relevantKinds = append(relevantKinds, kind)
+			}
+		}
+		if len(relevantKinds) == 0 || registered(definition.Target) {
+			continue
+		}
+		for _, kind := range relevantKinds {
+			errs = append(errs, fmt.Errorf("target %q kind %q requires %s but none is registered", definition.Target, kind, registration))
+		}
+	}
+	return errs
+}
+
 func commonAcceptedKinds() []ir.ResourceKind {
 	return []ir.ResourceKind{
 		ir.KindSkill,

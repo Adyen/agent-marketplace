@@ -1,6 +1,7 @@
 package modelpolicy
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -136,19 +137,16 @@ func TestShippedCatalogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, definition := range target.Definitions() {
-		var acceptedKinds []ir.ResourceKind
-		for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent} {
-			if slices.Contains(definition.AcceptedKinds, kind) {
-				acceptedKinds = append(acceptedKinds, kind)
-			}
-		}
-		if len(acceptedKinds) == 0 {
-			continue
-		}
-		if _, ok := r.catalogs[definition.Target]; !ok {
-			t.Errorf("target %s kind(s) %v has no model catalog", definition.Target, acceptedKinds)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent},
+		"a model catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 }
 

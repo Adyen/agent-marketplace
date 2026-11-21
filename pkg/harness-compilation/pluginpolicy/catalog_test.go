@@ -1,6 +1,7 @@
 package pluginpolicy
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -92,14 +93,16 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, definition := range target.Definitions() {
-		if !slices.Contains(definition.AcceptedKinds, ir.KindPlugin) {
-			continue
-		}
-		tg := definition.Target
-		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("target %s kind %s has no plugin catalog", tg, ir.KindPlugin)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindPlugin},
+		"a plugin catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 	want := map[string]bool{
 		"claude-plugin": true, "factory-plugin": true, "codex-plugin": true,
