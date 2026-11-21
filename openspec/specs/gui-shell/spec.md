@@ -250,25 +250,6 @@ A resource row for a disabled resource SHALL render its check indicator in the w
 - **THEN** the enabled row's check indicator MUST use the signal role
 - **AND** the disabled row's check indicator MUST use the warning role and MUST NOT use the signal role
 
-### Requirement: Sidebar source labels
-
-A sidebar Marketplace source SHALL be labeled by its configured source name. When the source has no name, or only the generic name `marketplace` or `marketplace-<n>` that the GUI assigns, it SHALL be labeled by its endpoint host. The full location SHALL stay available in the row's tooltip and accessible name, and the tooltip text SHALL have at least 4.5:1 contrast against its background in the light and dark themes.
-
-#### Scenario: Named Marketplace source shows its name
-
-- **WHEN** the user-personal configuration declares a Marketplace source under a non-generic name
-- **THEN** the sidebar row MUST show that name
-
-#### Scenario: Generic or missing name falls back to the host
-
-- **WHEN** a Marketplace source has no name or a generic `marketplace` or `marketplace-<n>` name
-- **THEN** the sidebar row MUST show the endpoint host
-
-#### Scenario: Source tooltip is readable in both themes
-
-- **WHEN** the user hovers over or focuses a sidebar source row in the light or dark theme
-- **THEN** a tooltip MUST show the source's full location with at least 4.5:1 contrast against its background
-
 ### Requirement: Plain-language discovery health
 
 Diagnostics SHALL describe each Marketplace endpoint's discovery state in plain words: whether its results are current, saved from an earlier check, or not checked yet, and whether only part of the catalog is shown. It SHALL NOT show the words "fresh" or "truncated".
@@ -567,3 +548,17 @@ The GUI SHALL name the action that deselects an installed resource Uninstall: in
 - **WHEN** the user selects an installed resource that the user can deselect and activates its inspector action
 - **THEN** the inspector MUST show a text button labeled Uninstall with the accessible name "Uninstall Resource" and no trash icon
 - **AND** the dialog MUST be titled "Uninstall Resource", its text MUST begin "Uninstall <displayName>", and its confirm control MUST be "Confirm uninstall"
+
+### Requirement: Sidebar Marketplace endpoint labels
+
+A sidebar Marketplace source SHALL be labeled by its endpoint host, followed by its port when one is declared and by its last path segment when present, regardless of its configured source name or whether that name is generic. The full location SHALL stay available in the row's tooltip and accessible name, and the tooltip text SHALL have at least 4.5:1 contrast against its background in the light and dark themes.
+
+#### Scenario: Marketplace source shows its endpoint regardless of name
+
+- **WHEN** a Marketplace source is declared under any name, including a generic `marketplace` or `marketplace-<n>` name, in any configuration layer
+- **THEN** the sidebar row and the source browse header MUST show the endpoint host
+
+#### Scenario: Source tooltip is readable in both themes
+
+- **WHEN** the user hovers over or focuses a sidebar source row in the light or dark theme
+- **THEN** a tooltip MUST show the source's full location with at least 4.5:1 contrast against its background

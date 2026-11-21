@@ -17,3 +17,7 @@ Sidebar Marketplace sources take their label from the configured source name. A 
 ## Impact
 
 Desktop GUI source labels (`gui/src/source-label.ts`) and their tests. No configuration schema, local API, Marketplace server, TUI, or resource behavior changes. Source search still matches configured names.
+
+## Release note
+
+The desktop app now labels every Marketplace source in the sidebar and source header by its endpoint, such as `agent-marketplace.example.com`, instead of its configured source name.
