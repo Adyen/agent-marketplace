@@ -53,7 +53,7 @@ func TestDeclaredKindWithoutAnImplementationFailsValidation(t *testing.T) {
 		compiler   bool
 		wantErrFor []string
 	}{
-		{name: "undeclared kind needs no compiler", kinds: []ir.ResourceKind{ir.KindSkill}, compiler: true},
+		{name: "valid single-kind declaration passes", kinds: []ir.ResourceKind{ir.KindSkill}, compiler: true},
 		{name: "missing compiler", kinds: []ir.ResourceKind{ir.KindHook}, wantErrFor: []string{"partial", "hook"}},
 		{name: "empty kinds", compiler: true, wantErrFor: []string{"partial", "accepted kind"}},
 		{name: "collection", kinds: []ir.ResourceKind{ir.KindCollection}, compiler: true, wantErrFor: []string{"partial", "collection"}},
