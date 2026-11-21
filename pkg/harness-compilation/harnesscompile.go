@@ -97,12 +97,19 @@ func ValidateTargetRegistrations() error {
 		}
 		if definition.Compiler {
 			if _, ok := compile.Lookup(compile.Target(t)); !ok {
-				errs = append(errs, fmt.Errorf("target %q declares a compiler but none is registered", t))
+				for _, kind := range definition.AcceptedKinds {
+					errs = append(errs, fmt.Errorf("target %q kind %q declares a compiler but none is registered", t, kind))
+				}
 			}
 		}
 		if definition.Ingester {
 			if _, ok := ingest.For(ingest.Harness(t)); !ok {
-				errs = append(errs, fmt.Errorf("target %q declares an ingester but none is registered", t))
+				for _, kind := range definition.AcceptedKinds {
+					if kind == ir.KindPlugin {
+						continue
+					}
+					errs = append(errs, fmt.Errorf("target %q kind %q declares an ingester but none is registered", t, kind))
+				}
 			}
 		}
 		if definition.Conversion && (!definition.Compiler || !definition.Ingester) {

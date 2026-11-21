@@ -1,11 +1,13 @@
 package hookpolicy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -51,9 +53,13 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
+	for _, definition := range target.Definitions() {
+		if !slices.Contains(definition.AcceptedKinds, ir.KindHook) {
+			continue
+		}
+		tg := definition.Target
 		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("no hook catalog for target %s", tg)
+			t.Fatalf("target %s kind %s has no hook catalog", tg, ir.KindHook)
 		}
 	}
 }

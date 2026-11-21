@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: application-target-model/rule-diagnostics-keep-their-codes
 func TestGeminiRule_NoPrimitiveDiagnostic(t *testing.T) {
 	rule := ir.NewRule("typescript", "TS", "body\n", nil, false, nil, ir.SourceRef{File: "rules/typescript.md", Line: 1})
 

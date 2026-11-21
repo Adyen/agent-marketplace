@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/testutil"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -33,6 +35,7 @@ var goldenBundle = filepath.Join("testdata", "resources")
 // compared byte for byte. Artifacts marked for external reconciliation are
 // still golden-tested, but only after this test proves generic Materialize
 // refuses the complete result without writing anything.
+// spec: application-target-model/existing-harness-output-is-unchanged
 func TestGolden_AllTargets(t *testing.T) {
 	targets := targetmeta.CompilerTargets()
 
@@ -160,10 +163,12 @@ func TestGolden_PerResourceKind(t *testing.T) {
 
 	tests := []struct {
 		name string
+		kind ir.ResourceKind
 		load func() ([]Resource, error)
 	}{
 		{
 			name: "skill",
+			kind: ir.KindSkill,
 			load: func() ([]Resource, error) {
 				s, err := LoadSkill(src, "skills/demo-skill")
 				if err != nil {
@@ -174,6 +179,7 @@ func TestGolden_PerResourceKind(t *testing.T) {
 		},
 		{
 			name: "command",
+			kind: ir.KindCommand,
 			load: func() ([]Resource, error) {
 				c, err := LoadCommand(src, "commands/demo-cmd.md")
 				if err != nil {
@@ -184,6 +190,7 @@ func TestGolden_PerResourceKind(t *testing.T) {
 		},
 		{
 			name: "subagent",
+			kind: ir.KindSubagent,
 			load: func() ([]Resource, error) {
 				s, err := LoadSubagent(src, "agents/demo-agent.md")
 				if err != nil {
@@ -194,6 +201,7 @@ func TestGolden_PerResourceKind(t *testing.T) {
 		},
 		{
 			name: "hook",
+			kind: ir.KindHook,
 			load: func() ([]Resource, error) {
 				hooks, _, err := LoadHooks(src, "hooks/hooks.json")
 				if err != nil {
@@ -208,6 +216,7 @@ func TestGolden_PerResourceKind(t *testing.T) {
 		},
 		{
 			name: "mcpserver",
+			kind: ir.KindMcpServer,
 			load: func() ([]Resource, error) {
 				servers, err := LoadMcpServers(src, ".mcp.json")
 				if err != nil {
@@ -224,6 +233,13 @@ func TestGolden_PerResourceKind(t *testing.T) {
 
 	for _, tt := range tests {
 		for _, target := range targets {
+			definition, ok := targetmeta.Lookup(string(target))
+			if !ok {
+				t.Fatalf("target %q has no definition", target)
+			}
+			if !slices.Contains(definition.AcceptedKinds, tt.kind) {
+				continue
+			}
 			name := tt.name + "/" + string(target)
 			t.Run(name, func(t *testing.T) {
 				resources, err := tt.load()
@@ -234,6 +250,9 @@ func TestGolden_PerResourceKind(t *testing.T) {
 				var allArtifacts []Artifact
 				var allDiags []Diagnostic
 				for _, r := range resources {
+					if r.Kind() != tt.kind {
+						t.Fatalf("%s loader returned kind %s, want %s", tt.name, r.Kind(), tt.kind)
+					}
 					result, err := Compile(r, target, WithPluginRoot("/plugins/demo"))
 					if err != nil {
 						t.Fatalf("Compile(%s/%s): %v", tt.name, target, err)

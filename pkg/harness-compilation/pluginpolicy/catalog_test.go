@@ -1,10 +1,12 @@
 package pluginpolicy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -89,9 +91,13 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
+	for _, definition := range target.Definitions() {
+		if !slices.Contains(definition.AcceptedKinds, ir.KindPlugin) {
+			continue
+		}
+		tg := definition.Target
 		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("no plugin catalog for target %s", tg)
+			t.Fatalf("target %s kind %s has no plugin catalog", tg, ir.KindPlugin)
 		}
 	}
 	want := map[string]bool{
@@ -124,10 +130,14 @@ func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
+	for _, definition := range target.Definitions() {
+		if !slices.Contains(definition.AcceptedKinds, ir.KindPlugin) {
+			continue
+		}
+		tg := definition.Target
 		c := r.catalogs[tg]
 		if c.Delivery.Decompose.Status != DeliveryVerified {
-			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
+			t.Fatalf("%s kind %s decompose status = %q, want verified", tg, ir.KindPlugin, c.Delivery.Decompose.Status)
 		}
 		for _, scope := range []string{"user", "repo"} {
 			native, err := LookupNativeDelivery(tg, scope)

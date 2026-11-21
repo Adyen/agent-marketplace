@@ -340,9 +340,9 @@ func newMaterializeAdapterComposition() (materializeAdapterComposition, error) {
 		return materializeAdapterComposition{}, err
 	}
 	catalog := materializeBindingCatalog()
-	bindings := make(map[hcc.Target]materializeAdapter, len(registry.Targets()))
-	for _, target := range registry.Targets() {
-		adapter, ok := registry.Lookup(target)
+	bindings := make(map[hcc.Target]materializeAdapter, len(registry.AdapterTargets()))
+	for _, target := range registry.AdapterTargets() {
+		adapter, ok := registry.LookupAdapter(target)
 		if !ok {
 			return materializeAdapterComposition{}, fmt.Errorf("installation adapter %q disappeared during composition", target)
 		}

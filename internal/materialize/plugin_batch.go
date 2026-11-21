@@ -22,7 +22,7 @@ func pluginOutputDestinations(key outputKey, repoRoot string) (string, []harness
 	if err != nil {
 		return "", nil, err
 	}
-	if adapter, ok := registry.Lookup(key.target); ok {
+	if adapter, ok := registry.LookupAdapter(key.target); ok {
 		home := ""
 		if key.machineScope {
 			home, err = os.UserHomeDir()

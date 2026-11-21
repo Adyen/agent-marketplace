@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 
@@ -58,9 +59,16 @@ func materializedAggregateFiles(t *testing.T, target hcc.Target, machineScope bo
 		t.Setenv("HOME", outDir)
 		t.Setenv("CODEX_HOME", filepath.Join(outDir, ".codex"))
 	}
+	definition, ok := targetmeta.Lookup(string(target))
+	if !ok {
+		t.Fatalf("target %q has no compiled definition", target)
+	}
 
 	seen := make(map[string]bool)
 	for _, kind := range sortedKinds(probeResources()) {
+		if !slices.Contains(definition.AcceptedKinds, kind) {
+			continue
+		}
 		resource := probeResources()[kind]
 		opts := []hcc.Option{hcc.WithManagedBy("_managed_by", "agent-marketplace")}
 		if machineScope {
@@ -124,7 +132,7 @@ func sortedTargets(t *testing.T) []hcc.Target {
 		t.Fatalf("installation adapter registry: %v", err)
 	}
 	for _, target := range registry.Targets() {
-		seen[target] = true
+		seen[hcc.Target(target.ID)] = true
 	}
 	targets := make([]hcc.Target, 0, len(seen))
 	for target := range seen {

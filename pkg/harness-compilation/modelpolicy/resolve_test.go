@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -134,9 +135,18 @@ func TestShippedCatalogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range target.Targets() {
-		if _, ok := r.catalogs[name]; !ok {
-			t.Errorf("missing catalog %s", name)
+	for _, definition := range target.Definitions() {
+		var acceptedKinds []ir.ResourceKind
+		for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent} {
+			if slices.Contains(definition.AcceptedKinds, kind) {
+				acceptedKinds = append(acceptedKinds, kind)
+			}
+		}
+		if len(acceptedKinds) == 0 {
+			continue
+		}
+		if _, ok := r.catalogs[definition.Target]; !ok {
+			t.Errorf("target %s kind(s) %v has no model catalog", definition.Target, acceptedKinds)
 		}
 	}
 }
