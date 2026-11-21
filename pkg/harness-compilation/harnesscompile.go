@@ -76,6 +76,27 @@ func Targets() []Target { return targetmeta.Targets() }
 // IsValidTarget reports whether name is a declared target.
 func IsValidTarget(name string) bool { return targetmeta.IsValid(name) }
 
+func validateKindRegistrations(definitions []targetmeta.Definition, hasCompiler, hasIngester func(targetmeta.Target) bool) []error {
+	var errs []error
+	for _, definition := range definitions {
+		t := Target(definition.Target)
+		if definition.Compiler && !hasCompiler(definition.Target) {
+			for _, kind := range definition.AcceptedKinds {
+				errs = append(errs, fmt.Errorf("target %q kind %q declares a compiler but none is registered", t, kind))
+			}
+		}
+		if definition.Ingester && !hasIngester(definition.Target) {
+			for _, kind := range definition.AcceptedKinds {
+				if kind == ir.KindPlugin {
+					continue
+				}
+				errs = append(errs, fmt.Errorf("target %q kind %q declares an ingester but none is registered", t, kind))
+			}
+		}
+	}
+	return errs
+}
+
 // ValidateTargetRegistrations checks the integration boundary between the
 // dependency-free target declarations and the explicit compiler/ingester
 // registrations. It validates both directions: every declared capability must
@@ -84,7 +105,17 @@ func IsValidTarget(name string) bool { return targetmeta.IsValid(name) }
 // completeness tests, not for registering implementations implicitly.
 func ValidateTargetRegistrations() error {
 	definitions := targetmeta.Definitions()
-	var errs []error
+	errs := validateKindRegistrations(
+		definitions,
+		func(target targetmeta.Target) bool {
+			_, ok := compile.Lookup(compile.Target(target))
+			return ok
+		},
+		func(target targetmeta.Target) bool {
+			_, ok := ingest.For(ingest.Harness(target))
+			return ok
+		},
+	)
 	seen := make(map[targetmeta.Target]bool, len(definitions))
 	for _, definition := range definitions {
 		t := Target(definition.Target)
@@ -94,23 +125,6 @@ func ValidateTargetRegistrations() error {
 		seen[definition.Target] = true
 		if err := targetmeta.ValidateDefinition(definition); err != nil {
 			errs = append(errs, err)
-		}
-		if definition.Compiler {
-			if _, ok := compile.Lookup(compile.Target(t)); !ok {
-				for _, kind := range definition.AcceptedKinds {
-					errs = append(errs, fmt.Errorf("target %q kind %q declares a compiler but none is registered", t, kind))
-				}
-			}
-		}
-		if definition.Ingester {
-			if _, ok := ingest.For(ingest.Harness(t)); !ok {
-				for _, kind := range definition.AcceptedKinds {
-					if kind == ir.KindPlugin {
-						continue
-					}
-					errs = append(errs, fmt.Errorf("target %q kind %q declares an ingester but none is registered", t, kind))
-				}
-			}
 		}
 		if definition.Conversion && (!definition.Compiler || !definition.Ingester) {
 			errs = append(errs, fmt.Errorf("target %q declares conversion without compiler and ingester capabilities", t))
