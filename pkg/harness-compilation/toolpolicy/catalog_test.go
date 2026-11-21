@@ -49,6 +49,7 @@ func TestShippedCatalogsValidate(t *testing.T) {
 	}
 }
 
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestEveryTargetShipsACatalog(t *testing.T) {
 	r, err := shipped()
 	if err != nil {

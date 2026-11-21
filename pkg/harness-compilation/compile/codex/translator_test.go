@@ -336,19 +336,28 @@ func TestMCPPreservesWorkingDirectory(t *testing.T) {
 
 // spec: application-target-model/rule-diagnostics-keep-their-codes
 func TestUnsupportedRuleAndHookProduceStableDiagnostics(t *testing.T) {
-	resources := []ir.Resource{
-		ir.NewRule("rule", "", "Body", nil, false, nil, ir.SourceRef{}),
-		ir.NewHook("prompt", "PreToolUse", "", "prompt", nil, ir.SourceRef{}),
-		ir.NewHook("event", "MadeUpEvent", "./check", "command", nil, ir.SourceRef{}),
+	tests := []struct {
+		name     string
+		resource ir.Resource
+		wantCode string
+	}{
+		{name: "rule", resource: ir.NewRule("rule", "", "Body", nil, false, nil, ir.SourceRef{}), wantCode: diag.CodeRuleCodexUnsupported},
+		{name: "prompt hook", resource: ir.NewHook("prompt", "PreToolUse", "", "prompt", nil, ir.SourceRef{})},
+		{name: "unsupported event", resource: ir.NewHook("event", "MadeUpEvent", "./check", "command", nil, ir.SourceRef{})},
 	}
-	for _, resource := range resources {
-		result, err := compile.Compile(resource, compile.TargetCodex)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Artifacts) != 0 || len(result.Diagnostics) == 0 || result.Diagnostics[0].Code == "" {
-			t.Errorf("result = %#v, want stable diagnostic and no artifact", result)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := compile.Compile(tt.resource, compile.TargetCodex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Artifacts) != 0 || len(result.Diagnostics) == 0 || result.Diagnostics[0].Code == "" {
+				t.Fatalf("result = %#v, want stable diagnostic and no artifact", result)
+			}
+			if tt.wantCode != "" && result.Diagnostics[0].Code != tt.wantCode {
+				t.Errorf("diagnostic code = %q, want %q", result.Diagnostics[0].Code, tt.wantCode)
+			}
+		})
 	}
 }
 
