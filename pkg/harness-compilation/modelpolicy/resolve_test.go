@@ -130,6 +130,7 @@ func TestFactoryReasoningSubset(t *testing.T) {
 }
 
 // spec: harness-model-catalogs/every-registered-harness-target-ships-a-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestShippedCatalogs(t *testing.T) {
 	r, err := shipped()
 	if err != nil {

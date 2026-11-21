@@ -86,6 +86,7 @@ func TestShippedCatalogsValidate(t *testing.T) {
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestEveryTargetShipsACatalog(t *testing.T) {
 	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
@@ -125,6 +126,7 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
