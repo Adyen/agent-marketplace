@@ -51,8 +51,6 @@ type ApplicationTarget struct {
 	InstallationAdapter
 	ID            string
 	acceptedKinds []ir.ResourceKind
-	hasAdapter    bool
-	info          TargetInfo
 }
 
 func NewApplicationTarget(id string, kinds []ir.ResourceKind) ApplicationTarget {
@@ -71,14 +69,15 @@ func (t ApplicationTarget) RequireAccepted(kind ir.ResourceKind) error {
 }
 
 func (t ApplicationTarget) Adapter() (InstallationAdapter, bool) {
-	return t.InstallationAdapter, t.hasAdapter
+	return t.InstallationAdapter, t.hasAdapter()
+}
+
+func (t ApplicationTarget) hasAdapter() bool {
+	return t.resolve != nil
 }
 
 func (t ApplicationTarget) Info() TargetInfo {
-	if t.hasAdapter {
-		return t.InstallationAdapter.Info()
-	}
-	return t.info
+	return t.InstallationAdapter.Info()
 }
 
 // InstallationAdapterRegistry composes all application targets and retains
@@ -198,13 +197,12 @@ func newInstallationAdapterRegistry(validateLayouts func() error) (InstallationA
 		appTarget := ApplicationTarget{ID: string(definition.Target), acceptedKinds: definition.AcceptedKinds}
 		if adapter, ok := adapters[target]; ok {
 			appTarget.InstallationAdapter = adapter
-			appTarget.hasAdapter = true
 		} else {
 			info, ok := legacyInfo[target]
 			if !ok {
 				return InstallationAdapterRegistry{}, fmt.Errorf("harness: target %q has no installation metadata", target)
 			}
-			appTarget.info = info
+			appTarget.InstallationAdapter = InstallationAdapter{info: info}
 		}
 		targets = append(targets, appTarget)
 	}
@@ -217,7 +215,6 @@ func newApplicationTargetRegistry(targets []ApplicationTarget) InstallationAdapt
 		byID:    make(map[string]ApplicationTarget, len(targets)),
 	}
 	for i, target := range targets {
-		target.acceptedKinds = slices.Clone(target.acceptedKinds)
 		registry.targets[i] = target
 		registry.byID[target.ID] = target
 	}
@@ -234,7 +231,7 @@ func bindMachineRoots(registry InstallationAdapterRegistry, resolveHome func() (
 		return registry
 	}
 	devin, ok := registry.Lookup(string(targetmeta.TargetDevin))
-	if !ok || !devin.hasAdapter {
+	if !ok || !devin.hasAdapter() {
 		return registry
 	}
 	targets := registry.Targets()
@@ -247,7 +244,7 @@ func bindMachineRoots(registry InstallationAdapterRegistry, resolveHome func() (
 			targets[i].InstallationAdapter = adapter
 		}
 	}
-	if openCode, ok := registry.Lookup(string(targetmeta.TargetOpenCode)); ok && openCode.hasAdapter {
+	if openCode, ok := registry.Lookup(string(targetmeta.TargetOpenCode)); ok && openCode.hasAdapter() {
 		adapter := openCode.InstallationAdapter
 		info := adapter.info
 		if root, err := openCodeMachineRoot(home); err == nil {
@@ -265,20 +262,11 @@ func bindMachineRoots(registry InstallationAdapterRegistry, resolveHome func() (
 
 func (r InstallationAdapterRegistry) Lookup(id string) (ApplicationTarget, bool) {
 	target, ok := r.byID[id]
-	if !ok {
-		return ApplicationTarget{}, false
-	}
-	target.acceptedKinds = slices.Clone(target.acceptedKinds)
-	return target, true
+	return target, ok
 }
 
 func (r InstallationAdapterRegistry) Targets() []ApplicationTarget {
-	out := make([]ApplicationTarget, len(r.targets))
-	for i, target := range r.targets {
-		target.acceptedKinds = slices.Clone(target.acceptedKinds)
-		out[i] = target
-	}
-	return out
+	return slices.Clone(r.targets)
 }
 
 func (r InstallationAdapterRegistry) LookupAdapter(target hcc.Target) (InstallationAdapter, bool) {
@@ -292,7 +280,7 @@ func (r InstallationAdapterRegistry) LookupAdapter(target hcc.Target) (Installat
 func (r InstallationAdapterRegistry) AdapterTargets() []hcc.Target {
 	out := make([]hcc.Target, 0, len(r.targets))
 	for _, target := range r.targets {
-		if target.hasAdapter {
+		if target.hasAdapter() {
 			out = append(out, hcc.Target(target.ID))
 		}
 	}
@@ -303,8 +291,8 @@ func (r InstallationAdapterRegistry) AdapterTargets() []hcc.Target {
 func (r InstallationAdapterRegistry) legacyTargetInfoMap() map[hcc.Target]TargetInfo {
 	out := make(map[hcc.Target]TargetInfo)
 	for _, target := range r.targets {
-		if !target.hasAdapter {
-			out[hcc.Target(target.ID)] = target.info
+		if !target.hasAdapter() {
+			out[hcc.Target(target.ID)] = target.Info()
 		}
 	}
 	return out
@@ -321,7 +309,7 @@ func TargetInfoFor(target hcc.Target) (TargetInfo, bool) {
 			return TargetInfo{}, false
 		}
 		appTarget, ok := registry.Lookup(string(target))
-		if !ok || !appTarget.hasAdapter {
+		if !ok || !appTarget.hasAdapter() {
 			return TargetInfo{}, false
 		}
 		return appTarget.Info(), true
