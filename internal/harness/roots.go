@@ -489,7 +489,7 @@ func MachineRoot(target hcc.Target) (string, bool) {
 			return "", false
 		}
 		appTarget, ok := registry.Lookup(string(target))
-		if !ok || !appTarget.hasAdapter || appTarget.Info().Roots.Machine == "" {
+		if !ok || !appTarget.hasAdapter() || appTarget.Info().Roots.Machine == "" {
 			return "", false
 		}
 		return appTarget.Info().Roots.Machine, true
