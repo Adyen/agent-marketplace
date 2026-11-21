@@ -13,4 +13,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive generalize-target-kinds --yes`
+- [x] 3.1 Run `openspec archive generalize-target-kinds --yes`
