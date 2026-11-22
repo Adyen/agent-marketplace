@@ -21,6 +21,27 @@ func mutateIncludeSkill(m *LayerMutation) error {
 	return m.Apply(binding, config.SelectionChange{Operation: config.SelectionInclude, Locators: []config.ResourceLocator{{Kind: ir.KindSkill, Name: "one"}}})
 }
 
+// spec: config-mutation/unrelated-edit-leaves-an-empty-harnesses-list-as-written
+func TestInstallSelectionPreservesEmptyHarnessesList(t *testing.T) {
+	home := isolateConsumerPipeline(t)
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFileMode(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: []\n", 0o600)
+
+	if err := EditLayerAtPath(config.LayerTarget{Source: config.UserPersonal, StagedPath: userPath, DeclaringPath: userPath}, mutateIncludeSkill); err != nil {
+		t.Fatalf("install selection edit: %v", err)
+	}
+	after, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "harnesses: []") || strings.Contains(string(after), "targets:") {
+		t.Fatalf("install selection changed the empty harnesses spelling:\n%s", after)
+	}
+	if !strings.Contains(string(after), "skill/one") {
+		t.Fatalf("install selection was not written:\n%s", after)
+	}
+}
+
 func isolateConsumerPipeline(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()

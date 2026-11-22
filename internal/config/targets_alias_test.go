@@ -331,33 +331,6 @@ func TestTargetsAliasEmptyIncludedFragmentIsRefused(t *testing.T) {
 	assertTargetAliasError(t, err, "v4.harness", fragment, "empty targets")
 }
 
-// spec: config-mutation/unrelated-edit-leaves-an-empty-harnesses-list-as-written
-func TestUnrelatedEditPreservesEmptyHarnessesSpelling(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	userPath, err := config.GlobalConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	before := "apiVersion: agent-marketplace/v4\nharnesses: []\nsources:\n  tools:\n    marketplace: https://market.example\nresources:\n  tools: [tools/skill/review]\n"
-	if err := os.WriteFile(userPath, []byte(before), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SetUserMarketplaceExclusion(userPath, "https://market.example", "tools", ir.KindSkill, "review", true); err != nil {
-		t.Fatal(err)
-	}
-	after, err := os.ReadFile(userPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(after), "harnesses: []") || strings.Contains(string(after), "targets:") {
-		t.Fatalf("unrelated exclusion edit changed the empty harnesses spelling:\n%s", after)
-	}
-}
-
 // spec: resource-selection/group-target-list-cannot-add-a-harness
 func TestTargetsGroupCannotWiden(t *testing.T) {
 	dir := t.TempDir()
