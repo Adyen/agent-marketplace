@@ -403,6 +403,7 @@ type Config struct {
 	// Harnesses lists the target harnesses to materialize into (e.g.
 	// "factory", "cursor", "claude"). Target-dependent operations require them.
 	Harnesses             []string               `yaml:"harnesses,omitempty"`
+	HasTargets            bool                   `yaml:"-"`
 	Registries            []RegistryEntry        `yaml:"registries,omitempty"`
 	Marketplaces          []MarketplaceEntry     `yaml:"marketplaces,omitempty"`
 	MarketplaceExclusions []MarketplaceExclusion `yaml:"-"`

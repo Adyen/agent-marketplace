@@ -955,7 +955,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	targetRows := [][]string{{displayTargetList(targetHarnesses), targetSource.String()}}
 	// Output selected by user and organization layers can use a different set
 	// than the repository's; show both only when they differ.
-	if len(view.machineTargets) > 0 && !slices.Equal(view.machineTargets, targetHarnesses) {
+	if view.machineTargetSource != config.SourceUnset && !slices.Equal(view.machineTargets, targetHarnesses) {
 		targetRows = [][]string{
 			{displayTargetList(targetHarnesses), targetSource.String() + " (repository selections)"},
 			{displayTargetList(view.machineTargets), view.machineTargetSource.String() + " (user and organization selections)"},

@@ -35,6 +35,7 @@ type LayerIntent struct {
 
 type Settings struct {
 	Harnesses           []string
+	HasTargets          bool
 	AllowedRegistries   *[]string
 	AllowedMarketplaces *[]string
 	Backup              *BackupConfig
@@ -116,6 +117,7 @@ func (l LayerIntent) Settings() Settings {
 	if l.v4 != nil {
 		settings := Settings{
 			Harnesses:       cloneV4StringList(l.v4.Harnesses),
+			HasTargets:      l.v4.Targets,
 			Backup:          l.v4.Backup,
 			Logging:         l.v4.Logging,
 			UpdateCheck:     l.v4.UpdateCheck,
@@ -140,6 +142,7 @@ func (s Settings) config() *Config {
 	return &Config{
 		APIVersion:          APIVersionV4,
 		Harnesses:           s.Harnesses,
+		HasTargets:          s.HasTargets,
 		AllowedRegistries:   s.AllowedRegistries,
 		AllowedMarketplaces: s.AllowedMarketplaces,
 		Backup:              s.Backup,
@@ -308,6 +311,9 @@ func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Documen
 func (i Intent) TargetHarnesses() ([]string, Source) {
 	if harnesses := i.Layers[RepoCommitted].Settings().Harnesses; len(harnesses) > 0 {
 		return append([]string(nil), harnesses...), RepoCommitted
+	}
+	if settings := i.Layers[UserPersonal].Settings(); settings.HasTargets && len(settings.Harnesses) == 0 {
+		return []string{}, UserPersonal
 	}
 	if harnesses := i.Layers[UserPersonal].Settings().Harnesses; len(harnesses) > 0 {
 		return append([]string(nil), harnesses...), UserPersonal
@@ -674,6 +680,9 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	if ec.Repo.Config != nil && len(ec.Repo.Config.Harnesses) > 0 {
 		ec.TargetHarnesses = append([]string(nil), ec.Repo.Config.Harnesses...)
 		ec.TargetHarnessSource = RepoCommitted
+	} else if ec.User.Config != nil && ec.User.Config.HasTargets && len(ec.User.Config.Harnesses) == 0 {
+		ec.TargetHarnesses = []string{}
+		ec.TargetHarnessSource = UserPersonal
 	} else if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
 		ec.TargetHarnesses = append([]string(nil), ec.User.Config.Harnesses...)
 		ec.TargetHarnessSource = UserPersonal

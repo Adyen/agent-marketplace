@@ -447,6 +447,7 @@ var catalog = map[string]hintFunc{
 	"v4.api-version":               versionRefusalHint,
 	"v4.api-version-required":      versionRefusalHint,
 	"v4.auxiliary":                 configurationHint("Correct the named auxiliary configuration setting"),
+	"v4.targets-alias":             configurationHint("Use only one of targets or harnesses in each v4 root or resource group"),
 	"v4.directory-path":            configurationHint("Choose a local source directory that exists and remains inside the allowed configuration root"),
 	"v4.duplicate":                 configurationHint("Remove the duplicate value from the named configuration field"),
 	"v4.duplicate-key":             configurationHint("Remove or rename the duplicate key in the v4 configuration"),

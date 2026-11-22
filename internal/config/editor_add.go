@@ -105,10 +105,6 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if isLocalConfigPath(configPath) {
 		return fmt.Errorf("harnesses cannot be set in repository personal config %q", configPath)
 	}
-	harnesses, err := canonicalCompilerHarnesses("harnesses", harnesses)
-	if err != nil {
-		return err
-	}
 	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
@@ -117,7 +113,25 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
-	sequence, err := ensureTopLevelSequence(root, "harnesses")
+	targetsNode, harnessesNode := findMappingValue(root, "targets"), findMappingValue(root, "harnesses")
+	if targetsNode != nil && harnessesNode != nil {
+		return v4err("v4.targets-alias", "targets", targetsNode.Line, "targets and harnesses cannot both be declared")
+	}
+	key := "harnesses"
+	if targetsNode != nil {
+		key = "targets"
+	}
+	if len(harnesses) == 0 {
+		if key != "targets" || !isGlobalConfigPath(configPath) {
+			return fmt.Errorf("empty target selection requires targets:; upgrade every reader of this file, rename the key to targets:, and retry")
+		}
+	} else {
+		harnesses, err = canonicalCompilerHarnesses(key, harnesses)
+		if err != nil {
+			return err
+		}
+	}
+	sequence, err := ensureTopLevelSequence(root, key)
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
@@ -125,6 +139,6 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if err := writeConfigDocument(configPath, mode, doc); err != nil {
 		return err
 	}
-	slog.Debug("harnesses updated in config", "config_path", configPath, "harnesses", len(harnesses))
+	slog.Debug("target list updated in config", "config_path", configPath, "targets", len(harnesses))
 	return nil
 }
