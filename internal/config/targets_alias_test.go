@@ -283,6 +283,33 @@ func TestTargetsEditorRefusesEmptyHarnessesSpelling(t *testing.T) {
 }
 
 // spec: consumer-config-format/empty-targets-outside-the-user-root-is-refused
+func TestTargetsEditorRejectsEmptyTargetsOutsideUserRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	const before = "apiVersion: agent-marketplace/v4\ntargets: [factory]\n"
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := config.SetHarnessesInConfig(configPath, nil)
+	if err == nil || !strings.Contains(err.Error(), "empty targets lists are valid only in the user root") {
+		t.Fatalf("empty target edit error = %v, want user-root-only guidance", err)
+	}
+	if strings.Contains(err.Error(), "upgrade every reader") || strings.Contains(err.Error(), "rename the key") {
+		t.Fatalf("non-user targets refusal used reader-upgrade guidance: %v", err)
+	}
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil || string(after) != before {
+		t.Fatalf("refusing empty target edit changed config: %q, %v", after, readErr)
+	}
+}
+
+// spec: consumer-config-format/empty-targets-outside-the-user-root-is-refused
 func TestTargetsAliasEmptyIncludedFragmentIsRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -334,9 +361,12 @@ func TestUnrelatedEditPreservesEmptyHarnessesSpelling(t *testing.T) {
 // spec: resource-selection/group-target-list-cannot-add-a-harness
 func TestTargetsGroupCannotWiden(t *testing.T) {
 	dir := t.TempDir()
-	repo := filepath.Join(dir, "repo")
+	t.Setenv("HOME", filepath.Join(dir, "home"))
 	source := filepath.Join(dir, "source")
-	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	configPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{filepath.Dir(configPath), filepath.Join(source, "skills", "review")} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
@@ -361,15 +391,27 @@ resources:
 	if err != nil {
 		t.Fatalf("LoadConfigFromPath: %v", err)
 	}
+	v4cfg, err := config.LoadV4ConfigIfPresent(configPath, config.UserPersonal)
+	if err != nil {
+		t.Fatalf("LoadV4ConfigIfPresent: %v", err)
+	}
+	group := v4cfg.Groups["local"]
+	if !reflect.DeepEqual(group.Harnesses, []string{"factory", "claude"}) || !group.Targets {
+		t.Fatalf("parsed group targets = %#v, want [factory claude] from targets:", group)
+	}
 	if len(cfg.Registries) != 1 {
 		t.Fatalf("registry count = %d, want 1", len(cfg.Registries))
 	}
 	entry := cfg.Registries[0]
 	entry.CatalogKey = "local"
 	cfg.Registries[0] = entry
+	rootTargets := make([]hcc.Target, 0, len(cfg.Harnesses))
+	for _, target := range cfg.Harnesses {
+		rootTargets = append(rootTargets, hcc.Target(target))
+	}
 	resolved, errs := resolver.Resolve(cfg, map[string][]catalog.Entry{
 		"local": {{Kind: ir.KindSkill, Name: "review", Path: "/cache/review"}},
-	}, nil, resolver.WithTargetHarnesses([]hcc.Target{hcc.TargetFactory}))
+	}, nil, resolver.WithTargetHarnesses(rootTargets))
 	if len(errs) != 0 {
 		t.Fatalf("Resolve errors = %v", errs)
 	}

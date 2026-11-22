@@ -176,6 +176,7 @@ resources:
 }
 
 // spec: consumer-config-format/both-spellings-in-one-file-are-refused
+// spec: consumer-config-format/empty-targets-outside-the-user-root-is-refused
 func TestTargetsAliasRefusesBeforeSyncWrites(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -236,6 +237,27 @@ func TestTargetsAliasRefusesBeforeSyncWrites(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty repository targets", func(t *testing.T) {
+		_, _, repo := setupV4ConsumerCommand(t)
+		configPath := config.ProjectConfigPath(repo)
+		const configBefore = "apiVersion: agent-marketplace/v4\ntargets: []\n"
+		writeConfig(t, configPath, configBefore)
+		lockPath := filepath.Join(filepath.Dir(configPath), "lock.yaml")
+		const lockBefore = "repository lock fixture\n"
+		writeFile(t, lockPath, lockBefore)
+
+		_, err := executeCommand("sync", "--no-backup")
+		assertTargetsValidation(t, err, "v4.harness", configPath, "empty targets")
+		configAfter, readErr := os.ReadFile(configPath)
+		if readErr != nil || string(configAfter) != configBefore {
+			t.Fatalf("refusal changed repository config: %q, %v", configAfter, readErr)
+		}
+		lockAfter, readErr := os.ReadFile(lockPath)
+		if readErr != nil || string(lockAfter) != lockBefore {
+			t.Fatalf("refusal changed repository lock: %q, %v", lockAfter, readErr)
+		}
+	})
 }
 
 // spec: resource-selection/explicit-empty-user-target-list-selects-no-machine-targets
@@ -263,6 +285,12 @@ func TestUserTargetsEmptySyncStatusAndDeinit(t *testing.T) {
 			t.Errorf("explicit empty user targets installed machine output %s: %v", path, err)
 		}
 	}
+	for _, machineSkill := range []string{"organization-skill", "user-skill"} {
+		path := filepath.Join(home, ".claude", "skills", machineSkill, "SKILL.md")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("explicit empty user targets installed machine output %s: %v", path, err)
+		}
+	}
 	repoSkill := filepath.Join(repo, ".claude", "skills", "repository-skill", "SKILL.md")
 	if _, err := os.Stat(repoSkill); err != nil {
 		t.Fatalf("repository target control was not installed: %v", err)
@@ -285,6 +313,12 @@ func TestUserTargetsEmptySyncStatusAndDeinit(t *testing.T) {
 	}
 	for _, machineSkill := range []string{"organization-skill", "user-skill"} {
 		path := filepath.Join(home, ".factory", "skills", machineSkill, "SKILL.md")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("deinit --scope user created machine output %s: %v", path, err)
+		}
+	}
+	for _, machineSkill := range []string{"organization-skill", "user-skill"} {
+		path := filepath.Join(home, ".claude", "skills", machineSkill, "SKILL.md")
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("deinit --scope user created machine output %s: %v", path, err)
 		}

@@ -41,10 +41,17 @@ const refuseEmptyGlobalSelection = async (terminal: TestTerminal, fixture: Fixtu
   await step("save is refused", () => terminal.write("\r"), async () => {
     await locate(terminal, "! 1 errors").unique().expect();
   });
+  await step("the harness modal stays open", () => {}, async () => {
+    await locate(terminal, /Editing:\s+global/).unique().expect();
+  });
   assert.deepEqual(fs.readFileSync(userConfig), configBefore, "refusing the last-target removal changed the user config");
   assert.equal(fs.existsSync(userLock), lockBefore !== null, "refusing the last-target removal changed lock presence");
   if (lockBefore) assert.deepEqual(fs.readFileSync(userLock), lockBefore, "refusing the last-target removal changed the user lock");
 
+  await step("close the harness modal", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, /Available\s+\(1\)/).unique().expect();
+    assert.doesNotMatch((await terminal.text()).replaceAll(/\s+/g, " "), /Editing:\s+global/);
+  });
   await step("the diagnostic shows reader-upgrade guidance", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     assert.match((await terminal.text()).replaceAll(/\s+/g, " "), /upgrade every reader of this file, rename the key to targets:/);
@@ -97,6 +104,7 @@ snapshot.test("the inherited target list is copied when edited", async (terminal
 });
 
 // spec: config-mutation/removing-the-last-target-from-a-targets-list-saves-an-empty-list
+// spec: tui-interactions/empty-selection
 const emptyTargets = defineFixture("targets-alias-empty", ["tui"], 80, 24, { organization: "missing-lock" });
 before(async () => {
   await emptyTargets.setup();

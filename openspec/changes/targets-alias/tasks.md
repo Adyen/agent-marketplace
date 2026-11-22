@@ -13,4 +13,4 @@
 
 ## 3. Archive
 
-- [x] 3.1 Run `openspec archive targets-alias --yes`
+- [ ] 3.1 Run `openspec archive targets-alias --yes`
