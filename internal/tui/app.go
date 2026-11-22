@@ -826,6 +826,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishOperation(msg.operation)
 		if msg.err != nil {
 			m.recordOperationFailure(operationTargets, diagnosticMutation, msg.err)
+			if msg.scopeLabel == harnessScopeGlobal.label() && strings.Contains(msg.err.Error(), "empty target selection requires targets:") {
+				m.pane = paneHarnessModal
+				m.buildHarnessForm()
+			}
 			m.pushToast(fmt.Sprintf("error: %v", msg.err), 5*time.Second)
 			slog.Error("harness configuration write failed", "scope", msg.scopeLabel, "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "harness", msg.err)

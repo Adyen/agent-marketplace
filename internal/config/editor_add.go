@@ -119,6 +119,9 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	}
 	key := targetListKey(targetsNode != nil)
 	if len(harnesses) == 0 {
+		if key == "targets" && !isGlobalConfigPath(configPath) {
+			return v4err("v4.harness", "targets", targetsNode.Line, "empty targets lists are valid only in the user root")
+		}
 		if key != "targets" || !isGlobalConfigPath(configPath) {
 			return fmt.Errorf("empty target selection requires targets:; upgrade every reader of this file, rename the key to targets:, and retry")
 		}
