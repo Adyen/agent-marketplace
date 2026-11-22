@@ -562,3 +562,52 @@ A sidebar Marketplace source SHALL be labeled by its endpoint host, followed by 
 
 - **WHEN** the user hovers over or focuses a sidebar source row in the light or dark theme
 - **THEN** a tooltip MUST show the source's full location with at least 4.5:1 contrast against its background
+
+### Requirement: Clear all resource filters
+
+While any source, kind, or status filter is active, the filter bar above the resource list SHALL offer a Clear filters control in addition to each filter's own clear control. Activating it SHALL remove every active filter at once and return to the unfiltered resource list.
+
+#### Scenario: Clear filters removes every active filter
+
+- **WHEN** the user has a kind filter and a status filter active and activates Clear filters
+- **THEN** both filters MUST be removed, the filter bar MUST disappear, and the resource list MUST show all resources
+
+### Requirement: Sync and update feedback starts at the click
+
+When the user starts Sync or Update, the GUI SHALL show the action's progress toast and a busy indicator on the pressed toolbar button from the moment the request is sent until the operation settles or fails to start, including before the session reports the running operation.
+
+#### Scenario: Update shows feedback before the operation is reported
+
+- **WHEN** the user presses Update and the action request has not yet returned and no snapshot reports the operation
+- **THEN** the progress toast MUST read "Updating…" and the Update button MUST show a busy indicator
+- **AND** both MUST disappear when the operation settles
+
+#### Scenario: Failed start clears the feedback
+
+- **WHEN** the user presses Sync and the action request fails or is refused as busy
+- **THEN** the progress toast and the Sync button's busy indicator MUST disappear
+
+### Requirement: Formatted Markdown in resource inspection
+
+Resource inspection SHALL show a selected Markdown file formatted by default, with leading frontmatter shown verbatim above the formatted body, and SHALL offer a Source view of the unmodified file. Formatting SHALL NOT execute or render raw HTML, SHALL NOT load images, and SHALL NOT navigate the application window; only http and https links SHALL be activatable, and they SHALL open in the system browser.
+
+#### Scenario: Markdown file opens formatted with a Source view
+
+- **WHEN** the user previews a Markdown file with frontmatter, headings, emphasis, and code
+- **THEN** the body MUST be shown formatted with the frontmatter verbatim above it
+- **AND** choosing Source MUST show the unmodified file text
+
+#### Scenario: Untrusted Markdown stays inert
+
+- **WHEN** a previewed Markdown file contains raw HTML, an image, and links with http, javascript, and file schemes
+- **THEN** the raw HTML MUST appear as text, no image MUST be requested, only the http link MUST be activatable, and activating it MUST open the system browser without navigating the application window
+
+### Requirement: Dialogs clear the macOS window controls
+
+On macOS, every GUI dialog SHALL be placed below the window's close, minimize, and zoom controls, and resource inspection SHALL offer a single close control in its header.
+
+#### Scenario: Resource inspection clears the window controls
+
+- **WHEN** resource inspection opens on macOS
+- **THEN** the dialog's top edge MUST be at least 52 px below the top of the window
+- **AND** the dialog MUST NOT show a footer close button
