@@ -145,7 +145,7 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 	if adapterErr != nil {
 		return nil, adapterErr
 	}
-	if adapter, ok := adapters.Lookup(target); ok {
+	if adapter, ok := adapters.LookupAdapter(target); ok {
 		return adapter.Resolve(machineScope, repoRoot, homeDir)
 	}
 	definition, declared := targetmeta.Lookup(string(target))

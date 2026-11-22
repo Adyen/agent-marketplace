@@ -76,6 +76,26 @@ func Targets() []Target { return targetmeta.Targets() }
 // IsValidTarget reports whether name is a declared target.
 func IsValidTarget(name string) bool { return targetmeta.IsValid(name) }
 
+func validateKindRegistrations(definitions []targetmeta.Definition, hasCompiler, hasIngester func(targetmeta.Target) bool) []error {
+	var compilerDefinitions, ingesterDefinitions []targetmeta.Definition
+	for _, definition := range definitions {
+		if definition.Compiler {
+			compilerDefinitions = append(compilerDefinitions, definition)
+		}
+		if definition.Ingester {
+			ingesterDefinitions = append(ingesterDefinitions, definition)
+		}
+	}
+	errs := targetmeta.MissingKindRegistrations(compilerDefinitions, nil, "a compiler", hasCompiler)
+	errs = append(errs, targetmeta.MissingKindRegistrations(
+		ingesterDefinitions,
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook, ir.KindMcpServer, ir.KindRule},
+		"an ingester",
+		hasIngester,
+	)...)
+	return errs
+}
+
 // ValidateTargetRegistrations checks the integration boundary between the
 // dependency-free target declarations and the explicit compiler/ingester
 // registrations. It validates both directions: every declared capability must
@@ -84,7 +104,17 @@ func IsValidTarget(name string) bool { return targetmeta.IsValid(name) }
 // completeness tests, not for registering implementations implicitly.
 func ValidateTargetRegistrations() error {
 	definitions := targetmeta.Definitions()
-	var errs []error
+	errs := validateKindRegistrations(
+		definitions,
+		func(target targetmeta.Target) bool {
+			_, ok := compile.Lookup(compile.Target(target))
+			return ok
+		},
+		func(target targetmeta.Target) bool {
+			_, ok := ingest.For(ingest.Harness(target))
+			return ok
+		},
+	)
 	seen := make(map[targetmeta.Target]bool, len(definitions))
 	for _, definition := range definitions {
 		t := Target(definition.Target)
@@ -94,16 +124,6 @@ func ValidateTargetRegistrations() error {
 		seen[definition.Target] = true
 		if err := targetmeta.ValidateDefinition(definition); err != nil {
 			errs = append(errs, err)
-		}
-		if definition.Compiler {
-			if _, ok := compile.Lookup(compile.Target(t)); !ok {
-				errs = append(errs, fmt.Errorf("target %q declares a compiler but none is registered", t))
-			}
-		}
-		if definition.Ingester {
-			if _, ok := ingest.For(ingest.Harness(t)); !ok {
-				errs = append(errs, fmt.Errorf("target %q declares an ingester but none is registered", t))
-			}
 		}
 		if definition.Conversion && (!definition.Compiler || !definition.Ingester) {
 			errs = append(errs, fmt.Errorf("target %q declares conversion without compiler and ingester capabilities", t))

@@ -1,10 +1,13 @@
 package pluginpolicy
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -84,15 +87,22 @@ func TestShippedCatalogsValidate(t *testing.T) {
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestEveryTargetShipsACatalog(t *testing.T) {
 	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
-		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("no plugin catalog for target %s", tg)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindPlugin},
+		"a plugin catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 	want := map[string]bool{
 		"claude-plugin": true, "factory-plugin": true, "codex-plugin": true,
@@ -119,15 +129,20 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
+	for _, definition := range target.Definitions() {
+		if !slices.Contains(definition.AcceptedKinds, ir.KindPlugin) {
+			continue
+		}
+		tg := definition.Target
 		c := r.catalogs[tg]
 		if c.Delivery.Decompose.Status != DeliveryVerified {
-			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
+			t.Fatalf("%s kind %s decompose status = %q, want verified", tg, ir.KindPlugin, c.Delivery.Decompose.Status)
 		}
 		for _, scope := range []string{"user", "repo"} {
 			native, err := LookupNativeDelivery(tg, scope)

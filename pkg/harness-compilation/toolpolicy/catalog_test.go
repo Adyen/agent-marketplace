@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -48,15 +49,22 @@ func TestShippedCatalogsValidate(t *testing.T) {
 	}
 }
 
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestEveryTargetShipsACatalog(t *testing.T) {
 	r, err := shipped()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tg := range target.Targets() {
-		if _, ok := r.catalogs[tg]; !ok {
-			t.Fatalf("no tool catalog for target %s", tg)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent, ir.KindHook},
+		"a tool catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 }
 

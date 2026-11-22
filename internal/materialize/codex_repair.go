@@ -32,7 +32,7 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 	if err != nil {
 		return nil, fmt.Errorf("construct Codex repair adapter: %w", err)
 	}
-	adapter, ok := registry.Lookup(hcc.Target(targetmeta.TargetCodex))
+	adapter, ok := registry.LookupAdapter(hcc.Target(targetmeta.TargetCodex))
 	if !ok {
 		return nil, fmt.Errorf("codex repair adapter is not registered")
 	}

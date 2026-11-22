@@ -13,25 +13,30 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
+// spec: harness-compilation/plugins-compile-only-as-packages
 func TestCompileRefusesPlugin(t *testing.T) {
 	p := &ir.Plugin{Manifest: ir.Manifest{Name: "demo"}}
-	_, err := harnesscompile.Compile(p, harnesscompile.TargetClaude)
-	if err == nil {
-		t.Fatal("Compile must refuse a plugin resource")
-	}
-	if !strings.Contains(err.Error(), "plugin.compile.package-required") {
-		t.Fatalf("want plugin.compile.package-required, got %v", err)
-	}
-	var coded *diag.CodedError
-	if !errors.As(err, &coded) || coded.Code != "plugin.compile.package-required" {
-		t.Fatalf("want a coded plugin.compile.package-required error, got %v", err)
-	}
-	// The inner compile.Compile boundary refuses identically.
-	if _, err := compile.Compile(p, compile.TargetClaude); err == nil || !strings.Contains(err.Error(), "plugin.compile.package-required") {
-		t.Fatalf("compile.Compile must refuse a plugin with plugin.compile.package-required, got %v", err)
+	for _, compilerTarget := range target.CompilerTargets() {
+		t.Run(string(compilerTarget), func(t *testing.T) {
+			_, err := harnesscompile.Compile(p, compilerTarget)
+			if err == nil {
+				t.Fatal("Compile must refuse a plugin resource")
+			}
+			if !strings.Contains(err.Error(), "plugin.compile.package-required") {
+				t.Fatalf("want plugin.compile.package-required, got %v", err)
+			}
+			var coded *diag.CodedError
+			if !errors.As(err, &coded) || coded.Code != "plugin.compile.package-required" {
+				t.Fatalf("want a coded plugin.compile.package-required error, got %v", err)
+			}
+			if _, err := compile.Compile(p, compilerTarget); err == nil || !strings.Contains(err.Error(), "plugin.compile.package-required") {
+				t.Fatalf("compile.Compile must refuse a plugin with plugin.compile.package-required, got %v", err)
+			}
+		})
 	}
 }
 
+// spec: harness-compilation/plugins-compile-only-as-packages
 func TestCompilePackageProjects(t *testing.T) {
 	skill := ir.NewSkill("ok", "fine skill", "Do the thing.", nil, nil, ir.SourceRef{})
 	p := &ir.Plugin{

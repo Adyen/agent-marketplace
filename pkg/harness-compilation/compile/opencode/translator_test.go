@@ -132,6 +132,7 @@ func TestMCPReferencesRemainData(t *testing.T) {
 }
 
 // spec: harness-opencode/rules-preserve-shared-instructions
+// spec: application-target-model/rule-diagnostics-keep-their-codes
 func TestRulesEmitNoInstructionArtifact(t *testing.T) {
 	a, d, err := (Compiler{}).Translate(ir.NewRule("rules", "", "Instructions", nil, false, nil, ir.SourceRef{}))
 	if err != nil || len(a) != 0 || len(d) != 1 || d[0].Code != "rule.opencode.unsupported" || d[0].Severity != diag.SeverityWarning {

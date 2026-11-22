@@ -237,7 +237,7 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", err.Error()))
 		return report
 	}
-	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	adapter, ok := registry.LookupAdapter(hcc.TargetDevin)
 	if !ok {
 		report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeMaterializeDevinAggregateWrite, key, "", "Devin installation adapter is not registered"))
 		return report

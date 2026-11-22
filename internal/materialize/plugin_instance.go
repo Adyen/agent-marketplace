@@ -3,12 +3,22 @@ package materialize
 import (
 	"fmt"
 
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 )
+
+var lookupApplicationTarget = func(target hcc.Target) (harness.ApplicationTarget, bool, error) {
+	registry, err := harness.NewInstallationAdapterRegistry()
+	if err != nil {
+		return harness.ApplicationTarget{}, false, err
+	}
+	appTarget, ok := registry.Lookup(string(target))
+	return appTarget, ok, nil
+}
 
 func preflightPluginInstances(work []skillTarget) (map[string]bool, []diag.Diagnostic) {
 	groups := make(map[string][]skillTarget)
@@ -26,7 +36,20 @@ func preflightPluginInstances(work []skillTarget) (map[string]bool, []diag.Diagn
 	blocked := make(map[string]bool)
 	var diagnostics []diag.Diagnostic
 	for _, identity := range identities {
-		if len(groups[identity]) > 0 && groups[identity][0].skill.PluginPackage.Delivery == "native" {
+		first := groups[identity][0]
+		if err := requireAcceptedDelivery(first.target, resourceDeliveryKind(first)); err != nil {
+			blocked[identity] = true
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     "materialize.compile.error",
+				Severity: diag.SeverityError,
+				Target:   string(first.target),
+				Resource: "plugin/" + first.skill.PluginPackage.Name,
+				Message:  err.Error(),
+				Source:   diag.SourceRef{File: first.skill.PluginPackage.PackageRoot},
+			})
+			continue
+		}
+		if first.skill.PluginPackage.Delivery == "native" {
 			continue
 		}
 		for _, item := range groups[identity] {
@@ -108,6 +131,27 @@ func preflightPluginInstances(work []skillTarget) (map[string]bool, []diag.Diagn
 		}
 	}
 	return blocked, diagnostics
+}
+
+func resourceDeliveryKind(item skillTarget) ir.ResourceKind {
+	if item.skill.PluginPackage != nil {
+		return ir.KindPlugin
+	}
+	return item.skill.Resource.Kind()
+}
+
+func requireAcceptedDelivery(target hcc.Target, kind ir.ResourceKind) error {
+	if kind == ir.KindRule {
+		return nil
+	}
+	appTarget, ok, err := lookupApplicationTarget(target)
+	if err != nil {
+		return fmt.Errorf("harness: cannot validate target %q resource kind %q: %w", target, kind, err)
+	}
+	if !ok {
+		return fmt.Errorf("harness: target %q has no application declaration for resource kind %q", target, kind)
+	}
+	return appTarget.RequireAccepted(kind)
 }
 
 func pluginMemberCompileInput(item skillTarget) (ir.Resource, []hcc.Option, error) {

@@ -1,11 +1,13 @@
 package modelpolicy
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -129,15 +131,22 @@ func TestFactoryReasoningSubset(t *testing.T) {
 }
 
 // spec: harness-model-catalogs/every-registered-harness-target-ships-a-catalog
+// spec: harness-compilation/declared-kind-without-an-implementation-fails-validation
 func TestShippedCatalogs(t *testing.T) {
 	r, err := shipped()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range target.Targets() {
-		if _, ok := r.catalogs[name]; !ok {
-			t.Errorf("missing catalog %s", name)
-		}
+	if err := errors.Join(target.MissingKindRegistrations(
+		target.Definitions(),
+		[]ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindSubagent},
+		"a model catalog",
+		func(t target.Target) bool {
+			_, ok := r.catalogs[t]
+			return ok
+		},
+	)...); err != nil {
+		t.Fatal(err)
 	}
 }
 

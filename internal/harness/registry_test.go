@@ -17,12 +17,12 @@ func TestInstallationAdapterRegistryCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []hcc.Target{hcc.TargetCodex, hcc.TargetDevin, hcc.TargetOpenCode}
-	got := registry.Targets()
+	got := registry.AdapterTargets()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapter targets = %v, want %v", got, want)
 	}
 	for _, target := range want {
-		adapter, ok := registry.Lookup(target)
+		adapter, ok := registry.LookupAdapter(target)
 		if !ok {
 			t.Fatalf("adapter %q is missing", target)
 		}
@@ -45,7 +45,7 @@ func TestInstallationAdapterInventoryMatchesDescriptor(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, target := range []hcc.Target{hcc.TargetCodex, hcc.TargetDevin, hcc.TargetOpenCode} {
-		adapter, ok := registry.Lookup(target)
+		adapter, ok := registry.LookupAdapter(target)
 		if !ok {
 			t.Fatalf("adapter %q is missing", target)
 		}
@@ -94,7 +94,7 @@ func TestRegistryAllowsRepoResolutionWithoutHome(t *testing.T) {
 	registry = bindMachineRoots(registry, func() (string, error) {
 		return "", errors.New("home unavailable")
 	})
-	adapter, ok := registry.Lookup(hcc.TargetDevin)
+	adapter, ok := registry.LookupAdapter(hcc.TargetDevin)
 	if !ok {
 		t.Fatal("Devin adapter is missing")
 	}

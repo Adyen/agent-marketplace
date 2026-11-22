@@ -1093,7 +1093,7 @@ func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutput
 		target := hcc.Target(entry.Target)
 		_, legacy := roots[target]
 		legacy = legacy && !harness.IsInstallationAdapterTarget(target)
-		_, migrated := adapters.Lookup(target)
+		_, migrated := adapters.LookupAdapter(target)
 		if legacy || (adapterErr == nil && migrated) {
 			allOutputs[outputKey{target: target, machineScope: machineScope}] = true
 		}
@@ -1127,7 +1127,7 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 	// Adapter-owned destinations cover migrated targets (including Codex's
 	// partitioned roots) without maintaining a second target-specific walk.
 	if adapters, err := harness.NewInstallationAdapterRegistry(); err == nil {
-		for _, target := range adapters.Targets() {
+		for _, target := range adapters.AdapterTargets() {
 			for _, machineScope := range []bool{false, true} {
 				destinations, err := harness.ResolveDestinations(target, machineScope, repoRoot)
 				if err != nil {
@@ -1428,6 +1428,21 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				}
 			}
 			continue
+		}
+		if w.skill.PluginPackage == nil {
+			if err := requireAcceptedDelivery(w.target, resourceDeliveryKind(w)); err != nil {
+				blockResource(key, w)
+				markResourceIncomplete(key, w, ownedAggregateHandlerFor(key.target))
+				allDiags = append(allDiags, diag.Diagnostic{
+					Code:     "materialize.compile.error",
+					Severity: diag.SeverityError,
+					Target:   string(w.target),
+					Resource: w.skill.Name,
+					Message:  err.Error(),
+					Source:   compilepkg.SourceOf(w.skill.Resource),
+				})
+				continue
+			}
 		}
 		if w.skill.PluginPackage != nil && w.skill.PluginPackage.Delivery == "native" {
 			if plan := pluginPlanFor(w); plan != nil {
@@ -2220,7 +2235,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		var ok bool
 		var adapterDestinations []harness.Destination
 		var home string
-		if adapter, migrated := adapters.Lookup(key.target); migrated {
+		if adapter, migrated := adapters.LookupAdapter(key.target); migrated {
 			if key.machineScope {
 				var err error
 				home, err = os.UserHomeDir()
