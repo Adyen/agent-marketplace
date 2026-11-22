@@ -203,7 +203,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 }
 
 // spec: tui-interactions/empty-selection
-func TestHarnessModalRejectsEmptySelection(t *testing.T) {
+func TestHarnessModalRejectsEmptyProjectSelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.projectHarnesses = []string{"factory"}
 	m.openHarnessModal()
@@ -235,7 +235,7 @@ func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 
 // spec: tui-interactions/empty-selection
 // spec: config-mutation/removing-the-last-target-without-targets-spelling-is-refused
-func TestHarnessModalRejectsEmptyGlobalSelectionWithoutWriting(t *testing.T) {
+func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	configPath := filepath.Join(home, ".agents", "config.yaml")
