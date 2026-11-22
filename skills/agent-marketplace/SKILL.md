@@ -96,7 +96,10 @@ list); fragments merge below the including file, and editors refuse to edit a
 selection that lives in a fragment (`config.edit.include-owned`).
 `targets:` is an alias of `harnesses:` at root and group scope (declaring both
 is refused; `targets: []` is valid only in the user file and selects no machine
-targets). Editors still write `harnesses:`, and older clients reject `targets:`.
+targets). Editors preserve the authored spelling: they write `harnesses:` by
+default, keep `targets:` where the file already spells it, and a user-scope
+save of an empty selection writes `targets: []` only when the user file already
+spells `targets:` (otherwise it refuses). Older clients reject `targets:`.
 
 ### Sources and resource groups
 
