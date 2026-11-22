@@ -776,6 +776,24 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
+.workspace__clear-filters {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--gui-ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+}
+
+.workspace__clear-filters:hover {
+  background: var(--gui-layer);
+  color: var(--gui-ink);
+}
+
 .source-browse-header {
   align-items: flex-start;
   border-bottom: 1px solid var(--gui-line);

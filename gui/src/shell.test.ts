@@ -410,6 +410,37 @@ describe('diagnostics view', () => {
     expect(resources.attributes('aria-current')).toBe('page')
   })
 
+  // spec: gui-shell/clear-filters-removes-every-active-filter
+  it('clears every active resource filter from the Clear filters control', async () => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+    ])
+    const clearFilters = () => wrapper.findAll('button').find((element) => element.text() === 'Clear filters')
+    const kindFacet = () => wrapper.get('.gui-sidebar__kinds button')
+    await button(wrapper, 'Required by org').trigger('click')
+    await kindFacet().trigger('click')
+    await tick()
+    expect(wrapper.get('[aria-label="Active resource filters"]').findAll('.workspace__filter-chip')).toHaveLength(2)
+    expect(clearFilters()).toBeDefined()
+
+    await clearFilters()!.trigger('click')
+    await tick()
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(false)
+    expect(button(wrapper, 'Required by org').attributes('aria-pressed')).toBe('false')
+    expect(kindFacet().attributes('aria-pressed')).toBe('false')
+    expect(button(wrapper, 'All resources').attributes('aria-current')).toBe('page')
+    expect(rowNames(wrapper).sort()).toEqual(['a', 'm'])
+    expect(document.activeElement).toBe(button(wrapper, 'All resources').element)
+  })
+
+  it('offers Clear filters while a single filter is active', async () => {
+    const { wrapper } = await mountShell([row('a')])
+    await button(wrapper, 'Required by org').trigger('click')
+    await tick()
+    expect(wrapper.findAll('button').some((element) => element.text() === 'Clear filters')).toBe(true)
+  })
+
   it('returns to resources from the Resources row and shows no problems when clean', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)

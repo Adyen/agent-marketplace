@@ -293,6 +293,30 @@ test('an active sidebar facet shows the same highlight as the active Resources r
   await expect(resources).toHaveAttribute('aria-current', 'page')
 })
 
+test('Clear filters sits at the filter bar end and highlights on hover', async ({ page }) => {
+  await openPreview(page)
+  const bar = page.getByRole('group', { name: 'Active resource filters' })
+  const clearFilters = page.getByRole('button', { name: 'Clear filters', exact: true })
+  const background = (locator: Locator) => locator.evaluate((element) => getComputedStyle(element).backgroundColor)
+
+  await page.locator('.gui-sidebar__nav').getByRole('button', { name: 'Required by org', exact: true }).click()
+  await expect(bar).toBeVisible()
+  const [barBox, buttonBox] = await Promise.all([bar.boundingBox(), clearFilters.boundingBox()])
+  expect(barBox).not.toBeNull()
+  expect(buttonBox).not.toBeNull()
+  if (barBox == null || buttonBox == null) {
+    throw new Error('filter bar or Clear filters has no geometry')
+  }
+  expect(Math.abs(buttonBox.x + buttonBox.width - (barBox.x + barBox.width - 12))).toBeLessThanOrEqual(1)
+
+  await clearFilters.hover()
+  await expect.poll(() => background(clearFilters)).not.toBe('rgba(0, 0, 0, 0)')
+
+  await page.locator('.gui-sidebar__kinds button').first().click()
+  await expect(bar.getByRole('button', { name: /^Clear (kind|status) filter/ })).toHaveCount(2)
+  await bar.screenshot({ path: fileURLToPath(new URL('../test-results/clear-filters.png', import.meta.url)) })
+})
+
 test('diagnostic messages are selectable apart from their keyboard-operable expand control', async ({ page }) => {
   await openPreview(page)
   await page.getByRole('button', { name: 'Show diagnostics' }).click()

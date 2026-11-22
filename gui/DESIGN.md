@@ -890,7 +890,9 @@ Where a rule here conflicts with an earlier section, this section wins.
 - *Rule*: the sidebar offers one kind facet and one status facet at a time.
   Needs attention means stale, broken, or malformed rows; Required by org
   means rows marked required. The facets intersect with the source and search
-  filters. Their chips clear independently. The separate "All resources"
+  filters. Their chips clear independently, and a quiet "Clear filters" text
+  button at the right end of the filter bar clears them all at once, moving
+  focus to "All resources". The separate "All resources"
   action clears source and facets without clearing search; the existing
   Resources and group navigation keep their current filter behavior.
 - *Rule*: facets use the existing sidebar row and token styling. The facet

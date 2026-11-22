@@ -493,10 +493,19 @@ function showAll() {
   }
 }
 
-function showAllResources() {
+function clearResourceFilters() {
   clearSourceFilter()
   selectedKind.value = null
   selectedStatus.value = null
+}
+
+function clearFiltersFromBar() {
+  clearResourceFilters()
+  document.querySelector<HTMLElement>('button[aria-label="All resources"]')?.focus()
+}
+
+function showAllResources() {
+  clearResourceFilters()
   showAll()
 }
 
@@ -775,9 +784,7 @@ const diagnosticsTone = computed<'danger' | 'warning' | 'info' | null>(() => {
 })
 
 function showDiagnostics() {
-  clearSourceFilter()
-  selectedKind.value = null
-  selectedStatus.value = null
+  clearResourceFilters()
   mainView.value = 'diagnostics'
 }
 
@@ -1380,6 +1387,7 @@ async function run(action: 'sync' | 'update') {
             @click="selectedStatus = null"
           ><GuiIcon name="close" /></button>
         </div>
+        <button type="button" class="workspace__clear-filters" @click="clearFiltersFromBar">Clear filters</button>
       </div>
 
       <SourceBrowseHeader
