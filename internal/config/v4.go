@@ -383,6 +383,14 @@ var v4GroupKeys = map[string]struct{}{
 	"include": {}, "exclude": {}, "tags": {}, "all": {}, "registries": {}, "required": {}, "harnesses": {}, "targets": {},
 }
 
+// targetListKey returns the spelling a target list was authored under.
+func targetListKey(targets bool) string {
+	if targets {
+		return "targets"
+	}
+	return "harnesses"
+}
+
 // ParseV4Config parses one root or fragment. A root must carry v4 explicitly;
 // fragments may omit apiVersion and inherit it from their containing tree.
 func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, error) {
@@ -575,7 +583,7 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	if len(kinds) > 0 {
-		if doc.targets && len(doc.harnesses) == 0 && (kinds[0] != userLayer || !root) {
+		if doc.targets && len(doc.harnesses) == 0 && !root {
 			return nil, v4DocumentError(file, raw, v4err("v4.harness", "targets", 0, "empty targets lists are valid only in the user root"), !root)
 		}
 		policy := &V4Config{Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization}
@@ -767,9 +775,9 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 	if harnessesNode != nil && targetsNode != nil {
 		return v4err("v4.targets-alias", "targets", targetsNode.Line, "targets and harnesses cannot both be declared")
 	}
-	listKey, n := "harnesses", harnessesNode
+	listKey, n := targetListKey(targetsNode != nil), harnessesNode
 	if targetsNode != nil {
-		listKey, n, doc.targets = "targets", targetsNode, true
+		n, doc.targets = targetsNode, true
 	}
 	if n != nil {
 		doc.hasHarnesses = true
@@ -2087,11 +2095,7 @@ func normalizeV4Tree(c *V4Config) error {
 		if g.HasHarnesses {
 			for i, harness := range g.Harnesses {
 				if !target.IsValid(harness) {
-					key := "harnesses"
-					if g.Targets {
-						key = "targets"
-					}
-					return v4err("v4.harness", fmt.Sprintf("resources.%s.%s[%d]", name, key, i), 0, "unknown target %q", harness)
+					return v4err("v4.harness", fmt.Sprintf("resources.%s.%s[%d]", name, targetListKey(g.Targets), i), 0, "unknown target %q", harness)
 				}
 			}
 			if g.Targets && len(g.Harnesses) == 0 {
@@ -2262,11 +2266,7 @@ func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document
 // editors can refuse a layer-invalid document before writing any bytes.
 func (c *V4Config) validateLayerFields(kind layerKind) error {
 	if kind == localLayer && c.HasHarnesses {
-		field := "harnesses"
-		if c.Targets {
-			field = "targets"
-		}
-		return v4err("v4.layer-field", field, 0, "target lists are not valid in repository personal configuration")
+		return v4err("v4.layer-field", targetListKey(c.Targets), 0, "target lists are not valid in repository personal configuration")
 	}
 	if c.Targets && len(c.Harnesses) == 0 && kind != userLayer {
 		return v4err("v4.harness", "targets", 0, "empty targets lists are valid only in the user root")

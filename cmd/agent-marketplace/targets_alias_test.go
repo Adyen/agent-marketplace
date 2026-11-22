@@ -128,7 +128,7 @@ func TestTargetsAliasSyncAndStatus(t *testing.T) {
 		return
 	}
 	t.Run("root and group aliases", func(t *testing.T) {
-		root, home, repo := setupV4ConsumerCommand(t)
+		root, home, _ := setupV4ConsumerCommand(t)
 		source := writeTargetAliasDirectory(t, root, "alias")
 		userPath := filepath.Join(home, ".agents", "config.yaml")
 		writeFile(t, userPath, fmt.Sprintf(`apiVersion: agent-marketplace/v4
@@ -158,7 +158,6 @@ resources:
 		if !strings.Contains(status, "alias-skill") {
 			t.Fatalf("status omitted the target alias selection:\n%s", status)
 		}
-		_ = repo
 	})
 
 	t.Run("unknown ID", func(t *testing.T) {
@@ -187,22 +186,17 @@ func TestTargetsAliasRefusesBeforeSyncWrites(t *testing.T) {
 			name = "group spellings"
 		}
 		t.Run(name, func(t *testing.T) {
-			root, home, _ := setupV4ConsumerCommand(t)
+			_, home, _ := setupV4ConsumerCommand(t)
 			origin, working := createBareRepoWithWorkingClone(t, "targets-alias-refusal.git")
 			writeSkill(t, working, "review", "Alias refusal control", nil)
 			commitAndPushAll(t, working, "seed refusal control")
 			userPath := filepath.Join(home, ".agents", "config.yaml")
-			base := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+			base := "apiVersion: agent-marketplace/v4\ntargets: [factory]\nharnesses: [factory]\n" +
+				"sources:\n  personal:\n    git: file://" + origin + "\n    ref: main\nresources:\n  personal: [skill/review]\n"
 			if groupConflict {
-				base += "sources:\n  personal:\n    git: file://" + origin + "\n    ref: main\nresources:\n  personal:\n    include: [skill/review]\n    harnesses: [factory]\n"
-			} else {
-				base = "apiVersion: agent-marketplace/v4\ntargets: [factory]\nharnesses: [factory]\n" +
-					"sources:\n  personal:\n    git: file://" + origin + "\n    ref: main\nresources:\n  personal: [skill/review]\n"
+				base = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n" +
+					"sources:\n  personal:\n    git: file://" + origin + "\n    ref: main\nresources:\n  personal:\n    include: [skill/review]\n    targets: [factory]\n    harnesses: [factory]\n"
 			}
-			if groupConflict {
-				base = strings.Replace(base, "    harnesses: [factory]\n", "    targets: [factory]\n    harnesses: [factory]\n", 1)
-			}
-			writeFile(t, userPath, base)
 			valid := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  personal:\n    git: file://" + origin + "\n    ref: main\nresources:\n  personal: [skill/review]\n"
 			writeFile(t, userPath, valid)
 			if output, err := executeCommand("sync", "--no-backup"); err != nil {
@@ -240,7 +234,6 @@ func TestTargetsAliasRefusesBeforeSyncWrites(t *testing.T) {
 					t.Fatalf("%v changed installed output: %v", args, readErr)
 				}
 			}
-			_ = root
 		})
 	}
 }

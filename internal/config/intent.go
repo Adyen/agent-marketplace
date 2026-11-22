@@ -312,11 +312,8 @@ func (i Intent) TargetHarnesses() ([]string, Source) {
 	if harnesses := i.Layers[RepoCommitted].Settings().Harnesses; len(harnesses) > 0 {
 		return append([]string(nil), harnesses...), RepoCommitted
 	}
-	if settings := i.Layers[UserPersonal].Settings(); settings.HasTargets && len(settings.Harnesses) == 0 {
-		return []string{}, UserPersonal
-	}
-	if harnesses := i.Layers[UserPersonal].Settings().Harnesses; len(harnesses) > 0 {
-		return append([]string(nil), harnesses...), UserPersonal
+	if settings := i.Layers[UserPersonal].Settings(); settings.HasTargets || len(settings.Harnesses) > 0 {
+		return append([]string{}, settings.Harnesses...), UserPersonal
 	}
 	if harnesses := i.Layers[Organization].Settings().Harnesses; len(harnesses) > 0 {
 		return append([]string(nil), harnesses...), i.Layers[Organization].Source
@@ -680,10 +677,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	if ec.Repo.Config != nil && len(ec.Repo.Config.Harnesses) > 0 {
 		ec.TargetHarnesses = append([]string(nil), ec.Repo.Config.Harnesses...)
 		ec.TargetHarnessSource = RepoCommitted
-	} else if ec.User.Config != nil && ec.User.Config.HasTargets && len(ec.User.Config.Harnesses) == 0 {
-		ec.TargetHarnesses = []string{}
-		ec.TargetHarnessSource = UserPersonal
-	} else if ec.User.Config != nil && len(ec.User.Config.Harnesses) > 0 {
+	} else if ec.User.Config != nil && (ec.User.Config.HasTargets || len(ec.User.Config.Harnesses) > 0) {
 		ec.TargetHarnesses = append([]string(nil), ec.User.Config.Harnesses...)
 		ec.TargetHarnessSource = UserPersonal
 	} else if ec.Organization.Config != nil && len(ec.Organization.Config.Harnesses) > 0 {
