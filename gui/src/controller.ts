@@ -94,6 +94,7 @@ export interface WorkspaceState {
   settledMutation: ResourceActionSettlementIntent | null
   phase: string | null
   operation: OperationRef | null
+  pendingAction: Action | null
   notifications: { id: number; severity: string; outcome?: NotificationOutcome; message: string }[]
   requesting: boolean
   error: string | null
@@ -145,6 +146,7 @@ export class WorkspaceController {
     settledMutation: null,
     phase: null,
     operation: null,
+    pendingAction: null,
     notifications: [],
     requesting: false,
     error: null,
@@ -349,7 +351,12 @@ export class WorkspaceController {
   }
 
   async runAction(action: Action): Promise<boolean> {
-    return this.requestOperation(() => this.client.action(action))
+    this.state.pendingAction = action
+    const started = await this.requestOperation(() => this.client.action(action))
+    if (!started) {
+      this.state.pendingAction = null
+    }
+    return started
   }
 
   async syncAndQuit(): Promise<boolean> {
@@ -755,6 +762,7 @@ export class WorkspaceController {
         }
         if (fresh) {
           this.lastSettled = settled
+          this.state.pendingAction = null
           if (active != null && active.id <= settled.id) {
             this.state.operation = null
             this.state.phase = null
@@ -769,6 +777,7 @@ export class WorkspaceController {
         } else if (reported == null && active != null && last != null && active.id <= last.id) {
           this.state.operation = null
           this.state.phase = null
+          this.state.pendingAction = null
         }
       }
       this.applySnapshotFields(snapshot, generation)

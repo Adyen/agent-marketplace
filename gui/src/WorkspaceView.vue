@@ -848,10 +848,18 @@ const resourceActionBusy = computed(() => {
   return action != null && action.rowId === selected.value?.id && action.loading &&
     (action.action === 'install' || action.action === 'restore')
 })
+const runningAction = computed<'sync' | 'update' | null>(() => {
+  const kind = view.value?.operation?.kind
+  if (kind === 'sync' || kind === 'update') {
+    return kind
+  }
+  return view.value?.operation == null ? view.value?.pendingAction ?? null : null
+})
 const progressTitle = computed(() => {
   const operation = view.value?.operation
   if (operation == null) {
-    return ''
+    const pending = view.value?.pendingAction
+    return pending == null ? '' : operationLabel(pending)
   }
   const action = view.value?.resourceAction
   if (state.value?.resourceActionSubmitting && action != null) {
@@ -1334,6 +1342,7 @@ async function run(action: 'sync' | 'update') {
         :applied-query="appliedQuery"
         :local-match-count="localMatchCount"
         :ready="ready"
+        :running-action="runningAction"
         :pending-count="pendingCount"
         :available-updates="view?.availableUpdates ?? 0"
         :show-setup="configuration?.firstRun === true || setupOpen"
@@ -1519,7 +1528,7 @@ async function run(action: 'sync' | 'update') {
 
       <div class="gui-toasts">
         <Transition name="gui-toast-fade">
-          <div v-if="view?.operation" class="gui-toast gui-toast--progress" role="status" aria-live="polite">
+          <div v-if="view?.operation || view?.pendingAction" class="gui-toast gui-toast--progress" role="status" aria-live="polite">
             <span class="gui-toast__spinner" aria-hidden="true" />
             <div class="gui-toast__body">
               <p class="gui-toast__title">{{ progressTitle }}</p>

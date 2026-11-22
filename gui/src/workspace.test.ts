@@ -1009,6 +1009,60 @@ describe('WorkspaceView', () => {
     expect(wrapper.text()).not.toContain('Update complete')
   })
 
+  // spec: gui-shell/update-shows-feedback-before-the-operation-is-reported
+  it('shows Update feedback on the toast and button before the session reports the operation', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+    let resolveAction!: (operation: OperationRef) => void
+    vi.mocked(client.action).mockImplementationOnce(() => new Promise<OperationRef>((resolve) => { resolveAction = resolve }))
+
+    await wrapper.get('button[aria-label="Update"]').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Updating…')
+    const update = wrapper.get('button[aria-label="Update"]')
+    expect(update.attributes('aria-busy')).toBe('true')
+    expect(update.find('.gui-toast__spinner').exists()).toBe(true)
+
+    resolveAction({ id: 9, kind: 'update' })
+    await tick()
+    push(event({ sequence: 2, generation: 2, operation: { id: 9, kind: 'update' }, payload: snapshot([row('a')]) }))
+    await tick()
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Updating…')
+    expect(wrapper.get('button[aria-label="Update"]').attributes('aria-busy')).toBe('true')
+
+    push(event({ sequence: 3, generation: 2, payload: snapshot([row('a')], { settledOperation: { id: 9, kind: 'update' } }) }))
+    await tick()
+    expect(wrapper.find('.gui-toast--progress').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label="Update"]').attributes('aria-busy')).toBeUndefined()
+    expect(wrapper.get('button[aria-label="Update"]').find('.gui-toast__spinner').exists()).toBe(false)
+  })
+
+  // spec: gui-shell/failed-start-clears-the-feedback
+  it.each([
+    { name: 'refused as busy', error: new RequestError(409, 'localapi.busy') },
+    { name: 'failed', error: new RequestError(500, 'localapi.internal') },
+  ])('clears Sync feedback when the start request is $name', async ({ error }) => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+    let rejectAction!: (reason: unknown) => void
+    vi.mocked(client.action).mockImplementationOnce(() => new Promise<OperationRef>((_, reject) => { rejectAction = reject }))
+
+    await wrapper.get('button[aria-label="Sync"]').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Syncing…')
+    expect(wrapper.get('button[aria-label="Sync"]').attributes('aria-busy')).toBe('true')
+
+    rejectAction(error)
+    await tick()
+    expect(wrapper.find('.gui-toast--progress').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label="Sync"]').attributes('aria-busy')).toBeUndefined()
+    expect(wrapper.get('button[aria-label="Sync"]').find('.gui-toast__spinner').exists()).toBe(false)
+  })
+
   // spec: session-feedback/late-progress
   it('late-progress leaves mounted feedback unchanged for stale phases', async () => {
     const { client, push } = fakeClient()

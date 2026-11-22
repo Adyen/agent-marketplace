@@ -12,6 +12,7 @@ const props = defineProps<{
   appliedQuery: string
   localMatchCount: number
   ready: boolean
+  runningAction: 'sync' | 'update' | null
   pendingCount: number
   availableUpdates: number
   showSetup: boolean
@@ -114,13 +115,23 @@ defineExpose({
         @click="emit('clearSearch')"
       ><GuiIcon name="close" /></button>
       <ViewMenu ref="viewMenu" :settings="viewSettings" @change="emit('changeView', $event)" />
-      <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
-        <GuiIcon name="update" />
+      <UButton
+        aria-label="Update"
+        class="gui-button--secondary"
+        color="neutral"
+        variant="soft"
+        :disabled="!ready"
+        :aria-busy="runningAction === 'update' ? 'true' : undefined"
+        @click="emit('update')"
+      >
+        <span v-if="runningAction === 'update'" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />
+        <GuiIcon v-else name="update" />
         Update
         <span v-if="availableUpdates > 0" class="gui-badge mono">{{ availableUpdates }}</span>
       </UButton>
-      <UButton aria-label="Sync" :disabled="!ready" @click="emit('sync')">
-        <GuiIcon name="sync" />
+      <UButton aria-label="Sync" :disabled="!ready" :aria-busy="runningAction === 'sync' ? 'true' : undefined" @click="emit('sync')">
+        <span v-if="runningAction === 'sync'" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />
+        <GuiIcon v-else name="sync" />
         Sync
         <span v-if="pendingCount > 0" class="gui-badge mono">{{ pendingCount }}</span>
       </UButton>
