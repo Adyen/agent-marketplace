@@ -117,10 +117,7 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if targetsNode != nil && harnessesNode != nil {
 		return v4err("v4.targets-alias", "targets", targetsNode.Line, "targets and harnesses cannot both be declared")
 	}
-	key := "harnesses"
-	if targetsNode != nil {
-		key = "targets"
-	}
+	key := targetListKey(targetsNode != nil)
 	if len(harnesses) == 0 {
 		if key != "targets" || !isGlobalConfigPath(configPath) {
 			return fmt.Errorf("empty target selection requires targets:; upgrade every reader of this file, rename the key to targets:, and retry")

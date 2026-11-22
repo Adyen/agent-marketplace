@@ -222,10 +222,7 @@ func (s Source) CanConfigureLogging() bool {
 // non-empty organization list. It returns nil and SourceUnset when neither
 // declares one; callers then fall back to the repository-scope list.
 func MachineHarnesses(user, organization *Config) ([]string, Source) {
-	if user != nil && user.HasTargets {
-		return append([]string{}, user.Harnesses...), UserPersonal
-	}
-	if user != nil && len(user.Harnesses) > 0 {
+	if user != nil && (user.HasTargets || len(user.Harnesses) > 0) {
 		return append([]string(nil), user.Harnesses...), UserPersonal
 	}
 	if organization != nil && len(organization.Harnesses) > 0 {

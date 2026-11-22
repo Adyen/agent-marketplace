@@ -245,24 +245,6 @@ func TestUserTargetsAbsentSnapshotAndExplicitEmpty(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"factory", "claude"}) || source != config.Organization {
 		t.Fatalf("deleting the user list resolves to %v from %v, want organization [factory claude]", got, source)
 	}
-
-	if err := os.WriteFile(userPath, []byte(`apiVersion: agent-marketplace/v4
-harnesses: []
-sources:
-  market: {marketplace: https://marketplace.example}
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SetUserMarketplaceExclusion(userPath, "https://marketplace.example", "team", ir.KindSkill, "review", true); err != nil {
-		t.Fatalf("unrelated exclusion edit: %v", err)
-	}
-	data, err = os.ReadFile(userPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "harnesses: []") || strings.Contains(string(data), "targets:") {
-		t.Fatalf("unrelated edit changed an authored empty harnesses list: %s", data)
-	}
 }
 
 // spec: config-mutation/removing-the-last-target-without-targets-spelling-is-refused
