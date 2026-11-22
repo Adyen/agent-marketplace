@@ -57,8 +57,9 @@ func MergeLayers(layers []Layer) *Config {
 		if layer.Config.APIVersion != "" {
 			merged.APIVersion = layer.Config.APIVersion
 		}
-		if layer.Config.Harnesses != nil {
-			merged.Harnesses = layer.Config.Harnesses
+		if layer.Config.Harnesses != nil || layer.Config.HasTargets {
+			merged.Harnesses = append([]string{}, layer.Config.Harnesses...)
+			merged.HasTargets = layer.Config.HasTargets
 		}
 		// Preserve the highest-precedence project-facing setting for callers
 		// that display the merged config. Execution uses
@@ -221,6 +222,9 @@ func (s Source) CanConfigureLogging() bool {
 // non-empty organization list. It returns nil and SourceUnset when neither
 // declares one; callers then fall back to the repository-scope list.
 func MachineHarnesses(user, organization *Config) ([]string, Source) {
+	if user != nil && user.HasTargets {
+		return append([]string{}, user.Harnesses...), UserPersonal
+	}
 	if user != nil && len(user.Harnesses) > 0 {
 		return append([]string(nil), user.Harnesses...), UserPersonal
 	}

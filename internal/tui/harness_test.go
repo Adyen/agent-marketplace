@@ -205,8 +205,15 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 // spec: tui-interactions/empty-selection
 func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	m.projectHarnesses = []string{"factory"}
 	m.openHarnessModal()
-	m.harnessModal.selected = map[string]bool{}
+	mi, _ := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	m = mi.(Model)
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = mi.(Model)
+	if m.harnessModal.selected["factory"] {
+		t.Fatal("space should remove Factory from the project selection")
+	}
 
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)

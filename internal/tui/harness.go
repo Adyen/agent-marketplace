@@ -209,7 +209,7 @@ func (m Model) handleHarnessModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		harnesses := selectedHarnessIDs(m.harnessModal.selected)
-		if len(harnesses) == 0 {
+		if len(harnesses) == 0 && m.harnessModal.scope != harnessScopeGlobal {
 			// Rebuild so the completed form resets and the user can
 			// keep toggling options after the rejected save.
 			m.buildHarnessForm()
