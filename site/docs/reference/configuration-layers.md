@@ -59,6 +59,8 @@ A repository's list therefore never narrows what your user or organization confi
 
 Lists are not combined across layers. A resource group's `harnesses` list intersects with its scope's target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
 
+`targets:` may replace `harnesses:` anywhere above. An authored `targets: []` in the user file counts as a declared empty list: it selects no machine targets and no other layer replaces it. See the [`harnesses` reference](configuration.md#harnesses).
+
 ### Allowlists
 
 `allowed_registries` and `allowed_marketplaces` are checked in the order organization, user, repository, and the first layer that declares the field controls it. Within that layer, the first declaration in include order wins. A later layer or fragment cannot relax or replace it. The personal-local file cannot declare either field.

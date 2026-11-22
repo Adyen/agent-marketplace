@@ -94,6 +94,9 @@ personal file cannot set `harnesses` or allowlists, and the CLI adds it and its
 lock to `.gitignore`. Every layer supports local-file `include:` (one path or a
 list); fragments merge below the including file, and editors refuse to edit a
 selection that lives in a fragment (`config.edit.include-owned`).
+`targets:` is an alias of `harnesses:` at root and group scope (declaring both
+is refused; `targets: []` is valid only in the user file and selects no machine
+targets). Editors still write `harnesses:`, and older clients reject `targets:`.
 
 ### Sources and resource groups
 
