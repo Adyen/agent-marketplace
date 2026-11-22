@@ -19,7 +19,7 @@ Harness editing and initial configuration SHALL support selecting multiple suppo
 
 #### Scenario: Empty selection
 - **WHEN** a user attempts to save an empty harness selection
-- **THEN** the form refuses the save without modifying configuration bytes, except in the user scope, where the config-mutation rules for removing the last target apply (save `targets: []` when the user root already spells `targets:`; otherwise refuse with the upgrade-and-rename guidance)
+- **THEN** the form refuses the save without modifying configuration bytes
 
 #### Scenario: Unknown harness target IDs refuse configuration
 - **WHEN** otherwise valid consumer configuration names an unknown harness target ID, including alongside supported IDs or in per-target materialization settings
