@@ -338,7 +338,7 @@ Per modal:
 | **First run** | sparkle | A three-step flow with a step indicator (`1 Targets · 2 Telemetry · 3 Sources`). Telemetry consent is a choice list with *no* preselected row ("Share basic telemetry" / "Don't share"), and Continue stays disabled until the user picks one. Cancel writes nothing. |
 | **Resource action** (Install/Remove) | none | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
 | **Confirmations** (quit, sync-and-quit, migration) | exit / sync | The question, then a choice list with the affirmative, negative, and cancel options from `session-interactions`, then "Continue". Escape maps to cancel. |
-| **Resource inspection** | file | Two columns: a file tree on `--gui-s0100` and a preview pane styled like Codex's diff panel, with a sticky path header (path in mono and a size tag), mono 12 px content, and line numbers in `--gui-ink-3`. |
+| **Resource inspection** | file | Two columns: a 240 px file tree on `--gui-s0100` and a preview pane on `--gui-canvas` with a 1 px `--gui-line` border. The preview has a sticky header with the path in mono 12 px `--gui-ink-2`. Markdown files open formatted by default: the body is `--gui-sans` 14 px with verbatim frontmatter in a mono box above it, and a Formatted/Source switch in the header shows the unmodified file. Other files show mono 12 px content. The dialog has a single close control in its header; the footer shows "Retry inspection" only after an error. |
 
 ## Keyboard map
 

@@ -139,9 +139,12 @@ test('built GUI inspects an exact uninstalled Marketplace skill read-only', asyn
     await expect(dialog).toBeVisible()
     const primary = dialog.getByRole('treeitem', { name: 'SKILL.md' })
     await expect(primary).toHaveAttribute('aria-selected', 'true')
-    const preview = dialog.locator('pre')
+    const preview = dialog.locator('.resource-inspection__markdown')
     await expect(preview).toContainText('Grill inspection')
     await expect(preview).toContainText('<script>text</script>')
+    const bullet = preview.locator('ul > li').first()
+    await expect(bullet).toBeVisible()
+    expect(await bullet.evaluate((element) => getComputedStyle(element.parentElement as Element).listStyleType)).toBe('disc')
     expect(await dialog.locator('script, img').count()).toBe(0)
     const columns = dialog.locator('.resource-inspection__columns')
     const desktop = await inspectionGeometry(dialog, 2)
@@ -286,5 +289,33 @@ test('inspection harness stop propagates its protected-byte witness failure', as
     if (!expectedFailureObserved) {
       await harness.stop().catch(() => undefined)
     }
+  }
+})
+
+// spec: gui-shell/resource-inspection-clears-the-window-controls
+test('resource inspection clears the macOS window controls', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the inspection window-controls check')
+  }
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'platform', { configurable: true, get: () => 'MacIntel' })
+  })
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'local-skill-files' })
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await launchBuiltUserApp(page, harness.bootstrap)
+    const directory = page.getByRole('option').filter({ hasText: 'directory-skill' })
+    await expect(directory).toBeVisible({ timeout: 60_000 })
+    await directory.click()
+    await page.getByRole('button', { name: 'Open resource', exact: true }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Resource inspection' })
+    await expect(dialog).toBeVisible()
+    const box = await dialog.boundingBox()
+    expect(box?.y ?? 0).toBeGreaterThanOrEqual(52)
+    await expect(dialog.getByRole('button', { name: 'Close inspection' })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeVisible()
+  } finally {
+    await harness.stop()
   }
 })

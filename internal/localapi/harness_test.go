@@ -853,7 +853,7 @@ func setupWork41PagedDiscoveryFixture(t *testing.T, home string, bootstrap map[s
 func setupWork36InspectionFixture(t *testing.T, home string, bootstrap map[string]string) []discoveryFixtureFile {
 	t.Helper()
 	fixture := inspectiontest.NewFixtureContent(t,
-		[]byte("# Grill inspection\n\nLiteral <script>text</script> remains inert."),
+		[]byte("# Grill inspection\n\n- Literal <script>text</script> remains inert."),
 		map[string][]byte{
 			"notes.md":   []byte("# Notes\n\nSupporting inspection."),
 			"logo.png":   []byte("\x89PNG\r\n\x1a\nfake-image"),

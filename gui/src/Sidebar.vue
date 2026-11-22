@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { SourceDescription } from './api/client'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
+import { isMacPlatform } from './platform'
 import { sourceLabel } from './source-label'
 import { flattenSourceGroups, groupSources } from './source-groups'
 
@@ -47,7 +48,6 @@ const emit = defineEmits<{
   quit: []
 }>()
 
-const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
 const sourcesButton = ref<HTMLButtonElement | null>(null)
 const settingsButton = ref<HTMLButtonElement | null>(null)
 const foldedSourceGroups = ref(new Set<string>())
@@ -114,7 +114,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
   <aside
     class="gui-sidebar"
     aria-label="Navigation"
-    :class="{ 'gui-sidebar--mac': isMac }"
+    :class="{ 'gui-sidebar--mac': isMacPlatform }"
   >
     <div class="gui-sidebar__top" />
 

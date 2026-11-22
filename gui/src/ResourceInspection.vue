@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { InspectionFile } from './api/client'
 import type { WorkspaceController } from './controller'
 import GuiModal from './GuiModal.vue'
+import { renderMarkdown } from './markdown'
 
 interface TreeNode {
   id: string
@@ -22,7 +23,7 @@ const props = defineProps<{ controller: WorkspaceController }>()
 const open = defineModel<boolean>('open', { default: false })
 const expandedDirectories = ref(new Set<string>())
 const focusedNodeID = ref<string | null>(null)
-const closeButton = ref<HTMLButtonElement | null>(null)
+const markdownView = ref<'formatted' | 'source'>('formatted')
 const treeItemElements = new Map<string, HTMLElement>()
 
 const inspection = computed(() => props.controller.state.inspection)
@@ -89,6 +90,24 @@ const visibleTree = computed<VisibleTreeNode[]>(() => {
 const selectedFile = computed(() =>
   files.value.find((file) => file.id === inspection.value?.selectedFileId) ?? null,
 )
+const isMarkdown = computed(() => selectedFile.value != null && /\.(md|markdown)$/i.test(selectedFile.value.path))
+const renderedMarkdown = computed(() =>
+  isMarkdown.value && inspection.value?.data != null ? renderMarkdown(inspection.value.data.content) : null,
+)
+
+function openMarkdownLink(event: MouseEvent) {
+  const anchor = (event.target as Element | null)?.closest('a')
+  if (anchor == null) {
+    return
+  }
+  event.preventDefault()
+  const href = anchor.getAttribute('href') ?? ''
+  if (window.runtime?.BrowserOpenURL != null) {
+    window.runtime.BrowserOpenURL(href)
+    return
+  }
+  window.open(href, '_blank', 'noopener,noreferrer')
+}
 
 function setTreeItemRef(id: string, element: Element | null) {
   if (element instanceof HTMLElement) {
@@ -200,13 +219,13 @@ function retry() {
   if (selectedFileID != null && inspection.value?.data?.files.some((file) => file.id === selectedFileID)) {
     focusTreeItem(selectedFileID)
   } else {
-    void nextTick(() => closeButton.value?.focus())
+    const first = visibleTree.value[0]
+    if (first != null) {
+      focusTreeItem(first.id)
+    }
   }
 }
 
-function close() {
-  open.value = false
-}
 </script>
 
 <template>
@@ -243,21 +262,40 @@ function close() {
             </ul>
           </section>
           <section class="resource-inspection__preview-panel" aria-label="File preview">
-            <h2 v-if="selectedFile" class="resource-inspection__path">{{ selectedFile.path }}</h2>
+            <header v-if="selectedFile" class="resource-inspection__preview-header">
+              <h2 class="resource-inspection__path">{{ selectedFile.path }}</h2>
+              <div v-if="renderedMarkdown != null" class="segmented resource-inspection__view" role="radiogroup" aria-label="Preview format">
+                <label class="segmented__option" :class="{ 'segmented__option--selected': markdownView === 'formatted' }">
+                  <input v-model="markdownView" type="radio" name="resource-inspection-format" value="formatted" />
+                  <span>Formatted</span>
+                </label>
+                <label class="segmented__option" :class="{ 'segmented__option--selected': markdownView === 'source' }">
+                  <input v-model="markdownView" type="radio" name="resource-inspection-format" value="source" />
+                  <span>Source</span>
+                </label>
+              </div>
+            </header>
             <p v-if="inspection?.loading" role="status" aria-live="polite">
               {{ inspection.data == null ? 'Loading verified inspection…' : 'Loading selected file…' }}
             </p>
             <p v-else-if="inspection?.error" role="alert">{{ inspection.error }}</p>
             <p v-else-if="inspection?.data?.unsupportedMessage" role="status">{{ inspection.data.unsupportedMessage }}</p>
-            <pre v-else-if="inspection?.data" class="resource-inspection__content" tabindex="0">{{ inspection.data.content }}</pre>
+            <template v-else-if="inspection?.data">
+              <div
+                v-if="renderedMarkdown != null && markdownView === 'formatted'"
+                class="resource-inspection__markdown-view"
+              >
+                <pre v-if="renderedMarkdown.frontmatter != null" class="resource-inspection__frontmatter">{{ renderedMarkdown.frontmatter }}</pre>
+                <div class="resource-inspection__markdown" @click="openMarkdownLink" v-html="renderedMarkdown.html" />
+              </div>
+              <pre v-else class="resource-inspection__content" tabindex="0">{{ inspection.data.content }}</pre>
+            </template>
             <p v-else role="status">Select a verified file to preview it.</p>
           </section>
         </div>
     </div>
-    <template #footer>
-      <button ref="closeButton" type="button" aria-label="Close inspection" @click="close">Close inspection</button>
+    <template v-if="inspection?.error" #footer>
       <button
-        v-if="inspection?.error"
         type="button"
         aria-label="Retry inspection"
         @click="retry"

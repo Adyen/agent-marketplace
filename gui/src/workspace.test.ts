@@ -2539,7 +2539,13 @@ describe('Event stream reconnect', () => {
     await tick()
     expect(document.body.querySelector('script')).toBeNull()
     expect(document.body.querySelector('img')).toBeNull()
-    expect(document.body.querySelector('pre')?.textContent).toContain('<script>alert(1)</script>')
+    expect(document.body.querySelector('.resource-inspection__markdown')?.textContent).toContain('<script>alert(1)</script>')
+    const sourceRadio = document.body.querySelector('input[name="resource-inspection-format"][value="source"]') as HTMLInputElement
+    sourceRadio.click()
+    await tick()
+    expect(document.body.querySelector('pre.resource-inspection__content')?.textContent).toContain('<script>alert(1)</script>')
+    document.body.querySelector<HTMLInputElement>('input[name="resource-inspection-format"][value="formatted"]')?.click()
+    await tick()
     const primaryItem = document.body.querySelector('[role="treeitem"][aria-label="SKILL.md"]') as HTMLElement | null
     expect(primaryItem?.getAttribute('aria-selected')).toBe('true')
     expect(document.activeElement).toBe(primaryItem)
@@ -2583,7 +2589,7 @@ describe('Event stream reconnect', () => {
     calls[0]?.resolve(payload(first.id, primaryID, 'stale first resource'))
     await tick()
     expect(controller.state.inspection?.rowId).toBe(second.id)
-    expect(document.body.querySelector('pre')?.textContent).toBe('# Supporting inspection.')
+    expect(document.body.querySelector('.resource-inspection__markdown h1')?.textContent).toBe('Supporting inspection.')
 
     const image = document.body.querySelector('[role="treeitem"][aria-label="support/logo.png"]') as HTMLElement | null
     expect(image).not.toBeNull()
@@ -2626,6 +2632,107 @@ describe('Event stream reconnect', () => {
       expect(event).not.toHaveProperty('sourceName')
     }
     expect(quit).not.toHaveBeenCalled()
+  })
+
+  // spec: gui-shell/markdown-file-opens-formatted-with-a-source-view
+  it('opens a Markdown preview formatted with frontmatter above it and a Source view of the file', async () => {
+    type Pending = { resolve: (value: import('./api/client').InspectionPayload) => void }
+    const calls: Pending[] = []
+    const { client, push } = fakeClient()
+    const inspection = vi.fn(() => new Promise<import('./api/client').InspectionPayload>((resolve) => calls.push({ resolve })))
+    Object.assign(client, { inspection })
+    const { wrapper } = mountWorkspace(client)
+    const target = row('rich', { id: 'row-rich', discovery: true, inspectable: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+    push(event({ sequence: 1, generation: 4, payload: snapshot([target], { discoveryEnabled: true }) }))
+    await tick()
+    await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+    const fileID = 'r'.repeat(64)
+    const content = '---\nname: rich\ndescription: Demo\n---\n# Heading\n\nSome *emphasis* and `code`.\n'
+    calls[0]?.resolve({
+      rowId: target.id,
+      generation: 4,
+      revision: 'sha256:' + 'a'.repeat(64),
+      manifestDigest: 'sha256:' + 'b'.repeat(64),
+      files: [{ id: fileID, path: 'SKILL.md', mediaType: 'text/markdown', size: content.length, inspectionClass: 'text' }],
+      primaryFileId: fileID,
+      selectedFileId: fileID,
+      content,
+      truncated: false,
+      unsupportedMessage: '',
+    })
+    await tick()
+
+    expect(document.body.querySelector('pre.resource-inspection__frontmatter')?.textContent).toBe('---\nname: rich\ndescription: Demo\n---')
+    expect(document.body.querySelector('.resource-inspection__markdown h1')?.textContent).toBe('Heading')
+    expect(document.body.querySelector('.resource-inspection__markdown')?.textContent).not.toContain('name: rich')
+    const formatted = document.body.querySelector('input[name="resource-inspection-format"][value="formatted"]') as HTMLInputElement
+    expect(formatted.checked).toBe(true)
+    const sourceRadio = document.body.querySelector('input[name="resource-inspection-format"][value="source"]') as HTMLInputElement
+    sourceRadio.click()
+    await tick()
+    expect(document.body.querySelector('pre.resource-inspection__content')?.textContent).toBe(content)
+    expect(document.body.querySelector('.resource-inspection__markdown')).toBeNull()
+  })
+
+  // spec: gui-shell/untrusted-markdown-stays-inert
+  it('keeps untrusted Markdown inert and opens only http links in the system browser', async () => {
+    type Pending = { resolve: (value: import('./api/client').InspectionPayload) => void }
+    const calls: Pending[] = []
+    const { client, push } = fakeClient()
+    const inspection = vi.fn(() => new Promise<import('./api/client').InspectionPayload>((resolve) => calls.push({ resolve })))
+    Object.assign(client, { inspection })
+    const browserOpenURL = vi.fn()
+    Object.defineProperty(window, 'runtime', { configurable: true, value: { BrowserOpenURL: browserOpenURL } })
+    try {
+      const target = row('hostile', { id: 'row-hostile', discovery: true, inspectable: true, group: 'available', checked: false, scope: 'available', status: 'available' })
+      const { wrapper } = mountWorkspace(client)
+      push(event({ sequence: 1, generation: 4, payload: snapshot([target], { discoveryEnabled: true }) }))
+      await tick()
+      await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+      await tick()
+      const fileID = 'h'.repeat(64)
+      const content = [
+        '# Hostile',
+        '',
+        '<img src="https://tracker.example/pixel.png" onerror="alert(1)"> <script>alert(2)</script>',
+        '',
+        '![logo](https://tracker.example/logo.png)',
+        '',
+        '[web](https://example.com) [js](javascript:alert(3)) [local](file:///etc/passwd)',
+      ].join('\n')
+      calls[0]?.resolve({
+        rowId: target.id,
+        generation: 4,
+        revision: 'sha256:' + 'a'.repeat(64),
+        manifestDigest: 'sha256:' + 'b'.repeat(64),
+        files: [{ id: fileID, path: 'SKILL.md', mediaType: 'text/markdown', size: content.length, inspectionClass: 'text' }],
+        primaryFileId: fileID,
+        selectedFileId: fileID,
+        content,
+        truncated: false,
+        unsupportedMessage: '',
+      })
+      await tick()
+
+      const body = document.body.querySelector('.resource-inspection__markdown') as HTMLElement
+      expect(body).not.toBeNull()
+      expect(body.querySelector('img')).toBeNull()
+      expect(document.body.querySelector('script')).toBeNull()
+      expect(body.textContent).toContain('<script>alert(2)</script>')
+      expect(body.querySelector('.resource-inspection__image-alt')?.textContent).toBe('logo')
+      const anchors = Array.from(body.querySelectorAll('a'))
+      expect(anchors.map((anchor) => anchor.getAttribute('href'))).toEqual(['https://example.com'])
+
+      const link = anchors[0]!
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+      link.dispatchEvent(click)
+      expect(click.defaultPrevented).toBe(true)
+      expect(browserOpenURL).toHaveBeenCalledWith('https://example.com')
+      expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    } finally {
+      Object.defineProperty(window, 'runtime', { configurable: true, value: undefined })
+    }
   })
 
   it('invalidates an inspection after a new core generation or a discovery result removes its row', async () => {
@@ -2755,7 +2862,7 @@ describe('Event stream reconnect', () => {
     expect(dialog).not.toBeNull()
     const primaryItem = document.body.querySelector('[role="treeitem"][aria-label="SKILL.md"]') as HTMLElement | null
     expect(document.activeElement).toBe(primaryItem)
-    expect(document.body.querySelector('pre')?.textContent).toBe('# Installed alpha')
+    expect(document.body.querySelector('.resource-inspection__markdown h1')?.textContent).toBe('Installed alpha')
 
     document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
     await tick()
@@ -2767,7 +2874,7 @@ describe('Event stream reconnect', () => {
     expect(calls[2]?.fileId).toBe(notesID)
     calls[2]?.resolve(payload(first.id, 4, notesID, '# Supporting review'))
     await tick()
-    expect(document.body.querySelector('pre')?.textContent).toBe('# Supporting review')
+    expect(document.body.querySelector('.resource-inspection__markdown h1')?.textContent).toBe('Supporting review')
 
     document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
     await tick()
@@ -2805,7 +2912,7 @@ describe('Event stream reconnect', () => {
     calls[4]?.resolve(payload(first.id, 4, scriptID, 'stale alpha script'))
     await tick()
     expect(controller.state.inspection?.rowId).toBe(second.id)
-    expect(document.body.querySelector('pre')?.textContent).toBe('# Installed beta')
+    expect(document.body.querySelector('.resource-inspection__markdown h1')?.textContent).toBe('Installed beta')
 
     document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
     await tick()

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
+import { isMacPlatform } from './platform'
 
 const props = withDefaults(
   defineProps<{
@@ -15,7 +16,7 @@ const props = withDefaults(
 )
 const open = defineModel<boolean>('open', { default: false })
 
-const contentClass = computed(() => `gui-modal gui-modal--${props.size}${props.busy && !props.bare ? ' gui-modal--busy' : ''}`)
+const contentClass = computed(() => `gui-modal gui-modal--${props.size}${props.busy && !props.bare ? ' gui-modal--busy' : ''}${isMacPlatform ? ' gui-modal--mac' : ''}`)
 </script>
 
 <template>

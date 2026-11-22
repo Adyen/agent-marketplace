@@ -55,7 +55,7 @@ async function expectPrimaryAndSupport(
   const primary = dialog.getByRole('treeitem', { name: 'SKILL.md', exact: true })
   await expect(primary).toHaveAttribute('aria-selected', 'true')
   await expect(primary).toBeFocused()
-  const preview = dialog.locator('pre')
+  const preview = dialog.locator('.resource-inspection__markdown')
   await expect(preview).toContainText(primaryText)
   await page.keyboard.press('ArrowUp')
   const support = dialog.getByRole('treeitem', { name: 'notes.md', exact: true })
