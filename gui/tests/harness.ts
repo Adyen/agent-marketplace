@@ -119,14 +119,18 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
     stopPromise = (async () => {
       lines.close()
       pipe.destroy()
-      if (!exited) {
-        const done = await Promise.race([exitPromise.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))])
-        if (!done) {
-          try {
-            process.kill(-child.pid!, 'SIGKILL')
-          } catch {
-            child.kill('SIGKILL')
-          }
+      const signalGroup = (signal: NodeJS.Signals) => {
+        try {
+          process.kill(-child.pid!, signal)
+        } catch {
+          child.kill(signal)
+        }
+      }
+      const exitWithin = (ms: number) => Promise.race([exitPromise.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))])
+      if (!exited && !(await exitWithin(10_000))) {
+        signalGroup('SIGTERM')
+        if (!(await exitWithin(10_000))) {
+          signalGroup('SIGKILL')
           await exitPromise
         }
       }
@@ -134,7 +138,7 @@ export async function startHarness(mode: HarnessMode, extraEnv: Record<string, s
         await closePromise
       }
       dumpStderr()
-      if (exitCode !== 0) {
+      if (exitCode !== 0 && exitSignal !== 'SIGTERM') {
         throw new Error(`Local API harness failed (exit ${exitCode ?? 'signal'}, signal ${exitSignal ?? 'none'}); see retained harness log.`)
       }
     })()

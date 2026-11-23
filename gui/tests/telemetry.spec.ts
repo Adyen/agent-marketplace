@@ -133,8 +133,8 @@ async function work40TelemetryBootstrap(value: Bootstrap): Promise<Work40Telemet
   const invalidPaths = await Promise.all(paths.map(async ([name, path]) =>
     path == null || !isAbsolute(path) || !await isWithinTemp(path) ? name : null,
   ))
-  if (bootstrap.work40Mode !== 'root-owned' || invalidPaths.some((path) => path != null)) {
-    throw new Error('Work40 telemetry fixture is not an isolated root-owned directory case')
+  if (!['root-owned', 'source-included'].includes(bootstrap.work40Mode) || invalidPaths.some((path) => path != null)) {
+    throw new Error('Work40 telemetry fixture is not an isolated directory case')
   }
   const endpoint = new URL(bootstrap.url)
   if (endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname)) {
@@ -150,7 +150,7 @@ async function startWork40TelemetryHarness(testInfo: TestInfo) {
   await mkdir(harnessLogDir, { recursive: true })
   const harness = await startHarness('user', {
     AM_LOCALAPI_USER_FIXTURE: 'work40-resource-actions',
-    AM_LOCALAPI_USER_INITIAL_MODE: 'root-owned',
+    AM_LOCALAPI_USER_INITIAL_MODE: 'source-included',
     AM_LOCALAPI_TELEMETRY_MODE: 'detailed',
     AM_LOCALAPI_TELEMETRY_CAPTURE: capturePath,
     AM_LOCALAPI_RELEASE_MARK: '',
@@ -233,14 +233,14 @@ function observeWork40ActionRequests(page: Page): { plans: () => number; resourc
   return { plans: () => plans, resourceActions: () => resourceActions, coreActions: () => coreActions }
 }
 
-async function openWork40InstallPlan(page: Page, actions: string[]): Promise<Locator> {
-  const installButton = page.getByRole('button', { name: 'Install resource', exact: true })
-  await expect(installButton).toBeEnabled()
-  await tabTo(page, installButton, 'Install resource', actions)
+async function openWork40UninstallPlan(page: Page, actions: string[]): Promise<Locator> {
+  const uninstallButton = page.getByRole('button', { name: 'Uninstall resource', exact: true })
+  await expect(uninstallButton).toBeEnabled()
+  await tabTo(page, uninstallButton, 'Uninstall resource', actions)
   const response = page.waitForResponse((candidate) => candidate.request().method() === 'POST' && new URL(candidate.url()).pathname === '/api/resource-plan')
   await page.keyboard.press('Enter')
   expect((await response).status()).toBe(200)
-  const dialog = page.getByRole('dialog', { name: 'Install resource' })
+  const dialog = page.getByRole('dialog', { name: 'Uninstall resource' })
   await expect(dialog).toBeVisible()
   return dialog
 }
@@ -418,7 +418,7 @@ test('built GUI records detailed toggle cancellation spans for explicit Director
     expect(events.count()).toBe(0)
     actions.push('Keyboard-filtered and selected the current Review row without browsing')
 
-    let dialog = await openWork40InstallPlan(page, actions)
+    let dialog = await openWork40UninstallPlan(page, actions)
     expect(await dialog.locator('input[type="checkbox"]').count()).toBe(0)
     assertWork40PreviewHasNoLocalPaths(await dialog.locator('pre').textContent(), bootstrap)
     await dialog.screenshot({ path: testInfo.outputPath('toggle-cancellation-plan.png'), animations: 'disabled' })
@@ -431,7 +431,7 @@ test('built GUI records detailed toggle cancellation spans for explicit Director
     expect(events.count()).toBe(1)
     actions.push('Dismissed the static Directory plan with Escape; one telemetry response and no protected-file changes')
 
-    dialog = await openWork40InstallPlan(page, actions)
+    dialog = await openWork40UninstallPlan(page, actions)
     const declineResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')
     await tabTo(page, dialog.getByRole('button', { name: 'Cancel', exact: true }), 'Cancel', actions, dialog)
     await page.keyboard.press('Enter')
@@ -441,7 +441,7 @@ test('built GUI records detailed toggle cancellation spans for explicit Director
     expect(events.count()).toBe(2)
     actions.push('Dismissed the static Directory plan with Cancel; one additional telemetry response and no protected-file changes')
 
-    dialog = await openWork40InstallPlan(page, actions)
+    dialog = await openWork40UninstallPlan(page, actions)
     const cancelResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')
     await tabTo(page, dialog.getByRole('button', { name: 'Cancel', exact: true }), 'Cancel', actions, dialog)
     await page.keyboard.press('Enter')
