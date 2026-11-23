@@ -46,6 +46,7 @@ type ResolvedArtifact struct {
 	// appears in the advisory implied preview). Prerequisite provenance is
 	// kept separate from collection provenance: Via stays collection-only.
 	RequiredBy []ResourceRef
+	Implied    bool
 
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
@@ -1051,7 +1052,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	errs = append(errs, selectErrs...)
 
 	// Phase 5: Compute the prerequisite closure over the resolved resources.
-	implied, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targets.repository)
+	implied, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targets)
 	errs = append(errs, reqErrs...)
 	if cfg.RequiresExpansionEnabled() {
 		resolved = append(resolved, implied...)

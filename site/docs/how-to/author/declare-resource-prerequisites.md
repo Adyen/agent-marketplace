@@ -61,7 +61,9 @@ warning: skill "review-code" requires mcp "docs-server", but it is not selected
 Installed review-code in this repo
 ```
 
-The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception: it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
+Remediation arguments are POSIX shell literals: simple values print unquoted, and values that need quoting are single-quoted. When `requires.expand: true` selects the prerequisite transitively, `install` instead ends its summary with `also selected mcp "docs-server" (required by skill "review-code")`; with expansion disabled an eligible prerequisite prints as `would also select` without being installed.
+
+The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception — it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
 
 ## 5. Verify with `status`
 
@@ -82,9 +84,11 @@ Status lists the same prerequisite in an `UNMET REQUIREMENTS` table sorted by `R
 
 ```text
 UNMET REQUIREMENTS
-RESOURCE           REQUIRES         FIX
-skill:review-code  mcp:docs-server  agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
+RESOURCE           REQUIRES         REASON                  FIX
+skill:review-code  mcp:docs-server  source-not-configured   agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
 ```
+
+`REASON` is `not-found`, `excluded`, or `source-not-configured`. Because this sample names a `registry` hint that the consumer never configured, `agent-marketplace doctor` also reports `unconfigured prerequisite source: skill "review-code" requires mcp "docs-server" from https://github.com/example-org/integrations.git`. That report is warning only; `doctor` does not configure or fetch the hinted source.
 
 ## Boundaries
 
