@@ -450,11 +450,12 @@ here conflicts with an earlier section, this section wins.
   (`/Users/alexandergr/code/ai…`), so every row starts with the same prefix
   and the part that identifies the source is hidden. The folder icons
   shrink by different amounts as the label grows, so they don't line up.
-- *Rule*: a source row shows a short label: the last two path segments for
-  directories (`resources/skills`), the configured name for named Marketplace
-  sources (otherwise the full endpoint host), and
-  the host and repository name for Git sources (`github.com/org/repo` →
-  `org/repo`). The full location stays in the tooltip and the accessible
+- *Rule*: a source row shows a short label. A named directory or Git source
+  shows its configured name. An unnamed directory shows its last two path
+  segments (`resources/skills`), and an unnamed Git source shows its host and
+  repository name (`github.com/org/repo` → `org/repo`). A Marketplace source
+  always shows its endpoint host, with its port and last path segment, whatever
+  its name. The full location stays in the tooltip and the accessible
   name. The leading icon matches the source kind: folder for directories,
   branch for Git, globe for Marketplace. No icon may shrink: `GuiIcon` is
   `flex: none` everywhere.

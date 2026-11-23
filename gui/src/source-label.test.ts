@@ -28,6 +28,18 @@ describe('sourceLabel', () => {
     expect(sourceLabel(source('marketplace', 'http://localhost:8443/api'))).toBe('localhost:8443/api')
   })
 
+  // spec: gui-shell/named-local-source-shows-its-configured-name
+  it('labels a named directory or Git source by its configured name', () => {
+    expect(sourceLabel(source('directory', '/Users/alexandergr/code/ai/resources/skills', 'team-skills'))).toBe('team-skills')
+    expect(sourceLabel(source('git', 'https://github.com/org/repo.git', 'shared-tools'))).toBe('shared-tools')
+  })
+
+  // spec: gui-shell/unnamed-local-source-keeps-its-path-label
+  it('falls back to the path label for an unnamed directory or Git source', () => {
+    expect(sourceLabel(source('directory', '/Users/alexandergr/code/ai/resources/skills', ''))).toBe('resources/skills')
+    expect(sourceLabel(source('git', 'https://github.com/org/repo.git', ''))).toBe('org/repo')
+  })
+
   it('keeps an IPv4 host whole', () => {
     expect(sourceLabel(source('marketplace', 'http://127.0.0.1:9000'))).toBe('127.0.0.1:9000')
   })

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import type { SourceDescription } from './api/client'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import { isMacPlatform } from './platform'
-import { sourceLabel } from './source-label'
+import { hasNamedLocalLabel, sourceLabel } from './source-label'
 import { flattenSourceGroups, groupSources } from './source-groups'
 
 export interface SidebarGroup {
@@ -83,7 +83,7 @@ const sourceEntries = computed(() =>
 )
 
 function sourceName(source: SourceDescription): string {
-  const rowLabel = source.rowSourceId === '' ? undefined : props.rowSourceLabels.get(source.rowSourceId)
+  const rowLabel = hasNamedLocalLabel(source) || source.rowSourceId === '' ? undefined : props.rowSourceLabels.get(source.rowSourceId)
   return rowLabel || sourceLabel(source)
 }
 

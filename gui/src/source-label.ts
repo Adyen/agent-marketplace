@@ -16,8 +16,15 @@ function marketplaceLabel(location: string): string {
   return `${url.hostname}${port}${segment === '' ? '' : `/${segment}`}`
 }
 
+export function hasNamedLocalLabel(source: SourceDescription): boolean {
+  return source.kind !== 'marketplace' && source.name.trim() !== ''
+}
+
 export function sourceLabel(source: SourceDescription): string {
   const location = source.location
+  if (hasNamedLocalLabel(source)) {
+    return source.name.trim()
+  }
   try {
     switch (source.kind) {
       case 'directory': {
