@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
 import ChoiceList from './ChoiceList.vue'
 import GuiModal from './GuiModal.vue'
+import { harnessDisplayName } from './harness-names'
 import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
 
@@ -12,6 +13,7 @@ const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ cancel: [] }>()
 
 const step = ref<'targets' | 'consent' | 'sources'>('targets')
+const targetsGroup = ref<HTMLElement | null>(null)
 const draft = ref<Set<string>>(new Set())
 const consent = ref<boolean | null>(null)
 const consentOptions = [
@@ -31,6 +33,7 @@ const detectionUnavailable = computed(() => configuration.value?.detectionUnavai
 const needsConsent = computed(() => configuration.value?.consentRequired === true)
 const showSources = computed(() => (configuration.value?.organizationSources ?? []).length === 0)
 const options = computed(() => configuration.value?.supportedTargets ?? [])
+const detected = computed(() => new Set(configuration.value?.detectedTargets ?? []))
 const submitting = computed(
   () =>
     pending.value ||
@@ -65,6 +68,7 @@ watch(open, (isOpen) => {
   pendingSources.value = []
   formEpoch.value += 1
   draft.value = new Set(configuration.value?.detectedTargets ?? [])
+  void nextTick(() => targetsGroup.value?.querySelector<HTMLElement>('[role="checkbox"]')?.focus())
 })
 
 function toggle(id: string, checked: boolean | 'indeterminate') {
@@ -143,16 +147,17 @@ async function finish() {
     <p v-else-if="detectionUnavailable" role="status">Harness detection is unavailable; select targets manually.</p>
 
     <template v-if="step === 'targets'">
-      <p>Choose the Harness targets this installation manages.</p>
-      <fieldset class="settings__group" :disabled="submitting">
+      <p>Choose which coding agents Agent Marketplace installs resources for.</p>
+      <fieldset ref="targetsGroup" class="settings__group" :disabled="submitting">
         <legend>Harness targets</legend>
         <label v-for="id in options" :key="id" class="settings__option">
           <UCheckbox
             :model-value="draft.has(id)"
-            :label="id"
+            :label="harnessDisplayName(id)"
             :aria-label="`Target ${id}`"
             @update:model-value="toggle(id, $event)"
           />
+          <span v-if="detected.has(id)" class="gui-tag">Detected</span>
         </label>
       </fieldset>
     </template>

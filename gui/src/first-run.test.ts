@@ -136,6 +136,20 @@ describe('First-run setup', () => {
   })
 
   // spec: gui-first-run/detected-harness-targets-are-preselected-and-editable
+  it('names targets by product and tags the detected ones', async () => {
+    const { client, push } = firstRunClient()
+    mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    const targets = dialog().textContent ?? ''
+    expect(targets).toContain('Choose which coding agents Agent Marketplace installs resources for.')
+    expect(targets).toContain('Claude Code')
+    expect(targets).toContain('Windsurf')
+    expect(targets).toContain('Detected')
+    expect(targets).not.toContain('Choose the Harness targets')
+  })
+
   it('preselects detected targets, allows changes, and requires a non-empty selection', async () => {
     const { client, push } = firstRunClient()
     mountWorkspace(client)
