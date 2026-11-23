@@ -10,7 +10,16 @@ This profile enables the same [isolated runner](../sqlite-filesystem/README.md#s
 as the SQLite profile. Build or load the verified image before starting Compose.
 Only the `worker` gets access to the runner socket.
 
-To refresh assessments, run `docker compose exec worker /app/agent-marketplace serve reindex --config /app/marketplace.yaml`.
+Before upgrading from the repository root, stage the runner image or opt out
+by setting `MARKETPLACE_SKILLSPECTOR_ENDPOINT=` and passing
+`--scale skillspector=0` to the PostgreSQL profile's `up` command.
+
+From the repository root, refresh assessments with:
+
+```bash
+docker compose -f deploy/compose/postgres-s3/compose.yaml exec worker \
+  /app/agent-marketplace serve reindex --config /app/marketplace.yaml
+```
 
 The web image builds on Debian Node 24 and runs on a separate distroless Node 24
 image, without a shell or package manager. `NODE_IMAGE` selects the builder;

@@ -1,6 +1,9 @@
 package store_test
 
 import (
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -190,8 +193,28 @@ func TestDecodeAdvisoryReports(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DecodeAdvisoryReports = %#v, want %#v", got, want)
 	}
-	if _, err := store.DecodeAdvisoryReports("["); err == nil || !strings.Contains(err.Error(), "unmarshal advisory reports") {
-		t.Fatalf("malformed advisory report error = %v", err)
+	for _, tt := range []struct {
+		name    string
+		encoded string
+		cause   error
+	}{
+		{"malformed", "[", nil},
+		{"duplicate report member", `[{"tool":"skillspector","status":"partial","status":"complete"}]`, jsontext.ErrDuplicateName},
+		{"duplicate finding member", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","severity":"high","severity":"low","summary":"Potential risky skill behavior."}]}]`, jsontext.ErrDuplicateName},
+		{"report alias after canonical", `[{"tool":"skillspector","status":"","Status":"complete"}]`, jsonv2.ErrUnknownName},
+		{"report alias before canonical", `[{"tool":"skillspector","Status":"complete","status":""}]`, jsonv2.ErrUnknownName},
+		{"finding alias after canonical", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","severity":"","Severity":"low","summary":"Potential risky skill behavior."}]}]`, jsonv2.ErrUnknownName},
+		{"finding alias before canonical", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","Severity":"low","severity":"","summary":"Potential risky skill behavior."}]}]`, jsonv2.ErrUnknownName},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.DecodeAdvisoryReports(tt.encoded)
+			if got != nil || err == nil || !strings.HasPrefix(err.Error(), "unmarshal advisory reports: ") {
+				t.Fatalf("DecodeAdvisoryReports = %#v, %v; want nil and unmarshal advisory reports error", got, err)
+			}
+			if tt.cause != nil && !errors.Is(err, tt.cause) {
+				t.Fatalf("DecodeAdvisoryReports error = %v, want cause %v", err, tt.cause)
+			}
+		})
 	}
 }
 

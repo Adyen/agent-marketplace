@@ -1,6 +1,11 @@
 # Deploy Agent Marketplace on Kubernetes
 
-This guide deploys the Agent Marketplace service with the reusable Helm chart in this directory. With an explicit image version, the default topology renders one all-in-one Deployment (`mode: all`), and it can add the web and documentation frontends. Use `mode: split` when you have external shared storage and want to scale the API and worker separately.
+This guide deploys the Agent Marketplace service with the reusable Helm chart in
+this directory. With the default values and the required image references, the
+chart renders one all-in-one Marketplace Deployment (`mode: all`) and the
+isolated SkillSpector runner Deployment. You can also enable the web and
+documentation frontends. Use `mode: split` when you have external shared storage
+and want to scale the API and worker separately.
 
 ## Prerequisites
 
@@ -17,6 +22,11 @@ workers. Set `skillspector.image.repository` and either its immutable
 tag falls back to the top-level `image.tag` only for local render/test use. No
 runner image is prepublished by this repository. See the offline image build
 instructions in [`deploy/skillspector`](../../skillspector/README.md).
+
+Before upgrading, set an independent runner image reference, even if you already
+pin `image.digest`, `api.image`, or `worker.image`. Those values identify
+Marketplace images, not the runner. If you cannot stage a runner image yet, set
+`skillspector.enabled: false` before upgrading.
 
 The runner has a private ClusterIP Service, no ingress route, no service-account
 token, no chart extra volumes or secrets, a non-root read-only container, and a

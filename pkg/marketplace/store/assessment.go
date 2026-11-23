@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"reflect"
 )
@@ -13,7 +14,7 @@ func DecodeAdvisoryReports(data string) ([]AdvisoryReport, error) {
 		return nil, nil
 	}
 	var reports []AdvisoryReport
-	if err := json.Unmarshal([]byte(data), &reports); err != nil {
+	if err := jsonv2.Unmarshal([]byte(data), &reports, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("unmarshal advisory reports: %w", err)
 	}
 	if len(reports) == 0 {

@@ -42,6 +42,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-%s" (include "agent-marketplace.fullname" .root) .component | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "agent-marketplace.skillspectorName" -}}
+{{- $full := include "agent-marketplace.fullname" . -}}
+{{- if le (len $full) 50 -}}
+{{- printf "%s-skillspector" $full -}}
+{{- else -}}
+{{- $prefix := $full | trunc 47 | trimSuffix "-" -}}
+{{- $hash := sha256sum $full | trunc 12 -}}
+{{- $name := printf "%s-%s-ss" $prefix $hash -}}
+{{- if eq $name $full -}}
+{{- printf "%s-%s-sr" $prefix $hash -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
 {{- define "agent-marketplace.workerMetricSelector" -}}
 {{- $api := include "agent-marketplace.componentName" (dict "root" . "component" "api") -}}
 {{- $worker := include "agent-marketplace.componentName" (dict "root" . "component" "worker") -}}
@@ -254,7 +270,7 @@ spec:
             {{- end }}
             {{- if and $root.Values.skillspector.enabled (has $role (list "worker" "all")) }}
             - name: MARKETPLACE_SKILLSPECTOR_ENDPOINT
-              value: {{ printf "http://%s:8081" (include "agent-marketplace.componentName" (dict "root" $root "component" "skillspector")) | quote }}
+              value: {{ printf "http://%s:8081" (include "agent-marketplace.skillspectorName" $root) | quote }}
             {{- end }}
             {{- if eq $role "web" }}
             - name: NUXT_APP_BASE_URL

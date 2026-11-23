@@ -28,4 +28,11 @@ Marketplace ingestion and assessment storage, public API and generated web clien
 
 ## Release note
 
+Breaking: Before upgrading a supplied Compose deployment, build or load a
+verified local SkillSpector runner image. Before upgrading Helm, set
+`skillspector.image.repository` and pin the runner with
+`skillspector.image.digest` or `skillspector.image.tag`; a Marketplace image
+digest does not pin the runner. To opt out, disable the runner using the
+deployment guide before upgrading.
+
 The Marketplace resource detail page shows security reports by tool and makes clear when a scan was incomplete or did not run. Supplied Marketplace deployments run built-in analysis and SkillSpector for skills by default; SkillSpector does not change install availability.

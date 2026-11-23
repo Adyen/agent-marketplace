@@ -320,7 +320,41 @@ func TestHelmSkillspectorDefaultIsolation(t *testing.T) {
 		t.Fatalf("rendered %s component %q is missing", kind, component)
 		return nil
 	}
+	objectName := func(t *testing.T, object map[string]any) string {
+		t.Helper()
+		return getMap(t, object, "metadata")["name"].(string)
+	}
+	endpoint := func(t *testing.T, deployment map[string]any) (string, bool) {
+		t.Helper()
+		pod := getMap(t, getMap(t, getMap(t, deployment, "spec"), "template"), "spec")
+		container := asMap(t, getSlice(t, pod, "containers")[0])
+		environments, _ := container["env"].([]any)
+		for _, raw := range environments {
+			env := asMap(t, raw)
+			if env["name"] == "MARKETPLACE_SKILLSPECTOR_ENDPOINT" {
+				return env["value"].(string), true
+			}
+		}
+		return "", false
+	}
+	checkRunnerNames := func(t *testing.T, objects []map[string]any, want string) {
+		t.Helper()
+		deployment := find(t, objects, "Deployment", "skillspector")
+		service := find(t, objects, "Service", "skillspector")
+		policy := find(t, objects, "NetworkPolicy", "")
+		for _, object := range []map[string]any{deployment, service, policy} {
+			if name := objectName(t, object); name != want {
+				t.Errorf("runner %s name = %q, want %q", object["kind"], name, want)
+			}
+		}
+		app := find(t, objects, "Deployment", "all")
+		got, _ := endpoint(t, app)
+		if want := "http://" + objectName(t, service) + ":8081"; got != want {
+			t.Errorf("all-in-one runner endpoint = %q, want %q", got, want)
+		}
+	}
 	objects := render(t, "image.tag=ci")
+	checkRunnerNames(t, objects, "marketplace-agent-marketplace-skillspector")
 	runner := find(t, objects, "Deployment", "skillspector")
 	pod := getMap(t, getMap(t, getMap(t, runner, "spec"), "template"), "spec")
 	if pod["automountServiceAccountToken"] != false {
@@ -397,37 +431,57 @@ func TestHelmSkillspectorDefaultIsolation(t *testing.T) {
 	if len(ports) != 1 || asMap(t, ports[0])["port"] != 8081 {
 		t.Fatalf("runner ingress ports = %#v", ports)
 	}
-	app := find(t, objects, "Deployment", "all")
-	appPod := getMap(t, getMap(t, getMap(t, app, "spec"), "template"), "spec")
-	appContainer := asMap(t, getSlice(t, appPod, "containers")[0])
-	endpoint := ""
-	for _, raw := range getSlice(t, appContainer, "env") {
-		env := asMap(t, raw)
-		if env["name"] == "MARKETPLACE_SKILLSPECTOR_ENDPOINT" {
-			endpoint, _ = env["value"].(string)
-		}
-	}
-	if endpoint != "http://marketplace-agent-marketplace-skillspector:8081" {
-		t.Fatalf("all-in-one runner endpoint = %q", endpoint)
-	}
 
 	split := render(t, "mode=split", "image.tag=ci")
 	api := find(t, split, "Deployment", "api")
 	worker := find(t, split, "Deployment", "worker")
-	hasEndpoint := func(t *testing.T, deployment map[string]any) bool {
-		t.Helper()
-		pod := getMap(t, getMap(t, getMap(t, deployment, "spec"), "template"), "spec")
-		container := asMap(t, getSlice(t, pod, "containers")[0])
-		environments, _ := container["env"].([]any)
-		for _, raw := range environments {
-			if asMap(t, raw)["name"] == "MARKETPLACE_SKILLSPECTOR_ENDPOINT" {
-				return true
-			}
-		}
-		return false
+	if _, found := endpoint(t, api); found {
+		t.Error("split API must not have a scanner endpoint")
 	}
-	if hasEndpoint(t, api) || !hasEndpoint(t, worker) {
-		t.Fatal("scanner endpoint must be scoped to the worker, not the API")
+	got, _ := endpoint(t, worker)
+	if want := "http://" + objectName(t, find(t, split, "Service", "skillspector")) + ":8081"; got != want {
+		t.Errorf("split worker runner endpoint = %q, want %q", got, want)
+	}
+
+	prefix := strings.Repeat("x", 50)
+	runnerNames := make(map[string]string, 3)
+	for _, tc := range []struct{ name, fullname string }{
+		// Fullname produced by Helm's maximum-length release name of 53 x's.
+		{"long release fullname", prefix + "xxx-agent-mar"},
+		{"fullname matching runner candidate", prefix + "-skillspector"},
+		{"distinct long release fullname", prefix + "yyy-agent-mar"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			override := "fullnameOverride=" + tc.fullname
+			enabled := render(t, "image.tag=ci", override)
+			disabled := render(t, "image.tag=ci", override, "skillspector.enabled=false")
+			runnerName := objectName(t, find(t, enabled, "Service", "skillspector"))
+			checkRunnerNames(t, enabled, runnerName)
+			if len(runnerName) > 63 {
+				t.Errorf("runner name = %q, length %d exceeds 63", runnerName, len(runnerName))
+			}
+			if previous, found := runnerNames[runnerName]; found {
+				t.Errorf("runner name %q is shared by %q and %q", runnerName, previous, tc.name)
+			} else {
+				runnerNames[runnerName] = tc.name
+			}
+			repeated := render(t, "image.tag=ci", override)
+			if repeatedName := objectName(t, find(t, repeated, "Service", "skillspector")); repeatedName != runnerName {
+				t.Errorf("runner name for same fullname = %q, want stable %q", repeatedName, runnerName)
+			}
+			for _, resource := range []struct{ kind, component string }{{"Deployment", "all"}, {"Service", "api"}} {
+				before := objectName(t, find(t, disabled, resource.kind, resource.component))
+				after := objectName(t, find(t, enabled, resource.kind, resource.component))
+				if before != tc.fullname || after != before {
+					t.Errorf("Marketplace %s (%s) names disabled = %q, enabled = %q, want both %q",
+						resource.kind, resource.component, before, after, tc.fullname)
+				}
+				runnerName := objectName(t, find(t, enabled, resource.kind, "skillspector"))
+				if after == runnerName {
+					t.Errorf("Marketplace %s (%s) and runner collide at %q", resource.kind, resource.component, after)
+				}
+			}
+		})
 	}
 }
 

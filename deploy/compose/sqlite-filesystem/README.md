@@ -6,10 +6,12 @@ The proxy routes the API, the well-known metadata document, and `/healthz` to `a
 
 ## SkillSpector runner
 
-The default Compose profile includes the isolated SkillSpector runner. Stage the
-externally vetted offline wheels and `requirements.lock`, then build the local
-image as described in [`deploy/skillspector`](../../skillspector/README.md)
-before starting Compose. Alternatively, load a locally available verified
+Before upgrading with `docker compose up --build`, stage the isolated
+SkillSpector runner image. Compose starts the runner by default and fails if
+the image is not already local. Stage the externally vetted offline wheels and
+`requirements.lock`, then build the local image as described in
+[`deploy/skillspector`](../../skillspector/README.md) before starting Compose.
+Alternatively, load a locally available verified
 runner image. `docker compose up --build` does not build or distribute the
 runner; Compose uses `agent-marketplace-skillspector:local` by default.
 Production can set `MARKETPLACE_SKILLSPECTOR_IMAGE` to an operator-approved
@@ -22,10 +24,19 @@ For the required real-scan check, see [Verify a real scan](../../skillspector/RE
 
 Before exposing a deployment, verify that the runtime denies runner egress and
 that a positive control can still submit a scan from the Marketplace worker.
-After enabling the runner, refresh a registry with
-`docker compose exec app /app/agent-marketplace serve reindex --config /app/marketplace.yaml`
-to produce current reports; historical revisions are not backfilled. To
-temporarily disable supplementary scans, set
+After enabling the runner, reindex to produce current reports; historical
+revisions are not backfilled. With the `app` image already built, run the
+following commands from the repository root. Stop `app` before reindexing so
+only the reindex process opens the SQLite database. Leave the enabled
+SkillSpector runner running, and restart `app` even if reindexing fails.
+
+```bash
+docker compose stop app
+docker compose run --rm --no-deps app serve reindex --config /app/marketplace.yaml
+docker compose start app
+```
+
+To temporarily disable supplementary scans, set
 `MARKETPLACE_SKILLSPECTOR_ENDPOINT=` and start with
 `--scale skillspector=0`. This leaves Marketplace policy unchanged and does not
 turn a missing report into a clean scan.

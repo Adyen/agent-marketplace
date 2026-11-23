@@ -77,6 +77,7 @@ func TestMarketplaceSkillSpectorComposeWitness(t *testing.T) {
 	} {
 		command := exec.Command("git", args...)
 		command.Dir = registry
+		command.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, output)
 		}
