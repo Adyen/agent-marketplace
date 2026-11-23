@@ -218,6 +218,25 @@ type ResourceListItem struct {
 	Score             float64           `json:"score,omitempty"`
 }
 
+// ResourceRelation identifies a related Marketplace resource by its registry
+// slug, kind, and name.
+type ResourceRelation struct {
+	Registry string `json:"registry"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
+// ResourceRequirement is one indexed prerequisite of a resource revision.
+// Registry and Path echo the stored, credential-redacted hints. Resolved is
+// present only when a visible current-head target satisfies the hints.
+type ResourceRequirement struct {
+	Kind     string            `json:"kind"`
+	Name     string            `json:"name"`
+	Registry string            `json:"registry,omitempty"`
+	Path     string            `json:"path,omitempty"`
+	Resolved *ResourceRelation `json:"resolved,omitempty"`
+}
+
 // ArtifactRequest is the body of `POST /api/v1/artifacts/{kind}/{name}` when
 // asking the server to produce an artifact for a specific revision.
 type ArtifactRequest struct {

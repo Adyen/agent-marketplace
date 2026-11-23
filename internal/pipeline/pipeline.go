@@ -1183,7 +1183,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			result.Warnings = append(result.Warnings, issue)
 		}
 	}
-	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(resolved.ImpliedPreview)}
+	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(materializableImpliedPreview(resolved.ImpliedPreview))}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}
