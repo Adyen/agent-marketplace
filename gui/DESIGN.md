@@ -5,7 +5,8 @@ This document describes the visual and interaction design of the desktop GUI
 
 - **Visual language**: the agent-marketplace landing design
   (`agent-marketplace-design.html`). It uses an ink-alpha surface scale, one
-  green signal color, monospace uppercase labels, dot resource checks, and
+  green signal color, sentence-case labels with monospace reserved for
+  identifiers, dot resource checks, and
   restrained motion.
 - **Application shell**: the Codex desktop app. It has a fixed left sidebar and
   a foldable right inspector around a central work area, a compact toolbar with
@@ -79,8 +80,8 @@ platform font, use these stacks:
 | Role | Size / weight | Notes |
 |---|---|---|
 | Base (`--x`) | 13px / 400, line height 1.38 | The desktop density used by Codex |
-| Mono | 12px / 500, tabular numerals | Identifiers and counts |
-| Caps label | Mono 11px / 500, uppercase, `--gui-ink-3` | Section eyebrows ("SOURCES") |
+| Mono | 12px / 500, tabular numerals | Identifiers, paths, counts, and kbd |
+| Label | Sans 12px / 500, sentence case, `--gui-ink-2` | Section headings ("Sources", "Kind", "Groups") and eyebrows |
 | Pane title | 13px / 500 | Toolbar titles |
 | Modal title | 20px / 600 | One per modal |
 
@@ -158,17 +159,17 @@ alone separates it from the main column. It never folds.
   - *Diagnostics* shows the diagnostics view with its count.
   - Search and pending sync have no sidebar row. The toolbar search pill,
     ⌘K, `/`, the Sync count, and the status bar carry them.
-- **Kind**: a caps label, then a single-column list with one row per kind
+- **Kind**: a label, then a single-column list with one row per kind
   and its count, in the same row style as Groups. A kind with a count of zero
   is hidden unless it is the selected kind.
-- **Groups**: a caps label that is a disclosure control, then one row per
+- **Groups**: a label that is a disclosure control, then one row per
   session group with its row count. Groups start expanded at 720 px window
   height and above, and collapsed below it.
   The pinned Needs attention group is left out, because its filter covers it.
   The list is absent under Kind grouping, where the Kind list covers it.
   Selecting a row scrolls the main list to that group's header and moves
   selection there, using the existing section selection.
-- **Sources**: a caps label with a ＋ icon button ("Sources") that opens the
+- **Sources**: a label with a ＋ icon button ("Sources") that opens the
   Settings window on its Sources tab with focus in the Add source form.
   Below it, one icon row per configured source shows the source label (see
   the sidebar rules below), with an ORG tag where it applies; sources that
@@ -569,7 +570,7 @@ wins.
 - *Rule — session*: Session holds the drift row only ("In sync" with its
   status dot). The inspector is hidden while Diagnostics is shown. The Harness targets live in the sidebar footer.
 - *Rule — discovery*: Marketplace discovery is its own inspector section,
-  with its own caps label and hairline, between Session and Diagnostics.
+  with its own label and hairline, between Session and Diagnostics.
 
 ### Diagnostics: one row per problem
 

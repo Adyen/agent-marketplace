@@ -41,8 +41,6 @@ textarea:focus-visible,
 .gui-kbd,
 .gui-badge,
 .gui-tag,
-.gui-caps,
-.gui-steps,
 .gui-group-heading__count,
 .gui-nav-row__count,
 .gui-statusbar__status,
@@ -111,12 +109,10 @@ textarea:focus-visible,
 }
 
 .gui-caps {
-  color: var(--gui-ink-3);
-  font-size: 11px;
+  color: var(--gui-ink-2);
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.06em;
   margin: 12px 0 4px;
-  text-transform: uppercase;
 }
 
 .gui-caps__count {
@@ -142,7 +138,6 @@ textarea:focus-visible,
   height: 20px;
   margin-left: auto;
   padding: 0 6px;
-  text-transform: uppercase;
 }
 
 .gui-badge {
@@ -1020,15 +1015,12 @@ textarea:focus-visible,
   color: var(--gui-ink-2);
   cursor: pointer;
   display: flex;
-  font-family: var(--gui-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   gap: 6px;
   height: 28px;
-  letter-spacing: 0.04em;
   padding: 0 4px;
   text-align: left;
-  text-transform: uppercase;
   width: 100%;
   --wails-draggable: no-drag;
 }
@@ -1833,10 +1825,9 @@ button:disabled {
 .gui-steps {
   color: var(--gui-ink-3);
   display: flex;
-  font-size: 11px;
-  gap: 6px;
+  font-size: 12px;
+  gap: 12px;
   margin: 0;
-  text-transform: uppercase;
 }
 
 .gui-steps__current {
@@ -1945,14 +1936,11 @@ button:disabled {
 
 .settings__group legend,
 .settings__group h3 {
-  color: var(--gui-ink-3);
-  font-family: var(--gui-mono);
-  font-size: 11px;
+  color: var(--gui-ink-2);
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.04em;
   margin: 0 0 6px;
   padding: 0;
-  text-transform: uppercase;
 }
 
 .settings__group ul {
@@ -1984,7 +1972,6 @@ button:disabled {
   font-size: 11px;
   height: 20px;
   padding: 0 6px;
-  text-transform: uppercase;
 }
 
 .source-list {

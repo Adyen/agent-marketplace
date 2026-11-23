@@ -286,8 +286,8 @@ test('Settings source labels share sans typography and Add source stays content-
       expect(new Set(metrics.typography.map(({ size }) => size)).size).toBe(1)
       expect(new Set(metrics.typography.map(({ case: textCase }) => textCase)).size).toBe(1)
       expect(metrics.typography[0].case).toBe('none')
-      expect(metrics.headingFamily).not.toBe(metrics.typography[0].family)
-      expect(metrics.headingCase).toBe('uppercase')
+      expect(metrics.headingFamily).toBe(metrics.typography[0].family)
+      expect(metrics.headingCase).toBe('none')
       expect(metrics.actionWidth).toBeLessThan(metrics.formWidth)
       expect(Math.abs(metrics.actionRight - metrics.formRight)).toBeLessThanOrEqual(1)
     }

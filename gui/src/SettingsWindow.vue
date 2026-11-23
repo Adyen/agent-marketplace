@@ -438,7 +438,7 @@ async function confirmRemove() {
                 <li v-for="id in configuration.organizationTargets" :key="id" class="settings__option settings__option--static">
                   <span class="settings__row-main">
                     <span class="mono settings__target">{{ id }}</span>
-                    <span class="settings__badge">ORG</span>
+                    <span class="settings__badge">Org</span>
                   </span>
                   <GuiIcon name="lock" class="settings__lock" />
                 </li>

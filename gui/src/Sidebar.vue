@@ -238,7 +238,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
             <GuiIcon :name="sourceIcons[entry.entry.kind]" />
             <span class="gui-source-row__location">{{ sourceLabel(entry.entry.sources[0]) }}</span>
             <span class="gui-nav-row__count">{{ entry.entry.sources.length }}</span>
-            <span v-if="entry.entry.layer === 'organization'" class="gui-tag">ORG</span>
+            <span v-if="entry.entry.layer === 'organization'" class="gui-tag">Org</span>
           </button>
           <div v-else class="gui-sidebar__source-actions">
             <UTooltip :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
@@ -258,7 +258,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
                   {{ entry.groupKey == null ? sourceName(entry.source) : entry.source.path || '/' }}
                   <template v-if="entry.groupKey != null && entry.source.ref"> · {{ entry.source.ref }}</template>
                 </span>
-                <span v-if="entry.layer === 'organization'" class="gui-tag">ORG</span>
+                <span v-if="entry.layer === 'organization'" class="gui-tag">Org</span>
               </button>
             </UTooltip>
             <button

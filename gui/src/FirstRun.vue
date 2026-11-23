@@ -137,9 +137,7 @@ async function finish() {
   <GuiModal v-model:open="open" title="Set up Agent Marketplace" icon="sparkle" size="lg" :dismissible="!submitting">
     <p class="gui-steps">
       <span :class="{ 'gui-steps__current': step === 'targets' }">1 Targets</span>
-      <span aria-hidden="true">·</span>
       <span :class="{ 'gui-steps__current': step === 'consent' }">2 Telemetry</span>
-      <span aria-hidden="true">·</span>
       <span :class="{ 'gui-steps__current': step === 'sources' }">3 Sources</span>
     </p>
     <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
