@@ -21,7 +21,7 @@ import Sidebar, { type SidebarGroup, type SidebarSource, type StatusFacet } from
 import SourceBrowseHeader from './SourceBrowseHeader.vue'
 import StatusBar from './StatusBar.vue'
 import { releaseVersionLabel } from './release-version'
-import { sourceLabel } from './source-label'
+import { sourceDisplayLabel, sourceLabel } from './source-label'
 
 type SectionView = Omit<Section, 'children'> & { collapsed: boolean; children: SectionView[] }
 type VisibleEntry =
@@ -227,7 +227,7 @@ function selectSidebarSource(sourceId: string) {
   const entry = sidebarSources.value.find(({ source }) => source.id === sourceId)
   selectedSourceId.value = sourceId
   if (entry != null) {
-    lastSelectedSourceLabel.value = rowSourceLabels.value.get(entry.source.rowSourceId) || sourceLabel(entry.source)
+    lastSelectedSourceLabel.value = sourceDisplayLabel(entry.source, rowSourceLabels.value.get(entry.source.rowSourceId))
   }
   showResources()
 }
@@ -712,7 +712,12 @@ const activeSourceLabel = computed(() => {
   if (source == null) {
     return lastSelectedSourceLabel.value
   }
-  return rowSourceLabels.value.get(source.rowSourceId) || sourceLabel(source) || lastSelectedSourceLabel.value
+  return sourceDisplayLabel(source, rowSourceLabels.value.get(source.rowSourceId)) || lastSelectedSourceLabel.value
+})
+const selectedRegistryLabel = computed(() => {
+  const rowSourceId = selected.value?.source.id
+  const entry = sidebarSources.value.find(({ source }) => rowSourceId != null && source.rowSourceId === rowSourceId)
+  return entry == null ? null : sourceDisplayLabel(entry.source, rowSourceLabels.value.get(entry.source.rowSourceId))
 })
 const sourceRows = computed(() => {
   const rows = view.value?.rows ?? []
@@ -1584,6 +1589,7 @@ async function run(action: 'sync' | 'update') {
       :overlay="inspectorOverlay"
       :inert="inspectorHidden"
       :selected="selected"
+      :registry-label="selectedRegistryLabel"
       :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen || view?.resourceAction != null"
       :action-busy="resourceActionBusy"
       @open-resource-action="openResourceAction"

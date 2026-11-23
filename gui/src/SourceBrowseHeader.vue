@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import type { SourceDescription } from './api/client'
 import { copyText } from './clipboard'
+import { shortSourceLocation } from './source-label'
 
 const props = defineProps<{
   source: SourceDescription
@@ -96,7 +97,7 @@ function removeSource() {
         <h2>{{ label }}</h2>
         <span class="gui-tag">{{ sourceKind }}</span>
       </div>
-      <p class="source-browse-header__location">{{ source.location }}</p>
+      <p class="source-browse-header__location" :title="source.location">{{ shortSourceLocation(source.location) }}</p>
       <div v-if="source.ref !== '' || source.path !== ''" class="source-browse-header__declared">
         <span v-if="source.ref !== ''">Ref {{ source.ref }}</span>
         <span v-if="source.path !== ''">Subpath {{ source.path }}</span>

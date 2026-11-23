@@ -268,7 +268,9 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
 The inspector uses the `--gui-s0100` surface and has its own 44 px header with
 the title "Details". It holds only the selected resource: the caps eyebrow
 (kind), the display name in mono, the description in `--gui-ink-2`, and a
-`dl` with Registry, Scope, and Status. Its actions sit in a row of outlined
+`dl` with Registry, Scope, and Status. When the row belongs to a configured
+source, Registry shows that source's sidebar label, the same one the filter
+chip and browse header title use. Its actions sit in a row of outlined
 buttons, 28 px tall with 8 px radius, each with a leading icon and a text
 label. Open resource comes first, `file`. The resource action follows it:
 Install and Restore use `plus`, Uninstall and Exclude use `minus`. Uninstall
@@ -608,6 +610,9 @@ wins.
   last path segment when the URL has a path. The full location stays in a
   themed tooltip and the accessible name, and the ORG tag still marks
   organization sources.
+- *Rule — source browse header*: the title is the sidebar label. The location
+  line shows the last two path segments (`shortSourceLocation`), with the full
+  location in its `title`. Source actions still copy the full location.
 
 ## Implementation plan
 

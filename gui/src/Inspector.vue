@@ -10,6 +10,7 @@ const props = defineProps<{
   actionDisabled: boolean
   actionBusy: boolean
   overlay: boolean
+  registryLabel: string | null
 }>()
 
 const emit = defineEmits<{
@@ -81,7 +82,7 @@ defineExpose({
             <p class="gui-inspector__description">{{ selected.description }}</p>
             <dl>
               <dt>Registry</dt>
-              <dd class="mono">{{ selected.registry }}</dd>
+              <dd class="mono">{{ registryLabel ?? selected.registry }}</dd>
               <dt>Scope</dt>
               <dd>{{ scopeTagLabel[selected.scope] ?? selected.scope }}</dd>
               <dt>Status</dt>

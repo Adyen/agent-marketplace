@@ -1447,6 +1447,26 @@ describe('WorkspaceView', () => {
 })
 
 describe('workspace facets and source header', () => {
+  // spec: gui-shell/source-identity-labels-match-the-sidebar
+  it('shows the configured source label as the inspector Registry value', async () => {
+    const teamSource = source({
+      id: 'team-source',
+      name: 'Team',
+      kind: 'git',
+      location: 'https://git.example.test/team.git',
+      rowSourceId: 'team-identity',
+    })
+    const { client, push } = fakeClient()
+    vi.mocked(client.configuration).mockResolvedValue(configuration({ userSources: [teamSource] }))
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('team-skill', { source: { id: 'team-identity', label: 'Team registry' } })]) }))
+    await tick()
+
+    await wrapper.get('[role="option"]').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-inspector dd.mono').text()).toBe('Team')
+  })
+
   // spec: gui-shell/workspace-facets-intersect-and-clear-independently
   it('workspace facets intersect and clear independently while retaining search', async () => {
     const teamSource = source({
@@ -1663,9 +1683,10 @@ describe('workspace facets and source header', () => {
 
       expect(wrapper.find('.source-browse-header').exists()).toBe(true)
       const header = wrapper.get('.source-browse-header')
-      expect(header.find('h2').text()).toBe('Team registry')
+      expect(header.find('h2').text()).toBe('Team')
       expect(header.text()).toContain('Git repository')
-      expect(header.text()).toContain(location)
+      expect(header.get('.source-browse-header__location').attributes('title')).toBe(location)
+      expect(header.get('.source-browse-header__location').text()).toBe('team')
       expect(header.text()).toContain('main')
       expect(header.text()).toContain('packages/core')
       expect(header.get('button[aria-label="View source problems"]').text()).toContain('3')

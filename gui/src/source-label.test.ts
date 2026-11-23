@@ -1,10 +1,35 @@
 import { describe, expect, it } from 'vitest'
 import type { SourceDescription } from './api/client'
-import { sourceLabel } from './source-label'
+import { shortSourceLocation, sourceDisplayLabel, sourceLabel } from './source-label'
 
 function source(kind: SourceDescription['kind'], location: string, name = ''): SourceDescription {
   return { id: 'id', name, kind, location, path: '', ref: '', sourceHarness: '' } as SourceDescription
 }
+
+describe('sourceDisplayLabel', () => {
+  it('uses the configured name for a named local source and the row label otherwise', () => {
+    expect(sourceDisplayLabel(source('git', 'https://git.example.test/team.git', 'Team'), 'ignored')).toBe('Team')
+    expect(sourceDisplayLabel(source('directory', '/code/skills'), 'row-label')).toBe('row-label')
+    expect(sourceDisplayLabel(source('directory', '/code/skills'))).toBe('code/skills')
+  })
+
+  it('keeps the endpoint label for a Marketplace source', () => {
+    expect(sourceDisplayLabel(source('marketplace', 'https://marketplace.example.com/api', 'Hub'))).toBe('marketplace.example.com/api')
+  })
+})
+
+describe('shortSourceLocation', () => {
+  it('keeps the last two path segments of a directory or Git location', () => {
+    expect(shortSourceLocation('/Users/alexandergr/code/ai/resources/skills')).toBe('resources/skills')
+    expect(shortSourceLocation('https://git.example.test/org/team.git')).toBe('org/team')
+    expect(shortSourceLocation('git@git.example.test:org/team.git')).toBe('org/team')
+  })
+
+  it('returns a single-segment or unparseable location unchanged', () => {
+    expect(shortSourceLocation('/skills')).toBe('skills')
+    expect(shortSourceLocation('https://')).toBe('https://')
+  })
+})
 
 describe('sourceLabel', () => {
   it('shows the last two segments of a directory', () => {

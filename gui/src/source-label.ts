@@ -20,27 +20,41 @@ export function hasNamedLocalLabel(source: SourceDescription): boolean {
   return source.kind !== 'marketplace' && source.name.trim() !== ''
 }
 
+export function shortSourceLocation(location: string): string {
+  try {
+    const scp = SCP_LIKE.exec(location)
+    let path = location
+    if (scp) {
+      path = scp[1]
+    } else if (location.startsWith('file://')) {
+      path = decodeURIComponent(new URL(location).pathname)
+    } else if (location.includes('://')) {
+      path = new URL(location).pathname
+    }
+    return lastSegments(path).replace(/\.git$/, '') || location
+  } catch {
+    return location
+  }
+}
+
+export function sourceDisplayLabel(source: SourceDescription, rowLabel = ''): string {
+  if (hasNamedLocalLabel(source)) {
+    return source.name.trim()
+  }
+  return rowLabel || sourceLabel(source)
+}
+
 export function sourceLabel(source: SourceDescription): string {
   const location = source.location
   if (hasNamedLocalLabel(source)) {
     return source.name.trim()
   }
-  try {
-    switch (source.kind) {
-      case 'directory': {
-        const path = location.startsWith('file://') ? decodeURIComponent(new URL(location).pathname) : location
-        return lastSegments(path) || location
-      }
-      case 'marketplace':
-        return marketplaceLabel(location)
-      case 'git': {
-        const scp = SCP_LIKE.exec(location)
-        const path = scp ? scp[1] : new URL(location).pathname
-        return lastSegments(path).replace(/\.git$/, '') || location
-      }
+  if (source.kind === 'marketplace') {
+    try {
+      return marketplaceLabel(location)
+    } catch {
+      return location
     }
-  } catch {
-    return location
   }
-  return location
+  return shortSourceLocation(location)
 }
