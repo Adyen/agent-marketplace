@@ -27,10 +27,11 @@ async function actionVisibility(page: Page, dialog: Locator, action: Locator, na
 
 async function sourceListVisibility(page: Page, dialog: Locator, sources: Locator, longLocation: string) {
   const item = sources.locator('li').filter({ hasText: longLocation })
-  const kind = item.getByText('DIRECTORY', { exact: true })
-  const location = item.getByText(longLocation, { exact: true })
-  const [dialogBox, kindBox, locationBox] = await Promise.all([
-    dialog.boundingBox(), kind.boundingBox(), location.boundingBox(),
+  const kind = item.getByText('Directory', { exact: true })
+  const head = item.locator('.source-card__head .source-card__location').first()
+  const location = item.locator('.source-card__location, .source-card__meta').filter({ hasText: longLocation }).first()
+  const [dialogBox, kindBox, headBox] = await Promise.all([
+    dialog.boundingBox(), kind.boundingBox(), head.boundingBox(),
   ])
   const textRects = await location.evaluate((element) => {
     const range = document.createRange()
@@ -46,7 +47,7 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
   ])
   const viewport = page.viewportSize()
   return {
-    kindOnLocationRow: kindBox != null && locationBox != null && kindBox.y < locationBox.y + locationBox.height && locationBox.y < kindBox.y + kindBox.height,
+    kindOnHeadRow: kindBox != null && headBox != null && kindBox.y < headBox.y + headBox.height && headBox.y < kindBox.y + kindBox.height,
     locationLines: new Set(textRects.map((rect) => Math.round(rect.top))).size,
     locationWithinDialog: dialogBox != null && viewport != null && textRects.length > 0 && textRects.every((rect) =>
       rect.left >= dialogBox.x && rect.right <= dialogBox.x + dialogBox.width &&
@@ -403,7 +404,7 @@ test('built GUI adds and removes a user directory source against the real user-s
 
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
-    await expect(userSources).toContainText('DIRECTORY')
+    await expect(userSources).toContainText('Directory')
     await expect(notifications.getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
@@ -569,7 +570,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     expect(visibility, `visibility metrics: ${JSON.stringify(visibility)}`).toMatchObject({
       viewport: { width: 1280, height: 720 },
       list: {
-        kindOnLocationRow: true,
+        kindOnHeadRow: true,
         locationWithinDialog: true,
         dialogHasNoHorizontalOverflow: true,
         sourcesHaveNoHorizontalOverflow: true,
@@ -600,7 +601,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await addButton.press('Enter')
 
     await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
-    await expect(userSources).toContainText('MARKETPLACE')
+    await expect(userSources).toContainText('Marketplace')
     await expect(page.getByLabel('Notifications').getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
@@ -610,7 +611,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await userSources.screenshot({ path: marketplacePresentScreenshotPath })
     const updatedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
     expect(updatedListMetrics).toMatchObject({
-      kindOnLocationRow: true,
+      kindOnHeadRow: true,
       locationWithinDialog: true,
       dialogHasNoHorizontalOverflow: true,
       sourcesHaveNoHorizontalOverflow: true,
@@ -677,7 +678,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     ).not.toContain('devin')
     const removedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
     expect(removedListMetrics).toMatchObject({
-      kindOnLocationRow: true,
+      kindOnHeadRow: true,
       locationWithinDialog: true,
       dialogHasNoHorizontalOverflow: true,
       sourcesHaveNoHorizontalOverflow: true,
@@ -755,7 +756,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     await expect(managedSection.getByText('Included files, per-source configuration, and other settings are managed outside the GUI.')).toBeVisible()
     const orgSection = dialog.getByLabel('Organization sources')
     await expect(orgSection.getByText('Managed by your organization; read-only.')).toBeVisible()
-    await expect(orgSection).toContainText('DIRECTORY')
+    await expect(orgSection).toContainText('Directory')
     await expect(orgSection.locator('button, input, select, a')).toHaveCount(0)
     await page.screenshot({ path: artifactPath('git-source-before.png'), fullPage: true })
 
@@ -793,7 +794,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
 
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(gitURL, { timeout: 60_000 })
-    await expect(userSources).toContainText('GIT')
+    await expect(userSources).toContainText('Git')
     await expect(userSources).toContainText('main · solo')
     await expect(notifications.getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
@@ -957,7 +958,6 @@ test('built GUI filters configured sources in Resources and clears without chang
     await page.keyboard.press('Enter')
 
     const clearSource = page.getByRole('button', { name: /^Clear source filter / })
-    await page.getByRole('button', { name: 'Show diagnostics' }).click()
     const skillsFacet = page.getByRole('button', { name: 'Kind facet Skills' })
     await skillsFacet.press('Enter')
     await expect(skillsFacet).toHaveAttribute('aria-pressed', 'true')

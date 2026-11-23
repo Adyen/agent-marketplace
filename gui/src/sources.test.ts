@@ -47,6 +47,8 @@ const groupedSources = [
   { ...dirSource, id: 'solo-directory', location: '/var/solo' },
 ]
 
+const paddingSources = Array.from({ length: 4 }, (_, index) => ({ ...dirSource, id: `pad-${index}`, location: `/var/pad-${index}` }))
+
 async function mountSources(overrides: Partial<Configuration> = { userSources: groupedSources }) {
   const { client, push } = sourcesClient(overrides)
   const { wrapper } = mountWorkspace(client)
@@ -483,10 +485,45 @@ describe('Source settings', () => {
     expect(() => button(`Remove source ${marketplaceSource.location}`)).toThrow()
   })
 
+  // spec: gui-shell/source-search-appears-above-six-sources
+  it('shows the source search only when more than six sources are configured', async () => {
+    const many = Array.from({ length: 7 }, (_, index) => ({ ...dirSource, id: `many-${index}`, location: `/var/many-${index}` }))
+    const { wrapper } = await mountSources({ userSources: many.slice(0, 6) })
+    await openSources(wrapper)
+    expect(dialog().querySelector('input[aria-label="Search sources"]')).toBeNull()
+    wrapper.unmount()
+
+    const { wrapper: more } = await mountSources({ userSources: many })
+    await openSources(more)
+    expect(dialog().querySelector('input[aria-label="Search sources"]')).not.toBeNull()
+  })
+
+  // spec: gui-shell/source-row-remove-stays-reachable-on-hover-and-focus
+  it('keeps the remove control in the DOM for keyboard use', async () => {
+    const { wrapper } = await mountSources({ userSources: [dirSource] })
+    await openSources(wrapper)
+    const remove = button(`Remove source ${dirSource.location}`) as HTMLButtonElement
+    expect(remove.disabled).toBe(false)
+    expect(remove.closest('.source-card')).not.toBeNull()
+  })
+
+  // spec: gui-shell/settings-source-rows-lead-with-the-name
+  it('shows a named source by its name with its location as the secondary line', async () => {
+    const named = { ...dirSource, id: 'named-dir', name: 'team-skills', location: '/var/regs' }
+    const { wrapper } = await mountSources({ userSources: [named] })
+    await openSources(wrapper)
+
+    const card = dialog().querySelector<HTMLElement>('[data-source-id="named-dir"]')!
+    expect(card.querySelector('.source-card__head .source-card__location')?.textContent).toBe('team-skills')
+    expect(card.querySelector('.source-card__meta')?.textContent).toContain('/var/regs')
+    expect(card.querySelector('.source-card__tags')?.textContent).toContain('Directory')
+    expect(card.querySelector('.source-card__tags')?.textContent).not.toContain('DIRECTORY')
+  })
+
   it.each([
     {
       source: { id: 'org-dir', name: '', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
-      texts: ['DIRECTORY', 'ORG', '/opt/org-regs'],
+      texts: ['Directory', 'Organization', '/opt/org-regs'],
       absent: ['Ref ', 'Subpath '],
     },
     {
@@ -500,12 +537,12 @@ describe('Source settings', () => {
         sourceHarness: 'devin',
         rowSourceId: '',
       },
-      texts: ['GIT', 'https://example.com/org.git', 'main · nested · layout devin'],
+      texts: ['Git', 'https://example.com/org.git', 'main · nested · layout devin'],
       absent: [],
     },
     {
       source: { id: 'org-mp', name: '', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
-      texts: ['MARKETPLACE', 'ORG', 'https://org-mp.example'],
+      texts: ['Marketplace', 'Organization', 'https://org-mp.example'],
       absent: ['Ref ', 'Subpath '],
     },
   ])('keeps the organization $source.kind source free of any controls', async ({ source, texts, absent }) => {
@@ -1069,7 +1106,7 @@ describe('Source settings', () => {
 
     const list = dialog().querySelector('[aria-label="User sources"]')!
     expect(list.textContent).toContain(marketplaceSource.location)
-    expect(list.textContent).toContain('MARKETPLACE')
+    expect(list.textContent).toContain('Marketplace')
     expect(dialog()).toBeDefined()
     expect(controller.state.operation).toBeNull()
     expect(controller.state.requesting).toBe(false)
@@ -1128,7 +1165,7 @@ describe('Source settings', () => {
   // spec: gui-shell/revealing-a-source-unfolds-its-folded-group
   // spec: gui-shell/sidebar-add-control-focuses-the-add-source-form
   it('reveals a selected source and focuses the add form from the sidebar', async () => {
-    const { wrapper } = await mountSources()
+    const { wrapper } = await mountSources({ userSources: [...groupedSources, ...paddingSources] })
     await openSources(wrapper)
     await setInput('Search sources', 'plugins/beta')
     expect(Array.from(dialog().querySelectorAll('.source-card')).map((card) => card.getAttribute('data-source-id'))).toEqual(['git-beta'])
@@ -1160,7 +1197,7 @@ describe('Source settings', () => {
     const alpha = { ...dirSource, id: 'search-alpha', name: 'Named Alpha', location: '/var/Alpha', path: 'secret/alpha-path' }
     const beta = { ...dirSource, id: 'search-beta', name: 'Named Beta', location: '/var/Beta', path: 'public/beta-path' }
     const org = { ...dirSource, id: 'org-only', name: 'OrgOnly', location: '/org/records', path: 'private/org-only' }
-    const { client, wrapper } = await mountSources({ userSources: [alpha, beta], organizationSources: [org] })
+    const { client, wrapper } = await mountSources({ userSources: [alpha, beta, ...paddingSources], organizationSources: [org] })
     await openSources(wrapper)
 
     const sourceIds = () => Array.from(dialog().querySelectorAll('.source-card')).map((card) => card.getAttribute('data-source-id'))
@@ -1180,7 +1217,7 @@ describe('Source settings', () => {
     expect(dialog().textContent).toContain('No sources match “not found”.')
     expect(dialog().querySelectorAll('.source-card')).toHaveLength(0)
     await setInput('Search sources', '')
-    expect(sourceIds()).toEqual(['search-alpha', 'search-beta', 'org-only'])
+    expect(sourceIds()).toEqual(expect.arrayContaining(['search-alpha', 'search-beta', 'org-only']))
   })
 })
 

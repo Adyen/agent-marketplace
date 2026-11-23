@@ -762,10 +762,13 @@ earlier section, this section wins.
 - The draft survives tab switches. Saving keeps the window open: the submitted
   selection stays on screen until the write settles, and the controller then
   reloads the saved configuration. Closing the window discards an unsaved draft.
-- Sources holds a "Search sources" field, the user source cards with trash
-  buttons (grouped and foldable when sources share a location; see Sources
-  navigation), the inline removal confirmation, organization sources, the
-  add form, and the managed-outside footnote at the bottom.
+- Sources holds a "Search sources" field shown only above six configured
+  sources, the user source cards (grouped and foldable when sources share a
+  location; see Sources navigation), the inline removal confirmation,
+  organization sources, the add form, and the managed-outside footnote at the
+  bottom. A named user source leads with its name, with its location beneath
+  it. Kind tags read "Directory", "Git", "Marketplace", and "Organization". The
+  trash button appears on card hover or keyboard focus only.
 
 ### Diagnostics view
 

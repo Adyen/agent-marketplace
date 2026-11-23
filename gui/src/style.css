@@ -2001,6 +2001,15 @@ button:disabled {
   outline-offset: 1px;
 }
 
+.source-card .gui-icon-button {
+  opacity: 0;
+}
+
+.source-card:hover .gui-icon-button,
+.source-card:focus-within .gui-icon-button {
+  opacity: 1;
+}
+
 .source-card__icon {
   color: var(--gui-ink-2);
   margin-top: 2px;

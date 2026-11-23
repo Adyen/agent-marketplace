@@ -35,15 +35,19 @@ const activeTitle = computed(() => tabs.find((tab) => tab.id === active.value)?.
 
 const configuration = computed<Configuration | null>(() => props.controller.state.configuration)
 const sourceQuery = ref('')
+const showSourceSearch = computed(
+  () => (configuration.value?.userSources.length ?? 0) + (configuration.value?.organizationSources.length ?? 0) > 6,
+)
+const activeSourceQuery = computed(() => (showSourceSearch.value ? sourceQuery.value : ''))
 const highlightedSourceId = ref('')
 const sourceLists = computed(() => ({
   user: groupSources(
     (configuration.value?.userSources ?? []).map((source) => ({ source, layer: 'user' as const })),
-    sourceQuery.value,
+    activeSourceQuery.value,
   ),
   organization: groupSources(
     (configuration.value?.organizationSources ?? []).map((source) => ({ source, layer: 'organization' as const })),
-    sourceQuery.value,
+    activeSourceQuery.value,
   ),
 }))
 const loading = ref(false)
@@ -473,16 +477,16 @@ async function confirmRemove() {
             class="settings-window__panel"
           >
             <template v-if="configuration != null">
-              <label class="settings__source-search">
+              <label v-if="showSourceSearch" class="settings__source-search">
                 <span class="gui-visually-hidden">Search sources</span>
                 <input v-model="sourceQuery" type="search" class="gui-input" aria-label="Search sources" placeholder="Search sources">
               </label>
 
               <p
-                v-if="sourceQuery !== '' && sourceLists.user.length + sourceLists.organization.length === 0"
+                v-if="activeSourceQuery !== '' && sourceLists.user.length + sourceLists.organization.length === 0"
                 class="settings__hint"
                 role="status"
-              >No sources match “{{ sourceQuery }}”.</p>
+              >No sources match “{{ activeSourceQuery }}”.</p>
 
               <SourceList
                 title="User sources"

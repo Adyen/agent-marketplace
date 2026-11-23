@@ -20,6 +20,12 @@ const kindIcons: Record<SourceDescription['kind'], IconName> = {
   marketplace: 'globe',
 }
 
+const kindLabels: Record<SourceDescription['kind'], string> = {
+  directory: 'Directory',
+  git: 'Git',
+  marketplace: 'Marketplace',
+}
+
 const root = ref<HTMLElement | null>(null)
 const foldedGroups = ref(new Set<string>())
 let lastFocusedRevealSequence = 0
@@ -36,9 +42,21 @@ const entries = computed(
 const hasSources = computed(() => (props.sourceCount ?? entries.value.length) > 0)
 const rows = computed(() => flattenSourceGroups(entries.value, foldedGroups.value))
 
+function isNamed(source: SourceDescription): boolean {
+  return source.name.trim() !== ''
+}
+
+function primaryLabel(source: SourceDescription, grouped: boolean): string {
+  if (grouped) {
+    return source.path || '/'
+  }
+  return isNamed(source) ? source.name.trim() : source.location
+}
+
 function meta(source: SourceDescription, grouped: boolean): string {
   const layout = source.sourceHarness === '' ? '' : `layout ${source.sourceHarness}`
-  return [source.ref, ...(grouped ? [] : [source.path]), layout].filter((value) => value !== '').join(' · ')
+  const location = !grouped && isNamed(source) ? [source.location] : []
+  return [...location, source.ref, ...(grouped ? [] : [source.path]), layout].filter((value) => value !== '').join(' · ')
 }
 
 function toggleGroup(key: string) {
@@ -114,10 +132,10 @@ watch(
           <GuiIcon :name="kindIcons[row.source.kind]" class="source-card__icon" />
           <div class="source-card__body">
             <div class="source-card__head">
-              <span class="source-card__location">{{ row.groupKey == null ? row.source.location : row.source.path || '/' }}</span>
+              <span class="source-card__location">{{ primaryLabel(row.source, row.groupKey != null) }}</span>
               <span class="source-card__tags">
-                <span class="gui-tag">{{ row.source.kind.toUpperCase() }}</span>
-                <span v-if="organization" class="gui-tag">ORG</span>
+                <span class="gui-tag">{{ kindLabels[row.source.kind] }}</span>
+                <span v-if="organization" class="gui-tag">Organization</span>
               </span>
             </div>
             <p v-if="meta(row.source, row.groupKey != null) !== ''" class="source-card__meta">{{ meta(row.source, row.groupKey != null) }}</p>
