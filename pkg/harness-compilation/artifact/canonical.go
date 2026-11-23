@@ -18,8 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/jsonutil"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 	CanonicalSupportDir       = "support"
 	CanonicalArtifactSchemaV1 = "v1"
 	ContentDigestPrefix       = "sha256"
+	placePayloadPath          = CanonicalPayloadDir + "/place-package.json"
 	archiveDigestValueLen     = 71 // len("sha256:") + 64 hex characters
 	archiveDigestPlaceholder  = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )
@@ -65,21 +68,22 @@ type CanonicalArtifact struct {
 
 // CanonicalManifest describes the artifact payload and provenance.
 type CanonicalManifest struct {
-	SchemaVersion    string              `json:"schema_version"`
-	ArtifactVersion  string              `json:"artifact_version"`
-	Kind             string              `json:"kind"`
-	Name             string              `json:"name"`
-	RegistryID       string              `json:"registry_id,omitempty"`
-	RegistrySlug     string              `json:"registry_slug,omitempty"`
-	Revision         string              `json:"revision"`
-	ContentDigest    string              `json:"content_digest"`
-	ArchiveDigest    string              `json:"archive_digest"`
-	License          string              `json:"license,omitempty"`
-	AnalyzerVersion  string              `json:"analyzer_version,omitempty"`
-	Capabilities     []string            `json:"capabilities,omitempty"`
-	Findings         []CanonicalFinding  `json:"findings,omitempty"`
-	Provenance       CanonicalProvenance `json:"provenance"`
-	SupportedSchemas []string            `json:"supported_schema_versions"`
+	SchemaVersion       string                 `json:"schema_version"`
+	ArtifactVersion     string                 `json:"artifact_version"`
+	Kind                string                 `json:"kind"`
+	Name                string                 `json:"name"`
+	RegistryID          string                 `json:"registry_id,omitempty"`
+	RegistrySlug        string                 `json:"registry_slug,omitempty"`
+	Revision            string                 `json:"revision"`
+	ContentDigest       string                 `json:"content_digest"`
+	ArchiveDigest       string                 `json:"archive_digest"`
+	License             string                 `json:"license,omitempty"`
+	AnalyzerVersion     string                 `json:"analyzer_version,omitempty"`
+	Capabilities        []string               `json:"capabilities,omitempty"`
+	Findings            []CanonicalFinding     `json:"findings,omitempty"`
+	Provenance          CanonicalProvenance    `json:"provenance"`
+	SupportedSchemas    []string               `json:"supported_schema_versions"`
+	HostPackageIdentity *targetprofile.Binding `json:"host_package_identity,omitempty"`
 }
 
 // CanonicalFinding is a single analyzer finding attached to an artifact.
@@ -105,6 +109,9 @@ type CanonicalProvenance struct {
 
 // PayloadPath returns the path of the resource payload inside the archive.
 func PayloadPath(kind string) string {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return placePayloadPath
+	}
 	return path.Join(CanonicalPayloadDir, kind+".json")
 }
 
@@ -485,6 +492,8 @@ func decode(r io.Reader, budget *decodeBudget) (CanonicalArtifact, []byte, error
 	}
 
 	var a CanonicalArtifact
+	var placeLayoutViolation bool
+	var seenManifest, seenPlacePayload, seenResourceDir bool
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -500,6 +509,26 @@ func decode(r io.Reader, budget *decodeBudget) (CanonicalArtifact, []byte, error
 		name, err := validateTarHeaderPath(hdr.Name)
 		if err != nil {
 			return CanonicalArtifact{}, nil, err
+		}
+
+		switch {
+		case hdr.Typeflag == tar.TypeReg && name == CanonicalManifestPath:
+			if seenManifest {
+				placeLayoutViolation = true
+			}
+			seenManifest = true
+		case hdr.Typeflag == tar.TypeReg && name == placePayloadPath:
+			if seenPlacePayload {
+				placeLayoutViolation = true
+			}
+			seenPlacePayload = true
+		case hdr.Typeflag == tar.TypeDir && name == CanonicalPayloadDir:
+			if seenResourceDir {
+				placeLayoutViolation = true
+			}
+			seenResourceDir = true
+		default:
+			placeLayoutViolation = true
 		}
 
 		switch hdr.Typeflag {
@@ -555,6 +584,12 @@ func decode(r io.Reader, budget *decodeBudget) (CanonicalArtifact, []byte, error
 		}
 	}
 
+	if _, _, scoped := nameutil.SplitPlaceKind(a.Manifest.Kind); scoped {
+		if placeLayoutViolation || !seenManifest || !seenPlacePayload {
+			return CanonicalArtifact{}, nil, errors.New("scoped place archive layout is invalid")
+		}
+	}
+
 	a.rawArchive = raw.Bytes()
 	return a, raw.Bytes(), nil
 }
@@ -596,9 +631,12 @@ func gzipToTar(r io.Reader) (*tar.Reader, error) {
 	return tar.NewReader(gr), nil
 }
 
-// VerifyContentDigest checks that the sha256 digest of the payload matches the
-// manifest's ContentDigest.
+// VerifyContentDigest checks the content identity claimed by the manifest.
 func (a CanonicalArtifact) VerifyContentDigest() error {
+	if _, _, scoped := nameutil.SplitPlaceKind(a.Manifest.Kind); scoped {
+		_, err := a.PlaceFiles()
+		return err
+	}
 	got := ContentDigest(a.Payload)
 	if got != a.Manifest.ContentDigest {
 		return fmt.Errorf("content digest mismatch: got %s, want %s", got, a.Manifest.ContentDigest)
@@ -833,6 +871,19 @@ func (m CanonicalManifest) Validate() error {
 	}
 	if !isDigestFormat(m.ContentDigest) {
 		return fmt.Errorf("manifest content_digest must be sha256:<64-hex>")
+	}
+	if _, _, scoped := nameutil.SplitPlaceKind(m.Kind); scoped {
+		if !nameutil.IsPlacePackageName(m.Name) {
+			return fmt.Errorf("invalid place package name %q", m.Name)
+		}
+		if m.HostPackageIdentity == nil {
+			return errors.New("manifest host_package_identity is required for scoped resource kind")
+		}
+		if err := m.HostPackageIdentity.ValidateFor(m.Kind, m.ContentDigest); err != nil {
+			return fmt.Errorf("invalid manifest host_package_identity: %w", err)
+		}
+	} else if m.HostPackageIdentity != nil {
+		return errors.New("manifest host_package_identity is only valid for scoped resource kinds")
 	}
 	if m.ArchiveDigest != "" && !isDigestFormat(m.ArchiveDigest) {
 		return fmt.Errorf("manifest archive_digest must be sha256:<64-hex>")
