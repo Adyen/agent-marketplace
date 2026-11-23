@@ -5,20 +5,18 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
 const identityInvalidCode = "marketplace.profile.identity-invalid"
 const compiledTargetIDCode = "marketplace.profile.compiled-target-id"
-
-var validTargetID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 
 type Identity struct {
 	TargetID       string `json:"target_id"`
@@ -39,7 +37,7 @@ func (id Identity) Validate() error {
 	invalid := func() error {
 		return fmt.Errorf("%s: invalid identity for target %q", identityInvalidCode, id.TargetID)
 	}
-	if !validTargetID.MatchString(id.TargetID) {
+	if !nameutil.IsTargetIdentifier(id.TargetID) {
 		return invalid()
 	}
 	if target.IsValid(id.TargetID) {

@@ -42,8 +42,8 @@ type Locator = MarketplaceLocator
 //	https://host[/prefix]/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 //
 // Alias resolution is deliberately not performed here. The returned registry,
-// kind, and name are the route tokens, not decoded or otherwise rewritten
-// identifiers.
+// and name are route tokens. Scoped kind tokens are returned as structured
+// <target-id>/<local-kind> values.
 func ParseMarketplaceLocator(raw string) (MarketplaceLocator, error) {
 	input := strings.TrimSpace(raw)
 	if input == "" {
@@ -100,18 +100,22 @@ func parseAliasLocator(input string) (MarketplaceLocator, error) {
 	if err := validateRouteToken("registry", parts[0]); err != nil {
 		return MarketplaceLocator{}, err
 	}
-	if err := validateKind(parts[1]); err != nil {
+	kind, err := decodeKindToken(parts[1], parts[1])
+	if err != nil {
 		return MarketplaceLocator{}, err
 	}
 	name, revision, digest, err := splitNameRevision(parts[2])
 	if err != nil {
 		return MarketplaceLocator{}, err
 	}
+	if err := validatePlaceKindName(kind, name); err != nil {
+		return MarketplaceLocator{}, err
+	}
 	return MarketplaceLocator{
 		Marketplace: alias,
 		Alias:       alias,
 		Registry:    parts[0],
-		Kind:        parts[1],
+		Kind:        kind,
 		Name:        name,
 		Revision:    revision,
 		Digest:      digest,
@@ -136,8 +140,15 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 	if hasUnsafeURLPath(u) {
 		return MarketplaceLocator{}, fmt.Errorf("browser locator contains an unsafe path")
 	}
-	path := strings.TrimPrefix(u.Path, "/")
-	allParts := strings.Split(path, "/")
+	rawParts := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
+	allParts := make([]string, len(rawParts))
+	for i, token := range rawParts {
+		decoded, err := url.PathUnescape(token)
+		if err != nil {
+			return MarketplaceLocator{}, fmt.Errorf("browser locator contains an unsafe path")
+		}
+		allParts[i] = decoded
+	}
 	routeStart := len(allParts) - 4
 	if len(allParts) >= 6 && allParts[len(allParts)-6] == "r" && allParts[len(allParts)-2] == "revisions" {
 		routeStart = len(allParts) - 6
@@ -146,6 +157,12 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 		return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: expected [/prefix]/r/registry/kind/name with optional /revisions/revision", input)
 	}
 	parts := allParts[routeStart:]
+	kindIndex := routeStart + 2
+	for i, token := range rawParts {
+		if i != kindIndex && nameutil.ContainsEncodedPathSeparator(token) {
+			return MarketplaceLocator{}, fmt.Errorf("browser locator contains an unsafe path")
+		}
+	}
 	for i, token := range parts {
 		if token == "" {
 			return MarketplaceLocator{}, fmt.Errorf("invalid browser locator %q: empty path segment", input)
@@ -153,18 +170,26 @@ func parseBrowserLocator(input string) (MarketplaceLocator, error) {
 		if i == 0 || (len(parts) == 6 && i == 4) {
 			continue
 		}
+		if i == 2 {
+			kind, err := decodeKindToken(rawParts[kindIndex], token)
+			if err != nil {
+				return MarketplaceLocator{}, err
+			}
+			parts[i] = kind
+			continue
+		}
 		if err := validateRouteToken("browser path segment", token); err != nil {
 			return MarketplaceLocator{}, err
 		}
-	}
-	if err := validateKind(parts[2]); err != nil {
-		return MarketplaceLocator{}, err
 	}
 	revision := browserRevision(parts)
 	if revision != "" {
 		if err := validateExplicitRevision(revision); err != nil {
 			return MarketplaceLocator{}, err
 		}
+	}
+	if err := validatePlaceKindName(parts[2], parts[3]); err != nil {
+		return MarketplaceLocator{}, err
 	}
 	base := *u
 	base.Path = strings.Join(allParts[:routeStart], "/")
@@ -246,6 +271,32 @@ func validateKind(kind string) error {
 	return nil
 }
 
+func decodeKindToken(raw, decoded string) (string, error) {
+	if kind, ok := nameutil.DecodePlaceKindToken(raw); ok {
+		return kind, nil
+	}
+	if decoded == nameutil.TargetProfileKind {
+		return decoded, nil
+	}
+	if err := validateKind(decoded); err != nil {
+		return "", err
+	}
+	return decoded, nil
+}
+
+func validatePlaceKindName(kind, name string) error {
+	if kind == nameutil.TargetProfileKind {
+		if !nameutil.IsTargetIdentifier(name) {
+			return fmt.Errorf("invalid target profile name %q", name)
+		}
+		return nil
+	}
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped && !nameutil.IsPlacePackageName(name) {
+		return fmt.Errorf("invalid place package name %q", name)
+	}
+	return nil
+}
+
 func validateRouteToken(label, value string) error {
 	if err := validateLocatorSegment(label, value); err != nil {
 		return err
@@ -288,7 +339,7 @@ func hasUnsafeURLPath(u *url.URL) bool {
 	if u == nil {
 		return true
 	}
-	if strings.ContainsAny(u.EscapedPath(), "\\") || strings.Contains(u.EscapedPath(), "%2f") || strings.Contains(u.EscapedPath(), "%2F") || strings.Contains(u.EscapedPath(), "%5c") || strings.Contains(u.EscapedPath(), "%5C") {
+	if strings.ContainsAny(u.EscapedPath(), "\\") || strings.Contains(u.EscapedPath(), "%5c") || strings.Contains(u.EscapedPath(), "%5C") {
 		return true
 	}
 	for _, r := range u.Path {

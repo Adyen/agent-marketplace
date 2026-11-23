@@ -10,7 +10,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,8 +76,7 @@ type (
 )
 
 var (
-	packageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
-	envNamePattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 func Parse(data []byte, expected Identity) (Profile, error) {
@@ -291,12 +292,12 @@ func validateHost(host Host, hasChecks bool) error {
 		}
 	}
 	for kind, names := range host.Shipped {
-		if !validTargetID.MatchString(kind) {
+		if !nameutil.IsTargetIdentifier(kind) {
 			return fmt.Errorf("%s: invalid shipped kind", profileInvalidCode)
 		}
 		seen := map[string]bool{}
 		for _, name := range names {
-			if !packageNamePattern.MatchString(name) || seen[name] {
+			if !nameutil.IsPlacePackageName(name) || seen[name] {
 				return fmt.Errorf("%s: invalid or duplicate shipped package name", profileInvalidCode)
 			}
 			seen[name] = true
@@ -307,7 +308,7 @@ func validateHost(host Host, hasChecks bool) error {
 
 func validateChecks(checks map[string]Check) error {
 	for name, check := range checks {
-		if !validTargetID.MatchString(name) || check.Scope != "eager-package-load" ||
+		if !nameutil.IsTargetIdentifier(name) || check.Scope != "eager-package-load" ||
 			!validProfileRelativePath(check.Subject.Under) || check.Subject.Component != "package-name" {
 			return fmt.Errorf("%s: invalid package check", profileInvalidCode)
 		}
@@ -323,7 +324,7 @@ func validateKinds(kinds map[string]Kind, checks map[string]Check) error {
 		return fmt.Errorf("%s: at least one place kind is required", profileInvalidCode)
 	}
 	for name, kind := range kinds {
-		if !validTargetID.MatchString(name) || kind.Deliver != "place" || len(kind.Into) == 0 {
+		if !nameutil.IsTargetIdentifier(name) || kind.Deliver != "place" || len(kind.Into) == 0 {
 			return fmt.Errorf("%s: invalid local place kind", profileInvalidCode)
 		}
 		seen := map[string]bool{}
@@ -372,7 +373,7 @@ func validateLiteralArgv(argv []string, requireSubject bool) error {
 }
 
 func validProfileRelativePath(value string) bool {
-	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || hasControl(value) {
+	if value == "" || !utf8.ValidString(value) || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || hasControl(value) {
 		return false
 	}
 	for _, component := range strings.Split(value, "/") {

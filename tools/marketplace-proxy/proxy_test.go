@@ -33,6 +33,17 @@ func TestMarketplaceNginxRedirects(t *testing.T) {
 			t.Run(profile+"/docs="+strconv.FormatBool(docsEnabled), func(t *testing.T) {
 				container := startProxy(t, image, profile, docsEnabled)
 
+				for _, route := range []string{
+					"/api/v1/resources/fixtures/probe-app%2Fmod/example",
+					"/r/fixtures/probe-app%2Fmod/example",
+				} {
+					response := proxyResponse(t, container, route)
+					if response.StatusCode != http.StatusOK || response.Header.Get("X-Witness-Request-URI") != route {
+						t.Errorf("scoped route %q: status = %d, upstream URI = %q",
+							route, response.StatusCode, response.Header.Get("X-Witness-Request-URI"))
+					}
+				}
+
 				if strings.HasSuffix(profile, "/nginx.conf") {
 					t.Run("OIDC callback with maximal session cookie", func(t *testing.T) {
 						response := proxyResponse(t, container, "/api/v1/admin/auth/callback?state=proxy-check&code=proxy-check")
@@ -158,12 +169,34 @@ func startProxy(t testing.TB, image, profile string, docsEnabled bool) string {
 				add_header Set-Cookie "marketplace_admin_session=SESSION; Path=/; HttpOnly; Secure; SameSite=Lax" always;
 				return 303 /admin;
 			}
-			location / { return 200 "api"; }
+			location / {
+				add_header X-Witness-Request-URI $request_uri always;
+				return 200 "api";
+			}
 		}
 		server { listen 127.0.0.3:8080; return 200 "docs"; }
-server { listen 127.0.0.4:3000; return 200 "web"; }
+server {
+	listen 127.0.0.4:3000;
+	add_header X-Witness-Request-URI $request_uri always;
+	return 200 "web";
+}
 `, "SESSION", strings.Repeat("a", 1642))), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Base(profile) == "nginx-operator.local.conf" {
+		data, err := os.ReadFile(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const productionUpstream = "server 172.30.89.3:8080;"
+		if strings.Count(string(data), productionUpstream) != 1 {
+			t.Fatalf("local-operator profile must contain one fixed API upstream")
+		}
+		profile = filepath.Join(t.TempDir(), "nginx-operator.local.conf")
+		data = []byte(strings.Replace(string(data), productionUpstream, "server api:8080;", 1))
+		if err := os.WriteFile(profile, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	docsConfig := "docs-disabled.conf"
 	if docsEnabled {

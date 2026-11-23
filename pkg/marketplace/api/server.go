@@ -25,6 +25,7 @@ import (
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -38,6 +39,9 @@ const MaxRegistryHistoryEntries = store.MaxRegistryHistoryEntries
 const maxRegistrySummaries = 1000
 const blobProbeTimeout = 2 * time.Second
 const defaultServerVersion = "dev"
+
+// TargetProfilePlaceFeature is the opt-in feature token for place resource routes.
+const TargetProfilePlaceFeature = "target-profile-place-v1"
 
 type ServerOption func(*Server)
 
@@ -1025,9 +1029,11 @@ func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, s
 }
 
 func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/resources/")
-	path = strings.Trim(path, "/")
-	parts := strings.Split(path, "/")
+	parts, err := parseResourceRoutePath(r.URL.EscapedPath())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid resource path")
+		return
+	}
 
 	switch len(parts) {
 	case 3:
@@ -1071,8 +1077,53 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func parseResourceRoutePath(escapedPath string) ([]string, error) {
+	const prefix = "/api/v1/resources/"
+	if !strings.HasPrefix(escapedPath, prefix) {
+		return nil, errors.New("resource route prefix is invalid")
+	}
+	path := strings.Trim(strings.TrimPrefix(escapedPath, prefix), "/")
+	rawParts := strings.Split(path, "/")
+	parts := make([]string, len(rawParts))
+	for i, token := range rawParts {
+		if i != 1 && nameutil.ContainsEncodedPathSeparator(token) {
+			return nil, errors.New("resource path contains an encoded separator")
+		}
+		if i == 1 {
+			if kind, ok := nameutil.DecodePlaceKindToken(token); ok {
+				parts[i] = kind
+				continue
+			}
+			if nameutil.ContainsEncodedPathSeparator(token) {
+				return nil, errors.New("resource kind contains a noncanonical separator")
+			}
+		}
+		decoded, err := url.PathUnescape(token)
+		if err != nil || strings.ContainsAny(decoded, "/\\") {
+			return nil, errors.New("resource path contains an unsafe token")
+		}
+		parts[i] = decoded
+	}
+	return parts, nil
+}
+
+func resourceCoordinateAllowed(r *http.Request, kind, name string) bool {
+	if IsMarketplaceKind(kind) {
+		return true
+	}
+	values := r.Header.Values("X-Agent-Marketplace-Features")
+	if len(values) != 1 || values[0] != TargetProfilePlaceFeature {
+		return false
+	}
+	if kind == nameutil.TargetProfileKind {
+		return nameutil.IsTargetIdentifier(name)
+	}
+	_, _, scoped := nameutil.SplitPlaceKind(kind)
+	return scoped && nameutil.IsPlacePackageName(name)
+}
+
 func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1281,7 +1332,7 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1326,7 +1377,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "invalid revision digest")
 		return
 	}
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1363,7 +1414,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
-	_, payload, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
+	_, payload, err := s.getResourceInspection(r, registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -1372,7 +1423,7 @@ func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest, fileDigest string) {
-	manifest, _, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
+	manifest, _, err := s.getResourceInspection(r, registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -1414,13 +1465,14 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 	writeImmutable(w, file.MediaType, data)
 }
 
-func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
+func (s *Server) getResourceInspection(r *http.Request, registrySlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
 	if !isCanonicalSHA256Digest(digest) {
 		return inspection.Manifest{}, nil, errInvalidInspectionRevision
 	}
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
+	ctx := r.Context()
 	src, err := s.resolveRegistry(ctx, registrySlug)
 	if err != nil {
 		return inspection.Manifest{}, nil, err
