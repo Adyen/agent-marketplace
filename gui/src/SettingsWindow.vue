@@ -403,7 +403,6 @@ async function confirmRemove() {
                   </label>
                 </div>
               </div>
-              <p class="settings__caption">Applies immediately.</p>
             </fieldset>
           </section>
 

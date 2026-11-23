@@ -691,8 +691,10 @@ conflicts with an earlier section, this section wins.
   decide the first tab: the gear opens General, and the sidebar Sources
   control (focusing the Add source form), source rows (revealing that
   source), and the empty-state "Add a source" open Sources. The
-  window is 960 px wide and a fixed height, so switching tabs does not resize
-  it. Its sections are described in the fourth review.
+  window is 960 px wide and a fixed 520 px tall (or the viewport minus 48 px,
+  whichever is smaller), so switching tabs does not resize it. The pane scrolls
+  inside the window, so long tabs such as Sources scroll rather than growing
+  the dialog. Its sections are described in the fourth review.
 
 ### Toolbar search
 
@@ -772,8 +774,7 @@ earlier section, this section wins.
   text, so the tabs keep their accessible names.
 - The pane shows the tab title as its heading and scrolls. Content is rows: a
   label, a one-line hint, and a control on the right, separated by hairlines.
-- General has one Theme row with the preview tiles. The caption reads
-  "Applies immediately."
+- General has one Theme row with the preview tiles and no caption.
 - Harness targets lists the user targets as rows with checkboxes, organization
   targets as a read-only list with a lock, and a sticky bottom bar. The bar
   shows "Unsaved changes" while the draft differs, then Revert (disabled when
