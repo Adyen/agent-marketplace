@@ -161,7 +161,9 @@ alone separates it from the main column. It never folds.
 - **Kind**: a caps label, then a single-column list with one row per kind
   and its count, in the same row style as Groups. A kind with a count of zero
   is hidden unless it is the selected kind.
-- **Groups**: a caps label, then one row per session group with its row count.
+- **Groups**: a caps label that is a disclosure control, then one row per
+  session group with its row count. Groups start expanded at 720 px window
+  height and above, and collapsed below it.
   The pinned Needs attention group is left out, because its filter covers it.
   The list is absent under Kind grouping, where the Kind list covers it.
   Selecting a row scrolls the main list to that group's header and moves

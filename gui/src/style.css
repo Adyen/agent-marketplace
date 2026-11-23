@@ -323,6 +323,16 @@ textarea:focus-visible,
   margin-top: 4px;
 }
 
+.gui-sidebar__groups-toggle {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  text-transform: inherit;
+}
+
 .gui-sidebar__section--scroll {
   display: flex;
   flex: 1 1 0;

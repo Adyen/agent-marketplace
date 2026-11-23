@@ -309,6 +309,25 @@ describe('empty states and sidebar labels', () => {
     expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
   })
 
+  // spec: gui-shell/sidebar-groups-start-collapsed-in-short-windows
+  it('folds the Groups section by default in short windows and keeps its group buttons', async () => {
+    const original = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+    try {
+      const { wrapper } = await mountShell([row('p', { group: 'pending', status: 'pending sync' })])
+      const toggle = wrapper.get('section[aria-label="Groups"] button[aria-expanded]')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      expect(wrapper.get('section[aria-label="Groups"] ul').isVisible()).toBe(false)
+      expect(wrapper.find('button[aria-label="Show Pending sync group"]').exists()).toBe(true)
+
+      await toggle.trigger('click')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      expect(wrapper.get('section[aria-label="Groups"] ul').isVisible()).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: original })
+    }
+  })
+
   it('omits the Groups section when there are no groups', async () => {
     const { wrapper } = await mountShell([])
     expect(wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)

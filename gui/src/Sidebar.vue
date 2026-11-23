@@ -51,6 +51,7 @@ const emit = defineEmits<{
 const sourcesButton = ref<HTMLButtonElement | null>(null)
 const settingsButton = ref<HTMLButtonElement | null>(null)
 const foldedSourceGroups = ref(new Set<string>())
+const groupsExpanded = ref(window.innerHeight >= 720)
 
 defineExpose({
   focusSources: () => sourcesButton.value?.focus(),
@@ -186,8 +187,15 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
       </section>
 
       <section v-if="groups.length > 0" class="gui-sidebar__section gui-sidebar__groups" aria-label="Groups">
-        <h2 class="gui-caps">Groups</h2>
-        <ul class="gui-sidebar__list">
+        <h2 class="gui-caps">
+          <button
+            type="button"
+            class="gui-sidebar__groups-toggle"
+            :aria-expanded="groupsExpanded"
+            @click="groupsExpanded = !groupsExpanded"
+          >Groups</button>
+        </h2>
+        <ul v-show="groupsExpanded" class="gui-sidebar__list">
           <li v-for="group in groups" :key="group.id">
             <button
               type="button"
