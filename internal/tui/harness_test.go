@@ -203,10 +203,17 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 }
 
 // spec: tui-interactions/empty-selection
-func TestHarnessModalRejectsEmptySelection(t *testing.T) {
+func TestHarnessModalRejectsEmptyProjectSelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
+	m.projectHarnesses = []string{"factory"}
 	m.openHarnessModal()
-	m.harnessModal.selected = map[string]bool{}
+	mi, _ := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	m = mi.(Model)
+	mi, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = mi.(Model)
+	if m.harnessModal.selected["factory"] {
+		t.Fatal("space should remove Factory from the project selection")
+	}
 
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mi.(Model)
@@ -223,6 +230,59 @@ func TestHarnessModalRejectsEmptySelection(t *testing.T) {
 	}
 	if m.pane != paneHarnessModal {
 		t.Fatalf("empty save should keep modal open")
+	}
+}
+
+// spec: tui-interactions/empty-selection
+// spec: config-mutation/removing-the-last-target-without-targets-spelling-is-refused
+func TestHarnessModalRejectsEmptySelection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	const configBefore = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(configBefore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(filepath.Dir(configPath), "lock.yaml")
+	const lockBefore = "pinned lock fixture\n"
+	if err := os.WriteFile(lockPath, []byte(lockBefore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewModel("/repo", home)
+	m.globalHarnesses = []string{"factory"}
+	m.openHarnessModal()
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = mi.(Model)
+	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatal("saving an empty global selection should attempt the config edit")
+	}
+	written := cmd()
+	result, ok := written.(harnessWrittenMsg)
+	if !ok || result.err == nil {
+		t.Fatalf("empty global save = %#v, want reader-upgrade refusal", written)
+	}
+	if !strings.Contains(result.err.Error(), "upgrade every reader") ||
+		!strings.Contains(result.err.Error(), "rename the key to targets:") {
+		t.Fatalf("empty global save error = %v, want reader-upgrade and rename guidance", result.err)
+	}
+	mi, _ = m.Update(written)
+	m = mi.(Model)
+	if m.pane != paneHarnessModal {
+		t.Fatalf("empty global save should keep the harness modal open, got pane %v", m.pane)
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil || string(configAfter) != configBefore {
+		t.Fatalf("refusing empty global save changed config: %q, %v", configAfter, err)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || string(lockAfter) != lockBefore {
+		t.Fatalf("refusing empty global save changed lock: %q, %v", lockAfter, err)
 	}
 }
 

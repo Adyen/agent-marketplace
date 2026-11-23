@@ -208,7 +208,7 @@ func hccTargetsFromStrings(targets []string) []hcc.Target {
 // source from an EffectiveConfig. Project-level harnesses win, followed by
 // user-personal and organization defaults.
 func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Source) {
-	if len(ec.TargetHarnesses) > 0 {
+	if ec.TargetHarnessSource != config.SourceUnset {
 		return hccTargetsFromStrings(ec.TargetHarnesses), ec.TargetHarnessSource
 	}
 	if ec.Repo.Config != nil && len(ec.Repo.Config.Harnesses) > 0 {
@@ -228,7 +228,7 @@ func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Sou
 // Only when neither declares targets does it fall back to the repository set,
 // so a repository cannot narrow output that machine layers selected.
 func machineTargetHarnessSetFromEC(ec config.EffectiveConfig, repository []hcc.Target, repositorySource config.Source) ([]hcc.Target, config.Source) {
-	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); len(harnesses) > 0 {
+	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); source != config.SourceUnset {
 		return hccTargetsFromStrings(harnesses), source
 	}
 	return slices.Clone(repository), repositorySource
@@ -504,7 +504,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
 	result.MachineTargetHarnesses, result.MachineTargetHarnessSource = machineTargetHarnessSetFromEC(ec, result.TargetHarnesses, result.TargetHarnessSource)
 
-	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
+	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 && result.TargetHarnessSource == config.SourceUnset {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
 		return result, releaseExactLease
 	}

@@ -159,6 +159,8 @@ Supported targets are:
 
 Target names are lowercase. Unknown targets fail with `v4.harness`.
 
+`targets:` is an accepted alias of `harnesses:`, both at the root and on a resource group; a root or group that declares both spellings is refused. An empty `targets: []` is accepted only in the user file, where it selects no machine targets. Editors still write `harnesses:` by default, but preserve an authored `targets:` spelling: removing the last target in the user file saves `targets: []` when that file already spells `targets:`, and refuses otherwise. Older CLI releases do not understand `targets:` — upgrade every client that reads a file before authoring the alias in it.
+
 For resources the repository selects, a non-empty repository `harnesses` list takes precedence over the user and organization lists. If the repository file omits the field or sets an empty list, the user list is used; if that is also missing or empty, the organization list is used. Resources the user or organization selects use the user list, then the organization list, and fall back to the repository list only when neither declares one. See [target harnesses](./configuration-layers.md#target-harnesses). Commands that only read the catalog, such as `list`, work without any target list and print a warning. `sync` needs a target list and exits with an error when none is configured.
 
 Output paths for each harness are listed in the [harnesses and output paths reference](harnesses-and-output-paths.md).

@@ -345,7 +345,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			inventoryResult:      &resolvedResult,
 			materializationModes: resolvedResult.MaterializationModes,
 			localExcludes:        localExcludes(resolvedResult.LocalCfg),
-			globalHarnesses:      configHarnesses(resolvedResult.GlobalCfg),
+			globalHarnesses:      targetsToHarnesses(resolvedResult.MachineTargetHarnesses),
 			projectHarnesses:     configHarnesses(resolvedResult.RepoCfg),
 			targetHarnesses:      resolvedResult.TargetHarnesses,
 			targetHarnessSource:  resolvedResult.TargetHarnessSource,

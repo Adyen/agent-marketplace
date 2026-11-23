@@ -134,6 +134,7 @@ type V4ResourceGroup struct {
 	Registries    []string
 	Required      *bool
 	Harnesses     []string
+	Targets       bool
 	HasTags       bool
 	HasAll        bool
 	HasRegistries bool
@@ -164,6 +165,7 @@ type V4Config struct {
 	// silently discards configuration. Pointer fields preserve omitted values.
 	Harnesses           []string
 	HasHarnesses        bool
+	Targets             bool
 	AllowedRegistries   *[]string
 	AllowedMarketplaces *[]string
 	Backup              *BackupConfig
@@ -366,7 +368,7 @@ var v4LegacyKeys = map[string]struct{}{
 
 var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
-	"harnesses": {}, "allowed_registries": {}, "allowed_marketplaces": {},
+	"harnesses": {}, "targets": {}, "allowed_registries": {}, "allowed_marketplaces": {},
 	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
 }
 
@@ -375,7 +377,15 @@ var v4SourceKeys = map[string]struct{}{
 }
 
 var v4GroupKeys = map[string]struct{}{
-	"include": {}, "exclude": {}, "tags": {}, "all": {}, "registries": {}, "required": {}, "harnesses": {},
+	"include": {}, "exclude": {}, "tags": {}, "all": {}, "registries": {}, "required": {}, "harnesses": {}, "targets": {},
+}
+
+// targetListKey returns the spelling a target list was authored under.
+func targetListKey(targets bool) string {
+	if targets {
+		return "targets"
+	}
+	return "harnesses"
 }
 
 // ParseV4Config parses one root or fragment. A root must carry v4 explicitly;
@@ -385,7 +395,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		attachV4ValidationFile(err, declaringPath)
 		return nil, err
@@ -492,6 +502,7 @@ type v4Document struct {
 	groups              map[string]V4ResourceGroup
 	harnesses           []string
 	hasHarnesses        bool
+	targets             bool
 	allowedRegistries   *[]string
 	allowedMarketplaces *[]string
 	backup              *BackupConfig
@@ -568,7 +579,10 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	if len(kinds) > 0 {
-		policy := &V4Config{HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization}
+		if doc.targets && len(doc.harnesses) == 0 && !root {
+			return nil, v4DocumentError(file, raw, v4err("v4.harness", "targets", 0, "empty targets lists are valid only in the user root"), !root)
+		}
+		policy := &V4Config{Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization}
 		if err := policy.validateLayerFields(kinds[0]); err != nil {
 			return nil, v4DocumentError(file, raw, err, !root)
 		}
@@ -746,14 +760,22 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 		}
 		return nil
 	}
-	if n := mappingValue(root, "harnesses"); n != nil {
+	harnessesNode, targetsNode := mappingValue(root, "harnesses"), mappingValue(root, "targets")
+	if harnessesNode != nil && targetsNode != nil {
+		return v4err("v4.targets-alias", "targets", targetsNode.Line, "targets and harnesses cannot both be declared")
+	}
+	listKey, n := targetListKey(targetsNode != nil), harnessesNode
+	if targetsNode != nil {
+		n, doc.targets = targetsNode, true
+	}
+	if n != nil {
 		doc.hasHarnesses = true
-		if err := decode("harnesses", &doc.harnesses); err != nil {
+		if err := decode(listKey, &doc.harnesses); err != nil {
 			return err
 		}
 		for i, harness := range doc.harnesses {
 			if !target.IsValid(harness) {
-				return v4err("v4.harness", fmt.Sprintf("harnesses[%d]", i), n.Line, "unknown target %q", harness)
+				return v4err("v4.harness", fmt.Sprintf("%s[%d]", listKey, i), n.Line, "unknown target %q", harness)
 			}
 		}
 	}
@@ -1162,6 +1184,10 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 	if n.Kind != yaml.MappingNode {
 		return g, v4err("v4.type", "resources."+source, n.Line, "must be an include list or mapping")
 	}
+	harnessesNode, targetsNode := mappingValue(n, "harnesses"), mappingValue(n, "targets")
+	if harnessesNode != nil && targetsNode != nil {
+		return g, v4err("v4.targets-alias", "resources."+source+".targets", targetsNode.Line, "targets and harnesses cannot both be declared")
+	}
 	var excludeNode *yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, value := n.Content[i].Value, n.Content[i+1]
@@ -1220,12 +1246,12 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 			} else {
 				g.Required, g.HasRequired = &b, true
 			}
-		case "harnesses":
-			values, err := parseV4StringList(value, "resources."+source+".harnesses")
+		case "harnesses", "targets":
+			values, err := parseV4StringList(value, "resources."+source+"."+key)
 			if err != nil {
 				return g, err
 			}
-			g.Harnesses, g.HasHarnesses = values, true
+			g.Harnesses, g.HasHarnesses, g.Targets = values, true, key == "targets"
 		}
 	}
 	// Exclusions are applied after inclusions within one file regardless of
@@ -1773,7 +1799,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.Files = append(dst.Files, src.Files...)
 	dst.reads = append(dst.reads, src.reads...)
 	if src.HasHarnesses {
-		dst.Harnesses, dst.HasHarnesses = cloneV4StringList(src.Harnesses), true
+		dst.Harnesses, dst.HasHarnesses, dst.Targets = cloneV4StringList(src.Harnesses), true, src.Targets
 	}
 	// Allowlist policy is first-authority: an included child claims the field
 	// before its containing document can provide a weaker replacement.
@@ -1985,7 +2011,7 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
-	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
@@ -2013,7 +2039,7 @@ func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
 		d.Required, d.HasRequired = &b, true
 	}
 	if src.HasHarnesses {
-		d.Harnesses, d.HasHarnesses = cloneV4StringList(src.Harnesses), true
+		d.Harnesses, d.HasHarnesses, d.Targets = cloneV4StringList(src.Harnesses), true, src.Targets
 	}
 	dst.Groups[name] = d
 }
@@ -2046,8 +2072,11 @@ func normalizeV4Tree(c *V4Config) error {
 		if g.HasHarnesses {
 			for i, harness := range g.Harnesses {
 				if !target.IsValid(harness) {
-					return v4err("v4.harness", fmt.Sprintf("resources.%s.harnesses[%d]", name, i), 0, "unknown target %q", harness)
+					return v4err("v4.harness", fmt.Sprintf("resources.%s.%s[%d]", name, targetListKey(g.Targets), i), 0, "unknown target %q", harness)
 				}
+			}
+			if g.Targets && len(g.Harnesses) == 0 {
+				return v4err("v4.harness", "resources."+name+".targets", 0, "targets lists in resource groups must not be empty")
 			}
 		}
 		formatSource := src.Format != ""
@@ -2214,7 +2243,10 @@ func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document
 // editors can refuse a layer-invalid document before writing any bytes.
 func (c *V4Config) validateLayerFields(kind layerKind) error {
 	if kind == localLayer && c.HasHarnesses {
-		return v4err("v4.layer-field", "harnesses", 0, "harnesses are not valid in repository personal configuration")
+		return v4err("v4.layer-field", targetListKey(c.Targets), 0, "target lists are not valid in repository personal configuration")
+	}
+	if c.Targets && len(c.Harnesses) == 0 && kind != userLayer {
+		return v4err("v4.harness", "targets", 0, "empty targets lists are valid only in the user root")
 	}
 	if kind == localLayer && (c.AllowedRegistries != nil || c.AllowedMarketplaces != nil) {
 		return v4err("v4.layer-field", "allowed_registries", 0, "allowlists are not valid in repository personal configuration")
