@@ -537,8 +537,10 @@ wins.
   - **kind**: 10ch fits every kind ID (`mcpserver` is the longest) without
     an ellipsis.
   - **name cell**: the name, then any exceptions as inline tags after an 8 px
-    gap: the scope tag for `organization`, `project`, or `local`, and the
-    harness override badge. The name keeps priority; a long status reason
+    gap: the scope tag for `organization`, `project`, or `local` (read `Org`,
+    `Project`, or `Local`), and the harness override badge, which reads
+    `Only <harness names>` (for example `Only Claude Code, Devin`) in an
+    outlined style. The name keeps priority; a long status reason
     shrinks and truncates before it can cover the registry column.
   - **scope**: the default `user` scope shows nothing visible. The
     `workspace__scope` element is kept with its full text but is visually

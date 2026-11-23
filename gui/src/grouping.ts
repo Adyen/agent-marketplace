@@ -31,16 +31,22 @@ const GROUP_BY_AXES: readonly GroupBy[] = ['status', 'source', 'kind']
 const THEN_BY_AXES: readonly ThenBy[] = ['none', 'kind', 'source']
 const ATTENTION_GROUPS = new Set(['pending', 'stale', 'broken', 'malformed'])
 const KIND_ORDER = ['skill', 'command', 'subagent', 'hook', 'mcpserver', 'collection', 'rule']
-const KIND_TITLES = new Map([
-  ['skill', 'Skills'],
-  ['command', 'Commands'],
-  ['subagent', 'Subagents'],
-  ['hook', 'Hooks'],
-  ['mcpserver', 'MCP servers'],
-  ['collection', 'Collections'],
-  ['rule', 'Rules'],
+const KIND_NAMES = new Map([
+  ['skill', { singular: 'Skill', plural: 'Skills' }],
+  ['command', { singular: 'Command', plural: 'Commands' }],
+  ['subagent', { singular: 'Subagent', plural: 'Subagents' }],
+  ['hook', { singular: 'Hook', plural: 'Hooks' }],
+  ['mcpserver', { singular: 'MCP server', plural: 'MCP servers' }],
+  ['collection', { singular: 'Collection', plural: 'Collections' }],
+  ['rule', { singular: 'Rule', plural: 'Rules' }],
 ])
-export const kindFacetOptions = [...KIND_TITLES].map(([id, label]) => ({ id, label }))
+export const kindFacetOptions = [...KIND_NAMES].map(([id, { plural }]) => ({ id, label: plural }))
+
+export function kindName(id: string): string {
+  return KIND_NAMES.get(id)?.singular ?? id
+}
+
+export const scopeTagLabel: Record<string, string> = { organization: 'Org', project: 'Project', local: 'Local' }
 
 interface Bucket {
   segment: string
@@ -131,7 +137,7 @@ function bucketize(rows: Row[], axis: GroupBy | ThenBy, statusGroups: readonly S
         .sort(([left], [right]) => kindRank(left) - kindRank(right) || compareText(left, right))
         .map(([kind, members]) => ({
           segment: `kind:${encodeURIComponent(kind)}`,
-          title: KIND_TITLES.get(kind) ?? kind,
+          title: KIND_NAMES.get(kind)?.plural ?? kind,
           rows: members,
         }))
     case 'source':

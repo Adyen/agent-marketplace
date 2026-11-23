@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Row } from './controller'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
+import { kindName, scopeTagLabel } from './grouping'
 
 const props = defineProps<{
   folded: boolean
@@ -73,7 +74,7 @@ defineExpose({
           <div :key="selected.id" class="gui-inspector__resource">
             <div class="gui-inspector__head">
               <div class="gui-inspector__heading">
-                <p class="gui-caps gui-inspector__eyebrow">{{ selected.kind }}</p>
+                <p class="gui-caps gui-inspector__eyebrow">{{ kindName(selected.kind) }}</p>
                 <h2 class="gui-inspector__title mono">{{ selected.displayName }}</h2>
               </div>
             </div>
@@ -82,7 +83,7 @@ defineExpose({
               <dt>Registry</dt>
               <dd class="mono">{{ selected.registry }}</dd>
               <dt>Scope</dt>
-              <dd>{{ selected.scope }}</dd>
+              <dd>{{ scopeTagLabel[selected.scope] ?? selected.scope }}</dd>
               <dt>Status</dt>
               <dd><span class="gui-dot" :class="`gui-dot--${statusTone}`" aria-hidden="true" />{{ selected.status }}</dd>
             </dl>

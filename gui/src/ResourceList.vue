@@ -19,7 +19,8 @@ export function sectionElementId(id: string): string {
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Row } from './controller'
-import type { Section, ViewSettings } from './grouping'
+import { harnessDisplayName } from './harness-names'
+import { kindName, scopeTagLabel, type Section, type ViewSettings } from './grouping'
 import type { NameSegment } from './search'
 import GuiIcon from './GuiIcon.vue'
 
@@ -47,7 +48,7 @@ const rowColumns = computed(() =>
 )
 
 function scopeIsTag(scope: string): boolean {
-  return scope === 'organization' || scope === 'project' || scope === 'local'
+  return scope in scopeTagLabel
 }
 
 function problemReason(row: Row): { text: string; tone: 'danger' | 'warning' } | null {
@@ -123,13 +124,13 @@ function problemReason(row: Row): { text: string; tone: 'danger' | 'warning' } |
             @keydown.up.prevent="emit('move', -1)"
           >
             <span class="workspace__check" :class="{ 'workspace__check--on': row.checked && !row.disabled, 'workspace__check--disabled': row.disabled }" aria-hidden="true" />
-            <span class="workspace__kind" :class="{ 'gui-visually-hidden': hideKind }">{{ row.kind }}</span>
+            <span class="workspace__kind" :class="{ 'gui-visually-hidden': hideKind }">{{ kindName(row.kind) }}</span>
             <span class="workspace__name-cell">
               <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
               <span v-if="problemReason(row)" class="gui-tag workspace__reason" :class="`workspace__reason--${problemReason(row)?.tone}`">{{ problemReason(row)?.text }}</span>
-              <span v-if="scopeIsTag(row.scope)" class="workspace__scope workspace__scope--tag">{{ row.scope }}</span>
+              <span v-if="scopeIsTag(row.scope)" class="workspace__scope workspace__scope--tag">{{ scopeTagLabel[row.scope] }}</span>
               <span v-else class="workspace__scope gui-visually-hidden">{{ row.scope }}</span>
-              <span v-if="row.harnessOverride" class="workspace__badge" title="Registry-level harness override">harnesses: {{ row.harnesses.join(', ') }}</span>
+              <span v-if="row.harnessOverride" class="workspace__badge workspace__badge--outline" title="Registry-level harness override">Only {{ row.harnesses.map(harnessDisplayName).join(', ') }}</span>
             </span>
             <span class="workspace__registry" :class="{ 'gui-visually-hidden': hideRegistry }" :title="row.registry">{{ row.registry }}</span>
           </li>

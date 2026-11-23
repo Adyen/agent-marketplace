@@ -235,9 +235,9 @@ describe('WorkspaceView', () => {
     const names = wrapper.findAll('.workspace__name').map((name) => name.text())
     expect(names).toEqual(expect.arrayContaining(['needed', 'broken']))
     expect(wrapper.findAll('.workspace__registry').map((registry) => registry.text())).toEqual(expect.arrayContaining(['corp', 'local']))
-    expect(wrapper.findAll('.workspace__kind').map((kind) => kind.text())).toContain('skill')
-    expect(wrapper.findAll('.workspace__scope').map((s) => s.text())).toContain('organization')
-    expect(wrapper.find('.workspace__badge').text()).toContain('claude')
+    expect(wrapper.findAll('.workspace__kind').map((kind) => kind.text())).toContain('Skill')
+    expect(wrapper.findAll('.workspace__scope').map((s) => s.text())).toContain('Org')
+    expect(wrapper.find('.workspace__badge').text()).toContain('Claude Code')
   })
 
   // spec: gui-shell/disabled-and-enabled-rows-use-distinct-indicator-roles
@@ -314,6 +314,34 @@ describe('WorkspaceView', () => {
     expect(scopeOf('plain')?.classes()).toContain('gui-visually-hidden')
     expect(scopeOf('plain')?.text()).toBe('user')
     expect(scopeOf('corp')?.classes()).toContain('workspace__scope--tag')
+  })
+
+  // spec: gui-shell/resource-rows-show-plain-kind-scope-and-harness-labels
+  it('names resource kinds, scope tags, and harness overrides in plain words', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([
+          row('server', { kind: 'mcpserver', group: 'enabled', scope: 'project' }),
+          row('corp', { kind: 'skill', group: 'required', required: true, status: 'required (org)', scope: 'organization' }),
+          row('local-only', { kind: 'command', group: 'enabled', scope: 'local', harnessOverride: true, harnesses: ['claude', 'devin'] }),
+        ]),
+      }),
+    )
+    await tick()
+
+    const rowOf = (name: string) => wrapper.findAll('.workspace__row').find((r) => r.get('.workspace__name').text() === name)!
+    expect(rowOf('server').get('.workspace__kind').text()).toBe('MCP server')
+    expect(rowOf('corp').get('.workspace__kind').text()).toBe('Skill')
+    expect(rowOf('local-only').get('.workspace__kind').text()).toBe('Command')
+    expect(rowOf('server').get('.workspace__scope').text()).toBe('Project')
+    expect(rowOf('corp').get('.workspace__scope').text()).toBe('Org')
+    expect(rowOf('local-only').get('.workspace__scope').text()).toBe('Local')
+    const badge = rowOf('local-only').get('.workspace__badge')
+    expect(badge.text()).toBe('Only Claude Code, Devin')
+    expect(badge.classes()).toContain('workspace__badge--outline')
   })
 
   it('marks a sidebar group with a tone dot only when it has rows', async () => {
@@ -1490,7 +1518,7 @@ describe('workspace facets and source header', () => {
     const selectedSkill = wrapper.find('[role="option"][aria-selected="true"]')
     expect(selectedSkill.exists()).toBe(true)
     const selectedSkillName = selectedSkill.find('.workspace__name').text()
-    expect(selectedSkill.text()).toMatch(/^skill/)
+    expect(selectedSkill.text()).toMatch(/^Skill/)
     expect(selectedSkillName).not.toBe('team-command needle')
     expect(wrapper.get('aside[aria-label="Detail"] .gui-inspector__title').text()).toBe(selectedSkillName)
     expect(rowNames(wrapper).sort()).toEqual([
