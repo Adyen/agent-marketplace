@@ -55,3 +55,38 @@ The v4 user-personal settings editor SHALL preserve comments and unrelated keys 
 
 - **WHEN** the only key in a settings section is cleared
 - **THEN** the empty section MUST be removed
+
+### Requirement: Settings tabs edit global settings
+
+The Settings window SHALL show General (update checks and telemetry), Install mode, Backups, and Logging tabs, each with a Save changes and Discard footer. Save changes SHALL stay disabled until a field is changed and valid. A field the user has set SHALL offer a Reset action that sends null for that key. A field whose value is locked by the organization SHALL be disabled and SHALL say it is set by the organization. A field showing an organization or built-in default SHALL say so.
+
+#### Scenario: General saves the update check
+
+- **WHEN** the user turns off "Show when a new release is available" and selects Save changes
+- **THEN** the save MUST send an update check patch with enabled false
+
+#### Scenario: Locked telemetry is disabled with organization copy
+
+- **WHEN** the organization locks the telemetry level
+- **THEN** the telemetry choices MUST be disabled and the General tab MUST say the level is set by the organization
+
+#### Scenario: Install mode saves the mode and overrides
+
+- **WHEN** the user changes the install mode and selects a per-agent override
+- **THEN** the save MUST send the materialization mode and the complete override map
+
+#### Scenario: Backups tab blocks invalid day counts
+
+- **WHEN** the user enters a negative number of days on the Backups tab
+- **THEN** the field MUST show an inline message and Save changes MUST stay disabled
+
+#### Scenario: Logging reset clears the user value
+
+- **WHEN** the user resets the log level on the Logging tab and selects Save changes
+- **THEN** the save MUST send the log level as null
+
+#### Scenario: Settings save writes the user YAML
+
+- **WHEN** the user changes a backup day count in the built app and selects Save changes
+- **THEN** the user-personal root MUST contain the new value, and a "Settings saved" notification MUST appear
+

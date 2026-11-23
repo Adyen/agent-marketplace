@@ -20,6 +20,7 @@ import {
   type UpdateAction,
   type UpdateStatus,
 } from './api/client'
+import type { SettingsRequest } from './settings-model'
 
 export type Row = Snapshot['rows'][number]
 export type Diagnostic = Snapshot['diagnostics'][number]
@@ -651,6 +652,10 @@ export class WorkspaceController {
       this.state.sourceError = 'The action could not be started'
     }
     return accepted
+  }
+
+  async saveSettings(request: SettingsRequest): Promise<boolean> {
+    return this.requestOperation(() => this.client.configure(request))
   }
 
   async removeSource(id: string): Promise<boolean> {

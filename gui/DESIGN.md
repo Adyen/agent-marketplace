@@ -787,14 +787,34 @@ earlier section, this section wins.
 ### Settings window
 
 - A left rail (220 px, `--gui-s0100`, right hairline) holds a caps "Settings"
-  label and three tabs with icons: General (gear), Harness targets (target),
-  and Sources (folder). The tablist is vertical. Arrow keys, Home, and End
+  label and six tabs with icons, in this order: General (gear), Harness
+  targets (target), Install mode (branch), Backups (file), Logging (view), and
+  Sources (folder). The tablist is vertical. Arrow keys, Home, and End
   move between tabs. Each tab has `aria-controls`, and the tabs roving-focus.
 - Below 720 px the rail collapses to icons. The labels stay as visually hidden
   text, so the tabs keep their accessible names.
 - The pane shows the tab title as its heading and scrolls. Content is rows: a
   label, a one-line hint, and a control on the right, separated by hairlines.
-- General has one Theme row with the preview tiles and no caption.
+- General has the Theme row with the preview tiles, then "Updates and
+  telemetry": a switch "Show when a new release is available" and a telemetry
+  radio list ("Don't share", "Share basic telemetry", "Share detailed
+  telemetry").
+- Install mode has "Install resources as" with Symlinks (default) and Copies,
+  and a "Per-agent overrides" list with one select per user target (Use
+  default, Symlinks, Copies).
+- Backups has the switch "Keep backups before changing agent files" and
+  number fields "Keep backups for N days" and "Keep at most N backups per day".
+- Logging has the switch "Write a log file", a Log level select (Debug, Info,
+  Warning, Error), "Log file path" (placeholder "Default location"), "Rotate at
+  N MB", "Keep N old logs", "Delete logs after N days", and the switch
+  "Compress old logs".
+- Each global settings tab ends with a bar: "Unsaved changes", Discard, and the
+  solid Save changes, which stays disabled until a field changes and passes
+  its minimum (inline message below the field). A user-set field shows a Reset
+  link that clears it to its default. A field the organization locks is
+  disabled with "Set by your organization". A field at its built-in default
+  shows "Default: X"; one that only an organization sets shows "Organization
+  default: X". Saves go through `save-settings` and show "Settings saved".
 - Harness targets lists the user targets as rows with checkboxes, organization
   targets as a read-only list with a lock, and a sticky bottom bar. The bar
   shows "Unsaved changes" while the draft differs, then Revert (disabled when

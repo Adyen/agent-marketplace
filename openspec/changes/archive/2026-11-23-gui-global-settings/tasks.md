@@ -8,11 +8,11 @@
 
 ## 2. Phase 3: Settings tabs UI
 
-- [ ] 2.1 Show backup, logging, update check, and materialization in the Settings General tab.
-- [ ] 2.2 Show the locked telemetry level and the organization defaults in the UI.
-- [ ] 2.3 Add GUI tests and Playwright coverage for the new Settings controls.
+- [x] 2.1 Show backup, logging, update check, and materialization in the Settings General tab.
+- [x] 2.2 Show the locked telemetry level and the organization defaults in the UI.
+- [x] 2.3 Add GUI tests and Playwright coverage for the new Settings controls.
 
 ## 3. Verify
 
-- [ ] 3.1 Run the Go, gui, and Playwright checks and the spec check.
-- [ ] 3.2 Archive the change once Phase 3 is complete.
+- [x] 3.1 Run the Go, gui, and Playwright checks and the spec check.
+- [x] 3.2 Archive the change once Phase 3 is complete.

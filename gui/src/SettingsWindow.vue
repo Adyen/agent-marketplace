@@ -6,10 +6,11 @@ import type { WorkspaceController } from './controller'
 import { operationLabel } from './feedback'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
+import GlobalSettingsPanel from './GlobalSettingsPanel.vue'
 import SourceList from './SourceList.vue'
 import { groupSources } from './source-groups'
 
-export type SettingsTab = 'general' | 'targets' | 'sources'
+export type SettingsTab = 'general' | 'targets' | 'install' | 'backups' | 'logging' | 'sources'
 export interface SourceRevealRequest {
   sourceId: string
   sequence: number
@@ -27,6 +28,9 @@ const emit = defineEmits<{ addSource: [] }>()
 const tabs: { id: SettingsTab; label: string; icon: IconName }[] = [
   { id: 'general', label: 'General', icon: 'gear' },
   { id: 'targets', label: 'Harness targets', icon: 'target' },
+  { id: 'install', label: 'Install mode', icon: 'branch' },
+  { id: 'backups', label: 'Backups', icon: 'file' },
+  { id: 'logging', label: 'Logging', icon: 'view' },
   { id: 'sources', label: 'Sources', icon: 'folder' },
 ]
 const active = ref<SettingsTab>(props.tab)
@@ -342,6 +346,14 @@ async function confirmRemove() {
                 </div>
               </div>
             </fieldset>
+            <GlobalSettingsPanel
+              v-if="configuration != null"
+              section="general"
+              :controller="controller"
+              :settings="configuration.settings"
+              :user-targets="configuration.userTargets"
+              :disabled="fieldsDisabled"
+            />
           </section>
 
           <section
@@ -403,6 +415,25 @@ async function confirmRemove() {
                 @click="save"
               />
             </div>
+          </section>
+
+          <section
+            v-for="panelTab in ['install', 'backups', 'logging'] as const"
+            v-show="active === panelTab"
+            :id="`settings-panel-${panelTab}`"
+            :key="panelTab"
+            role="tabpanel"
+            :aria-labelledby="`settings-tab-${panelTab}`"
+            class="settings-window__panel"
+          >
+            <GlobalSettingsPanel
+              v-if="configuration != null"
+              :section="panelTab"
+              :controller="controller"
+              :settings="configuration.settings"
+              :user-targets="configuration.userTargets"
+              :disabled="fieldsDisabled"
+            />
           </section>
 
           <section
