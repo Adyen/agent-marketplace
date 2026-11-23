@@ -198,6 +198,13 @@ unmet warning also carries a typed reason, `not-found`, `excluded`,
 | `status` | Prints an `UNMET REQUIREMENTS` table with `RESOURCE`, `REQUIRES` (`<kind>:<name>`), `REASON`, and `FIX` columns, sorted by `RESOURCE` then `REQUIRES`. Its main table's `VIA` column shows `requires <kind>:<name>` provenance alongside collection provenance. |
 | `doctor` | Prints grouped warnings, and explicitly reports `unconfigured prerequisite source` for an unmet prerequisite whose `registry` hint matches no configured source. That line is warning-only: `doctor` never configures or fetches the hinted source. |
 
+The TUI shows the same relationships: the detail pane lists each declared
+prerequisite with a `met`, `implied`, `preview`, `excluded`, or `unmet` marker
+and the selected resources that require the inspected one, rows carry a `req`
+badge or `⚠` marker, and toggles report `also selected` / `would also select`
+prerequisites or resulting unmet warnings in the footer. See the
+[TUI reference](./tui.md).
+
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
