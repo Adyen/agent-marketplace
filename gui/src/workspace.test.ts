@@ -342,6 +342,22 @@ describe('WorkspaceView', () => {
     expect(dot.classes()).not.toContain('gui-dot--signal')
   })
 
+  it('styles Sync as the primary action only when changes are pending', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a', { group: 'enabled' })]) }))
+    await tick()
+
+    expect(wrapper.get('button[aria-label="Sync"]').classes()).toContain('gui-button--secondary')
+    expect(wrapper.get('button[aria-label="Update"]').classes()).toContain('gui-button--secondary')
+
+    push(event({ sequence: 2, payload: snapshot([row('p', { group: 'pending', status: 'pending sync' })]) }))
+    await tick()
+
+    expect(wrapper.get('button[aria-label="Sync"]').classes()).not.toContain('gui-button--secondary')
+    expect(wrapper.get('button[aria-label="Update"]').classes()).toContain('gui-button--secondary')
+  })
+
   it('keeps a single diagnostic message selectable without a disclosure button', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)

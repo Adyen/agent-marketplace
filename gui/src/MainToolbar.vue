@@ -129,7 +129,15 @@ defineExpose({
         Update
         <span v-if="availableUpdates > 0" class="gui-badge mono">{{ availableUpdates }}</span>
       </UButton>
-      <UButton aria-label="Sync" :disabled="!ready" :aria-busy="runningAction === 'sync' ? 'true' : undefined" @click="emit('sync')">
+      <UButton
+        aria-label="Sync"
+        :class="{ 'gui-button--secondary': pendingCount === 0 }"
+        :color="pendingCount === 0 ? 'neutral' : 'primary'"
+        :variant="pendingCount === 0 ? 'soft' : 'solid'"
+        :disabled="!ready"
+        :aria-busy="runningAction === 'sync' ? 'true' : undefined"
+        @click="emit('sync')"
+      >
         <span v-if="runningAction === 'sync'" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />
         <GuiIcon v-else name="sync" />
         Sync

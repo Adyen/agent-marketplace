@@ -196,8 +196,9 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
     3. An **Update** button, a separate visible secondary button next to Sync,
        with an available-update count badge (`2`, the same neutral mono badge
        as Sync) when updates exist.
-    4. A **Sync** button, styled like Codex's "Commit" button, with a sync
-       icon and a pending count badge (`2`) in mono.
+    4. A **Sync** button with a sync icon and a pending count badge (`2`) in
+       mono. It is the solid primary action only while changes are pending;
+       with nothing pending it uses the same secondary style as Update.
     5. A "Set up" button, shown only during first run.
     6. A divider, then a "Toggle inspector" icon button (◨).
 - Refresh is the only action without a visible control. `⌘R` refreshes the
