@@ -165,7 +165,7 @@ function writePanelChoice(key: string, folded: boolean) {
 
 const inspectorChoice = ref<boolean | null>(readPanelChoice(storageKeys.inspector))
 const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWidth)
-const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
+const inspectorFolded = computed(() => inspectorChoice.value ?? (inspectorOverlay.value || emptyState.value === 'resources'))
 const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
 const inspectorHidden = computed(() => inspectorFolded.value || mainView.value === 'diagnostics')
 const shellColumns = computed(() => {
@@ -1185,6 +1185,9 @@ async function moveSelection(direction: 1 | -1) {
 
 const busy = computed(() => view.value == null || view.value.operation != null || view.value.requesting)
 const ready = computed(() => view.value != null && eligible(view.value))
+const hasConfiguredSources = computed(
+  () => configuration.value == null || configuration.value.userSources.length + configuration.value.organizationSources.length > 0,
+)
 
 function openResourceAction(row: Row) {
   selectionTouched.value = true
@@ -1342,7 +1345,7 @@ async function run(action: 'sync' | 'update') {
         :active-query="activeQuery"
         :applied-query="appliedQuery"
         :local-match-count="localMatchCount"
-        :ready="ready"
+        :ready="ready && hasConfiguredSources"
         :running-action="runningAction"
         :pending-count="pendingCount"
         :available-updates="view?.availableUpdates ?? 0"

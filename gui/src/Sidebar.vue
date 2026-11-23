@@ -166,7 +166,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
     </nav>
 
     <div class="gui-sidebar__browse" aria-label="Browse kinds and groups">
-      <section class="gui-sidebar__section gui-sidebar__kinds" aria-label="Kind">
+      <section v-if="visibleKindOptions.length > 0" class="gui-sidebar__section gui-sidebar__kinds" aria-label="Kind">
         <h2 class="gui-caps">Kind</h2>
         <ul class="gui-sidebar__list">
           <li v-for="option in visibleKindOptions" :key="option.id">

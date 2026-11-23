@@ -80,7 +80,7 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
   return {
     userTargets: ['devin'],
     organizationTargets: [],
-    userSources: [],
+    userSources: [source({ id: 'default-source' })],
     organizationSources: [],
     supportedTargets: ['devin'],
     rootPresent: true,

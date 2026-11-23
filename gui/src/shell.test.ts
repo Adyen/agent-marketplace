@@ -277,6 +277,38 @@ describe('empty states and sidebar labels', () => {
     expect(document.querySelector('#settings-tab-sources')?.getAttribute('aria-selected')).toBe('true')
   })
 
+  it('hides the empty Kind heading and folds the inspector on an empty workspace without saving it', async () => {
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect(wrapper.find('section[aria-label="Kind"]').exists()).toBe(false)
+    expect(wrapper.get('aside[aria-label="Detail"]').classes()).toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem('am-gui-inspector')).toBeNull()
+  })
+
+  it('keeps a saved open inspector open on an empty workspace', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'open')
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect(wrapper.get('aside[aria-label="Detail"]').classes()).not.toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem('am-gui-inspector')).toBe('open')
+  })
+
+  it('disables Update and Sync when no source is configured', async () => {
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('omits the Groups section when there are no groups', async () => {
     const { wrapper } = await mountShell([])
     expect(wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)

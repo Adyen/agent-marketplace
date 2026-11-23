@@ -279,6 +279,8 @@ centered in `--gui-ink-3`.
   when the inspector is folded.
 - The fold state of the inspector is stored in `localStorage`
   (`am-gui-inspector`). A sidebar value left by an earlier build is ignored.
+  The automatic fold on an empty workspace is not stored; only a user toggle
+  writes the saved choice.
 - When the window is narrower than 1000 px, the inspector starts folded and
   opens as an overlay sheet over the main column. Escape and selecting outside
   the overlay close it.
@@ -729,7 +731,9 @@ conflicts with an earlier section, this section wins.
   "No resources yet", with a secondary "Add a source" button that opens
   Sources. A search with no matches shows "No resources match “{query}”." in
   `--gui-ink-3`. The sidebar omits the Groups section when there are no
-  groups.
+  groups, and the Kind section when no kind has rows. With no resources the
+  inspector folds unless the user has saved an open choice, and Update and Sync
+  are disabled when no source is configured.
 - *Observed*: a sidebar source shows its location, such as
   `platform/agent-skills`, while the rows and group headers from that source
   show the registry name, so the two do not match.
