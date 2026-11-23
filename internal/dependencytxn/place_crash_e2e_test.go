@@ -1,0 +1,550 @@
+//go:build e2e
+
+package dependencytxn
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+)
+
+const (
+	placeCrashChildEnv = "AGENT_MARKETPLACE_PLACE_CRASH_CHILD"
+	placeCrashPlanEnv  = "AGENT_MARKETPLACE_PLACE_CRASH_PLAN"
+)
+
+func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
+	for _, stage := range []FaultStage{
+		FaultPlaceAfterStage,
+		FaultPlaceAfterDirectory,
+		FaultPlaceAfterPublish,
+		FaultPlaceAfterOwnership,
+		FaultPlaceAfterPrune,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			root, stateDir, plan := newPlaceFixture(t, false)
+			if stage == FaultPlaceAfterPublish {
+				second := plan.Writes[0]
+				second.Path = "mods/second.txt"
+				plan.Writes = append(plan.Writes, second)
+			}
+			var stalePath string
+			if stage == FaultPlaceAfterPrune || stage == FaultPlaceAfterOwnership {
+				stalePath = filepath.Join(root, "layouts", "stale.txt")
+				if err := os.MkdirAll(filepath.Dir(stalePath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(stalePath, []byte("stale\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				parent, err := fsboundary.OpenDir(filepath.Dir(stalePath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan.Prunes = []PlacePrune{{
+					Path: "layouts/stale.txt", Parent: parent.Identity(),
+					Expected: Generation{Exists: true, Digest: Digest([]byte("stale\n"))},
+					Mode:     0o644,
+				}}
+				if err := parent.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			planFile := filepath.Join(t.TempDir(), "place-plan.json")
+			runPlaceCrashChild(t, planFile, plan, stage, 0)
+
+			pending := CheckPending(stateDir)
+			wantPendingPath := "mods"
+			if stage == FaultPlaceAfterOwnership {
+				wantPendingPath = "ownership"
+			} else if stage == FaultPlaceAfterPrune {
+				wantPendingPath = "layouts"
+			}
+			if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), filepath.Join(stateDir, ".dependencytxn-")) ||
+				!strings.Contains(pending.Error(), wantPendingPath) {
+				t.Fatalf("CheckPending = %v", pending)
+			}
+			blockedPath := filepath.Join(t.TempDir(), "unrelated-config.yaml")
+			_, blocked := Commit(context.Background(), stateDir, []DesiredFile{{
+				Path: blockedPath, Expected: Generation{}, Bytes: []byte("blocked"), Mode: 0o600,
+			}})
+			if !errors.Is(blocked, ErrRecoveryRequired) {
+				t.Fatalf("unrelated mutation while place journal pending = %v", blocked)
+			}
+			keys, err := ReadPendingPlaceGenerationKeys(stateDir)
+			if err != nil || !reflect.DeepEqual(keys, []string{plan.Writes[0].GenerationKey}) {
+				t.Fatalf("pending generation keys = %v, %v", keys, err)
+			}
+			if stage == FaultPlaceAfterStage {
+				if _, err := os.Lstat(filepath.Join(root, "mods")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("read-only check or stage crash wrote into target: %v", err)
+				}
+				stageRoot := filepath.Join(filepath.Dir(stateDir), "place-stage")
+				entries, err := os.ReadDir(stageRoot)
+				if err != nil || len(entries) != 1 {
+					t.Fatalf("stage outside target root = %v, %v", entries, err)
+				}
+			}
+			if stage == FaultPlaceAfterPublish {
+				j, err := readJournal(journals(t, stateDir)[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				stagePath := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage))
+				if err := os.Remove(filepath.Join(stagePath, j.Place.Writes[1].StageName)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stage == FaultPlaceAfterOwnership {
+				if err := os.WriteFile(stalePath, []byte("user edit\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := Recover(context.Background(), stateDir); err != nil {
+				t.Fatal(err)
+			}
+			if stage == FaultPlaceAfterStage {
+				if _, err := os.Lstat(filepath.Join(root, "mods", "new.txt")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("pre-write recovery resumed publication: %v", err)
+				}
+			} else if _, err := os.Stat(filepath.Join(root, "mods", "new.txt")); err != nil {
+				t.Fatalf("recovery did not complete publication: %v", err)
+			}
+			if stage == FaultPlaceAfterPublish {
+				if _, err := os.Stat(filepath.Join(root, "mods", "second.txt")); err != nil {
+					t.Fatalf("recovery did not complete the unpublished suffix: %v", err)
+				}
+			}
+			if stage == FaultPlaceAfterPrune {
+				if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("marked prune was not completed: %v", err)
+				}
+			} else if stage == FaultPlaceAfterOwnership {
+				assertFile(t, stalePath, "user edit\n", 0o644)
+			}
+			if err := CheckPending(stateDir); err != nil {
+				t.Fatalf("journal remains after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan.Directories = nil
+	ownershipBytes, err := json.Marshal(map[string]any{
+		"canonical_root":    root,
+		"place_directories": nil,
+		"root_key":          testPlaceRootKey(root),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(plan.Ownership.Path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Ownership.Path, ownershipBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan.Ownership.Bytes = ownershipBytes
+	plan.Ownership.Expected = Generation{Exists: true, Digest: Digest(ownershipBytes)}
+	plan.Ownership.ExpectedMode = 0o600
+
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterOwnership, 0)
+
+	payload := filepath.Join(root, "mods", "new.txt")
+	assertFile(t, payload, "new package bytes\n", 0o644)
+	if got, err := os.ReadFile(plan.Ownership.Path); err != nil || !reflect.DeepEqual(got, ownershipBytes) {
+		t.Fatalf("crash changed no-op ownership bytes: equal=%t err=%v", reflect.DeepEqual(got, ownershipBytes), err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("crash discarded ownership journal: %v", got)
+	}
+	if err := Recover(context.Background(), stateDir); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, payload, "new package bytes\n", 0o644)
+	if got, err := os.ReadFile(plan.Ownership.Path); err != nil || !reflect.DeepEqual(got, ownershipBytes) {
+		t.Fatalf("recovery changed no-op ownership bytes: equal=%t err=%v", reflect.DeepEqual(got, ownershipBytes), err)
+	}
+	if got := journals(t, stateDir); len(got) != 0 {
+		t.Fatalf("recovery left ownership journal: %v", got)
+	}
+}
+
+// spec: target-profile-place/a-partially-published-prefix-completes-exactly
+func TestPlaceCrashRecreatesMissingMarkedDirectory(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	second := plan.Writes[0]
+	second.Path = "layouts/second.txt"
+	plan.Writes = append(plan.Writes, second)
+	plan.Directories = []string{"mods", "layouts"}
+
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterDirectory, 1)
+	j, err := readJournal(journals(t, stateDir)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Place.Completed == 0 || j.Place.Pending == nil || j.Place.Pending.Path != "layouts" ||
+		j.Place.Directories[1].Identity == nil {
+		t.Fatalf("crashed directory operation = completed %d, pending %+v, identity %+v",
+			j.Place.Completed, j.Place.Pending, j.Place.Directories[1].Identity)
+	}
+	oldIdentity := *j.Place.Directories[1].Identity
+	markedPath := filepath.Join(root, "layouts")
+	asidePath := filepath.Join(filepath.Dir(root), "layouts-held")
+	if err := os.Rename(markedPath, asidePath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Recover(context.Background(), stateDir); err != nil {
+		t.Fatal(err)
+	}
+	assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+	assertFile(t, filepath.Join(root, "layouts", "second.txt"), "new package bytes\n", 0o644)
+	newDirectory, err := fsboundary.OpenDir(markedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newIdentity := newDirectory.Identity()
+	if err := newDirectory.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if newIdentity.SameObject(oldIdentity) {
+		t.Fatal("recreated directory reused the retained directory identity")
+	}
+	raw, err := os.ReadFile(plan.Ownership.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ownership struct {
+		Directories []PlaceDirectory `json:"place_directories"`
+	}
+	if err := json.Unmarshal(raw, &ownership); err != nil {
+		t.Fatal(err)
+	}
+	var recorded *PlaceDirectory
+	for i := range ownership.Directories {
+		if ownership.Directories[i].Path == "layouts" {
+			recorded = &ownership.Directories[i]
+			break
+		}
+	}
+	if recorded == nil || !recorded.Identity.SameObject(newIdentity) {
+		t.Fatalf("ownership directories = %+v, want recreated layouts identity %+v", ownership.Directories, newIdentity)
+	}
+	if pending := journals(t, stateDir); len(pending) != 0 {
+		t.Fatalf("recovery left journals: %v", pending)
+	}
+}
+
+// spec: target-profile-place/a-recovery-stop-names-its-paths
+func TestPlaceCrashUnmarkedIntendedFileIsNotAdopted(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, true)
+	priorOwnership, err := os.ReadFile(plan.Ownership.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := plan.Writes[0]
+	second.Path = "mods/second.txt"
+	plan.Writes = append(plan.Writes, second)
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterPublish, 0)
+
+	secondPath := filepath.Join(root, "mods", "second.txt")
+	if err := os.WriteFile(secondPath, []byte("new package bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := journals(t, stateDir)[0]
+	assertRefusal := func() {
+		t.Helper()
+		err := Recover(context.Background(), stateDir)
+		if !errors.Is(err, ErrRecoveryBlocked) || !strings.Contains(err.Error(), journalPath) ||
+			!strings.Contains(err.Error(), "mods/second.txt") {
+			t.Fatalf("recovery adopted an unmarked intended file: %v", err)
+		}
+		pending := CheckPending(stateDir)
+		if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+			!strings.Contains(pending.Error(), "mods/second.txt") {
+			t.Fatalf("pending check did not name the unmarked intended file: %v", pending)
+		}
+		assertFile(t, secondPath, "new package bytes\n", 0o644)
+		assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+		ownership, err := os.ReadFile(plan.Ownership.Path)
+		if err != nil || !reflect.DeepEqual(ownership, priorOwnership) {
+			t.Fatalf("recovery changed ownership: bytes equal prior=%t err=%v", reflect.DeepEqual(ownership, priorOwnership), err)
+		}
+		if got := journals(t, stateDir); len(got) != 1 || got[0] != journalPath {
+			t.Fatalf("recovery discarded journal evidence: %v", got)
+		}
+	}
+
+	assertRefusal()
+	afterFirst, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFirst.Place.Completed != 2 || afterFirst.Place.Pending != nil {
+		t.Fatalf("first refusal advanced past the validated prefix: completed=%d pending=%+v, want completed=2 and no pending operation",
+			afterFirst.Place.Completed, afterFirst.Place.Pending)
+	}
+
+	assertRefusal()
+	afterSecond, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterSecond.Place.Completed != afterFirst.Place.Completed ||
+		!reflect.DeepEqual(afterSecond.Place.Pending, afterFirst.Place.Pending) {
+		t.Fatalf("second refusal changed journal progress: first completed/pending=%d/%+v, second=%d/%+v",
+			afterFirst.Place.Completed, afterFirst.Place.Pending, afterSecond.Place.Completed, afterSecond.Place.Pending)
+	}
+}
+
+func TestPlaceCrashChild(t *testing.T) {
+	if os.Getenv(placeCrashChildEnv) != "1" {
+		t.Skip("subprocess-only crash witness")
+	}
+	raw, err := os.ReadFile(os.Getenv(placeCrashPlanEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan PlacePlan
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Dir(filepath.Dir(filepath.Dir(plan.Ownership.Path)))
+	if _, err := CommitPlace(context.Background(), filepath.Join(stateRoot, "dependencies"), plan); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatal("configured place crash point was not reached")
+}
+
+// spec: target-profile-place/prune-recovery-treats-marked-and-unmarked-absences-differently
+func TestPlaceCrashPruneRefusesUnmarkedAbsence(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	prunePaths := []string{
+		filepath.Join(root, "layouts", "first.txt"),
+		filepath.Join(root, "layouts", "second.txt"),
+	}
+	if err := os.MkdirAll(filepath.Dir(prunePaths[0]), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var parent fsboundary.Identity
+	dir, err := fsboundary.OpenDir(filepath.Dir(prunePaths[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent = dir.Identity()
+	if err := dir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range prunePaths {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan.Prunes = append(plan.Prunes, PlacePrune{
+			Path: filepath.Join("layouts", filepath.Base(path)), Parent: parent,
+			Expected: Generation{Exists: true, Digest: Digest([]byte(filepath.Base(path)))},
+			Mode:     0o644,
+		})
+	}
+	planFile := filepath.Join(t.TempDir(), "place-plan.json")
+	runPlaceCrashChild(t, planFile, plan, FaultPlaceAfterPrune, 0)
+	if err := os.Remove(prunePaths[1]); err != nil {
+		t.Fatal(err)
+	}
+	err = Recover(context.Background(), stateDir)
+	if err == nil || !strings.Contains(err.Error(), "second.txt") || !strings.Contains(err.Error(), ".dependencytxn-") {
+		t.Fatalf("recovery after an unmarked absence = %v", err)
+	}
+	if _, err := os.Stat(prunePaths[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("marked removal was not preserved: %v", err)
+	}
+	if _, err := os.Lstat(journals(t, stateDir)[0]); err != nil {
+		t.Fatalf("recovery discarded journal evidence: %v", err)
+	}
+}
+
+func TestPlaceCrashChangedStageIsRetainedAndNamed(t *testing.T) {
+	_, stateDir, plan := newPlaceFixture(t, false)
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterStage, 0)
+	journalPath := journals(t, stateDir)[0]
+	j, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagePath := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage))
+	stageFile := filepath.Join(stagePath, j.Place.Writes[0].StageName)
+	if err := os.WriteFile(stageFile, []byte("foreign bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := CheckPending(stateDir)
+	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+		!strings.Contains(pending.Error(), j.Place.Stage) {
+		t.Fatalf("CheckPending failed to name changed stage: %v", pending)
+	}
+	err = Recover(context.Background(), stateDir)
+	if err == nil || !strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), j.Place.Stage) {
+		t.Fatalf("recovery failed to name changed stage: %v", err)
+	}
+	assertFile(t, stageFile, "foreign bytes", 0o644)
+	if got := journals(t, stateDir); len(got) != 1 || got[0] != journalPath {
+		t.Fatalf("recovery discarded stage evidence: %v", got)
+	}
+}
+
+// spec: target-profile-place/an-unrecorded-present-directory-stops-recovery
+func TestPlaceCrashPresentDirectoryWithoutIdentityStops(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterDirectory, 0)
+	journalPath := journals(t, stateDir)[0]
+	j, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Place.Directories[0].Identity = nil
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pending := CheckPending(stateDir)
+	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+		!strings.Contains(pending.Error(), "mods") {
+		t.Fatalf("CheckPending failed to name unrecorded directory: %v", pending)
+	}
+	err = Recover(context.Background(), stateDir)
+	if err == nil || !strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), "mods") {
+		t.Fatalf("recovery accepted unrecorded directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "mods")); err != nil {
+		t.Fatalf("unrecorded directory was removed: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("recovery discarded journal: %v", got)
+	}
+}
+
+// spec: target-profile-place/a-recovery-stop-names-its-paths
+func TestPlaceCrashEditedPublishedPrefixStopsBeforeSuffix(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	second := plan.Writes[0]
+	second.Path = "mods/second.txt"
+	plan.Writes = append(plan.Writes, second)
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterPublish, 0)
+	journalPath := journals(t, stateDir)[0]
+	firstPath := filepath.Join(root, "mods", "new.txt")
+	if err := os.WriteFile(firstPath, []byte("user edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := CheckPending(stateDir)
+	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+		!strings.Contains(pending.Error(), "mods/new.txt") {
+		t.Fatalf("CheckPending failed to name changed prefix: %v", pending)
+	}
+	err := Recover(context.Background(), stateDir)
+	if err == nil || !strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), "mods/new.txt") {
+		t.Fatalf("recovery continued through edited prefix: %v", err)
+	}
+	assertFile(t, firstPath, "user edit", 0o644)
+	if _, err := os.Lstat(filepath.Join(root, "mods", "second.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recovery published a later file after the stop: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("recovery discarded journal: %v", got)
+	}
+}
+
+// spec: target-profile-place/a-recovery-stop-names-its-paths
+func TestPlaceCrashStatusNamesReplacedRoot(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterPublish, 0)
+	journalPath := journals(t, stateDir)[0]
+	j, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalBytes, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Place.StageIdentity == nil {
+		t.Fatal("crash did not record the stage identity")
+	}
+	stagePath := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage))
+	stageIdentity := *j.Place.StageIdentity
+	savedRoot := filepath.Join(filepath.Dir(root), "application-saved")
+	if err := os.Rename(root, savedRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(savedRoot, root); err != nil {
+		t.Fatal(err)
+	}
+
+	pending := CheckPending(stateDir)
+	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+		!strings.Contains(pending.Error(), root) {
+		t.Fatalf("CheckPending did not name the replaced root and journal: %v", pending)
+	}
+	if err := Recover(context.Background(), stateDir); err == nil ||
+		!strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), root) {
+		t.Fatalf("Recover did not refuse with the replaced root and journal: %v", err)
+	}
+	assertFile(t, filepath.Join(savedRoot, "mods", "new.txt"), "new package bytes\n", 0o644)
+	if entries, err := os.ReadDir(filepath.Join(savedRoot, "mods")); err != nil || len(entries) != 1 || entries[0].Name() != "new.txt" {
+		t.Fatalf("saved target tree changed after refusal: %v / %v", entries, err)
+	}
+	if got, err := os.ReadFile(journalPath); err != nil || !reflect.DeepEqual(got, journalBytes) {
+		t.Fatalf("recovery changed journal evidence: equal=%t err=%v", reflect.DeepEqual(got, journalBytes), err)
+	}
+	stage, err := fsboundary.OpenDir(stagePath)
+	if err != nil {
+		t.Fatalf("recovery removed the stage evidence: %v", err)
+	}
+	if !stage.Identity().SameObject(stageIdentity) {
+		_ = stage.Close()
+		t.Fatal("recovery replaced the stage evidence")
+	}
+	if err := stage.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 || got[0] != journalPath {
+		t.Fatalf("recovery cleared journal evidence: %v", got)
+	}
+}
+
+func runPlaceCrashChild(t *testing.T, planFile string, plan PlacePlan, stage FaultStage, index int) {
+	t.Helper()
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planFile, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPlaceCrashChild$")
+	cmd.Env = append(os.Environ(),
+		placeCrashChildEnv+"=1",
+		placeCrashPlanEnv+"="+planFile,
+		fmt.Sprintf("AGENT_MARKETPLACE_E2E_CRASH_AT=%s:%d", stage, index),
+	)
+	output, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if err == nil || !errors.As(err, &exit) || exit.ExitCode() != CrashExitCode {
+		t.Fatalf("crash child error = %v, output %s", err, output)
+	}
+}

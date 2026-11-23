@@ -36,7 +36,11 @@ func GarbageCollect(dryRun bool) ([]string, error) {
 			return err
 		}
 		removed = append(removed, stages...)
-		refs, err := ownership.ReadAllPluginGenerationRefs()
+		pendingPlace, err := dependencytxn.ReadPendingPlaceGenerationKeys(filepath.Join(stateRoot, "dependencies"))
+		if err != nil {
+			return err
+		}
+		committed, err := ownership.ReadCommittedPackageGenerationKeys()
 		if err != nil {
 			return err
 		}
@@ -44,8 +48,14 @@ func GarbageCollect(dryRun bool) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		live := make(map[string]bool, len(refs)+len(pending))
-		for _, ref := range append(refs, pending...) {
+		live := make(map[string]bool, len(committed)+len(pendingPlace)+len(pending))
+		for _, key := range committed {
+			live[key] = true
+		}
+		for _, key := range pendingPlace {
+			live[key] = true
+		}
+		for _, ref := range pending {
 			live[ref.GenerationKey] = true
 		}
 		entries, err := os.ReadDir(packagesDir)

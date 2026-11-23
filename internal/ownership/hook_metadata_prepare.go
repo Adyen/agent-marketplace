@@ -120,9 +120,13 @@ func (s *Store) PrepareBatch(snapshot StateSnapshot, mutations []Mutation, satis
 	if err := validateRecord(current, s.canonicalRoot, s.rootKey); err != nil {
 		return dependencytxn.DesiredFile{}, coded(diag.CodeOwnershipStateUnsafeValue, "", err)
 	}
-	data, err := json.MarshalIndent(current, "", "  ")
+	return s.desiredStateFile(snapshot, current)
+}
+
+func (s *Store) desiredStateFile(snapshot StateSnapshot, record *Record) (dependencytxn.DesiredFile, error) {
+	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return dependencytxn.DesiredFile{}, fmt.Errorf("ownership: marshal batch record: %w", err)
+		return dependencytxn.DesiredFile{}, fmt.Errorf("ownership: marshal state record: %w", err)
 	}
 	data = append(data, '\n')
 	return dependencytxn.DesiredFile{
@@ -139,6 +143,8 @@ func cloneRecord(record *Record) *Record {
 		return nil
 	}
 	clone := *record
+	clone.PlacePackages = clonePlacePackages(record.PlacePackages)
+	clone.PlaceDirectories = append([]dependencytxn.PlaceDirectory(nil), record.PlaceDirectories...)
 	clone.Files = make(map[string]FileState, len(record.Files))
 	for rel, file := range record.Files {
 		file.Entries = append([]Entry(nil), file.Entries...)
