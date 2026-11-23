@@ -28,8 +28,8 @@ interface FieldUI {
   field: (settings: Settings) => SettingField
   options?: Option[]
   placeholder?: string
-  fallbackDefault?: string
-  hint?: string
+  unit?: string
+  wide?: boolean
 }
 
 const props = defineProps<{
@@ -59,23 +59,23 @@ const LOG_LEVEL_OPTIONS: Option[] = [
 const FIELDS: Record<SettingsSection, FieldUI[]> = {
   general: [
     { key: 'updateCheck', label: 'Show when a new release is available', kind: 'switch', field: (s) => s.updateCheck.enabled },
-    { key: 'telemetryLevel', label: 'Telemetry', kind: 'radio', field: (s) => s.telemetry.level, options: TELEMETRY_OPTIONS, fallbackDefault: 'off' },
+    { key: 'telemetryLevel', label: 'Telemetry', kind: 'radio', field: (s) => s.telemetry.level, options: TELEMETRY_OPTIONS },
   ],
   install: [
     { key: 'installMode', label: 'Install resources as', kind: 'radio', field: (s) => s.materialization.mode, options: INSTALL_OPTIONS },
   ],
   backups: [
     { key: 'backupEnabled', label: 'Keep backups before changing agent files', kind: 'switch', field: (s) => s.backup.enabled },
-    { key: 'backupMaxDays', label: 'Keep backups for N days', kind: 'number', field: (s) => s.backup.maxDays },
-    { key: 'backupMaxPerDay', label: 'Keep at most N backups per day', kind: 'number', field: (s) => s.backup.maxPerDay },
+    { key: 'backupMaxDays', label: 'Keep backups for', kind: 'number', field: (s) => s.backup.maxDays, unit: 'days' },
+    { key: 'backupMaxPerDay', label: 'Backups per day', kind: 'number', field: (s) => s.backup.maxPerDay },
   ],
   logging: [
     { key: 'logEnabled', label: 'Write a log file', kind: 'switch', field: (s) => s.logging.enabled },
-    { key: 'logLevel', label: 'Log level', kind: 'select', field: (s) => s.logging.level, options: LOG_LEVEL_OPTIONS },
-    { key: 'logFile', label: 'Log file path', kind: 'text', field: (s) => s.logging.file, placeholder: 'Default location' },
-    { key: 'logMaxSizeMB', label: 'Rotate at N MB', kind: 'number', field: (s) => s.logging.maxSizeMB },
-    { key: 'logMaxBackups', label: 'Keep N old logs', kind: 'number', field: (s) => s.logging.maxBackups },
-    { key: 'logMaxAgeDays', label: 'Delete logs after N days', kind: 'number', field: (s) => s.logging.maxAgeDays },
+    { key: 'logLevel', label: 'Log level', kind: 'select', field: (s) => s.logging.level, options: LOG_LEVEL_OPTIONS, wide: true },
+    { key: 'logFile', label: 'Log file path', kind: 'text', field: (s) => s.logging.file, placeholder: 'Default location', wide: true },
+    { key: 'logMaxSizeMB', label: 'Rotate log at', kind: 'number', field: (s) => s.logging.maxSizeMB, unit: 'MB' },
+    { key: 'logMaxBackups', label: 'Keep old logs', kind: 'number', field: (s) => s.logging.maxBackups, unit: 'logs' },
+    { key: 'logMaxAgeDays', label: 'Delete logs after', kind: 'number', field: (s) => s.logging.maxAgeDays, unit: 'days' },
     { key: 'logCompress', label: 'Compress old logs', kind: 'switch', field: (s) => s.logging.compress },
   ],
 }
@@ -140,10 +140,8 @@ function helperText(ui: FieldUI): string | null {
   if (source.source === 'organization') {
     return `Organization default: ${formatValue(ui, source.value)}`
   }
-  if (source.source === 'default') {
-    return `Default: ${formatValue(ui, source.default ?? ui.fallbackDefault ?? null)}`
-  }
-  return null
+  const differs = JSON.stringify(draft.value[ui.key]) !== JSON.stringify(defaults.value[ui.key])
+  return differs ? `Default: ${formatValue(ui, defaults.value[ui.key])}` : null
 }
 
 function canReset(ui: FieldUI): boolean {
@@ -195,100 +193,103 @@ async function save() {
 </script>
 
 <template>
-  <section class="settings-window__section settings-global" :aria-label="TITLES[section]">
-    <h3 class="gui-caps settings-global__title">{{ TITLES[section] }}</h3>
+  <section class="settings-global" :aria-label="TITLES[section]">
+    <h3 v-if="section === 'general'" class="gui-caps settings-global__heading">Updates and telemetry</h3>
 
     <p v-if="saveError" role="alert" class="settings__notice settings__notice--danger">{{ saveError }}</p>
 
-    <div v-for="ui in fields" :key="ui.key" class="settings-window__row settings-global__row">
-      <div class="settings-window__row-text">
-        <p class="settings-window__row-title">
-          <label v-if="ui.kind === 'switch'" :for="`settings-${ui.key}`">{{ ui.label }}</label>
-          <span v-else>{{ ui.label }}</span>
-        </p>
-        <p v-if="helperText(ui)" class="settings-window__row-hint">{{ helperText(ui) }}</p>
-        <p v-if="errors[ui.key]" class="settings-global__error" role="alert">{{ errors[ui.key] }}</p>
-        <button
-          v-if="canReset(ui)"
-          type="button"
-          class="settings__link"
-          :aria-label="`Reset ${ui.label}`"
-          @click="reset(ui)"
-        >Reset</button>
-      </div>
+    <div class="settings-global__fields">
+      <div v-for="ui in fields" :key="ui.key" class="settings-global__field">
+        <div class="settings-global__label">
+          <span class="settings-global__name">{{ ui.label }}</span>
+          <p v-if="helperText(ui)" class="settings-window__row-hint">{{ helperText(ui) }}</p>
+          <p v-if="errors[ui.key]" class="settings-global__error" role="alert">{{ errors[ui.key] }}</p>
+          <button
+            v-if="canReset(ui)"
+            type="button"
+            class="settings__link"
+            :aria-label="`Reset ${ui.label}`"
+            @click="reset(ui)"
+          >Reset</button>
+        </div>
 
-      <input
-        v-if="ui.kind === 'switch'"
-        :id="`settings-${ui.key}`"
-        type="checkbox"
-        :aria-label="ui.label"
-        :checked="draft[ui.key] as boolean"
-        :disabled="isDisabled(ui)"
-        @change="setDraft(ui.key, ($event.target as HTMLInputElement).checked as never)"
-      />
-      <input
-        v-else-if="ui.kind === 'number'"
-        type="number"
-        min="0"
-        step="1"
-        class="gui-input settings-global__number"
-        :aria-label="ui.label"
-        :aria-invalid="errors[ui.key] != null"
-        :value="draft[ui.key] as string"
-        :disabled="isDisabled(ui)"
-        @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
-      />
-      <input
-        v-else-if="ui.kind === 'text'"
-        type="text"
-        class="gui-input"
-        :aria-label="ui.label"
-        :placeholder="ui.placeholder"
-        :value="draft[ui.key] as string"
-        :disabled="isDisabled(ui)"
-        @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
-      />
-      <select
-        v-else-if="ui.kind === 'select'"
-        class="gui-input"
-        :aria-label="ui.label"
-        :value="draft[ui.key] as string"
-        :disabled="isDisabled(ui)"
-        @change="setLevel(ui.key, ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="option in ui.options" :key="option.value" :value="option.value">{{ option.label }}</option>
-      </select>
-      <div v-else class="settings-global__choices" role="radiogroup" :aria-label="ui.label">
-        <label v-for="option in ui.options" :key="option.value" class="settings-global__choice">
-          <input
-            type="radio"
-            :name="`settings-${ui.key}`"
-            :value="option.value"
-            :aria-label="option.label"
-            :checked="draft[ui.key] === option.value"
+        <div class="settings-global__control">
+          <UCheckbox
+            v-if="ui.kind === 'switch'"
+            :model-value="draft[ui.key] as boolean"
+            :aria-label="ui.label"
             :disabled="isDisabled(ui)"
-            @change="ui.key === 'telemetryLevel' ? setTelemetry(option.value) : setInstallMode(option.value)"
+            @update:model-value="setDraft(ui.key, ($event === true) as never)"
           />
-          <span>{{ option.label }}</span>
-        </label>
+          <div v-else-if="ui.kind === 'number'" class="settings-global__number-row">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              class="gui-input settings-global__number"
+              :aria-label="ui.label"
+              :aria-invalid="errors[ui.key] != null"
+              :value="draft[ui.key] as string"
+              :disabled="isDisabled(ui)"
+              @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
+            />
+            <span v-if="ui.unit" class="settings-global__unit">{{ ui.unit }}</span>
+          </div>
+          <input
+            v-else-if="ui.kind === 'text'"
+            type="text"
+            class="gui-input settings-global__wide"
+            :aria-label="ui.label"
+            :placeholder="ui.placeholder"
+            :value="draft[ui.key] as string"
+            :disabled="isDisabled(ui)"
+            @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
+          />
+          <select
+            v-else-if="ui.kind === 'select'"
+            class="gui-input settings-global__wide"
+            :aria-label="ui.label"
+            :value="draft[ui.key] as string"
+            :disabled="isDisabled(ui)"
+            @change="setLevel(ui.key, ($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="option in ui.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <div v-else class="settings-global__choices" role="radiogroup" :aria-label="ui.label">
+            <label v-for="option in ui.options" :key="option.value" class="settings-global__choice">
+              <input
+                type="radio"
+                :name="`settings-${ui.key}`"
+                :value="option.value"
+                :aria-label="option.label"
+                :checked="draft[ui.key] === option.value"
+                :disabled="isDisabled(ui)"
+                @change="ui.key === 'telemetryLevel' ? setTelemetry(option.value) : setInstallMode(option.value)"
+              />
+              <span>{{ option.label }}</span>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div v-if="section === 'install' && userTargets.length > 0" class="settings-global__overrides">
-      <p class="settings-window__row-title">Per-agent overrides</p>
-      <p class="settings-window__row-hint">Choose a different install mode for one agent. Otherwise the default applies.</p>
-      <div v-for="id in userTargets" :key="id" class="settings-global__override">
-        <span class="mono">{{ id }}</span>
-        <select
-          class="gui-input"
-          :aria-label="`Install mode for ${id}`"
-          :value="draft.targetModes[id] ?? 'default'"
-          :disabled="props.disabled"
-          @change="setTargetMode(id, ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="default">Use default</option>
-          <option v-for="option in INSTALL_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
+    <div v-if="section === 'install' && userTargets.length > 0" class="settings-global__fields">
+      <div v-for="id in userTargets" :key="id" class="settings-global__field">
+        <div class="settings-global__label">
+          <span class="settings-global__name mono">{{ id }}</span>
+        </div>
+        <div class="settings-global__control">
+          <select
+            class="gui-input settings-global__wide"
+            :aria-label="`Install mode for ${id}`"
+            :value="draft.targetModes[id] ?? 'default'"
+            :disabled="props.disabled"
+            @change="setTargetMode(id, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="default">Use default</option>
+            <option v-for="option in INSTALL_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -296,8 +297,20 @@ async function save() {
       <span class="settings__status" aria-live="polite">
         <span v-if="dirty" class="settings__dirty"><span class="settings__dirty-dot" aria-hidden="true" />Unsaved changes</span>
       </span>
-      <button type="button" class="gui-button gui-button--secondary" aria-label="Discard" :disabled="!dirty || props.disabled" @click="discard">Discard</button>
-      <button type="button" class="gui-button" aria-label="Save changes" :disabled="saveDisabled" @click="save">Save changes</button>
+      <UButton
+        label="Discard"
+        aria-label="Discard"
+        color="neutral"
+        variant="ghost"
+        :disabled="!dirty || props.disabled"
+        @click="discard"
+      />
+      <UButton
+        label="Save changes"
+        aria-label="Save changes"
+        :disabled="saveDisabled"
+        @click="save"
+      />
     </div>
   </section>
 </template>

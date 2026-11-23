@@ -803,11 +803,15 @@ earlier section, this section wins.
   and a "Per-agent overrides" list with one select per user target (Use
   default, Symlinks, Copies).
 - Backups has the switch "Keep backups before changing agent files" and
-  number fields "Keep backups for N days" and "Keep at most N backups per day".
+  number fields "Keep backups for" (unit: days) and "Backups per day".
 - Logging has the switch "Write a log file", a Log level select (Debug, Info,
-  Warning, Error), "Log file path" (placeholder "Default location"), "Rotate at
-  N MB", "Keep N old logs", "Delete logs after N days", and the switch
-  "Compress old logs".
+  Warning, Error), "Log file path" (placeholder "Default location"), "Rotate log
+  at" (MB), "Keep old logs" (logs), "Delete logs after" (days), and the switch
+  "Compress old logs". Labels sit in a fixed 220 px column; controls share one
+  left edge. Number fields are 96 px with the unit as trailing text; the select
+  and path field are 280 px. The footer pins to the bottom of the pane, with
+  Save changes solid and Discard as a quiet secondary. A "Default: X" hint
+  appears only when the field's value differs from its default.
 - Each global settings tab ends with a bar: "Unsaved changes", Discard, and the
   solid Save changes, which stays disabled until a field changes and passes
   its minimum (inline message below the field). A user-set field shows a Reset

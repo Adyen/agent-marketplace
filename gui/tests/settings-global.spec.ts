@@ -22,7 +22,7 @@ test('built GUI saves a global setting through the real user-scope core', async 
     await expect(settings).toBeVisible()
     await settings.getByRole('tab', { name: 'Backups' }).click()
 
-    const days = settings.getByRole('spinbutton', { name: 'Keep backups for N days' })
+    const days = settings.getByRole('spinbutton', { name: 'Keep backups for' })
     await days.fill('7')
     const save = settings.getByRole('button', { name: 'Save changes' })
     await expect(save).toBeEnabled()

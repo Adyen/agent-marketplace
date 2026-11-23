@@ -2562,17 +2562,102 @@ button:disabled {
   align-items: center;
   background: var(--gui-canvas);
   border-top: 1px solid var(--gui-line);
-  bottom: 0;
+  bottom: -24px;
   display: flex;
   gap: 8px;
   justify-content: flex-end;
-  margin-top: auto;
-  padding: 12px 0 0;
+  margin: 0 -24px -24px;
+  padding: 12px 24px;
   position: sticky;
 }
 
 .settings-window__savebar .settings__status {
   margin-right: auto;
+}
+
+.settings-global {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-global__heading {
+  margin: 0;
+}
+
+.settings-global__fields {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-global__field {
+  align-items: start;
+  border-bottom: 1px solid var(--gui-line);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  padding: 12px 0;
+}
+
+.settings-global__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-global__name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-global__control {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-global__number-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.settings-global__number {
+  width: 96px;
+}
+
+.settings-global__unit {
+  color: var(--gui-ink-3);
+  font-size: 13px;
+}
+
+.settings-global__wide {
+  width: 280px;
+}
+
+.settings-global__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-global__choice {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.settings-global__error {
+  color: var(--am-color-status-danger);
+  font-size: 12px;
+  margin: 0;
+}
+
+.settings-global__field:last-child {
+  border-bottom: 0;
 }
 
 @media (max-width: 720px) {

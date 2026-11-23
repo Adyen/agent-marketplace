@@ -46,7 +46,7 @@ describe('settings tabs', () => {
     const { client } = await openSettingsTab('general')
     const general = panel('general')
     const updates = labelled(general, 'Show when a new release is available')
-    expect(updates.checked).toBe(true)
+    expect(updates.getAttribute('aria-checked')).toBe('true')
     expect(saveButton(general).disabled).toBe(true)
 
     updates.click()
@@ -88,7 +88,7 @@ describe('settings tabs', () => {
   it('Backups saves a changed day count and blocks an invalid one', async () => {
     const { client } = await openSettingsTab('backups')
     const backups = panel('backups')
-    const days = labelled(backups, 'Keep backups for N days')
+    const days = labelled(backups, 'Keep backups for')
     expect(days.value).toBe('14')
 
     await setValue(days, '-1')
