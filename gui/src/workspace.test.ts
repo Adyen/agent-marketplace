@@ -376,6 +376,29 @@ describe('WorkspaceView', () => {
     expect(item.find('button').exists()).toBe(false)
   })
 
+  it('hides the inspector while Diagnostics is shown', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+    await openDiagnostics(wrapper)
+
+    expect(wrapper.get('aside[aria-label="Detail"]').classes()).toContain('gui-inspector--folded')
+  })
+
+  it('breaks an absolute path in a diagnostic message at its slashes', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    const message = 'organization config "/var/folders/tmp/config.yaml" is invalid'
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics: [{ severity: 'warning', category: 'catalog', code: 'path', message }] }) }))
+    await tick()
+    await openDiagnostics(wrapper)
+
+    const text = wrapper.get('ul[aria-label="Diagnostics"] .gui-diagnostics__message')
+    expect(text.findAll('wbr').length).toBeGreaterThanOrEqual(3)
+    expect(text.text()).toContain(message)
+  })
+
   it('collapses diagnostics that share a code into one disclosure row and expands each group on its own', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
@@ -2186,10 +2209,10 @@ describe('Event stream reconnect', () => {
     await openDiagnostics(wrapper)
 
     const section = wrapper.get('[aria-label="Marketplace discovery health"]')
-    expect(section.text()).toContain('Results are current')
-    expect(section.text()).toContain('Showing saved results from an earlier check')
-    expect(section.text()).toContain('Not checked yet')
-    expect(section.text()).toContain('Only part of the catalog is shown; search to find more')
+    expect(section.text()).toContain('results are current')
+    expect(section.text()).toContain('showing saved results from an earlier check')
+    expect(section.text()).toContain('not checked yet')
+    expect(section.text()).toContain('; only part of the catalog is shown, search to find more')
     expect(section.text()).not.toMatch(/\b(fresh|truncated)\b/i)
   })
 
@@ -2205,8 +2228,8 @@ describe('Event stream reconnect', () => {
     await openDiagnostics(wrapper)
 
     const section = wrapper.get('[aria-label="Marketplace discovery health"]')
-    expect(section.text()).toContain('Checked · Results are current · 0 results')
-    expect(section.text()).not.toContain('Not checked yet')
+    expect(section.text()).toContain('Checked: results are current (0 resources)')
+    expect(section.text()).not.toContain('not checked yet')
   })
 
   // spec: session-navigation/remote-marketplace-search-is-debounced

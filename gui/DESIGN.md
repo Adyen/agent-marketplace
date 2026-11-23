@@ -492,14 +492,18 @@ here conflicts with an earlier section, this section wins.
   `dl` keeps Registry, Scope, and Status; Status leads with a 6 px
   dot (signal when enabled or installed, warning otherwise).
 - *Rule — session*: each line is a key/value row with the key in
-  `--gui-ink-2` and the value in mono, keeping the text "Drift: ready". Drift
-  shows a status dot: signal for `ready`, warning for `pending`, danger for
-  `failed`.
-- *Rule — discovery*: each endpoint is a compact row: the label in 500
-  weight, then plain-language health and result count. Current results say
-  "Results are current", cached results say they are from an earlier check,
-  and a cache miss says "Not checked yet". Partial results say that only part
-  of the catalog is shown and invite the user to search.
+  plain words: "In sync" for `ready`, "Changes pending" for `pending`, and
+  "Sync failed" for `failed`, each with a status dot (signal, warning, danger).
+  The raw drift value is not shown.
+- *Rule — discovery*: each endpoint is one line: the label, then a colon and
+  plain-language health with its resource count, for example
+  "mp: results are current (1 resource)". Current results say "results are
+  current", cached results say "showing saved results from an earlier check",
+  and a cache miss says "not checked yet". Partial results add "; only part of
+  the catalog is shown, search to find more". No middle dots.
+- *Rule — messages*: an absolute path in a diagnostic message breaks at its
+  slashes instead of mid-word. The full message stays copyable with Copy
+  diagnostics.
 - Diagnostics appear in the Diagnostics view, not in the inspector.
 - The empty state shows the `file` icon above "Select a resource to inspect
   it."
@@ -554,8 +558,8 @@ wins.
   "Restore Resource", which start with the visible label.
 - *Rule — eyebrow*: the eyebrow shows only the kind, in caps. The Registry
   row names the source, in its own case.
-- *Rule — session*: Session holds the drift row only ("Drift: ready" with
-  its status dot). The Harness targets live in the sidebar footer.
+- *Rule — session*: Session holds the drift row only ("In sync" with its
+  status dot). The inspector is hidden while Diagnostics is shown. The Harness targets live in the sidebar footer.
 - *Rule — discovery*: Marketplace discovery is its own inspector section,
   with its own caps label and hairline, between Session and Diagnostics.
 

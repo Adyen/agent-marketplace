@@ -81,9 +81,9 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await expect(cachedRemote).toBeVisible({ timeout: 10_000 })
     await expect(detail).toContainText('verification', { timeout: 10_000 })
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
-    await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: pending', { timeout: 10_000 })
+    await expect(page.locator('.gui-diagnostics-view')).toContainText('Changes pending', { timeout: 10_000 })
     await page.screenshot({ path: testInfo.outputPath('discovery-held-cache.png'), fullPage: true, animations: 'disabled' })
-    await expect(discoveryHealth).toContainText('Results are current', { timeout: 10_000 })
+    await expect(discoveryHealth).toContainText('results are current', { timeout: 10_000 })
     if (bootstrap.marketplaceEndpoint == null) {
       throw new Error('trusted Marketplace endpoint fixture missing')
     }
@@ -131,7 +131,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await expect(remote).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.workspace__search-status')).toContainText('0 local matches')
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
-    await expect(discoveryHealth).toContainText('Results are current')
+    await expect(discoveryHealth).toContainText('results are current')
     await expect(discoveryHealth).not.toContainText('miss')
     await page.getByRole('button', { name: 'All resources' }).click()
     expect(discoveryRequests).toBeGreaterThan(1)
@@ -147,7 +147,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await writeFile(bootstrap.discoveryRelease, 'released\n')
     released = true
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
-    await expect.poll(async () => /Drift: (ready|failed)/.test((await page.locator('.gui-diagnostics-view').innerText()) ?? ''), { timeout: 60_000 }).toBe(true)
+    await expect.poll(async () => /In sync|Sync failed/.test((await page.locator('.gui-diagnostics-view').innerText()) ?? ''), { timeout: 60_000 }).toBe(true)
     await expect(discoveryHealth).toContainText('Marketplace')
     await page.getByRole('button', { name: 'All resources' }).click()
     await expect(remote).toBeVisible({ timeout: 60_000 })
@@ -230,7 +230,7 @@ async function runPagedDiscoveryCase(page: Page, testInfo: TestInfo, scenario: P
     const expectIncompleteDiscovery = async () => {
       await expect(discoveryHealth).toContainText('Marketplace search failed', { timeout: 60_000 })
       await expect(discoveryHealth).toContainText(
-        'Only part of the catalog is shown; search to find more',
+        'only part of the catalog is shown, search to find more',
         { timeout: 60_000 },
       )
     }

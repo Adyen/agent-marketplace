@@ -208,7 +208,7 @@ describe('startup stage consumers', () => {
     expect(detail.text()).toContain('Verified owned detail')
     expect(detail.text()).toContain('pending sync')
     await openDiagnostics(wrapper)
-    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: pending')
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Changes pending')
     expect((wrapper.get('button[aria-label="Uninstall Resource"]').element as HTMLButtonElement).disabled).toBe(false)
 
     const finalOwned: ReturnType<typeof row> = { ...owned, group: 'enabled', status: 'enabled' }
@@ -221,8 +221,8 @@ describe('startup stage consumers', () => {
     expect(controller.state.diagnostics).toEqual([assessmentWarning])
     expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Assessment fixture warning')
     expect(detail.text()).toContain('enabled')
-    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: ready')
-    expect(wrapper.get('.gui-diagnostics-view').text()).not.toContain('Drift: pending')
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('In sync')
+    expect(wrapper.get('.gui-diagnostics-view').text()).not.toContain('Changes pending')
     expect(wrapper.text()).not.toContain('pending verification')
   })
 
@@ -386,7 +386,7 @@ describe('startup stage consumers', () => {
       expect(detail.find('h2').text()).toBe(ownedHeading)
       expect(detail.find('p').text()).toBe(ownedDescription)
       await openDiagnostics(wrapper)
-      expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: ready')
+      expect(wrapper.get('.gui-diagnostics-view').text()).toContain('In sync')
       expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Previous assessment warning')
       expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).not.toContain(stageDiagnostic.message)
       expect(wrapper.find(`[role="option"][id="row-${newPending.id}"]`).exists()).toBe(false)

@@ -167,8 +167,9 @@ const inspectorChoice = ref<boolean | null>(readPanelChoice(storageKeys.inspecto
 const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWidth)
 const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
 const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
+const inspectorHidden = computed(() => inspectorFolded.value || mainView.value === 'diagnostics')
 const shellColumns = computed(() => {
-  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px 0px' : `6px ${inspectorWidth.value}px`
+  const inspectorColumn = inspectorHidden.value || inspectorOverlay.value ? '0px 0px' : `6px ${inspectorWidth.value}px`
   return `${sidebarWidth.value}px 6px minmax(0, 1fr) ${inspectorColumn}`
 })
 
@@ -1558,7 +1559,7 @@ async function run(action: 'sync' | 'update') {
     </div>
 
     <div
-      v-if="!inspectorFolded && !inspectorOverlay"
+      v-if="!inspectorHidden && !inspectorOverlay"
       class="gui-pane-resize gui-pane-resize--inspector"
       role="separator"
       aria-orientation="vertical"
@@ -1576,9 +1577,9 @@ async function run(action: 'sync' | 'update') {
 
     <Inspector
       ref="inspector"
-      :folded="inspectorFolded"
+      :folded="inspectorHidden"
       :overlay="inspectorOverlay"
-      :inert="inspectorFolded"
+      :inert="inspectorHidden"
       :selected="selected"
       :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen || view?.resourceAction != null"
       :action-busy="resourceActionBusy"

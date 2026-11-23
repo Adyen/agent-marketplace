@@ -70,14 +70,26 @@ async function copyDiagnostics() {
   }
 }
 
+const driftCopy: Record<string, string> = {
+  ready: 'In sync',
+  pending: 'Changes pending',
+  failed: 'Sync failed',
+}
+
+const driftText = computed(() => driftCopy[props.drift] ?? 'Unknown')
+
 function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
   if (health.cacheState === 'fresh' || (health.cacheState === 'miss' && health.checked)) {
-    return 'Results are current'
+    return 'results are current'
   }
   if (health.cacheState === 'stale') {
-    return 'Showing saved results from an earlier check'
+    return 'showing saved results from an earlier check'
   }
-  return 'Not checked yet'
+  return 'not checked yet'
+}
+
+function breakablePath(message: string): string[] {
+  return message.split(/(?<=\/)/)
 }
 </script>
 
@@ -86,7 +98,7 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
     <section class="gui-diagnostics-view__card" aria-label="Session">
       <h2 class="gui-caps">Session</h2>
       <p class="gui-kv">
-        <span v-if="driftTone" class="gui-dot" :class="`gui-dot--${driftTone}`" aria-hidden="true" /><span class="gui-kv__key">Drift:</span> <span class="mono">{{ drift }}</span>
+        <span v-if="driftTone" class="gui-dot" :class="`gui-dot--${driftTone}`" aria-hidden="true" />{{ driftText }}
       </p>
     </section>
 
@@ -97,7 +109,7 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
       <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="emit('retryDiscovery')">Retry Marketplace search</button>
       <ul v-if="discoveryHealth.length" aria-label="Marketplace endpoint health">
         <li v-for="health in discoveryHealth" :key="health.id">
-          <p><strong>{{ health.label }}</strong><span class="mono gui-diagnostics-view__meta"> · {{ discoveryStatus(health) }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · Only part of the catalog is shown; search to find more</span></span></p>
+          <p>{{ health.label }}: {{ discoveryStatus(health) }} ({{ health.total }} {{ health.total === 1 ? 'resource' : 'resources' }})<span v-if="health.truncated">; only part of the catalog is shown, search to find more</span></p>
           <p v-if="health.message">{{ health.message }}</p>
         </li>
       </ul>
@@ -119,7 +131,7 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
         <li v-for="group in diagnosticGroups" :key="group.key" :class="`diag--${group.severity}`">
           <div class="gui-diagnostics__row">
             <GuiIcon :name="group.severity === 'error' ? 'error' : group.severity === 'warning' ? 'warning' : 'info'" class="gui-diagnostics__icon" />
-            <p class="gui-diagnostics__message"><span class="gui-visually-hidden">{{ group.severity }}: </span>{{ group.messages[0] }}</p>
+            <p class="gui-diagnostics__message"><span class="gui-visually-hidden">{{ group.severity }}: </span><template v-for="(segment, index) in breakablePath(group.messages[0] ?? '')" :key="index">{{ segment }}<wbr /></template></p>
             <button
               v-if="group.messages.length > 1"
               type="button"
@@ -133,7 +145,7 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
             </button>
           </div>
           <ul v-if="group.messages.length > 1 && expandedDiagnostics.has(group.key)" class="gui-diagnostics__messages">
-            <li v-for="(message, index) in group.messages" :key="index">{{ message }}</li>
+            <li v-for="(message, index) in group.messages" :key="index"><template v-for="(segment, part) in breakablePath(message)" :key="part">{{ segment }}<wbr /></template></li>
           </ul>
         </li>
       </ul>
