@@ -20,6 +20,7 @@ import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from
 import Sidebar, { type SidebarGroup, type SidebarSource, type StatusFacet } from './Sidebar.vue'
 import SourceBrowseHeader from './SourceBrowseHeader.vue'
 import StatusBar from './StatusBar.vue'
+import { releaseVersionLabel } from './release-version'
 import { sourceLabel } from './source-label'
 
 type SectionView = Omit<Section, 'children'> & { collapsed: boolean; children: SectionView[] }
@@ -1307,7 +1308,6 @@ async function run(action: 'sync' | 'update') {
       :row-source-labels="rowSourceLabels"
       :harnesses="view?.harnesses ?? []"
       :targets-loading="view == null || (view.harnesses.length === 0 && view.stage !== 'inventory' && view.stage !== 'final')"
-      :latest-version="view?.latestVersion ?? ''"
       @all-resources="showAllResources"
       @toggle-kind="toggleKindFacet"
       @toggle-status="toggleStatusFacet"
@@ -1419,7 +1419,7 @@ async function run(action: 'sync' | 'update') {
         No supported target harnesses are configured.
       </p>
       <div v-if="view?.latestVersion" class="workspace__notice workspace__release-notice" role="status">
-        <span>Agent Marketplace {{ view.latestVersion }} is available.</span>
+        <span>Agent Marketplace {{ releaseVersionLabel(view.latestVersion) }} is available.</span>
         <UButton
           v-if="updateButtonVisible"
           aria-label="Update now"

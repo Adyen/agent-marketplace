@@ -210,6 +210,9 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
 - **Banners** sit under the toolbar for errors, the no-harness notice, and the
   latest-version notice. A banner is a 32 px row on `--gui-s0100` with an icon
   and text. Operation progress is a toast, not a banner (see Notifications).
+  The latest-version notice is announced once, in its banner; the sidebar
+  footer does not repeat it. The version reads with exactly one leading `v`
+  (`releaseVersionLabel` in `release-version.ts`).
 - **Resource list**:
   - Group header: a sticky row with a caret, the caps title, and a count on
     the right. Selecting it toggles the group. This resembles Codex's

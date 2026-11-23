@@ -497,14 +497,6 @@ textarea:focus-visible,
   color: var(--gui-ink-3);
 }
 
-.gui-sidebar__update {
-  align-items: center;
-  color: var(--gui-ink-2);
-  display: flex;
-  font-size: 12px;
-  margin: 0 4px;
-}
-
 .gui-sidebar__footer-actions {
   display: flex;
   gap: 2px;

@@ -32,7 +32,6 @@ const props = defineProps<{
   rowSourceLabels: ReadonlyMap<string, string>
   harnesses: string[]
   targetsLoading: boolean
-  latestVersion: string
 }>()
 
 const emit = defineEmits<{
@@ -278,10 +277,6 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
     </section>
 
     <footer class="gui-sidebar__footer">
-      <p v-if="latestVersion !== ''" class="gui-sidebar__update">
-        <span class="gui-dot" aria-hidden="true" />
-        <span>v{{ latestVersion }} available</span>
-      </p>
       <div class="gui-sidebar__footer-row">
         <p class="gui-sidebar__harnesses mono">
           <template v-if="harnessSummary !== ''">

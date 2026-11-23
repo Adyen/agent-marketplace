@@ -25,6 +25,24 @@ describe('release notice', () => {
     expect(controller.state.error).toBeNull()
   })
 
+  it('announces a release once in the banner with a single v prefix', async () => {
+    const { client } = fakeClient()
+    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseNotice('v2.0.0'))
+    const { wrapper } = mountWorkspace(client)
+    await tick()
+    expect(wrapper.text()).toContain('Agent Marketplace v2.0.0 is available.')
+    expect(wrapper.text()).not.toContain('vv2.0.0')
+    expect(wrapper.find('.gui-sidebar__update').exists()).toBe(false)
+  })
+
+  it('adds the v prefix to a bare release version', async () => {
+    const { client } = fakeClient()
+    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseNotice('9.9.9'))
+    const { wrapper } = mountWorkspace(client)
+    await tick()
+    expect(wrapper.text()).toContain('Agent Marketplace v9.9.9 is available.')
+  })
+
   it('omits the notice for an empty latest version without error', async () => {
     const { client } = fakeClient()
     ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseNotice(''))
