@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // BlobUpload is a digest-addressed blob that must be present in the blob store
@@ -153,6 +154,9 @@ type ResourceRevisionPublication struct {
 // PublishResourceRevision uploads the resource archive and writes the resource
 // revision in a single transaction.
 func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, pub ResourceRevisionPublication) error {
+	if _, _, scoped := nameutil.SplitPlaceKind(pub.Revision.Coordinate.Kind); scoped {
+		return errors.New("scoped place packages require an assessed registry publication")
+	}
 	archive := string(pub.Revision.ArchiveDigest)
 	if archive != "" && len(pub.ArchiveBytes) > 0 {
 		if err := putImmutableBlob(ctx, blobs, BlobUpload{Digest: pub.Revision.ArchiveDigest, Data: pub.ArchiveBytes}); err != nil {
@@ -332,6 +336,9 @@ func CheckInspectionBlobs(ctx context.Context, blobs BlobStore, digest RevisionD
 }
 
 func inspectionPrimaryPathForKind(kind string) string {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return nameutil.PlacePackageInspectionPath
+	}
 	switch kind {
 	case "skill":
 		return "SKILL.md"
@@ -351,6 +358,9 @@ func inspectionPrimaryPathForKind(kind string) string {
 }
 
 func inspectionPrimaryMediaPolicy(kind string) (string, string) {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return "application/json", "text"
+	}
 	switch kind {
 	case "skill", "command", "subagent", "hook":
 		return "text/markdown", "text"
@@ -576,6 +586,9 @@ func prepareUploads(req RegistryRevisionPublication) ([]BlobUpload, error) {
 		}
 	}
 
+	if err := validatePlaceArchiveBindings(req, uploads, seen, placeholders); err != nil {
+		return nil, err
+	}
 	return uploads, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 const blobOwnerRevisionColumns = `rr.marketplace_id,rr.registry_id,rr.kind,rr.name,rr.content_digest,rr.archive_digest`
@@ -87,7 +88,9 @@ func decodeBlobRegistryManifest(payload []byte, digest ArchiveDigest) (blobRegis
 	seen := make(map[string]bool, len(manifest.Resources))
 	for _, resource := range manifest.Resources {
 		key := resource.Kind + "/" + resource.Name
-		if !IsMarketplaceResourceKind(resource.Kind) || resource.Name == "" || !validInspectionDigest(resource.ContentDigest) || seen[key] || (resource.ArchiveDigest != "" && !validInspectionDigest(resource.ArchiveDigest)) {
+		_, _, scoped := nameutil.SplitPlaceKind(resource.Kind)
+		validKind := IsMarketplaceResourceKind(resource.Kind) || (scoped && nameutil.IsPlacePackageName(resource.Name))
+		if !validKind || resource.Name == "" || !validInspectionDigest(resource.ContentDigest) || seen[key] || (resource.ArchiveDigest != "" && !validInspectionDigest(resource.ArchiveDigest)) {
 			return manifest, ErrBlobOwnershipInvalid
 		}
 		seen[key] = true

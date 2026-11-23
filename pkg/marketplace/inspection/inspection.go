@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -59,6 +60,9 @@ const (
 )
 
 func PrimaryPath(kind string) string {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return nameutil.PlacePackageInspectionPath
+	}
 	switch kind {
 	case "skill":
 		return PrimarySkillPath
@@ -253,6 +257,9 @@ func mediaPolicy(name string, data []byte) (string, string, bool) {
 }
 
 func primaryMediaPolicy(kind string) (string, string) {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return MediaJSON, ClassText
+	}
 	switch kind {
 	case "skill", "command", "subagent", "hook":
 		return MediaMarkdown, ClassText
