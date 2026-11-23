@@ -547,7 +547,8 @@ textarea:focus-visible,
   background: var(--gui-s0400);
 }
 
-.gui-button--danger {
+.gui-button--danger:hover:not(:disabled),
+.gui-button--danger:focus-visible {
   color: var(--am-color-status-danger);
 }
 

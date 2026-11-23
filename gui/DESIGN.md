@@ -263,9 +263,10 @@ the title "Details". It holds only the selected resource: the caps eyebrow
 (kind), the display name in mono, the description in `--gui-ink-2`, and a
 `dl` with Registry, Scope, and Status. Its actions sit in a row of outlined
 buttons, 28 px tall with 8 px radius, each with a leading icon and a text
-label: Install and Restore use `plus`, Uninstall and Exclude use `minus` and
-the danger text tone, and Open resource uses `file`. There is no icon-only
-action. Session drift, Marketplace
+label. Open resource comes first, `file`. The resource action follows it:
+Install and Restore use `plus`, Uninstall and Exclude use `minus`. Uninstall
+and Exclude keep neutral text and show the danger text tone only on hover and
+keyboard focus. There is no icon-only action. Session drift, Marketplace
 discovery, and diagnostics moved to the Diagnostics view (see the fourth
 review). The empty state, "Select a resource to inspect it.", is shown
 centered in `--gui-ink-3`.

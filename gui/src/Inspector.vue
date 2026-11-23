@@ -88,6 +88,18 @@ defineExpose({
             </dl>
             <div class="gui-inspector__actions">
               <UButton
+                v-if="selected.inspectable || selected.installedFiles"
+                ref="openResourceButton"
+                aria-label="Open resource"
+                class="gui-inspector__action"
+                color="neutral"
+                variant="outline"
+                @click="emit('openInspection', selected)"
+              >
+                <GuiIcon name="file" />
+                Open resource
+              </UButton>
+              <UButton
                 v-if="selected.resourceAction !== 'none'"
                 ref="resourceActionButton"
                 :aria-label="resourceActionLabel"
@@ -102,18 +114,6 @@ defineExpose({
                 <span v-if="actionBusy" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />
                 <GuiIcon v-else :name="resourceActionIcon" />
                 {{ resourceActionVerb }}
-              </UButton>
-              <UButton
-                v-if="selected.inspectable || selected.installedFiles"
-                ref="openResourceButton"
-                aria-label="Open resource"
-                class="gui-inspector__action"
-                color="neutral"
-                variant="outline"
-                @click="emit('openInspection', selected)"
-              >
-                <GuiIcon name="file" />
-                Open resource
               </UButton>
             </div>
           </div>

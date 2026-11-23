@@ -496,6 +496,18 @@ describe('inspector uninstall action', () => {
     expect(document.body.querySelector('.resource-actions__copy')?.textContent).toContain('Uninstall a from ')
     expect(document.body.querySelector('button[aria-label="Confirm uninstall"]')).not.toBeNull()
   })
+
+  it('lists Open resource before Uninstall in the inspector', async () => {
+    const { wrapper, client } = await mountShell([row('a', { id: 'row-a', resourceAction: 'remove', checked: true, inspectable: true })])
+    vi.mocked(client.resourcePlan).mockResolvedValue({
+      rowId: 'row-a', generation: 1, planId: 'a'.repeat(64), action: 'remove', preview: 'Resource: skill/a', requiresRiskAcceptance: false,
+    })
+    await wrapper.get('[role="option"][id="row-row-a"]').trigger('click')
+    await tick()
+
+    const labels = wrapper.findAll('aside[aria-label="Detail"] .gui-inspector__actions button').map((button) => button.attributes('aria-label'))
+    expect(labels).toEqual(['Open resource', 'Uninstall Resource'])
+  })
 })
 
 describe('resource opening actions', () => {
