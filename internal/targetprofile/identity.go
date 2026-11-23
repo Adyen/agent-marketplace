@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/gitidentity"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -43,7 +43,7 @@ func (id Identity) Validate() error {
 	if target.IsValid(id.TargetID) {
 		return fmt.Errorf("%s: target %q is a compiled harness target", compiledTargetIDCode, id.TargetID)
 	}
-	if _, err := lockfile.ParseDigest(id.RevisionDigest); err != nil {
+	if !nameutil.IsCanonicalSHA256Digest(id.RevisionDigest) {
 		return invalid()
 	}
 	if _, err := ParseSourceID(id.SourceID); err != nil {
@@ -99,7 +99,7 @@ func ParseSourceID(raw string) (Source, error) {
 		if !originOK || !refOK || !rootOK || !validRelativePath(root) {
 			return invalid()
 		}
-		canonical, err := lockfile.CanonicalGitURLV1(origin)
+		canonical, err := gitidentity.CanonicalV1(origin)
 		if err != nil || canonical != origin {
 			return invalid()
 		}

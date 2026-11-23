@@ -3,20 +3,12 @@ package api
 import (
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func IsCanonicalSHA256Digest(value string) bool {
-	if len(value) != len("sha256:")+64 || value[:len("sha256:")] != "sha256:" {
-		return false
-	}
-	for i := len("sha256:"); i < len(value); i++ {
-		c := value[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return nameutil.IsCanonicalSHA256Digest(value)
 }
 
 // IsCanonicalGitCommit reports whether value is the full, lowercase hexadecimal

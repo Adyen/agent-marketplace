@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/gitidentity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -265,7 +266,7 @@ func containsConflictMarkers(data []byte) bool {
 }
 
 func normalizeArtifactPath(value string, allowRoot bool) (string, error) {
-	if value == "" || strings.Contains(value, `\`) || hasControl(value) || strings.HasPrefix(value, "/") {
+	if value == "" || strings.Contains(value, `\`) || gitidentity.HasASCIIControl(value) || strings.HasPrefix(value, "/") {
 		return "", coded(CodeInvalidPath, "invalid portable path %q", value)
 	}
 	for part := range strings.SplitSeq(value, "/") {

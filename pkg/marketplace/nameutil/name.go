@@ -7,6 +7,19 @@ import (
 	"unicode"
 )
 
+func IsCanonicalSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+64 || value[:len("sha256:")] != "sha256:" {
+		return false
+	}
+	for i := len("sha256:"); i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidateSegment validates a single Marketplace identifier segment (instance
 // ID, registry binding, resource name or revision). The error text is a
 // predicate phrase so callers can prefix their own field label, e.g.

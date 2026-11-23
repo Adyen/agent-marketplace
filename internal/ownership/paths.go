@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/rootkey"
 )
 
@@ -71,37 +72,11 @@ func CanonicalRoot(targetRoot string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ownership: absolute path for %q: %w", targetRoot, err)
 	}
-	resolved, err := resolveExistingPrefix(abs)
+	resolved, err := fsboundary.ResolveExistingPrefix(abs)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("ownership: canonicalize %q: %w", abs, err)
 	}
 	return resolved, nil
-}
-
-// resolveExistingPrefix resolves symlinks in the longest existing ancestor of
-// abs and re-appends the remaining components.
-func resolveExistingPrefix(abs string) (string, error) {
-	remainder := []string{}
-	current := abs
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			for i := len(remainder) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, remainder[i])
-			}
-			return filepath.Clean(resolved), nil
-		} else if !os.IsNotExist(err) {
-			// A permission error or a symlink loop must not silently downgrade to
-			// an unresolved path: two different roots could then share a key.
-			return "", fmt.Errorf("ownership: canonicalize %q: %w", abs, err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			// Reached the filesystem root without finding anything that exists.
-			return filepath.Clean(abs), nil
-		}
-		remainder = append(remainder, filepath.Base(current))
-		current = parent
-	}
 }
 
 // RootKey derives the state key for a canonical root.

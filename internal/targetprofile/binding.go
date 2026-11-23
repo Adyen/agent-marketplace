@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"sort"
 
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
@@ -93,8 +92,8 @@ func (b Binding) ValidateFor(kind, contentDigest string) error {
 		return fmt.Errorf("marketplace.package.binding-invalid: %w", err)
 	}
 	for _, digest := range []string{b.PackageContentDigest, b.DeliveryMappingDigest, b.ProfileDigest, contentDigest} {
-		if _, err := lockfile.ParseDigest(digest); err != nil {
-			return fmt.Errorf("marketplace.package.binding-invalid: %w", err)
+		if !nameutil.IsCanonicalSHA256Digest(digest) {
+			return fmt.Errorf("marketplace.package.binding-invalid: lock.digest-invalid: invalid SHA-256 digest %q", digest)
 		}
 	}
 	if b.ProfileDigest != b.ProfileIdentity.RevisionDigest {
