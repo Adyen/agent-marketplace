@@ -791,6 +791,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Remove place rows before legacy validation, totals, and pagination.
+	revs = slices.DeleteFunc(revs, func(rev store.AssessedResourceRevision) bool {
+		kind := rev.Coordinate.Kind
+		_, _, scoped := nameutil.SplitPlaceKind(kind)
+		return scoped || kind == nameutil.TargetProfileKind
+	})
+
 	registries, err := s.registryIndex(r.Context())
 	if err != nil {
 		slog.Error("registry index failed", "err", logvalue.Safe(err))
