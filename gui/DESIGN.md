@@ -487,6 +487,8 @@ here conflicts with an earlier section, this section wins.
 - The status bar's `✓` takes `--gui-signal` in both themes; the words
   `in sync` keep `--gui-signal-ink`. A pending count shows `~` in
   `--am-color-status-warning`.
+- The keyboard hints (`↑↓ move · ⏎ open · s sync`) stay hidden until the
+  first arrow, Enter, or Tab key press in the session, then stay visible.
 
 ### Inspector
 

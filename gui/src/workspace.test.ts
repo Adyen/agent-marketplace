@@ -1823,6 +1823,7 @@ describe('workspace chrome', () => {
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
     await tick()
     await wrapper.get('[role="option"]').trigger('click')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
     await tick()
 
     const hints = wrapper.get('.gui-statusbar__hints').text().toLowerCase()
