@@ -17,7 +17,7 @@
 
 ## 4. Integrated Verification
 
-- [ ] 4.1 Run scoped test-first checks for each changed boundary, then the project validation and relevant web, deployment, and Marketplace E2E gates. Require a real SkillSpector result on a published skill in a supplied deployment, not only a stub report or a runner health check.
+- [x] 4.1 Run scoped test-first checks for each changed boundary, then the project validation and relevant web, deployment, and Marketplace E2E gates. Require a real SkillSpector result on a published skill in a supplied deployment, not only a stub report or a runner health check.
 
 ## Workflow follow-up
 
