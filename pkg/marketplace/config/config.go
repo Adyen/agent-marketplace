@@ -123,21 +123,22 @@ func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
 // Config is the top-level Marketplace operator configuration.
 type Config struct {
-	Admin               Administration      `yaml:"admin"`
-	Management          Management          `yaml:"management"`
-	APIVersion          string              `yaml:"apiVersion"`
-	Instance            Instance            `yaml:"instance"`
-	Listen              string              `yaml:"listen"`
-	OperationsListen    string              `yaml:"operations_listen"`
-	Storage             Storage             `yaml:"storage"`
-	AcquisitionDefault  string              `yaml:"acquisition_default"`
-	Refresh             Refresh             `yaml:"refresh"`
-	RefreshConcurrency  int                 `yaml:"refresh_concurrency,omitempty"`
-	Policy              Policy              `yaml:"policy"`
-	Registries          []Registry          `yaml:"registries"`
-	Revocations         Revocations         `yaml:"revocations"`
-	CatalogProjection   CatalogProjection   `yaml:"catalog_projection"`
-	InstallationMetrics InstallationMetrics `yaml:"installation_metrics"`
+	Admin                         Administration                 `yaml:"admin"`
+	Management                    Management                     `yaml:"management"`
+	APIVersion                    string                         `yaml:"apiVersion"`
+	Instance                      Instance                       `yaml:"instance"`
+	Listen                        string                         `yaml:"listen"`
+	OperationsListen              string                         `yaml:"operations_listen"`
+	Storage                       Storage                        `yaml:"storage"`
+	AcquisitionDefault            string                         `yaml:"acquisition_default"`
+	Refresh                       Refresh                        `yaml:"refresh"`
+	RefreshConcurrency            int                            `yaml:"refresh_concurrency,omitempty"`
+	Policy                        Policy                         `yaml:"policy"`
+	Registries                    []Registry                     `yaml:"registries"`
+	Revocations                   Revocations                    `yaml:"revocations"`
+	CatalogProjection             CatalogProjection              `yaml:"catalog_projection"`
+	InstallationMetrics           InstallationMetrics            `yaml:"installation_metrics"`
+	HostPackageAssessmentProfiles []HostPackageAssessmentProfile `yaml:"host_package_assessment_profiles,omitempty"`
 }
 
 type InstallationMetrics struct {
@@ -637,6 +638,7 @@ func (cfg Config) validateWithoutAdministration() error {
 	}
 	errs = append(errs, cfg.Revocations.ValidateForMarketplace(cfg.Instance.ID)...)
 	errs = append(errs, cfg.InstallationMetrics.Validate()...)
+	errs = append(errs, validateHostPackageAssessmentProfiles(cfg.HostPackageAssessmentProfiles)...)
 	return errors.Join(errs...)
 }
 

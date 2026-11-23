@@ -19,9 +19,9 @@ const identityInvalidCode = "marketplace.profile.identity-invalid"
 const compiledTargetIDCode = "marketplace.profile.compiled-target-id"
 
 type Identity struct {
-	TargetID       string `json:"target_id"`
-	SourceID       string `json:"source_id"`
-	RevisionDigest string `json:"revision_digest"`
+	TargetID       string `json:"target_id" yaml:"target_id"`
+	SourceID       string `json:"source_id" yaml:"source_id"`
+	RevisionDigest string `json:"revision_digest" yaml:"revision_digest"`
 }
 
 type Source struct {
