@@ -191,7 +191,7 @@ describe('startup stage consumers', () => {
     expect(controller.state.rows[0]?.id).toBe(pendingOwned.id)
     expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
     expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
-    expect(wrapper.find('button[aria-label="Uninstall Resource"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Uninstall resource"]').exists()).toBe(false)
 
     push(frame(3, 7, 'inventory', [owned, second], { harnesses: ['devin'], pendingChanges: 1 }))
     await tick()
@@ -209,7 +209,7 @@ describe('startup stage consumers', () => {
     expect(detail.text()).toContain('pending sync')
     await openDiagnostics(wrapper)
     expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Changes pending')
-    expect((wrapper.get('button[aria-label="Uninstall Resource"]').element as HTMLButtonElement).disabled).toBe(false)
+    expect((wrapper.get('button[aria-label="Uninstall resource"]').element as HTMLButtonElement).disabled).toBe(false)
 
     const finalOwned: ReturnType<typeof row> = { ...owned, group: 'enabled', status: 'enabled' }
     push(frame(4, 7, 'final', [finalOwned], { diagnostics: [assessmentWarning], pendingChanges: 0 }))
@@ -318,7 +318,7 @@ describe('startup stage consumers', () => {
     expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Startup resolution failed')
     expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
     expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
-    expect(wrapper.find('button[aria-label="Uninstall Resource"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Uninstall resource"]').exists()).toBe(false)
     expect(client.action).not.toHaveBeenCalled()
     expect(client.configure).not.toHaveBeenCalled()
   })

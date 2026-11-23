@@ -184,7 +184,7 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
     await tick()
 
     const dialog = document.body.querySelector('[role="dialog"]')
@@ -221,7 +221,7 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
     await tick()
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog?.querySelector('.resource-actions__spinner')).not.toBeNull()
@@ -259,7 +259,7 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
     await tick()
     const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement
     confirm.click()

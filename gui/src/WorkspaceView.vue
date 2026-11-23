@@ -1090,13 +1090,13 @@ function openInspection(row: Row) {
 function resourceActionLabel(action: Row['resourceAction']): string {
   switch (action) {
     case 'install':
-      return 'Install Resource'
+      return 'Install resource'
     case 'remove':
-      return 'Uninstall Resource'
+      return 'Uninstall resource'
     case 'exclude':
-      return 'Exclude Resource'
+      return 'Exclude resource'
     case 'restore':
-      return 'Restore Resource'
+      return 'Restore resource'
     default:
       return 'Action'
   }

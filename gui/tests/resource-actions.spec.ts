@@ -258,7 +258,7 @@ async function selectRowByDOMID(page: Page, domID: string, actions: string[]): P
 }
 
 async function openActionPlan(page: Page, verb: string, actions: string[]): Promise<Locator> {
-  const label = `${verb} Resource`
+  const label = `${verb} resource`
   const actionButton = page.getByRole('button', { name: label, exact: true })
   await expect(actionButton).toBeEnabled({ timeout: 30_000 })
   const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/resource-plan')
@@ -357,9 +357,9 @@ test('resource action dialog shows a spinner while preparing the plan', async ({
       await heldResponse
       await route.fulfill({ response })
     })
-    await page.getByRole('button', { name: 'Uninstall Resource', exact: true }).click()
+    await page.getByRole('button', { name: 'Uninstall resource', exact: true }).click()
     await fetched
-    const dialog = page.getByRole('dialog', { name: 'Uninstall Resource', exact: true })
+    const dialog = page.getByRole('dialog', { name: 'Uninstall resource', exact: true })
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('.resource-actions__spinner')).toBeVisible()
     await expect.poll(() => dialog.evaluate((element) => getComputedStyle(element).cursor)).toBe('progress')
@@ -416,7 +416,7 @@ test('risk-free Install writes without opening a dialog and shows busy inspector
       await route.fulfill({ response })
     })
 
-    const installButton = page.getByRole('button', { name: 'Install Resource', exact: true })
+    const installButton = page.getByRole('button', { name: 'Install resource', exact: true })
     await installButton.click()
     await planReady
     await expect(installButton).toBeDisabled()
@@ -540,7 +540,7 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     assertPreviewContainsNoLocalPaths(preview, [bootstrap.home!, bootstrap.repo!])
     await cancelDialog.screenshot({ path: testInfo.outputPath('available-install-preview.png'), animations: 'disabled' })
     await cancelAction(page, cancelDialog, actions)
-    await expect(page.getByRole('button', { name: 'Install Resource', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Install resource', exact: true })).toBeFocused()
     assertFilesUnchanged(beforeCancel, await captureFiles(rootPaths), 'cancelled prepare modified protected fixture files')
     expect(counts.plans).toBe(1)
     expect(counts.actions).toBe(0)
@@ -590,7 +590,7 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     expect(heldFinal.status()).toBe(204)
     await expect(installDialog).toBeHidden()
     await expect(mutationStatus(page)).toBeVisible()
-    const oldInstallButton = page.getByRole('button', { name: 'Install Resource', exact: true })
+    const oldInstallButton = page.getByRole('button', { name: 'Install resource', exact: true })
     await expect(oldInstallButton).toBeDisabled()
     await oldInstallButton.screenshot({ path: testInfo.outputPath('install-awaiting-authoritative-final.png'), animations: 'disabled' })
     const afterCommitBeforeFinal = await captureFiles(rootPaths)
@@ -617,11 +617,11 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     const release = await page.request.post(bootstrap.resourceActionBarrierReleaseURL)
     expect(release.status()).toBe(204)
     barrierReleased = true
-    const removeButton = page.getByRole('button', { name: 'Uninstall Resource', exact: true })
+    const removeButton = page.getByRole('button', { name: 'Uninstall resource', exact: true })
     await expect(removeButton).toBeVisible({ timeout: 60_000 })
     await expect(removeButton).toBeFocused()
     await removeButton.screenshot({ path: testInfo.outputPath('installed-authoritative-final.png'), animations: 'disabled' })
-    actions.push('Released the real final event; the verified installed row now offers Uninstall Resource with focus restored')
+    actions.push('Released the real final event; the verified installed row now offers Uninstall resource with focus restored')
 
     const beforeRemoveConfirmation = await captureFiles(rootPaths)
     const removeDialog = await openActionPlan(page, 'Uninstall', actions)
@@ -633,7 +633,7 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     await expect(removeDialog).toBeHidden()
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
     await selectReviewRow(page, actions)
-    const installButton = page.getByRole('button', { name: 'Install Resource', exact: true })
+    const installButton = page.getByRole('button', { name: 'Install resource', exact: true })
     await expect(installButton).toBeVisible()
     await expect.poll(() => counts.actions).toBe(2)
     await installButton.screenshot({ path: testInfo.outputPath('remove-settled.png'), animations: 'disabled' })
@@ -694,7 +694,7 @@ test('built user GUI excludes and restores an optional organization pin without 
     const preview = await cancelDialog.locator('pre').textContent()
     assertPreviewContainsNoLocalPaths(preview, [bootstrap.home!, bootstrap.repo!])
     await cancelAction(page, cancelDialog, actions)
-    await expect(page.getByRole('button', { name: 'Exclude Resource', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Exclude resource', exact: true })).toBeFocused()
     assertFilesUnchanged(baseline, await captureFiles(protectedPaths), 'cancelled organization exclusion modified protected fixture files')
     actions.push('Cancelled the optional organization exclusion plan without changing user, organization, lock, materialized, or CWD bytes')
 
@@ -711,7 +711,7 @@ test('built user GUI excludes and restores an optional organization pin without 
     expect(heldFinal.status()).toBe(204)
     await expect(excludeDialog).toBeHidden()
     await expect(mutationStatus(page)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Exclude Resource', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Exclude resource', exact: true })).toBeDisabled()
     if (sameFileState(userConfigBeforeExclude, await fileState(bootstrap.resourceActionUserConfig))) {
       throw new Error('accepted exclusion did not update the user config before final delivery')
     }
@@ -724,7 +724,7 @@ test('built user GUI excludes and restores an optional organization pin without 
     barrierReleased = true
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
     await selectRowByDOMID(page, organizationRowDOMID, actions)
-    await expect(page.getByRole('button', { name: 'Restore Resource', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Restore resource', exact: true })).toBeVisible()
     await expect.poll(async () => counts.actions).toBe(1)
     const afterExclude = await captureFiles(orgPaths)
     assertFilesUnchanged(beforeExcludeCommit, afterExclude, 'organization or unrelated protected files changed on exclusion')
@@ -735,11 +735,11 @@ test('built user GUI excludes and restores an optional organization pin without 
     const beforeRestoreUserConfig = await fileState(bootstrap.resourceActionUserConfig)
     const beforeRestoreUserLock = await fileState(bootstrap.resourceActionUserLock)
     await trackOpenedDialogs(page)
-    await page.getByRole('button', { name: 'Restore Resource', exact: true }).click()
+    await page.getByRole('button', { name: 'Restore resource', exact: true }).click()
     await expect.poll(async () => counts.actions).toBe(2)
     await expect(page.getByLabel('Notifications').getByText('Restored review')).toBeVisible({ timeout: 60_000 })
     expect(await stopDialogTracking(page)).toBe(false)
-    await expect(page.getByRole('dialog', { name: 'Restore Resource', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: 'Restore resource', exact: true })).toHaveCount(0)
     if (sameFileState(beforeRestoreUserConfig, await fileState(bootstrap.resourceActionUserConfig))) {
       throw new Error('risk-free restore did not update the user config')
     }
@@ -747,7 +747,7 @@ test('built user GUI excludes and restores an optional organization pin without 
       throw new Error('risk-free restore changed the user acquisition lock')
     }
     await selectReviewRow(page, actions)
-    const excludeButton = page.getByRole('button', { name: 'Exclude Resource', exact: true })
+    const excludeButton = page.getByRole('button', { name: 'Exclude resource', exact: true })
     await expect(excludeButton).toBeVisible()
     assertFilesUnchanged(beforeRestoreCommit, await captureFiles(orgPaths), 'organization or unrelated protected files changed on restore')
     expect(counts.plans).toBe(3)

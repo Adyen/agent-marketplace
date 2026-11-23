@@ -234,13 +234,13 @@ function observeWork40ActionRequests(page: Page): { plans: () => number; resourc
 }
 
 async function openWork40InstallPlan(page: Page, actions: string[]): Promise<Locator> {
-  const installButton = page.getByRole('button', { name: 'Install Resource', exact: true })
+  const installButton = page.getByRole('button', { name: 'Install resource', exact: true })
   await expect(installButton).toBeEnabled()
-  await tabTo(page, installButton, 'Install Resource', actions)
+  await tabTo(page, installButton, 'Install resource', actions)
   const response = page.waitForResponse((candidate) => candidate.request().method() === 'POST' && new URL(candidate.url()).pathname === '/api/resource-plan')
   await page.keyboard.press('Enter')
   expect((await response).status()).toBe(200)
-  const dialog = page.getByRole('dialog', { name: 'Install Resource' })
+  const dialog = page.getByRole('dialog', { name: 'Install resource' })
   await expect(dialog).toBeVisible()
   return dialog
 }

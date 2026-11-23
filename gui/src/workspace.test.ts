@@ -180,7 +180,7 @@ async function startWork39HeldRemoval() {
   push(work39SnapshotEvent(1, 1, [removed, next]))
   await tick()
   await selectWork39Row(wrapper, removed.id)
-  await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+  await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
   await tick()
   const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
   if (confirm == null) {
@@ -1465,6 +1465,17 @@ describe('workspace facets and source header', () => {
     await wrapper.get('[role="option"]').trigger('click')
     await tick()
     expect(wrapper.get('.gui-inspector dd.mono').text()).toBe('Team')
+  })
+
+  it('shows User for user scope in the inspector Scope value', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('personal-skill', { scope: 'user' })]) }))
+    await tick()
+
+    await wrapper.get('[role="option"]').trigger('click')
+    await tick()
+    expect(wrapper.findAll('.gui-inspector dd')[1].text()).toBe('User')
   })
 
   // spec: gui-shell/workspace-facets-intersect-and-clear-independently
@@ -3102,14 +3113,14 @@ describe('Event stream reconnect', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       await tick()
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
       const actionSignal = vi.mocked(client.resourcePlan).mock.calls[0]?.[1]
       expect(vi.mocked(client.resourcePlan).mock.calls[0]?.[0]).toBe(resource.id)
       expect(actionSignal).toBeInstanceOf(AbortSignal)
       expect(controller.state.resourceAction).toMatchObject({ action: 'install', displayName: resource.displayName, dialogOpen: false, loading: true })
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-      expect(wrapper.get('button[aria-label="Install Resource"]').find('.gui-inspector__action-spinner').exists()).toBe(true)
+      expect(wrapper.get('button[aria-label="Install resource"]').find('.gui-inspector__action-spinner').exists()).toBe(true)
 
       const plan = { ...work39Plan(resource.id, 1, 'install', true), preview: '<script>not executable</script>' }
       planRequest.resolve(plan)
@@ -3171,7 +3182,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.operation).toBeNull()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
       expect(controller.state.settledMutation).toBeNull()
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall resource')
     })
 
     // spec: session-interactions/cancel-or-stale-completion
@@ -3189,7 +3200,7 @@ describe('Event stream reconnect', () => {
       push(work39SnapshotEvent(1, 1, [first, second]))
       await tick()
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
       const firstSignal = requests[0]?.signal
       await wrapper.findAll('[role="option"]')[1].trigger('click')
@@ -3197,7 +3208,7 @@ describe('Event stream reconnect', () => {
       expect(firstSignal?.aborted).toBe(true)
       expect(controller.state.resourceAction).toBeNull()
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       requests[0]?.response.resolve(work39Plan(first.id, 1, 'install'))
       await tick()
@@ -3213,7 +3224,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.resourceAction).toBeNull()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       const generationSignal = requests[2]?.signal
       push(work39SnapshotEvent(2, 2, [first, second]))
@@ -3224,7 +3235,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.resourceAction).toBeNull()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       const disposedSignal = requests[3]?.signal
       controller.dispose()
@@ -3248,7 +3259,7 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, resource.id)
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
 
       const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
@@ -3275,7 +3286,7 @@ describe('Event stream reconnect', () => {
       push(work39SnapshotEvent(1, 1, [resource]))
       await tick()
       await selectWork39Row(wrapper, resource.id)
-      await wrapper.get(`button[aria-label="${actionName} Resource"]`).trigger('click')
+      await wrapper.get(`button[aria-label="${actionName} resource"]`).trigger('click')
       await tick()
 
       const sync = controller.runAction('sync')
@@ -3298,7 +3309,7 @@ describe('Event stream reconnect', () => {
       cancel?.click()
       await tick()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-      expect((wrapper.get(`button[aria-label="${actionName} Resource"]`).element as HTMLButtonElement).disabled).toBe(false)
+      expect((wrapper.get(`button[aria-label="${actionName} resource"]`).element as HTMLButtonElement).disabled).toBe(false)
       expect(client.resourceAction).not.toHaveBeenCalled()
       controller.dispose()
     })
@@ -3315,7 +3326,7 @@ describe('Event stream reconnect', () => {
       push(work39SnapshotEvent(1, 1, [resource]))
       await tick()
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
       const alert = document.body.querySelector('[role="alert"]')
       expect(alert?.textContent).toBe('Action could not be prepared; refresh this resource and retry.')
@@ -3336,7 +3347,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.resourceAction).toBeNull()
       expect(client.resourceAction).not.toHaveBeenCalled()
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
       const cancel = document.body.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
       expect(cancel).not.toBeNull()
@@ -3358,7 +3369,7 @@ describe('Event stream reconnect', () => {
       push(work39SnapshotEvent(1, 1, [resource]))
       await tick()
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
       expect(confirm?.disabled).toBe(false)
@@ -3421,7 +3432,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.settlementIntent).toBeNull()
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install resource')
     })
 
     // spec: session-interactions/cancel-or-stale-completion
@@ -3451,7 +3462,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.settlementIntent).toBeNull()
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install resource')
     })
 
     // spec: session-interactions/cancel-or-stale-completion
@@ -3482,7 +3493,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.settlementIntent).toBeNull()
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Install resource')
     })
 
     // spec: session-navigation/clear-and-refresh
@@ -3503,7 +3514,7 @@ describe('Event stream reconnect', () => {
       expect(controller.state.rows.find((candidate) => candidate.id === removed.id)?.resourceAction).toBe('none')
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
-      expect(document.body.querySelector('button[aria-label="Uninstall Resource"]')).toBeNull()
+      expect(document.body.querySelector('button[aria-label="Uninstall resource"]')).toBeNull()
       expect(document.activeElement?.getAttribute('id')).toBe(`row-${removed.id}`)
     })
 
@@ -3522,7 +3533,7 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, removed.id)
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       const confirm = document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null
       confirm?.click()
@@ -3538,7 +3549,7 @@ describe('Event stream reconnect', () => {
       await tick()
       expect(controller.state.settledMutation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${next.id}`)
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Restore Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Restore resource')
     })
 
     // spec: session-navigation/clear-and-refresh
@@ -3554,7 +3565,7 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, removed.id)
 
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       ;(document.body.querySelector('button[aria-label="Confirm uninstall"]') as HTMLButtonElement | null)?.click()
       await tick()
@@ -3599,7 +3610,7 @@ describe('Event stream reconnect', () => {
       await tick()
       await selectWork39Row(wrapper, resource.id)
 
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Install resource"]').trigger('click')
       await tick()
       expect(document.body.querySelector('[role="dialog"]')).toBeNull()
       expect(controller.state.resourceAction).toMatchObject({ action: 'install', dialogOpen: false, loading: true })
@@ -3624,7 +3635,7 @@ describe('Event stream reconnect', () => {
       await tick()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
       expect(controller.state.settledMutation).toBeNull()
-      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall Resource')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Uninstall resource')
       expect(client.inspection).not.toHaveBeenCalled()
     })
   })
@@ -3649,7 +3660,7 @@ describe('Event stream reconnect', () => {
     }
 
     async function openWork41InstallPlan(wrapper: ReturnType<typeof mountWorkspace>['wrapper']): Promise<HTMLElement> {
-      await wrapper.get('button[aria-label="Uninstall Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Uninstall resource"]').trigger('click')
       await tick()
       const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
       if (dialog == null) {

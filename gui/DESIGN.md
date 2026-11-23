@@ -570,8 +570,8 @@ wins.
   their label and icon with `--am-color-status-danger`; Install and Restore
   keep `--gui-ink`. The visible label is the verb alone ("Install",
   "Remove", "Exclude", "Restore"). The accessible names stay
-  "Install Resource", "Remove Resource", "Exclude Resource", and
-  "Restore Resource", which start with the visible label.
+  "Install resource", "Remove resource", "Exclude resource", and
+  "Restore resource", which start with the visible label.
 - *Rule — eyebrow*: the eyebrow shows only the kind, in caps. The Registry
   row names the source, in its own case.
 - *Rule — session*: Session holds the drift row only ("In sync" with its
@@ -812,7 +812,7 @@ earlier section, this section wins.
 ### Resource header
 
 - Remove and Exclude are a trash icon at the top right of the resource
-  header. The accessible name stays "Remove Resource" or "Exclude Resource",
+  header. The accessible name stays "Remove resource" or "Exclude resource",
   and the tooltip is the verb. Install and Restore keep their text buttons in
   the action row.
 

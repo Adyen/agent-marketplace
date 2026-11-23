@@ -46,7 +46,7 @@ function actionName(value: ResourceAction): string {
   }
 }
 
-const title = computed(() => `${actionName(action.value)} Resource`)
+const title = computed(() => `${actionName(action.value)} resource`)
 const confirmLabel = computed(() => `Confirm ${actionName(action.value).toLowerCase()}`)
 const progressText = computed(() => state.value == null
   ? ''

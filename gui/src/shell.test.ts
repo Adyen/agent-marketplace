@@ -537,7 +537,7 @@ describe('inspector uninstall action', () => {
     await tick()
 
     const detail = wrapper.get('aside[aria-label="Detail"]')
-    const uninstall = detail.get('button[aria-label="Uninstall Resource"]')
+    const uninstall = detail.get('button[aria-label="Uninstall resource"]')
     expect(uninstall.text()).toBe('Uninstall')
     expect(uninstall.classes()).toContain('gui-button--danger')
     expect(detail.find('.gui-icon-button').exists()).toBe(false)
@@ -557,7 +557,7 @@ describe('inspector uninstall action', () => {
     await tick()
 
     const labels = wrapper.findAll('aside[aria-label="Detail"] .gui-inspector__actions button').map((button) => button.attributes('aria-label'))
-    expect(labels).toEqual(['Open resource', 'Uninstall Resource'])
+    expect(labels).toEqual(['Open resource', 'Uninstall resource'])
   })
 })
 

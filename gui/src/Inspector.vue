@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Row } from './controller'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
-import { kindName, scopeTagLabel } from './grouping'
+import { kindName, scopeLabel } from './grouping'
 
 const props = defineProps<{
   folded: boolean
@@ -38,7 +38,7 @@ const resourceActionIcons: Partial<Record<Row['resourceAction'], IconName>> = {
 
 const resourceActionVerb = computed(() => resourceActionVerbs[props.selected?.resourceAction ?? 'none'] ?? '')
 
-const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} Resource` : 'Action'))
+const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} resource` : 'Action'))
 
 const resourceActionIcon = computed<IconName>(() => resourceActionIcons[props.selected?.resourceAction ?? 'none'] ?? 'plus')
 
@@ -84,7 +84,7 @@ defineExpose({
               <dt>Registry</dt>
               <dd class="mono">{{ registryLabel ?? selected.registry }}</dd>
               <dt>Scope</dt>
-              <dd>{{ scopeTagLabel[selected.scope] ?? selected.scope }}</dd>
+              <dd>{{ scopeLabel[selected.scope] ?? selected.scope }}</dd>
               <dt>Status</dt>
               <dd><span class="gui-dot" :class="`gui-dot--${statusTone}`" aria-hidden="true" />{{ selected.status }}</dd>
             </dl>

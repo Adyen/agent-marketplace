@@ -200,7 +200,7 @@ async function selectedOptionDOMID(page: Page): Promise<string | null> {
 }
 
 async function openPlan(page: Page, bootstrap: Work40Bootstrap, verb: 'Install' | 'Uninstall', actions: string[]): Promise<Locator> {
-  const label = `${verb} Resource`
+  const label = `${verb} resource`
   const button = page.getByRole('button', { name: label, exact: true })
   await expect(button).toBeEnabled({ timeout: 30_000 })
   if (!(await button.evaluate((element) => element === document.activeElement))) {
@@ -293,8 +293,8 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
 
     const beforeInstall = await captureFiles(paths)
-    await page.getByRole('button', { name: 'Install Resource', exact: true }).click()
-    await expect(page.getByRole('dialog', { name: 'Install Resource', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Install resource', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Install resource', exact: true })).toHaveCount(0)
     const heldFinal = await page.request.get(bootstrap.resourceActionBarrierWaitURL)
     expect(heldFinal.status()).toBe(204)
     await expect(mutationStatus(page)).toBeVisible()
@@ -314,7 +314,7 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await expect.poll(() => selectedOptionDOMID(page)).toBe(reviewDOMID)
     await expect(reviewByID).toBeVisible()
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
-    const removeButton = page.getByRole('button', { name: 'Uninstall Resource', exact: true })
+    const removeButton = page.getByRole('button', { name: 'Uninstall resource', exact: true })
     await expect(removeButton).toBeFocused()
     const visibleOrderBeforeRemove = await page.getByRole('option').evaluateAll((elements) => elements.map((element) => (element as HTMLElement).id))
     const reviewIndex = visibleOrderBeforeRemove.indexOf(reviewDOMID)
@@ -346,7 +346,7 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await page.keyboard.press('Space')
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
     actions.push('Reselected the captured Review row by its original opaque DOM id')
-    await expect(page.getByRole('button', { name: 'Install Resource', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Install resource', exact: true })).toBeEnabled()
     assertActionRequestCounts(counts, 2, 2, 'Work40 journey used an unexpected plan, mutation, or core-action endpoint')
     actions.push('Confirmed removal through the real user API; the current review row is excluded and no core action/materialization ran')
     await saveActions(testInfo, actions)
@@ -396,7 +396,7 @@ test('built GUI refuses a directory source owned only by an included user fragme
     barrierReleased = true
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
     await expect(page.getByLabel('Notifications').getByText("Couldn't uninstall review")).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Uninstall Resource', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Uninstall resource', exact: true })).toBeFocused()
     assertFilesUnchanged(beforeRemove, await captureFiles(paths))
     assertActionRequestCounts(counts, 2, 1, 'included-owner refusal used an unexpected API endpoint')
     actions.push('Observed the included-source refusal and final error; user root, fragment, org, locks, source files, CWD, and materialized files stayed unchanged')

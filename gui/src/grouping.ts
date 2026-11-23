@@ -47,6 +47,7 @@ export function kindName(id: string): string {
 }
 
 export const scopeTagLabel: Record<string, string> = { organization: 'Org', project: 'Project', local: 'Local' }
+export const scopeLabel: Record<string, string> = { user: 'User', ...scopeTagLabel }
 
 interface Bucket {
   segment: string
