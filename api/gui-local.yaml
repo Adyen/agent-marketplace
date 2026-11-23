@@ -1058,7 +1058,7 @@ components:
           description: Declared source layout, or empty.
     Configuration:
       type: object
-      required: [userTargets, organizationTargets, userSources, organizationSources, supportedTargets, rootPresent, editable, managedOutsideGUI, firstRun, canInitialize, detectedTargets, detectionUnavailable, consentRequired, telemetryDestination, retentionPolicyURL]
+      required: [userTargets, organizationTargets, userSources, organizationSources, supportedTargets, rootPresent, editable, managedOutsideGUI, firstRun, canInitialize, detectedTargets, detectionUnavailable, consentRequired, telemetryDestination, retentionPolicyURL, settings]
       properties:
         userTargets:
           type: array
@@ -1114,6 +1114,71 @@ components:
         retentionPolicyURL:
           type: string
           description: Resolved telemetry retention policy URL for disclosure, or 'not configured'.
+        settings:
+          $ref: '#/components/schemas/GlobalSettings'
+    GlobalSettings:
+      type: object
+      description: Effective user-personal global settings. Each field reports its value, the built-in default, the layer that sets it (user, organization, or default), and whether the organization locks it. Only an explicit organization telemetry level locks a field.
+      required: [backup, logging, updateCheck, materialization, telemetry]
+      additionalProperties: false
+      properties:
+        backup: { $ref: '#/components/schemas/BackupSettings' }
+        logging: { $ref: '#/components/schemas/LoggingSettings' }
+        updateCheck: { $ref: '#/components/schemas/UpdateCheckSettings' }
+        materialization: { $ref: '#/components/schemas/MaterializationSettings' }
+        telemetry: { $ref: '#/components/schemas/TelemetrySettings' }
+    SettingField:
+      type: object
+      description: One effective setting. value and default are null when the setting has no built-in default (logging.file, telemetry.level).
+      required: [value, default, source, locked]
+      additionalProperties: false
+      properties:
+        value: {}
+        default: {}
+        source:
+          type: string
+          enum: [user, organization, default]
+        locked:
+          type: boolean
+    BackupSettings:
+      type: object
+      required: [enabled, maxDays, maxPerDay]
+      additionalProperties: false
+      properties:
+        enabled: { $ref: '#/components/schemas/SettingField' }
+        maxDays: { $ref: '#/components/schemas/SettingField' }
+        maxPerDay: { $ref: '#/components/schemas/SettingField' }
+    LoggingSettings:
+      type: object
+      required: [enabled, level, file, maxSizeMB, maxBackups, maxAgeDays, compress]
+      additionalProperties: false
+      properties:
+        enabled: { $ref: '#/components/schemas/SettingField' }
+        level: { $ref: '#/components/schemas/SettingField' }
+        file: { $ref: '#/components/schemas/SettingField' }
+        maxSizeMB: { $ref: '#/components/schemas/SettingField' }
+        maxBackups: { $ref: '#/components/schemas/SettingField' }
+        maxAgeDays: { $ref: '#/components/schemas/SettingField' }
+        compress: { $ref: '#/components/schemas/SettingField' }
+    UpdateCheckSettings:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: { $ref: '#/components/schemas/SettingField' }
+    MaterializationSettings:
+      type: object
+      required: [mode, targets]
+      additionalProperties: false
+      properties:
+        mode: { $ref: '#/components/schemas/SettingField' }
+        targets: { $ref: '#/components/schemas/SettingField' }
+    TelemetrySettings:
+      type: object
+      required: [level]
+      additionalProperties: false
+      properties:
+        level: { $ref: '#/components/schemas/SettingField' }
     GUIEvent:
       description: Closed GUI telemetry event union; unknown, duplicate, or mistyped keys are rejected.
       oneOf:
@@ -1234,6 +1299,7 @@ components:
         - $ref: '#/components/schemas/InitializeActionRequest'
         - $ref: '#/components/schemas/AddSourceActionRequest'
         - $ref: '#/components/schemas/RemoveSourceActionRequest'
+        - $ref: '#/components/schemas/SaveSettingsActionRequest'
       discriminator:
         propertyName: action
         mapping:
@@ -1241,6 +1307,53 @@ components:
           initialize: '#/components/schemas/InitializeActionRequest'
           add-source: '#/components/schemas/AddSourceActionRequest'
           remove-source: '#/components/schemas/RemoveSourceActionRequest'
+          save-settings: '#/components/schemas/SaveSettingsActionRequest'
+    SaveSettingsActionRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      description: Partial user-personal settings save. A field that is present with null clears its key; an absent field is left unchanged. Sending a locked field (telemetry.level under an organization level) is refused with localapi.setting_locked.
+      properties:
+        action:
+          type: string
+          enum: [save-settings]
+        backup:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled: { type: [boolean, 'null'] }
+            maxDays: { type: [integer, 'null'], minimum: 0 }
+            maxPerDay: { type: [integer, 'null'], minimum: 0 }
+        logging:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled: { type: [boolean, 'null'] }
+            level: { type: [string, 'null'], enum: [debug, info, warn, error, null] }
+            file: { type: [string, 'null'], minLength: 1 }
+            maxSizeMB: { type: [integer, 'null'], minimum: 1 }
+            maxBackups: { type: [integer, 'null'], minimum: 0 }
+            maxAgeDays: { type: [integer, 'null'], minimum: 0 }
+            compress: { type: [boolean, 'null'] }
+        updateCheck:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled: { type: [boolean, 'null'] }
+        materialization:
+          type: object
+          additionalProperties: false
+          properties:
+            mode: { type: [string, 'null'], enum: [symlink, file, null] }
+            targets:
+              type: [object, 'null']
+              additionalProperties: { type: string, enum: [symlink, file] }
+        telemetry:
+          type: object
+          additionalProperties: false
+          required: [level]
+          properties:
+            level: { type: string, enum: [off, basic, detailed] }
     SourceInput:
       description: Closed typed source form union; unknown, duplicate, or mistyped keys are rejected.
       oneOf:

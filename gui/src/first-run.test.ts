@@ -6,6 +6,7 @@ import {
   type OperationRef,
   type SourceInput,
 } from './api/client'
+import { defaultSettings } from './fixtures'
 import {
   configuration,
   event,
@@ -27,6 +28,7 @@ const firstRunConfiguration = (overrides: Partial<Configuration> = {}): Configur
     consentRequired: true,
     telemetryDestination: 'telemetry.example.com',
     retentionPolicyURL: 'https://example.com/retention',
+    settings: defaultSettings,
     ...overrides,
   })
 

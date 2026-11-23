@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Configuration, OperationRef, ReleaseNotice, SessionEvent, Snapshot, SnapshotRow } from '../src/api/client'
 import { serveBuiltApp, distIndexExists } from './app'
+import { defaultSettings } from '../src/fixtures'
 import { tabTo } from './keyboard'
 
 const groups: Snapshot['groups'] = [
@@ -26,6 +27,7 @@ const fixtureConfiguration: Configuration = {
   organizationSources: [],
   organizationTargets: [],
   retentionPolicyURL: 'not configured',
+  settings: defaultSettings,
   rootPresent: true,
   supportedTargets: ['devin'],
   telemetryDestination: 'not configured',

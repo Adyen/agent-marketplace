@@ -76,6 +76,29 @@ export function source(overrides: Partial<SourceDescription> = {}): SourceDescri
   }
 }
 
+export const defaultSettings: Configuration['settings'] = {
+  backup: {
+    enabled: { value: true, default: true, source: 'default', locked: false },
+    maxDays: { value: 14, default: 14, source: 'default', locked: false },
+    maxPerDay: { value: 10, default: 10, source: 'default', locked: false },
+  },
+  logging: {
+    enabled: { value: true, default: true, source: 'default', locked: false },
+    level: { value: 'info', default: 'info', source: 'default', locked: false },
+    file: { value: null, default: null, source: 'default', locked: false },
+    maxSizeMB: { value: 10, default: 10, source: 'default', locked: false },
+    maxBackups: { value: 5, default: 5, source: 'default', locked: false },
+    maxAgeDays: { value: 30, default: 30, source: 'default', locked: false },
+    compress: { value: true, default: true, source: 'default', locked: false },
+  },
+  updateCheck: { enabled: { value: true, default: true, source: 'default', locked: false } },
+  materialization: {
+    mode: { value: 'symlink', default: 'symlink', source: 'default', locked: false },
+    targets: { value: {}, default: {}, source: 'default', locked: false },
+  },
+  telemetry: { level: { value: null, default: null, source: 'default', locked: false } },
+  }
+
 export function configuration(overrides: Partial<Configuration> = {}): Configuration {
   return {
     userTargets: ['devin'],
@@ -93,6 +116,7 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     consentRequired: false,
     telemetryDestination: 'not configured',
     retentionPolicyURL: 'not configured',
+    settings: defaultSettings,
     ...overrides,
   }
 }

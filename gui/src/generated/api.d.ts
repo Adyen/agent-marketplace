@@ -395,6 +395,11 @@ export interface components {
             action: "add-source";
             source: components["schemas"]["SourceInput"];
         };
+        BackupSettings: {
+            enabled: components["schemas"]["SettingField"];
+            maxDays: components["schemas"]["SettingField"];
+            maxPerDay: components["schemas"]["SettingField"];
+        };
         Configuration: {
             /** @description Whether initialization is currently permitted (absent root, readable home, no configuration errors). */
             canInitialize: boolean;
@@ -418,6 +423,7 @@ export interface components {
             retentionPolicyURL: string;
             /** @description Whether a user-personal root entry exists (any file type, including a broken or dangling one). */
             rootPresent: boolean;
+            settings: components["schemas"]["GlobalSettings"];
             /** @description Canonical compiler target IDs this client supports. */
             supportedTargets: string[];
             /** @description Resolved primary telemetry destination hostname for disclosure, or 'not configured'. */
@@ -428,7 +434,7 @@ export interface components {
             userTargets: string[];
         };
         /** @description Tagged configuration action; the action field selects the strictly closed variant. */
-        ConfigurationActionRequest: components["schemas"]["SaveTargetsActionRequest"] | components["schemas"]["InitializeActionRequest"] | components["schemas"]["AddSourceActionRequest"] | components["schemas"]["RemoveSourceActionRequest"];
+        ConfigurationActionRequest: components["schemas"]["SaveTargetsActionRequest"] | components["schemas"]["InitializeActionRequest"] | components["schemas"]["AddSourceActionRequest"] | components["schemas"]["RemoveSourceActionRequest"] | components["schemas"]["SaveSettingsActionRequest"];
         Diagnostic: {
             category: string;
             /** @description Stable deduplication/identity key of the diagnostic. */
@@ -533,6 +539,14 @@ export interface components {
             /** @description Explicit git ref. */
             ref: string;
         };
+        /** @description Effective user-personal global settings. Each field reports its value, the built-in default, the layer that sets it (user, organization, or default), and whether the organization locks it. Only an explicit organization telemetry level locks a field. */
+        GlobalSettings: {
+            backup: components["schemas"]["BackupSettings"];
+            logging: components["schemas"]["LoggingSettings"];
+            materialization: components["schemas"]["MaterializationSettings"];
+            telemetry: components["schemas"]["TelemetrySettings"];
+            updateCheck: components["schemas"]["UpdateCheckSettings"];
+        };
         GUIBrowseEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -627,6 +641,15 @@ export interface components {
             /** @description Opaque identity of a currently visible installed Marketplace skill row. */
             rowId: string;
         };
+        LoggingSettings: {
+            compress: components["schemas"]["SettingField"];
+            enabled: components["schemas"]["SettingField"];
+            file: components["schemas"]["SettingField"];
+            level: components["schemas"]["SettingField"];
+            maxAgeDays: components["schemas"]["SettingField"];
+            maxBackups: components["schemas"]["SettingField"];
+            maxSizeMB: components["schemas"]["SettingField"];
+        };
         MarketplaceSourceInput: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -635,6 +658,10 @@ export interface components {
             kind: "marketplace";
             /** @description HTTP(S) Marketplace endpoint; ref and path are not accepted. */
             location: string;
+        };
+        MaterializationSettings: {
+            mode: components["schemas"]["SettingField"];
+            targets: components["schemas"]["SettingField"];
         };
         NotificationEvent: components["schemas"]["EventBase"] & {
             payload: {
@@ -731,6 +758,43 @@ export interface components {
             /** @description Opaque identity of one currently visible, eligible Marketplace Resource row. */
             rowId: string;
         };
+        /** @description Partial user-personal settings save. A field that is present with null clears its key; an absent field is left unchanged. Sending a locked field (telemetry.level under an organization level) is refused with localapi.setting_locked. */
+        SaveSettingsActionRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            action: "save-settings";
+            backup?: {
+                enabled?: boolean | null;
+                maxDays?: number | null;
+                maxPerDay?: number | null;
+            };
+            logging?: {
+                compress?: boolean | null;
+                enabled?: boolean | null;
+                file?: string | null;
+                /** @enum {string|null} */
+                level?: "debug" | "info" | "warn" | "error" | null;
+                maxAgeDays?: number | null;
+                maxBackups?: number | null;
+                maxSizeMB?: number | null;
+            };
+            materialization?: {
+                /** @enum {string|null} */
+                mode?: "symlink" | "file" | null;
+                targets?: {
+                    [key: string]: "symlink" | "file";
+                } | null;
+            };
+            telemetry?: {
+                /** @enum {string} */
+                level: "off" | "basic" | "detailed";
+            };
+            updateCheck?: {
+                enabled?: boolean | null;
+            };
+        };
         SaveTargetsActionRequest: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -746,6 +810,14 @@ export interface components {
          *     typed by type.
          *      */
         SessionEvent: components["schemas"]["SnapshotEvent"] | components["schemas"]["ProgressEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["DiscoveryEvent"];
+        /** @description One effective setting. value and default are null when the setting has no built-in default (logging.file, telemetry.level). */
+        SettingField: {
+            default: unknown;
+            locked: boolean;
+            /** @enum {string} */
+            source: "user" | "organization" | "default";
+            value: unknown;
+        };
         Snapshot: {
             /** @description Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check. */
             availableUpdates: number;
@@ -877,6 +949,12 @@ export interface components {
         };
         /** @enum {string} */
         StatusGroupID: "required" | "enabled" | "pending" | "stale" | "broken" | "available" | "malformed";
+        TelemetrySettings: {
+            level: components["schemas"]["SettingField"];
+        };
+        UpdateCheckSettings: {
+            enabled: components["schemas"]["SettingField"];
+        };
         UpdateRequest: {
             /** @enum {string} */
             action: "start" | "status" | "confirm" | "cancel";

@@ -132,6 +132,7 @@ type configurationDTO struct {
 	ConsentRequired      bool                   `json:"consentRequired"`
 	TelemetryDestination string                 `json:"telemetryDestination"`
 	RetentionPolicyURL   string                 `json:"retentionPolicyURL"`
+	Settings             settingsDTO            `json:"settings"`
 }
 
 func (a *API) userConfigPath() string {
@@ -171,6 +172,7 @@ func (a *API) configurationMetadata(ctx context.Context, accepted *config.Config
 	dto.UserTargets = append(dto.UserTargets, user.Settings().Harnesses...)
 	org := intent.Layers[config.Organization]
 	dto.OrganizationTargets = append(dto.OrganizationTargets, org.Settings().Harnesses...)
+	dto.Settings = settingsProjection(user.Settings(), org.Settings())
 	dto.UserSources = a.projectSources("user", user.DescribeSources(), accepted)
 	dto.OrganizationSources = a.projectSources("organization", org.DescribeSources(), accepted)
 
@@ -446,6 +448,19 @@ func (a *API) handleConfigurationAction(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, codeInvalidRequest)
 		return
 	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	var probe struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal(body, &probe) == nil && probe.Action == "save-settings" {
+		a.handleSaveSettings(w, r, body)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
 	req, ok := parseConfigurationAction(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, codeInvalidRequest)
