@@ -4,6 +4,14 @@ This example runs PostgreSQL, separate API and worker containers, the Nuxt Marke
 
 The API and worker are built from different targets of `Dockerfile.marketplace`. Only the `worker` image contains Git, because acquisition runs there.
 
+## SkillSpector runner
+
+This profile enables the same [isolated runner](../sqlite-filesystem/README.md#skillspector-runner)
+as the SQLite profile. Build or load the verified image before starting Compose.
+Only the `worker` gets access to the runner socket.
+
+To refresh assessments, run `docker compose exec worker /app/agent-marketplace serve reindex --config /app/marketplace.yaml`.
+
 The web image builds on Debian Node 24 and runs on a separate distroless Node 24
 image, without a shell or package manager. `NODE_IMAGE` selects the builder;
 `NODE_RUNTIME_IMAGE` selects the runtime. Mirrored runtimes must provide

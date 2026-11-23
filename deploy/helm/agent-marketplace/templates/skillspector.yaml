@@ -1,0 +1,103 @@
+{{- if .Values.skillspector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "skillspector") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: skillspector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agent-marketplace.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: skillspector
+  template:
+    metadata:
+      labels:
+        {{- include "agent-marketplace.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: skillspector
+    spec:
+      serviceAccountName: {{ include "agent-marketplace.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: skillspector
+          image: {{ include "agent-marketplace.skillspectorImage" . }}
+          imagePullPolicy: {{ .Values.skillspector.image.pullPolicy }}
+          args: ["--port", "8081"]
+          ports:
+            - name: scan
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            {{- toYaml .Values.skillspector.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "skillspector") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: skillspector
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: skillspector
+  ports:
+    - name: scan
+      port: 8081
+      targetPort: scan
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-skillspector" (include "agent-marketplace.fullname" .) }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "agent-marketplace.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: skillspector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "agent-marketplace.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - all
+                  - worker
+      ports:
+        - protocol: TCP
+          port: 8081
+  egress: []
+{{- end }}

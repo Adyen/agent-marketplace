@@ -18,6 +18,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/acquire"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/advisory"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
@@ -32,6 +33,7 @@ type Deps struct {
 	Marketplace   store.Marketplace
 	MetadataStore store.MetadataStore
 	BlobStore     store.BlobStore
+	SkillSpector  advisory.SkillSpector
 	Metrics       *Metrics
 	ReindexActor  store.ManagedActor
 	ResolveRef    func(context.Context, string, string, acquire.Credentials, time.Duration) (string, error)
@@ -106,7 +108,7 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 	}
 	defer func() { _ = res.Release() }()
 
-	rev, err := ingest.BuildRegistryRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
+	rev, err := ingest.BuildRegistryRevisionWithAdvisory(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit, deps.SkillSpector)
 	if err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
 	}

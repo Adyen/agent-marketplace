@@ -8,6 +8,20 @@ import (
 	"reflect"
 )
 
+func DecodeAdvisoryReports(data string) ([]AdvisoryReport, error) {
+	if data == "[]" {
+		return nil, nil
+	}
+	var reports []AdvisoryReport
+	if err := json.Unmarshal([]byte(data), &reports); err != nil {
+		return nil, fmt.Errorf("unmarshal advisory reports: %w", err)
+	}
+	if len(reports) == 0 {
+		return nil, nil
+	}
+	return reports, nil
+}
+
 // Validate returns an error if d is not a supported assessment decision.
 func (d AssessmentDecision) Validate() error {
 	switch d {
@@ -15,6 +29,16 @@ func (d AssessmentDecision) Validate() error {
 		return nil
 	default:
 		return fmt.Errorf("invalid assessment decision %q", d)
+	}
+}
+
+// Validate returns an error if status is not a supported advisory outcome.
+func (status AdvisoryStatus) Validate() error {
+	switch status {
+	case AdvisoryComplete, AdvisoryCompleteWithCaveats, AdvisoryPartial, AdvisoryFailed, AdvisoryNotRun:
+		return nil
+	default:
+		return fmt.Errorf("invalid advisory status %q", status)
 	}
 }
 
@@ -35,6 +59,16 @@ func FinalizeResourceAssessment(assessment ResourceAssessment) (ResourceAssessme
 			location := *assessment.Findings[i].Location
 			assessment.Findings[i].Location = &location
 		}
+	}
+	if len(assessment.AdvisoryReports) == 0 {
+		assessment.AdvisoryReports = nil
+	} else {
+		reports := make([]AdvisoryReport, len(assessment.AdvisoryReports))
+		copy(reports, assessment.AdvisoryReports)
+		for i := range reports {
+			reports[i].Findings = append([]AdvisoryFinding(nil), reports[i].Findings...)
+		}
+		assessment.AdvisoryReports = reports
 	}
 	digest, err := resourceAssessmentDigest(assessment)
 	if err != nil {
@@ -89,6 +123,7 @@ type resourceAssessmentIdentity struct {
 	Decision                 AssessmentDecision `json:"decision"`
 	Findings                 []Finding          `json:"findings"`
 	InspectionManifestDigest RevisionDigest     `json:"inspection_manifest_digest"`
+	AdvisoryReports          []AdvisoryReport   `json:"advisory_reports,omitempty"`
 }
 
 func resourceAssessmentDigest(assessment ResourceAssessment) (AssessmentDigest, error) {
@@ -104,6 +139,7 @@ func resourceAssessmentDigest(assessment ResourceAssessment) (AssessmentDigest, 
 		Decision:                 assessment.Decision,
 		Findings:                 findings,
 		InspectionManifestDigest: assessment.InspectionManifestDigest,
+		AdvisoryReports:          assessment.AdvisoryReports,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal canonical resource assessment: %w", err)
@@ -153,6 +189,30 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 			location := finding.Location
 			if location.Path == "" || location.Line < 0 || location.Column < 0 || location.StartByte < 0 || location.EndByte < location.StartByte {
 				return fmt.Errorf("finding %d has invalid location", i)
+			}
+		}
+	}
+	if len(assessment.AdvisoryReports) > 0 && assessment.Coordinate.Kind != "skill" {
+		return fmt.Errorf("advisory reports are only supported for skills")
+	}
+	seenTools := make(map[string]struct{}, len(assessment.AdvisoryReports))
+	for i, report := range assessment.AdvisoryReports {
+		if report.Tool == "" {
+			return fmt.Errorf("advisory report %d requires a tool", i)
+		}
+		if _, exists := seenTools[report.Tool]; exists {
+			return fmt.Errorf("duplicate advisory report tool %q", report.Tool)
+		}
+		seenTools[report.Tool] = struct{}{}
+		if err := report.Status.Validate(); err != nil {
+			return fmt.Errorf("advisory report %d: %w", i, err)
+		}
+		if (report.Status == AdvisoryFailed || report.Status == AdvisoryNotRun) && len(report.Findings) > 0 {
+			return fmt.Errorf("advisory report %d with status %q cannot contain findings", i, report.Status)
+		}
+		for j, finding := range report.Findings {
+			if finding.Code == "" || finding.Severity == "" || finding.Summary == "" {
+				return fmt.Errorf("advisory report %d finding %d requires code, severity, and summary", i, j)
 			}
 		}
 	}

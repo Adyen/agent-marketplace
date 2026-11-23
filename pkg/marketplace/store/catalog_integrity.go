@@ -16,12 +16,12 @@ func catalogReferenceContainsNUL(reference ResourceCoordinate) bool {
 func ReadCatalogProjectionIntegrity(rows *sql.Rows, textParametersRejectNUL bool) error {
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var findings string
+		var findings, advisoryReports string
 		var assessedAt int64
 		var revisionAt, coordinateAt, registryAt sql.NullInt64
 		var collectionID, collectionRegistry, collectionManifest, members, includes sql.NullString
 		var pageRegistry, pageContentDigest string
-		if err := rows.Scan(&findings, &assessedAt, &revisionAt, &coordinateAt, &registryAt, &collectionID, &collectionRegistry, &collectionManifest, &members, &includes, &pageRegistry, &pageContentDigest); err != nil {
+		if err := rows.Scan(&findings, &advisoryReports, &assessedAt, &revisionAt, &coordinateAt, &registryAt, &collectionID, &collectionRegistry, &collectionManifest, &members, &includes, &pageRegistry, &pageContentDigest); err != nil {
 			return fmt.Errorf("scan catalog integrity row: %w", err)
 		}
 		if findings != "" {
@@ -29,6 +29,9 @@ func ReadCatalogProjectionIntegrity(rows *sql.Rows, textParametersRejectNUL bool
 			if err := json.Unmarshal([]byte(findings), &decoded); err != nil {
 				return fmt.Errorf("unmarshal assessment findings: %w", err)
 			}
+		}
+		if _, err := DecodeAdvisoryReports(advisoryReports); err != nil {
+			return err
 		}
 		if collectionID.Valid {
 			if !collectionRegistry.Valid || !collectionManifest.Valid || !members.Valid || !includes.Valid {

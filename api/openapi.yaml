@@ -1716,6 +1716,36 @@ components:
           items: { $ref: "#/components/schemas/AssessmentFinding" }
         inspection_manifest_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
         assessed_at: { type: string, format: date-time }
+        advisory_reports:
+          type: array
+          items: { $ref: "#/components/schemas/AdvisoryReport" }
+
+    AdvisoryReport:
+      type: object
+      additionalProperties: false
+      required: [tool, status]
+      properties:
+        tool: { type: string, minLength: 1 }
+        version: { type: string }
+        status: { $ref: "#/components/schemas/AdvisoryStatus" }
+        reason: { type: string }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/AdvisoryFinding" }
+
+    AdvisoryStatus:
+      type: string
+      enum: [complete, complete_with_caveats, partial, failed, not_run]
+
+    AdvisoryFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity, summary]
+      properties:
+        code: { type: string, minLength: 1 }
+        severity: { type: string, minLength: 1 }
+        summary: { type: string, minLength: 1 }
+        path: { type: string, minLength: 1 }
 
     AssessmentFinding:
       type: object

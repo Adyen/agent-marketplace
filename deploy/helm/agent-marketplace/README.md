@@ -11,6 +11,27 @@ Before starting, check that:
 - A Marketplace operator configuration is ready, or the default example configuration is enough for a local SQLite/filesystem deployment.
 - A private authentication and TLS boundary is available in front of the public routes. The public application routes have no authentication or authorization.
 
+The chart enables an isolated SkillSpector runner by default for indexing
+workers. Set `skillspector.image.repository` and either its immutable
+`skillspector.image.digest` or an explicit `skillspector.image.tag`; the runner
+tag falls back to the top-level `image.tag` only for local render/test use. No
+runner image is prepublished by this repository. See the offline image build
+instructions in [`deploy/skillspector`](../../skillspector/README.md).
+
+The runner has a private ClusterIP Service, no ingress route, no service-account
+token, no chart extra volumes or secrets, a non-root read-only container, and a
+bounded memory-backed `/tmp`. Its default NetworkPolicy allows ingress only
+from this release's `all` or `worker` pods on port 8081 and denies all egress.
+Use a cluster with an enforcing NetworkPolicy implementation. Before rollout,
+prove that an external connection from the runner is blocked and that a
+positive control from the Marketplace worker can still reach the runner; a
+rendered policy alone does not prove enforcement. A reindex through the existing
+`agent-marketplace serve reindex --config /etc/agent-marketplace/config.yaml`
+workflow creates reports for current revisions; history is not backfilled.
+Set `skillspector.enabled: false` only to opt out of supplementary analysis;
+this also removes the runner endpoint and its policy, while the built-in policy
+remains authoritative.
+
 ## 1. Choose the storage topology
 
 For a single-process or development deployment, use the default SQLite/filesystem configuration and keep one replica:

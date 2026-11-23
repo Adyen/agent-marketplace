@@ -165,6 +165,9 @@ func TestHelmImageSelection(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	webDigest := "sha256:" + strings.Repeat("b", 64)
 	docsDigest := "sha256:" + strings.Repeat("c", 64)
+	runnerDigest := "sha256:" + strings.Repeat("d", 64)
+	runnerSet := "skillspector.image.digest=" + runnerDigest
+	runnerImage := "agent-marketplace-skillspector@" + runnerDigest
 	for _, tc := range []struct {
 		name   string
 		values string
@@ -172,13 +175,13 @@ func TestHelmImageSelection(t *testing.T) {
 		want   []string
 		fail   bool
 	}{
-		{name: "missing version", fail: true},
-		{name: "explicit tag", set: []string{"image.tag=dev"}, want: []string{"agent-marketplace:dev"}},
-		{name: "digest wins", set: []string{"image.tag=ignored", "image.digest=" + digest}, want: []string{"agent-marketplace@" + digest}},
+		{name: "missing version", set: []string{runnerSet}, fail: true},
+		{name: "explicit tag", set: []string{"image.tag=dev"}, want: []string{"agent-marketplace:dev", "agent-marketplace-skillspector:dev"}},
+		{name: "digest wins", set: []string{"image.tag=ignored", "image.digest=" + digest, runnerSet}, want: []string{"agent-marketplace@" + digest, runnerImage}},
 		{name: "web needs its own version", set: []string{"image.tag=dev", "web.enabled=true"}, fail: true},
 		{name: "docs needs its own version", set: []string{"image.tag=dev", "docs.enabled=true"}, fail: true},
-		{name: "null web digest cannot inherit the backend digest", set: []string{"image.digest=" + digest, "web.enabled=true", "web.image.digest=null"}, fail: true},
-		{name: "null docs digest cannot inherit the backend digest", set: []string{"image.digest=" + digest, "docs.enabled=true", "docs.image.digest=null"}, fail: true},
+		{name: "null web digest cannot inherit the backend digest", set: []string{"image.digest=" + digest, "web.enabled=true", "web.image.digest=null", runnerSet}, fail: true},
+		{name: "null docs digest cannot inherit the backend digest", set: []string{"image.digest=" + digest, "docs.enabled=true", "docs.image.digest=null", runnerSet}, fail: true},
 		{
 			name: "split digest inheritance and frontend isolation",
 			set: []string{
@@ -186,22 +189,23 @@ func TestHelmImageSelection(t *testing.T) {
 				"api.image.repository=example.invalid/api",
 				"web.enabled=true", "web.image.digest=" + webDigest,
 				"docs.enabled=true", "docs.image.digest=" + docsDigest,
+				runnerSet,
 			},
-			want: []string{"example.invalid/api@" + digest, "agent-marketplace@" + digest, "agent-marketplace-web@" + webDigest, "agent-marketplace-docs@" + docsDigest},
+			want: []string{"example.invalid/api@" + digest, "agent-marketplace@" + digest, "agent-marketplace-web@" + webDigest, "agent-marketplace-docs@" + docsDigest, runnerImage},
 		},
 		{
 			name: "split role overrides",
-			set:  []string{"mode=split", "api.image.tag=api-dev", "worker.image.digest=" + digest},
-			want: []string{"agent-marketplace:api-dev", "agent-marketplace@" + digest},
+			set:  []string{"mode=split", "api.image.tag=api-dev", "worker.image.digest=" + digest, runnerSet},
+			want: []string{"agent-marketplace:api-dev", "agent-marketplace@" + digest, runnerImage},
 		},
-		{name: "previous values require explicit versions", values: "helm-pre-hardening-values.yaml", fail: true},
-		{name: "previous values need a web version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest}, fail: true},
-		{name: "previous values need a docs version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest, "web.image.digest=" + webDigest}, fail: true},
+		{name: "previous values require explicit versions", values: "helm-pre-hardening-values.yaml", set: []string{runnerSet}, fail: true},
+		{name: "previous values need a web version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest, runnerSet}, fail: true},
+		{name: "previous values need a docs version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest, "web.image.digest=" + webDigest, runnerSet}, fail: true},
 		{
 			name:   "previous values upgraded with explicit digests",
 			values: "helm-pre-hardening-values.yaml",
-			set:    []string{"image.digest=" + digest, "web.image.digest=" + webDigest, "docs.image.digest=" + docsDigest},
-			want:   []string{"example.invalid/marketplace-worker@" + digest, "example.invalid/marketplace-web@" + webDigest, "example.invalid/marketplace-docs@" + docsDigest},
+			set:    []string{"image.digest=" + digest, "web.image.digest=" + webDigest, "docs.image.digest=" + docsDigest, runnerSet},
+			want:   []string{"example.invalid/marketplace-worker@" + digest, "example.invalid/marketplace-web@" + webDigest, "example.invalid/marketplace-docs@" + docsDigest, runnerImage},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,6 +263,171 @@ func TestHelmImageSelection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: marketplace-delivery-security/default-deployment-scans-with-an-isolated-runner
+func TestHelmSkillspectorDefaultIsolation(t *testing.T) {
+	if os.Getenv("AM_HELM_CHECK") != "1" {
+		t.Skip("the Helm chart gate enables real chart rendering")
+	}
+	chart := filepath.Join("..", "..", "deploy", "helm", "agent-marketplace")
+	render := func(t *testing.T, set ...string) []map[string]any {
+		t.Helper()
+		args := []string{"template", "marketplace", chart}
+		for _, value := range set {
+			args = append(args, "--set", value)
+		}
+		out, err := exec.Command("helm", args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("render chart: %v:\n%s", err, out)
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(out))
+		var objects []map[string]any
+		for {
+			var object map[string]any
+			if err := decoder.Decode(&object); err != nil {
+				if !errors.Is(err, io.EOF) {
+					t.Fatal(err)
+				}
+				return objects
+			}
+			if len(object) != 0 {
+				objects = append(objects, object)
+			}
+		}
+	}
+	asMap := func(t *testing.T, value any) map[string]any {
+		t.Helper()
+		result, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("value is not a map: %T", value)
+		}
+		return result
+	}
+	find := func(t *testing.T, objects []map[string]any, kind, component string) map[string]any {
+		t.Helper()
+		for _, object := range objects {
+			metadata := getMap(t, object, "metadata")
+			if object["kind"] != kind {
+				continue
+			}
+			labels := getMap(t, metadata, "labels")
+			if component == "" || labels["app.kubernetes.io/component"] == component {
+				return object
+			}
+		}
+		t.Fatalf("rendered %s component %q is missing", kind, component)
+		return nil
+	}
+	objects := render(t, "image.tag=ci")
+	runner := find(t, objects, "Deployment", "skillspector")
+	pod := getMap(t, getMap(t, getMap(t, runner, "spec"), "template"), "spec")
+	if pod["automountServiceAccountToken"] != false {
+		t.Fatalf("runner service-account token automount = %v", pod["automountServiceAccountToken"])
+	}
+	containers := getSlice(t, pod, "containers")
+	if len(containers) != 1 {
+		t.Fatalf("runner containers = %d, want one", len(containers))
+	}
+	container := asMap(t, containers[0])
+	if container["image"] != "agent-marketplace-skillspector:ci" {
+		t.Fatalf("runner image = %v", container["image"])
+	}
+	security := getMap(t, container, "securityContext")
+	if security["runAsNonRoot"] != true || security["readOnlyRootFilesystem"] != true ||
+		security["runAsUser"] != 1000 || security["runAsGroup"] != 1000 ||
+		security["allowPrivilegeEscalation"] != false {
+		t.Fatalf("runner security context = %#v", security)
+	}
+	volumes := getSlice(t, pod, "volumes")
+	if len(volumes) != 1 {
+		t.Fatalf("runner volumes = %#v, want only bounded temporary storage", volumes)
+	}
+	tmp := asMap(t, volumes[0])
+	tmpSpec := getMap(t, tmp, "emptyDir")
+	if tmpSpec["medium"] != "Memory" || tmpSpec["sizeLimit"] != "16Mi" {
+		t.Fatalf("runner temporary volume = %#v", tmpSpec)
+	}
+	service := find(t, objects, "Service", "skillspector")
+	serviceSpec := getMap(t, service, "spec")
+	if serviceSpec["type"] != "ClusterIP" {
+		t.Fatalf("runner service type = %v", serviceSpec["type"])
+	}
+	servicePorts := getSlice(t, serviceSpec, "ports")
+	if len(servicePorts) != 1 || asMap(t, servicePorts[0])["port"] != 8081 {
+		t.Fatalf("runner service ports = %#v", servicePorts)
+	}
+	policy := find(t, objects, "NetworkPolicy", "")
+	policySpec := getMap(t, policy, "spec")
+	if got := toStringSlice(t, getSlice(t, policySpec, "policyTypes")); !slices.Contains(got, "Ingress") || !slices.Contains(got, "Egress") {
+		t.Fatalf("runner policy types = %v", got)
+	}
+	if egress := getSlice(t, policySpec, "egress"); len(egress) != 0 {
+		t.Fatalf("runner egress rules = %#v, want none", egress)
+	}
+	selector := getMap(t, policySpec, "podSelector")
+	match := getMap(t, selector, "matchLabels")
+	if match["app.kubernetes.io/instance"] != "marketplace" || match["app.kubernetes.io/component"] != "skillspector" {
+		t.Fatalf("runner network-policy selector = %#v", match)
+	}
+	ingress := getSlice(t, policySpec, "ingress")
+	if len(ingress) != 1 {
+		t.Fatalf("runner ingress rules = %#v", ingress)
+	}
+	ingressRule := asMap(t, ingress[0])
+	from := asMap(t, getSlice(t, ingressRule, "from")[0])
+	workerSelector := getMap(t, from, "podSelector")
+	workerLabels := getMap(t, workerSelector, "matchLabels")
+	if workerLabels["app.kubernetes.io/name"] != "agent-marketplace" ||
+		workerLabels["app.kubernetes.io/instance"] != "marketplace" {
+		t.Fatalf("runner ingress worker labels = %#v", workerLabels)
+	}
+	expressions := getSlice(t, workerSelector, "matchExpressions")
+	if len(expressions) != 1 {
+		t.Fatalf("runner ingress selector = %#v", workerSelector)
+	}
+	expression := asMap(t, expressions[0])
+	if expression["key"] != "app.kubernetes.io/component" || expression["operator"] != "In" ||
+		!slices.Contains(toStringSlice(t, getSlice(t, expression, "values")), "all") ||
+		!slices.Contains(toStringSlice(t, getSlice(t, expression, "values")), "worker") {
+		t.Fatalf("runner worker selector = %#v", expression)
+	}
+	ports := getSlice(t, ingressRule, "ports")
+	if len(ports) != 1 || asMap(t, ports[0])["port"] != 8081 {
+		t.Fatalf("runner ingress ports = %#v", ports)
+	}
+	app := find(t, objects, "Deployment", "all")
+	appPod := getMap(t, getMap(t, getMap(t, app, "spec"), "template"), "spec")
+	appContainer := asMap(t, getSlice(t, appPod, "containers")[0])
+	endpoint := ""
+	for _, raw := range getSlice(t, appContainer, "env") {
+		env := asMap(t, raw)
+		if env["name"] == "MARKETPLACE_SKILLSPECTOR_ENDPOINT" {
+			endpoint, _ = env["value"].(string)
+		}
+	}
+	if endpoint != "http://marketplace-agent-marketplace-skillspector:8081" {
+		t.Fatalf("all-in-one runner endpoint = %q", endpoint)
+	}
+
+	split := render(t, "mode=split", "image.tag=ci")
+	api := find(t, split, "Deployment", "api")
+	worker := find(t, split, "Deployment", "worker")
+	hasEndpoint := func(t *testing.T, deployment map[string]any) bool {
+		t.Helper()
+		pod := getMap(t, getMap(t, getMap(t, deployment, "spec"), "template"), "spec")
+		container := asMap(t, getSlice(t, pod, "containers")[0])
+		environments, _ := container["env"].([]any)
+		for _, raw := range environments {
+			if asMap(t, raw)["name"] == "MARKETPLACE_SKILLSPECTOR_ENDPOINT" {
+				return true
+			}
+		}
+		return false
+	}
+	if hasEndpoint(t, api) || !hasEndpoint(t, worker) {
+		t.Fatal("scanner endpoint must be scoped to the worker, not the API")
 	}
 }
 

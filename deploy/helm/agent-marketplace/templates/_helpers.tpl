@@ -96,6 +96,16 @@ runbook_url: {{ printf "%s#%s" . $.alertName | quote }}
 {{- end }}
 {{- end }}
 
+{{- define "agent-marketplace.skillspectorImage" -}}
+{{- $image := .Values.skillspector.image -}}
+{{- if $image.digest }}
+{{- printf "%s@%s" $image.repository $image.digest }}
+{{- else }}
+{{- $tag := default .Values.image.tag $image.tag -}}
+{{- printf "%s:%s" $image.repository (required (printf "%s: set a runner image.tag or image.digest (the top-level image.tag is a local-test fallback)" $image.repository) $tag) }}
+{{- end }}
+{{- end }}
+
 {{- define "agent-marketplace.validate" -}}
 {{- if hasKey .Values "site" }}
 {{- fail "values.site was renamed to values.docs; update the values file before upgrading" }}
@@ -233,7 +243,7 @@ spec:
               protocol: TCP
           {{- end }}
           {{- end }}
-          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") $component.env }}
+          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") $component.env (and $root.Values.skillspector.enabled (has $role (list "worker" "all"))) }}
           env:
             {{- if and $isMarketplace $root.Values.storage.dsnSecret.name }}
             - name: {{ $root.Values.storage.dsnSecret.envName }}
@@ -241,6 +251,10 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.storage.dsnSecret.name }}
                   key: {{ $root.Values.storage.dsnSecret.key }}
+            {{- end }}
+            {{- if and $root.Values.skillspector.enabled (has $role (list "worker" "all")) }}
+            - name: MARKETPLACE_SKILLSPECTOR_ENDPOINT
+              value: {{ printf "http://%s:8081" (include "agent-marketplace.componentName" (dict "root" $root "component" "skillspector")) | quote }}
             {{- end }}
             {{- if eq $role "web" }}
             - name: NUXT_APP_BASE_URL
