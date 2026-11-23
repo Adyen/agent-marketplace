@@ -764,8 +764,10 @@ func runTableCase(t *testing.T, tc TestCase, firstErr *string) {
 
 	// Seed registries and collect their fixture URLs.
 	bareURLs := make(map[string]string, len(tc.Registries)+len(tc.Marketplaces))
+	registryTokens := make(map[string]string, len(tc.Registries))
 	for _, registry := range tc.Registries {
-		bareURLs[registry.Name] = env.CreateBareRepo(registry.Name, registry.FilesMap())
+		bareURLs[registry.Name] = env.CreateBareRepo(registry.Name, resolveTableMap(t, registry.FilesMap(), registryTokens))
+		registryTokens["{{REG:"+registry.Name+"}}"] = bareURLs[registry.Name]
 	}
 	var gitServerURL string
 	if len(bareURLs)+len(tc.Marketplaces) > 0 {

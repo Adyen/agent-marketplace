@@ -405,7 +405,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		options.pluginInstanceKeys = batch.ownerInstances
 		options.selectedHookResources = compiled.selectedHookNames[key]
 		var mcpDiagnostics []diag.Diagnostic
-		options.nativeHookFinalize = nativeHookActivationFinalizer(key, repoRoot, group.nativeMCP, false, func() {}, &mcpDiagnostics)
+		options.nativeHookFinalize = nativeHookActivationFinalizer(key, repoRoot, group.nativeMCP, nil, false, func() {}, &mcpDiagnostics)
 		diagnosticStart := len(report.Diags)
 		report = reconcileNativeHookJSON(ctx, report, key, repoRoot, group.nativeHooks, options, dryRun)
 		if pluginDiagnosticsContainError(report.Diags[diagnosticStart:]) {
@@ -416,7 +416,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		group.aggregateState.nativeHooks = map[outputKey]bool{key: true}
 		group.aggregateState.batches = map[outputKey]*pluginInstanceBatch{key: batch}
 		diagnosticStart := len(report.Diags)
-		report = group.handler.reconcile(ctx, report, group.aggregateState, key, outDir, destinations, dryRun)
+		report = group.handler.reconcile(ctx, report, group.aggregateState, ownedAggregateState{}, key, outDir, destinations, dryRun)
 		if pluginDiagnosticsContainError(report.Diags[diagnosticStart:]) {
 			return report
 		}

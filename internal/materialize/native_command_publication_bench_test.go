@@ -10,7 +10,7 @@ import (
 func BenchmarkNativeCommandUpdateDisk(b *testing.B) {
 	dir := filepath.Join(b.TempDir(), "commands")
 	links := []skillLink{{name: "probe.md", artifacts: []artifact.Artifact{{Path: "probe.md", Bytes: []byte("---\ndescription: inert\n---\n\nfirst inert body"), Mode: 0o644}}}}
-	if _, err := syncCommandFiles(dir, links, false, false); err != nil {
+	if _, err := syncCommandFiles(dir, links, false, false, portableSyncContext{}); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
@@ -22,7 +22,7 @@ func BenchmarkNativeCommandUpdateDisk(b *testing.B) {
 			body = "second inert body"
 		}
 		links[0].artifacts[0].Bytes = []byte("---\ndescription: inert\n---\n\n" + body)
-		if _, err := syncCommandFiles(dir, links, false, false); err != nil {
+		if _, err := syncCommandFiles(dir, links, false, false, portableSyncContext{}); err != nil {
 			b.Fatal(err)
 		}
 		i++

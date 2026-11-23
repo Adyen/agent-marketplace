@@ -161,7 +161,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 				return werr
 			}
 		}
-		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), deliverable, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), deliverable, materialize.WithDryRun(), materialize.WithMaterializationModes(modes), materialize.WithImpliedPreview(result.ImpliedPreview))
 	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode

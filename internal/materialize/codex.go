@@ -114,10 +114,17 @@ func (codexOwnedAggregateHandler) malformedDiagnostic(key outputKey, resource st
 	return diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateMalformed, Severity: diag.SeverityError, Target: string(key.target), Resource: resource, Message: err.Error()}
 }
 
-func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
+func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, previewState ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
 	current, _ := state.get(key).(*codexOwnedAggregateState)
 	if current == nil {
 		current = &codexOwnedAggregateState{}
+	}
+	preview, _ := previewState.get(key).(*codexOwnedAggregateState)
+	var previewHooks *ownedJSONAggregateWork
+	var previewMCPs []codexMCPEntry
+	if preview != nil {
+		previewHooks = preview.hooks
+		previewMCPs = preview.mcps
 	}
 	batch := state.pluginBatch(key)
 	for _, destination := range destinations {
@@ -150,7 +157,7 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 						}
 						return nil
 					}
-					report = reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
+					report = reconcileCodexRoot(ctx, report, state, key, destination, current, previewHooks, previewMCPs, dryRun, &session, batch)
 					return nil
 				})
 				if sessionErr != nil {
@@ -166,9 +173,9 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			}
 		}
 		if hasSession {
-			return reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
+			return reconcileCodexRoot(ctx, report, state, key, destination, current, previewHooks, previewMCPs, dryRun, &session, batch)
 		}
-		return reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, nil, batch)
+		return reconcileCodexRoot(ctx, report, state, key, destination, current, previewHooks, previewMCPs, dryRun, nil, batch)
 	}
 	return report
 }
@@ -186,7 +193,7 @@ func codexMCPHasWork(root string, desired []codexMCPEntry, registrations []codex
 }
 
 func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, destination harness.Destination,
-	current *codexOwnedAggregateState, dryRun bool, session *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
+	current *codexOwnedAggregateState, previewHooks *ownedJSONAggregateWork, previewMCPs []codexMCPEntry, dryRun bool, session *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
 	if !state.reconcilesNativeHooks(key) {
 		hookOptions := codexHookJSONOptions()
 		hookOptions.rootID = destination.ID
@@ -203,9 +210,9 @@ func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregat
 			hookOptions.deferLockDiagnostics = true
 			hookOptions.storeSessionHeld = true
 		}
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{codexHookFileSpec}, current.hooks, hookOptions, dryRun)
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{codexHookFileSpec}, current.hooks, previewHooks, hookOptions, dryRun)
 	}
-	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, session, batch)
+	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, previewMCPs, current.registrations, current.blocked, dryRun, session, batch)
 }
 
 func codexHookJSONOptions() ownedJSONReconcileOptions {
@@ -732,16 +739,16 @@ func lineEnd(raw []byte, offset int) int {
 	return len(raw)
 }
 
-func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
+func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired, preview []codexMCPEntry, incomplete, dryRun bool) *Report {
 	logCodexMCPReconciliationStart(key, root, len(desired), incomplete, dryRun)
-	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, nil, incomplete, dryRun, nil, nil)
+	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, preview, nil, incomplete, dryRun, nil, nil)
 }
 
 func logCodexMCPReconciliationStart(key outputKey, root string, desiredEntries int, incomplete, dryRun bool) {
 	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", desiredEntries, "incomplete", incomplete, "dry_run", dryRun)
 }
 
-func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, registrations []codexPluginRegistration, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
+func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired, preview []codexMCPEntry, registrations []codexPluginRegistration, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
 		if first, duplicate := seen[entry.name]; duplicate {
@@ -867,8 +874,18 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 		}
 		var edits []codexMCPEdit
 		owned := make([]ownership.Entry, 0, len(desired)+len(registrations)+len(drift.Stale)+len(registrationDrift.Stale))
+		previewKeep := make(map[string]bool, len(preview))
+		for _, entry := range preview {
+			previewKeep[ownedAggregateIDKey(entry.id())] = true
+		}
 		if !incomplete {
 			for _, id := range drift.Stale {
+				if previewKeep[ownedAggregateIDKey(id)] {
+					if recorded, ok := proof.Entry(id); ok {
+						owned = append(owned, recorded)
+					}
+					continue
+				}
 				if section, ok := sections[id.Key]; ok {
 					if section.alternate {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)})

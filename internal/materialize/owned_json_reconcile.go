@@ -97,7 +97,7 @@ func ownedJSONAggregatesHaveWork(outDir string, files []ownedJSONFileSpec, work 
 // create locks/<rootKey>.lock under the state root — breaking Open's documented
 // side-effect-free contract — and would make a read-only command block behind a
 // long-running sync.
-func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outputKey, outDir string, files []ownedJSONFileSpec, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
+func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outputKey, outDir string, files []ownedJSONFileSpec, work *ownedJSONAggregateWork, preview *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
 	files = append([]ownedJSONFileSpec(nil), files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
 
@@ -105,6 +105,12 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 	if work != nil {
 		for _, entry := range work.entries {
 			desiredByRel[entry.rel] = append(desiredByRel[entry.rel], entry)
+		}
+	}
+	previewByRel := make(map[string][]ownedJSONEntry, len(files))
+	if preview != nil {
+		for _, entry := range preview.entries {
+			previewByRel[entry.rel] = append(previewByRel[entry.rel], entry)
 		}
 	}
 	anyWork := ownedJSONAggregatesHaveWork(outDir, files, work)
@@ -233,7 +239,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 				report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, outDir, "", depErr, options.writeCode))
 			}
 		}
-		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, true)
+		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, previewByRel, work, options, true)
 	}
 	if options.storeSessionHeld {
 		if hasNative && options.batch == nil {
@@ -242,7 +248,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 				return report
 			}
 		}
-		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, false)
+		return appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, previewByRel, work, options, false)
 	}
 
 	sessionErr := store.WithWriteSessionContext(ctx, options.sessionName, func() error {
@@ -265,7 +271,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 				return nil
 			}
 		}
-		report = appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, work, options, false)
+		report = appendOwnedJSONAggregateReports(ctx, report, store, key, outDir, files, desiredByRel, previewByRel, work, options, false)
 		return nil
 	})
 	// The body never returns an error — every per-file failure is already a
@@ -286,9 +292,9 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 // into the report. It is a function rather than an inline loop only so the dry-run
 // path can reuse it verbatim without a session around it.
 func appendOwnedJSONAggregateReports(ctx context.Context, report *Report, store *ownership.Store, key outputKey, outDir string, files []ownedJSONFileSpec,
-	desiredByRel map[string][]ownedJSONEntry, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
+	desiredByRel map[string][]ownedJSONEntry, previewByRel map[string][]ownedJSONEntry, work *ownedJSONAggregateWork, options ownedJSONReconcileOptions, dryRun bool) *Report {
 	for _, file := range files {
-		fileReport := reconcileOwnedJSONAggregateFile(ctx, store, key, outDir, file, desiredByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
+		fileReport := reconcileOwnedJSONAggregateFile(ctx, store, key, outDir, file, desiredByRel[file.rel], previewByRel[file.rel], work != nil && work.incomplete[file.rel], options, dryRun)
 		report.Diags = append(report.Diags, fileReport.diags...)
 		report.HookChanges = append(report.HookChanges, fileReport.hookChanges...)
 		if !fileReport.written {
@@ -337,7 +343,7 @@ func recoverNativeDependencyTxn(ctx context.Context) error {
 	return nil
 }
 
-func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, incomplete bool, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
+func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store, key outputKey, outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, preview []ownedJSONEntry, incomplete bool, options ownedJSONReconcileOptions, dryRun bool) ownedJSONAggregateReport {
 	var out ownedJSONAggregateReport
 	rel := file.rel
 	abs := filepath.Join(outDir, rel)
@@ -543,7 +549,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	}
 	drift := ownership.Classify(proof, existingValues, desiredValues)
 
-	plan := ownedJSONPatchPlan(outDir, file, desired, existing, drift, proof, incomplete, options.selectedHookResources)
+	plan := ownedJSONPatchPlan(outDir, file, desired, preview, existing, drift, proof, incomplete, options.selectedHookResources)
 	out.diags = append(out.diags, plan.diags(key, options)...)
 
 	if applyErr := applyOwnedJSONPatch(doc, container, containerMember, file, plan); applyErr != nil {
@@ -1417,7 +1423,7 @@ type ownedJSONPatch struct {
 //     hooks."
 //   - "A partial run does not prune" — when incomplete is set, the prune list is
 //     emptied for this file.
-func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool, selected ...map[string]bool) ownedJSONPatch {
+func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, preview []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool, selected ...map[string]bool) ownedJSONPatch {
 	var selection map[string]bool
 	if len(selected) > 0 {
 		selection = selected[0]
@@ -1508,6 +1514,22 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 		}
 		drift = ownership.Classify(proof, existingValues, desiredValues)
 	}
+
+	keep := make(map[string]bool, len(preview))
+	for _, entry := range preview {
+		keep[ownedAggregateIDKey(entry.id())] = true
+	}
+	kept := make(map[string]bool)
+	prunable := make([]ownership.EntryID, 0, len(drift.Stale))
+	for _, id := range drift.Stale {
+		if keep[ownedAggregateIDKey(id)] {
+			kept[ownedAggregateIDKey(id)] = true
+			continue
+		}
+		prunable = append(prunable, id)
+	}
+	drift.Stale = prunable
+	retainPreviewOwnership(&patch, kept, proof)
 
 	collision := make(map[string]bool, len(drift.Collisions))
 	for _, id := range drift.Collisions {
@@ -1616,6 +1638,10 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 			id := ownedAggregateIDKey(entry.value.ID)
 			if stale[id] {
 				continue // proven ours and no longer desired: pruned
+			}
+			if drifted[id] && kept[id] {
+				elements = append(elements, entry.raw)
+				continue
 			}
 			if drifted[id] {
 				continue // proven ours and hand-edited: replaced below
@@ -1787,6 +1813,19 @@ func selectivePruneProven(id ownership.EntryID, proof ownership.Proof, selected 
 		}
 	}
 	return true
+}
+
+func retainPreviewOwnership(patch *ownedJSONPatch, kept map[string]bool, proof ownership.Proof) {
+	for _, id := range proof.OwnedIDs() {
+		if !kept[ownedAggregateIDKey(id)] {
+			continue
+		}
+		recorded, ok := proof.Entry(id)
+		if !ok {
+			continue
+		}
+		patch.owned = append(patch.owned, recorded)
+	}
 }
 
 func retainPostponedOwnership(patch *ownedJSONPatch, existing []ownedJSONExistingEntry, stale []ownership.EntryID, proof ownership.Proof, incomplete bool) {

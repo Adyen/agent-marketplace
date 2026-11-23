@@ -119,7 +119,7 @@ func TestPruneDirectoryMarkerReadRefusals(t *testing.T) {
 					}
 					var report TargetReport
 					if commandLane {
-						report, err = syncCommandFiles(dir, nil, dryRun, true, boundary)
+						report, err = syncCommandFiles(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})
 					} else {
 						report, err = syncSkillLinks(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})
 					}
@@ -303,7 +303,7 @@ func TestCommandMarkerReadRefusesVanishedDirectory(t *testing.T) {
 			dir := filepath.Join(root, "commands")
 			links := []skillLink{{name: "probe.md", artifacts: []artifact.Artifact{{Path: "probe.md", Bytes: []byte("---\ndescription: inert\n---\n\nfirst inert body"), Mode: 0o644}}}}
 			boundary := &destinationBoundary{repoRoot: root, roots: []string{dir}}
-			if _, err := syncCommandFiles(dir, links, false, false, boundary); err != nil {
+			if _, err := syncCommandFiles(dir, links, false, false, portableSyncContext{boundary: boundary}); err != nil {
 				t.Fatal(err)
 			}
 			retained := filepath.Join(root, "retained-commands")
@@ -319,7 +319,7 @@ func TestCommandMarkerReadRefusesVanishedDirectory(t *testing.T) {
 			}
 			t.Cleanup(func() { commandMarkerReadHook = nil })
 			links[0].artifacts[0].Bytes = []byte("---\ndescription: inert\n---\n\nsecond inert body")
-			report, err := syncCommandFiles(dir, links, dryRun, false, boundary)
+			report, err := syncCommandFiles(dir, links, dryRun, false, portableSyncContext{boundary: boundary})
 			if !moved {
 				t.Fatal("marker read seam not reached")
 			}
