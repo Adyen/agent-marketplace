@@ -91,7 +91,7 @@ func TestTuiExcludedOnlyDirectorySelectionsHaveNoProvisionalRows(t *testing.T) {
 						if row.Glyph() != "[x]" {
 							t.Fatalf("control stage %d: checked-glyph condition failed", i)
 						}
-						if !strings.Contains(row.StatusText(), "verification pending") {
+						if !strings.Contains(row.StatusText(), "waiting for verification") {
 							t.Fatalf("control stage %d: row-status condition failed", i)
 						}
 						view := m.View().Content
@@ -158,7 +158,7 @@ func work50TUIRows(t *testing.T, stage int, rows []row, required, excludeReview,
 		if item.Glyph() != wantGlyph {
 			t.Fatalf("mixed-pin TUI stage %d row %d: selection marker condition failed", stage, i)
 		}
-		if pending && !strings.Contains(item.StatusText(), "verification pending") {
+		if pending && !strings.Contains(item.StatusText(), "waiting for verification") {
 			t.Fatal("mixed-pin TUI row omitted pending verification status")
 		}
 		if i == 1 && excludeReview && !required && (!item.IsAvailable || !item.IsExcluded || !item.ExcludedByUser || !strings.Contains(item.StatusText(), "excluded")) {

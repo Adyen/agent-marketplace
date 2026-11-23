@@ -35,7 +35,7 @@ describe('status-grouped navigation', () => {
       row('stale', { group: 'stale', status: 'available, stale' }),
       row('broken', { group: 'broken', status: 'broken' }),
       row('available', { group: 'available', checked: false, status: 'available' }),
-      row('pending', { group: 'pending', status: 'enabled (pending sync)' }),
+      row('pending', { group: 'pending', status: 'enabled, waiting for sync' }),
       row('required', { group: 'required', required: true, status: 'required' }),
     ]
     push(event({ sequence: 1, payload: snapshot(rows) }))

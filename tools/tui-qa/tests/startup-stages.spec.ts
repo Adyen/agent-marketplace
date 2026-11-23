@@ -111,7 +111,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   const pending = async (name: string): Promise<void> => {
     await locate(terminal, new RegExp(`Name:\\s+${name}`)).unique().expect();
-    await locate(terminal, /Status:\s+enabled in config; verification\s+pending/).unique().expect();
+    await locate(terminal, /Status:\s+enabled in config, waiting for\s+verification/).unique().expect();
     await locate(terminal, "verifying resources...").unique().expect();
     await locate(terminal, /toggle (global|project|local)/).expect({ not: true });
     await locate(terminal, /enter apply.*esc cancel/).expect({ not: true });
@@ -155,7 +155,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
     await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
     await locate(terminal, "/ alpha-skill  1 match").unique().expect();
-    await locate(terminal, "verification pending").expect({ not: true });
+    await locate(terminal, "waiting for verification").expect({ not: true });
     await locate(terminal, "verifying resources").expect({ not: true });
   });
   unchanged();

@@ -90,7 +90,7 @@ func TestGuiHostOwnCatalogDriftPreservesRecoveryAndHiddenOccurrence(t *testing.T
 		t.Fatal("missing selected resource did not create an existing recovery row")
 	}
 	assessed := final["selected"]
-	if assessed.ID != selected.ID || !assessed.Checked || assessed.Group != "pending" || assessed.Status != "enabled (pending sync)" {
+	if assessed.ID != selected.ID || !assessed.Checked || assessed.Group != "pending" || assessed.Status != "enabled, waiting for sync" {
 		t.Fatal("selected catalog did not receive its own missing drift")
 	}
 	if after := final["recovery"]; recovery.ID != after.ID || recovery.Checked != after.Checked || recovery.Scope != after.Scope || recovery.Status != after.Status || recovery.Group != after.Group || recovery.PendingVerification != after.PendingVerification {

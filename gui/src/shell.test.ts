@@ -160,7 +160,7 @@ describe('sidebar navigation', () => {
     const { wrapper } = await mountShell([
       row('a'),
       row('p', { group: 'pending', status: 'pending sync' }),
-      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
       row('s', { group: 'stale', status: 'stale' }),
     ])
     const labels = (selector: string) => wrapper.findAll(selector).map((element) => element.attributes('aria-label'))
@@ -179,7 +179,7 @@ describe('sidebar navigation', () => {
 
   // spec: gui-shell/sidebar-offers-each-navigation-control-once
   it('All resources clears the facets but keeps the search', async () => {
-    const { wrapper } = await mountShell([row('a'), row('b', { kind: 'command', required: true, group: 'required', status: 'required (org)' })])
+    const { wrapper } = await mountShell([row('a'), row('b', { kind: 'command', required: true, group: 'required', status: 'required by org' })])
     await button(wrapper, 'Kind facet Commands').trigger('click')
     await button(wrapper, 'Required by org').trigger('click')
     await wrapper.get('button[aria-label="Search"]').trigger('click')
@@ -423,7 +423,7 @@ describe('diagnostics view', () => {
   ])('clears the $name resource filter when opening diagnostics', async ({ select }) => {
     const { wrapper } = await mountShell([
       row('a'),
-      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
     ])
     const facet = select(wrapper)
     await facet.trigger('click')
@@ -444,7 +444,7 @@ describe('diagnostics view', () => {
   ])('moves the active navigation highlight to the $name facet and back', async ({ facet, clear }) => {
     const { wrapper } = await mountShell([
       row('a'),
-      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
     ])
     const resources = button(wrapper, 'All resources')
     expect(resources.attributes('aria-current')).toBe('page')
@@ -465,7 +465,7 @@ describe('diagnostics view', () => {
   it('clears every active resource filter from the Clear filters control', async () => {
     const { wrapper } = await mountShell([
       row('a'),
-      row('m', { kind: 'command', required: true, group: 'required', status: 'required (org)' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
     ])
     const clearFilters = () => wrapper.findAll('button').find((element) => element.text() === 'Clear filters')
     const kindFacet = () => wrapper.get('.gui-sidebar__kinds button')

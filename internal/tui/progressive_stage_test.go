@@ -632,8 +632,8 @@ func TestSelectedRowDriftPrefersItsCurrentTargetOverAnOrphanedCopy(t *testing.T)
 func TestSelectedRowWithOnlyAnOrphanedCopyIsPendingSync(t *testing.T) {
 	r := mkRow("beta-skill", withProject)
 	r.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta-skill"), Reason: materialize.DriftOrphaned}
-	if got := r.StatusText(); got != "enabled (pending sync)" {
-		t.Fatalf("status = %q, want enabled (pending sync)", got)
+	if got := r.StatusText(); got != "enabled, waiting for sync" {
+		t.Fatalf("status = %q, want enabled, waiting for sync", got)
 	}
 	if got := classifyStatus(r); got != statusPending {
 		t.Fatalf("status bucket = %v, want pending", got)
@@ -771,7 +771,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	if !pending.PendingVerification {
 		t.Fatal("provisional row is not marked verification-pending")
 	}
-	if pending.Glyph() != "[x]" || pending.StatusText() != "enabled in config; verification pending" {
+	if pending.Glyph() != "[x]" || pending.StatusText() != "enabled in config, waiting for verification" {
 		t.Fatalf("provisional row did not show configuration separately from verification: glyph=%q status=%q", pending.Glyph(), pending.StatusText())
 	}
 	if badge := originBadge(pending); badge != "G" {
@@ -821,7 +821,7 @@ func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
 	}
 	excluded := m.rows[1]
-	if excluded.Artifact.Name != "review" || !excluded.PendingVerification || excluded.Glyph() != "[ ]" || excluded.StatusText() != "excluded; verification pending" || originBadge(excluded) != "G" {
+	if excluded.Artifact.Name != "review" || !excluded.PendingVerification || excluded.Glyph() != "[ ]" || excluded.StatusText() != "excluded, waiting for verification" || originBadge(excluded) != "G" {
 		t.Fatalf("excluded organization pin should hold its unchecked Global position while pending: glyph=%q status=%q badge=%q row=%#v", excluded.Glyph(), excluded.StatusText(), originBadge(excluded), excluded)
 	}
 	mi, _ := m.applyRowSpaceEligibility(excluded)
@@ -1100,7 +1100,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	if m.rows[pendingRow].Glyph() != "[x]" || originBadge(m.rows[pendingRow]) != "G" {
 		t.Fatalf("configured remote selection should show an early enabled check and scope badge: glyph=%q badge=%q", m.rows[pendingRow].Glyph(), originBadge(m.rows[pendingRow]))
 	}
-	if status := m.rows[pendingRow].StatusText(); !strings.Contains(status, "verification pending") || !strings.Contains(status, "enabled in config") {
+	if status := m.rows[pendingRow].StatusText(); !strings.Contains(status, "waiting for verification") || !strings.Contains(status, "enabled in config") {
 		t.Fatalf("early checked row does not distinguish configuration from installation: %q", status)
 	}
 	remoteLine := ""

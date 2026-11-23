@@ -296,7 +296,7 @@ func assertWork50HostMixedRows(t *testing.T, stage int, rows []work50HostRow, re
 		if row.Group != wantGroup {
 			t.Fatalf("mixed-pin host stage %d row %d: status-group condition failed", stage, i)
 		}
-		if pending && !strings.Contains(row.Status, "verification pending") {
+		if pending && !strings.Contains(row.Status, "waiting for verification") {
 			t.Fatalf("mixed-pin host stage %d row %d: pending-status condition failed", stage, i)
 		}
 		if i == 1 && excludeReview && !required && !strings.Contains(row.Status, "excluded") {

@@ -26,10 +26,10 @@ func TestRowPresentationRetainsExclusionCheckState(t *testing.T) {
 		available, excluded, userExcluded, pending, required, enabledGlobal, checked bool
 		status                                                                       string
 	}{
-		{"user-excluded-pending", true, true, true, true, false, true, false, "excluded; verification pending"},
+		{"user-excluded-pending", true, true, true, true, false, true, false, "excluded, waiting for verification"},
 		{"user-excluded-verified", true, true, true, false, false, true, false, "excluded"},
-		{"enabled-pending", false, false, false, true, false, true, true, "enabled in config; verification pending"},
-		{"required-pending", false, false, false, true, true, false, true, "enabled in config; verification pending"},
+		{"enabled-pending", false, false, false, true, false, true, true, "enabled in config, waiting for verification"},
+		{"required-pending", false, false, false, true, true, false, true, "enabled in config, waiting for verification"},
 		{"inactive-available", true, false, false, false, false, false, false, "available"},
 	}
 	for _, tc := range cases {

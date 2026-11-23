@@ -164,7 +164,7 @@ func TestGuiHostSingleViewProvisionalContinuityAndGuardedActions(t *testing.T) {
 		alpha := work52RowNamed(t, stages[3].Payload.Rows, "alpha")
 		beta := work52RowNamed(t, stages[3].Payload.Rows, "beta")
 		for _, row := range []work50HostRow{alpha, beta} {
-			if row.Group != "pending" || row.Status != "enabled (pending sync)" {
+			if row.Group != "pending" || row.Status != "enabled, waiting for sync" {
 				t.Fatal("final assessment did not mark selected rows pending sync")
 			}
 		}

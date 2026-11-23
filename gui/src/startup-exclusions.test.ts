@@ -30,14 +30,14 @@ function expectNoMutations(client: ReturnType<typeof fakeClient>['client']): voi
 function directoryRows(scope: 'user' | 'available', checked: boolean, pending: boolean) {
   return ['alpha', 'beta'].map((name) => row(name, {
     id: `directory-${name}`, registry: 'local', scope, checked, group: checked ? 'enabled' : 'available',
-    status: pending ? 'enabled in config; verification pending' : 'available', pendingVerification: pending, resourceAction: 'none',
+    status: pending ? 'enabled in config, waiting for verification' : 'available', pendingVerification: pending, resourceAction: 'none',
   }))
 }
 
 function organizationRows(required: boolean, excludeReview: boolean, pending: boolean) {
   const reviewExcluded = excludeReview && !required
-  const auditStatus = pending ? 'enabled in config; verification pending' : 'enabled in config'
-  const reviewStatus = reviewExcluded ? (pending ? 'excluded; verification pending' : 'excluded') : auditStatus
+  const auditStatus = pending ? 'enabled in config, waiting for verification' : 'enabled in config'
+  const reviewStatus = reviewExcluded ? (pending ? 'excluded, waiting for verification' : 'excluded') : auditStatus
   const group = required ? 'required' : 'enabled'
   const optionalAction = pending || required ? 'none' : 'exclude'
   const reviewAction = pending || required ? 'none' : reviewExcluded ? 'restore' : 'exclude'
@@ -112,7 +112,7 @@ describe('startup exclusion consumers', () => {
     expect(review.attributes('aria-selected')).toBe('true')
     expect(review.find('.workspace__check').classes()).not.toContain('workspace__check--on')
     expect(controller.state.rows[1]?.checked).toBe(false)
-    expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('excluded; verification pending')
+    expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('excluded, waiting for verification')
     expect(wrapper.find('button[aria-label="Install resource"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="Uninstall resource"]').exists()).toBe(false)
     await review.trigger('keydown', { key: 'Enter' })

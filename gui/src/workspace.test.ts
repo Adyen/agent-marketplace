@@ -219,7 +219,7 @@ describe('WorkspaceView', () => {
       event({
         sequence: 1,
         payload: snapshot([
-          row('needed', { group: 'required', required: true, status: 'required (org)', scope: 'organization', registry: 'corp' }),
+          row('needed', { group: 'required', required: true, status: 'required by org', scope: 'organization', registry: 'corp' }),
           row('on', { group: 'enabled' }),
           row('off', { group: 'available', checked: false, scope: 'available', status: 'available' }),
           row('narrow', { group: 'enabled', harnessOverride: true, harnesses: ['claude'] }),
@@ -304,7 +304,7 @@ describe('WorkspaceView', () => {
         sequence: 1,
         payload: snapshot([
           row('plain', { group: 'enabled' }),
-          row('corp', { group: 'required', required: true, status: 'required (org)', scope: 'organization' }),
+          row('corp', { group: 'required', required: true, status: 'required by org', scope: 'organization' }),
         ]),
       }),
     )
@@ -325,7 +325,7 @@ describe('WorkspaceView', () => {
         sequence: 1,
         payload: snapshot([
           row('server', { kind: 'mcpserver', group: 'enabled', scope: 'project' }),
-          row('corp', { kind: 'skill', group: 'required', required: true, status: 'required (org)', scope: 'organization' }),
+          row('corp', { kind: 'skill', group: 'required', required: true, status: 'required by org', scope: 'organization' }),
           row('local-only', { kind: 'command', group: 'enabled', scope: 'local', harnessOverride: true, harnesses: ['claude', 'devin'] }),
         ]),
       }),
@@ -1508,9 +1508,9 @@ describe('workspace facets and source header', () => {
       row('team-command needle', { kind: 'command', source: team }),
       row('other-skill needle', { source: organization }),
       row('team-broken needle', { source: team, group: 'broken', status: 'broken' }),
-      row('team-required needle', { kind: 'command', source: team, group: 'required', required: true, status: 'required (org)' }),
+      row('team-required needle', { kind: 'command', source: team, group: 'required', required: true, status: 'required by org' }),
       row('team-pending needle', { source: team, group: 'pending', status: 'pending' }),
-      row('other-required needle', { kind: 'command', source: organization, group: 'required', required: true, status: 'required (org)' }),
+      row('other-required needle', { kind: 'command', source: organization, group: 'required', required: true, status: 'required by org' }),
       row('unknown-kind needle', { kind: 'future-kind', source: organization }),
       row('team-no-match', { source: team }),
     ]
@@ -1614,7 +1614,7 @@ describe('workspace facets and source header', () => {
       sequence: 1,
       payload: snapshot([
         row('ordinary-skill'),
-        row('required-command', { kind: 'command', group: 'required', required: true, status: 'required (org)' }),
+        row('required-command', { kind: 'command', group: 'required', required: true, status: 'required by org' }),
       ]),
     }))
     await tick()

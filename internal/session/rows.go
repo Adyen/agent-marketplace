@@ -221,11 +221,11 @@ type rowStatus struct {
 
 func (r Row) Status() rowStatus {
 	if r.PendingVerification {
-		label := "enabled in config; verification pending"
+		label := "enabled in config, waiting for verification"
 		if r.IsExcluded {
-			label = "excluded; verification pending"
+			label = "excluded, waiting for verification"
 		} else if r.IsAvailable {
-			label = "available; verification pending"
+			label = "available, waiting for verification"
 		}
 		if r.IsAvailable {
 			return rowStatus{"[ ]", "○", label}
@@ -256,14 +256,14 @@ func (r Row) Status() rowStatus {
 	}
 	if r.Artifact.Required {
 		if r.Artifact.Source == config.Organization {
-			return rowStatus{"[R]", "■", "required (org)"}
+			return rowStatus{"[R]", "■", "required by org"}
 		}
 		return rowStatus{"[R]", "■", "required"}
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
 		case materialize.DriftMissing, materialize.DriftOrphaned:
-			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
+			return rowStatus{"[*]", "◐", "enabled, waiting for sync"}
 		case materialize.DriftBroken:
 			return rowStatus{"[!]", "✗", "broken"}
 		}

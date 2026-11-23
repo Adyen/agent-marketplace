@@ -26,7 +26,7 @@ const TEAM_PLUGINS = { id: 'https://example.com/team.git\x01main\x01plugins/a', 
 function resources(): Row[] {
   return [
     row('alpha', { kind: 'skill', group: 'enabled', status: 'enabled', source: TEAM_MAIN }),
-    row('beta', { kind: 'command', group: 'pending', status: 'enabled (pending sync)', source: TEAM_RELEASE }),
+    row('beta', { kind: 'command', group: 'pending', status: 'enabled, waiting for sync', source: TEAM_RELEASE }),
     row('gamma', { kind: 'mcpserver', group: 'broken', status: 'broken', source: LOCAL }),
     row('delta', { kind: 'zed-kind', group: 'available', checked: false, status: 'available', source: TEAM_PLUGINS }),
     row('epsilon', { kind: 'skill', group: 'malformed', status: 'malformed: invalid', source: LOCAL }),
@@ -141,8 +141,8 @@ describe('buildSections', () => {
   it('pins attention rows in status-then-name order outside Status grouping', () => {
     const rows = [
       row('zulu', { kind: 'skill', group: 'broken', status: 'broken', source: LOCAL }),
-      row('alpha', { kind: 'skill', group: 'pending', status: 'enabled (pending sync)', source: LOCAL }),
-      row('bravo', { kind: 'skill', group: 'pending', status: 'enabled (pending sync)', source: LOCAL }),
+      row('alpha', { kind: 'skill', group: 'pending', status: 'enabled, waiting for sync', source: LOCAL }),
+      row('bravo', { kind: 'skill', group: 'pending', status: 'enabled, waiting for sync', source: LOCAL }),
       row('charlie', { kind: 'skill', group: 'required', required: true, status: 'required', source: LOCAL }),
     ]
     const sections = buildSections(rankRows(rows, ''), STATUS_GROUPS, { groupBy: 'kind', thenBy: 'none' }, false)

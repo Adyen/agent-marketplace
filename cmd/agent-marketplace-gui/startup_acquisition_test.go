@@ -191,7 +191,7 @@ func TestGuiHostPublishesConfiguredRowsWhileAcquisitionBlocked(t *testing.T) {
 		requireAcquisition(t, row.ID != "" && row.Kind == "skill" && row.Registry == "local" && row.Scope == "user" && row.Checked && row.PendingVerification && row.ResourceAction == "none", "provisional Directory row did not reflect configured user selection")
 	}
 	remote := byName["remote"]
-	requireAcquisition(t, remote.ID != "" && remote.Kind == "skill" && remote.Scope == "organization" && remote.Checked && remote.PendingVerification && remote.ResourceAction == "none" && strings.Contains(remote.Status, "verification pending") && strings.Contains(remote.Status, "enabled in config"), "provisional organization Marketplace row did not reflect configured selection")
+	requireAcquisition(t, remote.ID != "" && remote.Kind == "skill" && remote.Scope == "organization" && remote.Checked && remote.PendingVerification && remote.ResourceAction == "none" && strings.Contains(remote.Status, "waiting for verification") && strings.Contains(remote.Status, "enabled in config"), "provisional organization Marketplace row did not reflect configured selection")
 	configStage := waitAcquisitionHostSnapshot(t, ctx, snapshots, failures, readerDone)
 	requireAcquisition(t, configStage.Type == "snapshot" && configStage.Payload.Stage == "config" && configStage.Generation == first.Generation && configStage.Sequence > first.Sequence, "configured-row snapshot was not a later config stage in the same generation")
 	requireAcquisition(t, reflect.DeepEqual(configStage.Payload.Rows, first.Payload.Rows), "config stage did not retain the provisional configured rows")

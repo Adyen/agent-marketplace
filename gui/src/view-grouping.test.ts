@@ -9,7 +9,7 @@ const TEAM_RELEASE = { id: 'https://example.com/team.git\x01release\x01', label:
 
 const alpha = row('alpha', { kind: 'skill', group: 'enabled', status: 'enabled', source: TEAM_MAIN, registry: 'team' })
 const bravo = row('bravo', { kind: 'command', group: 'enabled', status: 'enabled', source: LOCAL })
-const charlie = row('charlie', { kind: 'skill', group: 'pending', status: 'enabled (pending sync)', source: TEAM_RELEASE, registry: 'team' })
+const charlie = row('charlie', { kind: 'skill', group: 'pending', status: 'enabled, waiting for sync', source: TEAM_RELEASE, registry: 'team' })
 
 type Wrapper = ReturnType<typeof mountWorkspace>['wrapper']
 
