@@ -150,6 +150,22 @@ describe('First-run setup', () => {
     expect(targets).not.toContain('Choose the Harness targets')
   })
 
+  it('hides the no-harness notice and Set up while the first-run dialog is open', async () => {
+    const { client, push } = firstRunClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'final', harnesses: [] }) }))
+    await tick()
+
+    expect(dialog()).toBeTruthy()
+    expect(wrapper.text()).not.toContain('No supported target harnesses are configured')
+    expect(wrapper.find('button[aria-label="Set up"]').exists()).toBe(false)
+
+    dialogButton('Cancel').click()
+    await tick()
+    expect(wrapper.text()).toContain('No supported target harnesses are configured')
+    expect(wrapper.find('button[aria-label="Set up"]').exists()).toBe(true)
+  })
+
   it('preselects detected targets, allows changes, and requires a non-empty selection', async () => {
     const { client, push } = firstRunClient()
     mountWorkspace(client)

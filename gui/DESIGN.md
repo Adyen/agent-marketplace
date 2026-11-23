@@ -199,7 +199,8 @@ The active Resources or Diagnostics row uses `aria-current="page"` and the
     4. A **Sync** button with a sync icon and a pending count badge (`2`) in
        mono. It is the solid primary action only while changes are pending;
        with nothing pending it uses the same secondary style as Update.
-    5. A "Set up" button, shown only during first run.
+    5. A "Set up" button, shown only during first run and hidden while the
+       first-run dialog is open.
     6. A divider, then a "Toggle inspector" icon button (◨).
 - Refresh is the only action without a visible control. `⌘R` refreshes the
   session; window focus and successful mutations also reload it.

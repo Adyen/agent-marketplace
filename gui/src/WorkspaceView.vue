@@ -1346,7 +1346,7 @@ async function run(action: 'sync' | 'update') {
         :running-action="runningAction"
         :pending-count="pendingCount"
         :available-updates="view?.availableUpdates ?? 0"
-        :show-setup="configuration?.firstRun === true || setupOpen"
+        :show-setup="configuration?.firstRun === true && !setupOpen"
         :view-settings="viewSettings"
         :title="mainView === 'diagnostics' ? 'Diagnostics' : 'Resources'"
         @toggle-inspector="toggleInspector"
@@ -1412,7 +1412,7 @@ async function run(action: 'sync' | 'update') {
       />
 
       <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
-      <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
+      <p v-else-if="view && !setupOpen && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
         No supported target harnesses are configured.
       </p>
       <div v-if="view?.latestVersion" class="workspace__notice workspace__release-notice" role="status">
