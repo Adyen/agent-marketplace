@@ -16,7 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const maxProfileBytes = 4 << 20
+// MaxProfileBytes bounds the byte size accepted by Parse.
+const MaxProfileBytes = 4 << 20
 const profileInvalidCode = "marketplace.profile.invalid"
 const profileDigestMismatchCode = "marketplace.profile.digest-mismatch"
 
@@ -80,8 +81,8 @@ var (
 )
 
 func Parse(data []byte, expected Identity) (Profile, error) {
-	if int64(len(data)) > maxProfileBytes {
-		return Profile{}, fmt.Errorf("%s: profile exceeds %d bytes", profileInvalidCode, maxProfileBytes)
+	if int64(len(data)) > MaxProfileBytes {
+		return Profile{}, fmt.Errorf("%s: profile exceeds %d bytes", profileInvalidCode, MaxProfileBytes)
 	}
 	if err := expected.Validate(); err != nil {
 		return Profile{}, err

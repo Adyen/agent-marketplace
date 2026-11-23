@@ -56,7 +56,7 @@ func TestTargetProfileParse(t *testing.T) {
 	if _, err := Parse(changed, profileIdentity(changed, "invented-app")); err != nil {
 		t.Fatalf("Parse() rejected changed exact bytes with their digest: %v", err)
 	}
-	oversized := append([]byte(validProfileYAML), bytes.Repeat([]byte{'#'}, maxProfileBytes)...)
+	oversized := append([]byte(validProfileYAML), bytes.Repeat([]byte{'#'}, MaxProfileBytes)...)
 	if _, err := Parse(oversized, profileIdentity(oversized, "invented-app")); err == nil {
 		t.Fatal("Parse() accepted input larger than the profile limit")
 	}
