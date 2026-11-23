@@ -262,9 +262,10 @@ func TestRequiresMigrationLeavesExistingRowsUnindexed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Roll back only the requires migration for this fixture.
 	if _, err := db.ExecContext(ctx, `
 ALTER TABLE resource_revisions DROP COLUMN requires;
-DELETE FROM marketplace_metadata_v2_migrations WHERE version = (SELECT max(version) FROM marketplace_metadata_v2_migrations);
+DELETE FROM marketplace_metadata_v2_migrations WHERE version = 10;
 INSERT INTO resource_revisions (marketplace_id, registry_id, kind, name, content_digest, description)
 VALUES ('mp', 'reg', 'skill', 'legacy', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '');
 `); err != nil {

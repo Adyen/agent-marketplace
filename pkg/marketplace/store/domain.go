@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
 
 // Strong ID types for the Marketplace domain.
@@ -404,6 +406,8 @@ type ResourceAssessment struct {
 	InspectionManifestDigest RevisionDigest `json:"inspection_manifest_digest"`
 
 	AssessedAt time.Time `json:"assessed_at"`
+
+	HostPackageIdentity *targetprofile.Binding `json:"host_package_identity,omitempty"`
 }
 
 // Provenance records registry identity metadata for a resource revision.

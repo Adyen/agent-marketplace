@@ -19,7 +19,7 @@ const assessedResourceColumns = `
 	rr.marketplace_id, rr.registry_id, rr.kind, rr.name, rr.content_digest,
 	rr.archive_digest, rr.license, rr.description, COALESCE(rr.requires,''),
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
-	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
+	ra.findings, ra.inspection_manifest_digest, ra.assessed_at, ra.host_package_identity,
 	ro.revision_commit, ro.manifest_digest, ro.source_path,
 	rv.kind, rv.target_id, rv.reason, rv.applied_at,
 	rc.kind, rc.target_id, rc.reason, rc.applied_at,
@@ -79,6 +79,7 @@ func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevis
 	var archive, license, sourcePath sql.NullString
 	var findings string
 	var assessedAt int64
+	var binding sql.NullString
 	var revKind, revTarget, revReason sql.NullString
 	var revAt sql.NullInt64
 	var coordKind, coordTarget, coordReason sql.NullString
@@ -91,6 +92,7 @@ func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevis
 		&out.ContentDigest, &archive, &license, &out.Description, &out.Requires,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
 		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
+		&binding,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath,
 		&revKind, &revTarget, &revReason, &revAt,
 		&coordKind, &coordTarget, &coordReason, &coordAt,
@@ -109,6 +111,9 @@ func (s *Store) scanAssessedResource(sc rowScanner) (store.AssessedResourceRevis
 	out.Assessment.AssessedAt = microToTime(assessedAt)
 	if err := unmarshalJSON([]byte(findings), &out.Assessment.Findings); err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if err := store.RestoreAssessmentBinding(&out.Assessment, binding); err != nil {
+		return store.AssessedResourceRevision{}, err
 	}
 	out.Occurrence.Coordinate = out.Coordinate
 	out.Occurrence.ContentDigest = out.ContentDigest
@@ -308,13 +313,21 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 	if err != nil {
 		return err
 	}
+	var binding any
+	if finalized.HostPackageIdentity != nil {
+		encoded, err := marshalJSON(finalized.HostPackageIdentity)
+		if err != nil {
+			return err
+		}
+		binding = encoded
+	}
 	_, err = s.q.ExecContext(ctx, `INSERT OR IGNORE INTO resource_assessments
 		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest,
-		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at, host_package_identity)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind, finalized.Coordinate.Name,
 		finalized.ContentDigest, finalized.AssessmentDigest, finalized.AnalyzerVersion, finalized.PolicyDigest,
-		finalized.Decision, findings, finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt))
+		finalized.Decision, findings, finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt), binding)
 	if err != nil {
 		return err
 	}
@@ -359,13 +372,13 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
 	return scanResourceAssessment(s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at
+		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at, host_package_identity
 		FROM resource_assessments WHERE assessment_digest=? LIMIT 1`, digest))
 }
 
 func (s *Store) getResourceAssessment(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest, assessmentDigest store.AssessmentDigest) (store.ResourceAssessment, error) {
 	return scanResourceAssessment(s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at
+		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at, host_package_identity
 		FROM resource_assessments WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=? AND assessment_digest=?`,
 		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest, assessmentDigest))
 }
@@ -374,10 +387,11 @@ func scanResourceAssessment(sc rowScanner) (store.ResourceAssessment, error) {
 	var assessment store.ResourceAssessment
 	var findings string
 	var assessedAt int64
+	var binding sql.NullString
 	err := sc.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry, &assessment.Coordinate.Kind,
 		&assessment.Coordinate.Name, &assessment.ContentDigest, &assessment.AssessmentDigest,
 		&assessment.AnalyzerVersion, &assessment.PolicyDigest, &assessment.Decision, &findings,
-		&assessment.InspectionManifestDigest, &assessedAt)
+		&assessment.InspectionManifestDigest, &assessedAt, &binding)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceAssessment{}, store.ErrNotFound
 	}
@@ -388,12 +402,15 @@ func scanResourceAssessment(sc rowScanner) (store.ResourceAssessment, error) {
 	if err := unmarshalJSON([]byte(findings), &assessment.Findings); err != nil {
 		return store.ResourceAssessment{}, fmt.Errorf("unmarshal assessment findings: %w", err)
 	}
+	if err := store.RestoreAssessmentBinding(&assessment, binding); err != nil {
+		return store.ResourceAssessment{}, err
+	}
 	return assessment, nil
 }
 
 func (s *Store) ListResourceAssessments(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) ([]store.ResourceAssessment, error) {
 	rows, err := s.q.QueryContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at
+		assessment_digest, analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at, host_package_identity
 		FROM resource_assessments WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=?
 		ORDER BY assessed_at DESC, assessment_digest DESC`, coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest)
 	if err != nil {

@@ -1,13 +1,219 @@
 package store_test
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+func TestPlaceResourceAssessmentBindsExactProfile(t *testing.T) {
+	a := validResourceAssessment()
+	a.Coordinate.Kind = "herdr-app/mod"
+	binding := &targetprofile.Binding{
+		PackageContentDigest:  string(a.ContentDigest),
+		DeliveryMappingDigest: sha256Text("d"),
+		ProfileDigest:         sha256Text("e"),
+		ProfileIdentity: targetprofile.Identity{
+			TargetID:       "herdr-app",
+			SourceID:       "builtin:agent-marketplace",
+			RevisionDigest: sha256Text("e"),
+		},
+	}
+	a.HostPackageIdentity = binding
+	base, err := store.FinalizeResourceAssessment(a)
+	if err != nil {
+		t.Fatalf("FinalizeResourceAssessment: %v", err)
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("finalized assessment is invalid: %v", err)
+	}
+
+	clone := func() store.ResourceAssessment {
+		candidate := a
+		copy := *binding
+		candidate.HostPackageIdentity = &copy
+		return candidate
+	}
+	assertIdentityChange := func(name string, change func(*targetprofile.Binding)) {
+		t.Run(name, func(t *testing.T) {
+			candidate := clone()
+			change(candidate.HostPackageIdentity)
+			updated, err := store.FinalizeResourceAssessment(candidate)
+			if err != nil {
+				t.Fatalf("FinalizeResourceAssessment: %v", err)
+			}
+			if updated.AssessmentDigest == base.AssessmentDigest {
+				t.Fatal("changing exact profile binding did not change assessment identity")
+			}
+			candidate.AssessmentDigest = base.AssessmentDigest
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("Validate accepted the stale assessment digest")
+			}
+		})
+	}
+	assertIdentityChange("mapping digest", func(binding *targetprofile.Binding) {
+		binding.DeliveryMappingDigest = sha256Text("c")
+	})
+	assertIdentityChange("same revision from another profile source", func(binding *targetprofile.Binding) {
+		binding.ProfileIdentity.SourceID = "directory:%2Fprofiles%2Fherdr-app"
+	})
+
+	t.Run("missing binding", func(t *testing.T) {
+		candidate := clone()
+		candidate.HostPackageIdentity = nil
+		if _, err := store.FinalizeResourceAssessment(candidate); err == nil {
+			t.Fatal("FinalizeResourceAssessment accepted a missing host package identity")
+		}
+	})
+	t.Run("wrong payload digest", func(t *testing.T) {
+		candidate := clone()
+		candidate.HostPackageIdentity.PackageContentDigest = sha256Text("b")
+		if _, err := store.FinalizeResourceAssessment(candidate); err == nil {
+			t.Fatal("FinalizeResourceAssessment accepted a binding for different package content")
+		}
+	})
+	t.Run("legacy kind with binding", func(t *testing.T) {
+		candidate := clone()
+		candidate.Coordinate.Kind = "skill"
+		if _, err := store.FinalizeResourceAssessment(candidate); err == nil {
+			t.Fatal("FinalizeResourceAssessment accepted a host package identity on a legacy kind")
+		}
+	})
+
+	binding.DeliveryMappingDigest = sha256Text("b")
+	if base.HostPackageIdentity.DeliveryMappingDigest != sha256Text("d") {
+		t.Fatal("FinalizeResourceAssessment retained the caller's mutable binding pointer")
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("mutating caller's binding invalidated finalized assessment: %v", err)
+	}
+}
+
+func TestPlaceAssessmentStorage(t *testing.T) {
+	for _, backend := range []string{"sqlite", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			meta := openCatalogTestStore(t, backend)
+			ctx := context.Background()
+
+			a := validResourceAssessment()
+			a.Coordinate.Kind = "herdr-app/mod"
+			a.HostPackageIdentity = &targetprofile.Binding{
+				PackageContentDigest:  string(a.ContentDigest),
+				DeliveryMappingDigest: sha256Text("d"),
+				ProfileDigest:         sha256Text("e"),
+				ProfileIdentity: targetprofile.Identity{
+					TargetID:       "herdr-app",
+					SourceID:       "builtin:agent-marketplace",
+					RevisionDigest: sha256Text("e"),
+				},
+			}
+			manifest := store.RevisionDigest(sha256Text("f"))
+			if err := meta.PutResourceRevision(ctx, store.ResourceRevision{
+				Coordinate: a.Coordinate, ContentDigest: a.ContentDigest,
+			}); err != nil {
+				t.Fatalf("PutResourceRevision: %v", err)
+			}
+			if err := meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+				RegistryID: a.Coordinate.Registry, Ref: "main", Commit: "place-commit",
+				RegistryRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror,
+			}); err != nil {
+				t.Fatalf("PutRegistryOccurrence: %v", err)
+			}
+			if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+				Coordinate: a.Coordinate, ContentDigest: a.ContentDigest, Commit: "place-commit",
+				ManifestDigest: manifest,
+			}); err != nil {
+				t.Fatalf("PutResourceOccurrence: %v", err)
+			}
+
+			a, err := store.FinalizeResourceAssessment(a)
+			if err != nil {
+				t.Fatalf("FinalizeResourceAssessment: %v", err)
+			}
+			for i := 0; i < 2; i++ {
+				if err := meta.PutResourceAssessment(ctx, a); err != nil {
+					t.Fatalf("PutResourceAssessment retry %d: %v", i+1, err)
+				}
+			}
+			if err := meta.SetCurrentResourceAssessment(ctx, a); err != nil {
+				t.Fatalf("SetCurrentResourceAssessment: %v", err)
+			}
+
+			assertStored := func(t *testing.T, assessment store.ResourceAssessment) {
+				t.Helper()
+				if assessment.HostPackageIdentity == nil {
+					t.Fatal("stored host package identity is nil")
+				}
+				if !reflect.DeepEqual(*assessment.HostPackageIdentity, *a.HostPackageIdentity) {
+					t.Fatalf("stored host package identity = %#v, want %#v", *assessment.HostPackageIdentity, *a.HostPackageIdentity)
+				}
+				if err := assessment.Validate(); err != nil {
+					t.Fatalf("stored assessment is invalid: %v", err)
+				}
+			}
+
+			got, err := meta.GetResourceAssessment(ctx, a.AssessmentDigest)
+			if err != nil {
+				t.Fatalf("GetResourceAssessment: %v", err)
+			}
+			assertStored(t, got)
+			listed, err := meta.ListResourceAssessments(ctx, a.Coordinate, a.ContentDigest)
+			if err != nil {
+				t.Fatalf("ListResourceAssessments: %v", err)
+			}
+			if len(listed) != 1 {
+				t.Fatalf("ListResourceAssessments returned %d records, want 1", len(listed))
+			}
+			assertStored(t, listed[0])
+			revision, err := meta.GetResourceRevision(ctx, a.Coordinate, a.ContentDigest)
+			if err != nil {
+				t.Fatalf("GetResourceRevision: %v", err)
+			}
+			assertStored(t, revision.Assessment)
+			latest, err := meta.GetLatestResourceRevision(ctx, a.Coordinate)
+			if err != nil {
+				t.Fatalf("GetLatestResourceRevision: %v", err)
+			}
+			assertStored(t, latest.Assessment)
+
+			legacy := validResourceAssessment()
+			legacy.Coordinate.Name = "legacy-review"
+			if err := meta.PutResourceRevision(ctx, store.ResourceRevision{
+				Coordinate: legacy.Coordinate, ContentDigest: legacy.ContentDigest,
+			}); err != nil {
+				t.Fatalf("PutResourceRevision legacy: %v", err)
+			}
+			if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{
+				Coordinate: legacy.Coordinate, ContentDigest: legacy.ContentDigest, Commit: "place-commit",
+				ManifestDigest: manifest,
+			}); err != nil {
+				t.Fatalf("PutResourceOccurrence legacy: %v", err)
+			}
+			legacy, err = store.FinalizeResourceAssessment(legacy)
+			if err != nil {
+				t.Fatalf("FinalizeResourceAssessment legacy: %v", err)
+			}
+			if err := meta.PutResourceAssessment(ctx, legacy); err != nil {
+				t.Fatalf("PutResourceAssessment legacy: %v", err)
+			}
+			storedLegacy, err := meta.GetResourceAssessment(ctx, legacy.AssessmentDigest)
+			if err != nil {
+				t.Fatalf("GetResourceAssessment legacy: %v", err)
+			}
+			if storedLegacy.HostPackageIdentity != nil {
+				t.Fatalf("legacy host package identity = %#v, want nil", storedLegacy.HostPackageIdentity)
+			}
+			if err := storedLegacy.Validate(); err != nil {
+				t.Fatalf("stored legacy assessment is invalid: %v", err)
+			}
+		})
+	}
+}
 
 func TestFinalizeResourceAssessmentIsDeterministic(t *testing.T) {
 	assessment := validResourceAssessment()
