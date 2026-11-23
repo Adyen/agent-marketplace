@@ -331,6 +331,17 @@ describe('WorkspaceView', () => {
     expect(wrapper.find('button[aria-label="Show Stale group"] .gui-dot').exists()).toBe(false)
   })
 
+  it('colours the Pending sync group dot with the warning tone', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('pending', { group: 'pending', status: 'pending sync' })]) }))
+    await tick()
+
+    const dot = wrapper.get('button[aria-label="Show Pending sync group"] .gui-dot')
+    expect(dot.classes()).toContain('gui-dot--warning')
+    expect(dot.classes()).not.toContain('gui-dot--signal')
+  })
+
   it('keeps a single diagnostic message selectable without a disclosure button', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)

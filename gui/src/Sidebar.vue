@@ -91,7 +91,7 @@ function toggleSourceGroup(key: string) {
   foldedSourceGroups.value.has(key) ? foldedSourceGroups.value.delete(key) : foldedSourceGroups.value.add(key)
 }
 
-function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null {
+function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
   if (group.count === 0) {
     return null
   }
@@ -99,11 +99,10 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
     case 'attention':
     case 'malformed':
     case 'stale':
+    case 'pending':
       return 'warning'
     case 'broken':
       return 'danger'
-    case 'pending':
-      return 'signal'
     default:
       return null
   }
