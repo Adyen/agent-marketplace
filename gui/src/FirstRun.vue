@@ -135,11 +135,11 @@ async function finish() {
 
 <template>
   <GuiModal v-model:open="open" title="Set up Agent Marketplace" icon="sparkle" size="lg" :dismissible="!submitting">
-    <p class="gui-steps">
-      <span :class="{ 'gui-steps__current': step === 'targets' }">1 Targets</span>
-      <span :class="{ 'gui-steps__current': step === 'consent' }">2 Telemetry</span>
-      <span :class="{ 'gui-steps__current': step === 'sources' }">3 Sources</span>
-    </p>
+    <ol class="gui-steps">
+      <li :class="{ 'gui-steps__current': step === 'targets' }" :aria-current="step === 'targets' ? 'step' : undefined">1 Targets</li>
+      <li :class="{ 'gui-steps__current': step === 'consent' }" :aria-current="step === 'consent' ? 'step' : undefined">2 Telemetry</li>
+      <li :class="{ 'gui-steps__current': step === 'sources' }" :aria-current="step === 'sources' ? 'step' : undefined">3 Sources</li>
+    </ol>
     <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
     <p v-if="!canInitialize" role="status">Initialization is not currently available.</p>
     <p v-else-if="detectionUnavailable" role="status">Harness detection is unavailable; select targets manually.</p>

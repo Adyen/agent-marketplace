@@ -1827,7 +1827,9 @@ button:disabled {
   display: flex;
   font-size: 12px;
   gap: 12px;
+  list-style: none;
   margin: 0;
+  padding: 0;
 }
 
 .gui-steps__current {

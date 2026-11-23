@@ -150,6 +150,21 @@ describe('First-run setup', () => {
     expect(targets).not.toContain('Choose the Harness targets')
   })
 
+  // spec: gui-first-run/stepper-shows-numbered-steps-without-separators
+  it('shows the setup steps as a numbered list without separators and marks the current step', async () => {
+    const { client, push } = firstRunClient()
+    mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    const steps = Array.from(dialog().querySelectorAll('.gui-steps > li')).map((item) => item.textContent?.trim())
+    expect(steps).toEqual(['1 Targets', '2 Telemetry', '3 Sources'])
+    expect(dialog().querySelector('.gui-steps')?.textContent).not.toContain('·')
+    const current = dialog().querySelector('.gui-steps [aria-current="step"]')
+    expect(current?.textContent?.trim()).toBe('1 Targets')
+    expect(current?.classList.contains('gui-steps__current')).toBe(true)
+  })
+
   it('hides the no-harness notice and Set up while the first-run dialog is open', async () => {
     const { client, push } = firstRunClient()
     const { wrapper } = mountWorkspace(client)
