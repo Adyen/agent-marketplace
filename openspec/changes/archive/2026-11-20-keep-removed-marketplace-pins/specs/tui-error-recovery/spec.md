@@ -19,3 +19,4 @@ fail with the CLI's missing-resource error.
 
 - **WHEN** the removed pin's exact revision is no longer served and is not in the verified cache, and the user starts an update from the TUI
 - **THEN** the TUI update MUST fail, and the errors screen MUST name the resource with the remove-and-install hint
+- **AND** the diagnostics screen MUST also show warnings produced while preparing acquisition locks for the failed update

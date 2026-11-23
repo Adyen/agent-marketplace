@@ -111,7 +111,9 @@ git rm -r skills/code-review
 git commit -m "Remove deprecated code-review skill"
 ```
 
-Release this as a major version. Consumers who still select the old name get an `update` refusal that names it. Their harness keeps the old output until their lock moves without the `update` check, when `sync` removes it with a `selected but not found` warning that tells them to run `agent-marketplace status` or remove the selection.
+Release this as a major version. Consumers who still select the old name from a Git registry get an `update` refusal that names it. Their harness keeps the old output until their lock moves without the `update` check, when `sync` removes it with a `selected but not found` warning that tells them to run `agent-marketplace status` or remove the selection.
+
+Hosted Marketplace consumers with a usable pinned revision keep the old output and get an `update` warning instead. If the pinned revision is no longer usable, `update` still exits `1`.
 
 ## Retire a resource without a replacement
 

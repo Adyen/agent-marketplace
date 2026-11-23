@@ -104,6 +104,13 @@ func resourceFileHookSupportPlan(key outputKey, reportPrefix string) bool {
 	return !key.machineScope && dir != "" && reportPrefix == componentName(dir)
 }
 
+func sameNativeHookOutput(a, b outputKey, repoRoot string) bool {
+	aDestination, aFile, aErr := nativeHookJSONLayout(a, repoRoot)
+	bDestination, bFile, bErr := nativeHookJSONLayout(b, repoRoot)
+	return aErr == nil && bErr == nil &&
+		sameOutputDir(aDestination.Root, bDestination.Root) && aFile.rel == bFile.rel
+}
+
 func addExistingNativeHookOutputKeys(repoRoot string, outputs map[outputKey]bool) {
 	for _, target := range hcc.Targets() {
 		for _, machineScope := range []bool{false, true} {
@@ -113,10 +120,7 @@ func addExistingNativeHookOutputKeys(repoRoot string, outputs map[outputKey]bool
 			}
 			if !machineScope {
 				machineKey := outputKey{target: target, machineScope: true}
-				repoDestination, repoFile, repoErr := nativeHookJSONLayout(key, repoRoot)
-				machineDestination, machineFile, machineErr := nativeHookJSONLayout(machineKey, repoRoot)
-				if repoErr == nil && machineErr == nil &&
-					sameOutputDir(repoDestination.Root, machineDestination.Root) && repoFile.rel == machineFile.rel {
+				if sameNativeHookOutput(key, machineKey, repoRoot) {
 					continue
 				}
 			}

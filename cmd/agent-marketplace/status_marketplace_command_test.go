@@ -88,7 +88,7 @@ func TestStatusReportsRequiredRemovedMarketplacePin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "resources.team.required") || strings.Contains(output, "agent-marketplace remove") {
+	if !strings.Contains(output, "resources.team.required") || !strings.Contains(output, "resources.team.include") || strings.Contains(output, "agent-marketplace remove") {
 		t.Fatalf("required-pin warning has the wrong remediation:\n%s", output)
 	}
 }

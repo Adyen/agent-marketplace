@@ -97,7 +97,7 @@ func RemovedMarketplacePinWarning(entry config.MarketplaceEntry, pin config.Mark
 		if alias == "" {
 			alias = "marketplace"
 		}
-		return errors.New(message + fmt.Sprintf("; change configuration entry %s to drop it", QuoteTerminal("resources."+alias+".required")))
+		return errors.New(message + fmt.Sprintf("; required by %s; to drop it, remove the selection from %s in its owning configuration", QuoteTerminal("resources."+alias+".required"), QuoteTerminal("resources."+alias+".include")))
 	}
 	return errors.New(message + fmt.Sprintf("; drop it with %s", QuoteTerminal("agent-marketplace remove "+name)))
 }

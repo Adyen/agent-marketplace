@@ -161,7 +161,7 @@ func (r *Resolver) VerifyPinnedRevision(ctx context.Context, entry config.Market
 		if err := r.archiveEvidenceDrift(pin, string(prepared.Revision.ArchiveDigest)); err != nil {
 			return false, err
 		}
-		r.Verified.record(canonical, pin, prepared.Revision)
+		r.Verified.record(canonical, pin, prepared.Revision, false)
 		return true, nil
 	} else {
 		var apiErr *APIError
@@ -211,7 +211,7 @@ func (r *Resolver) VerifyPinnedRevision(ctx context.Context, entry config.Market
 	if err := r.archiveEvidenceDrift(pin, string(revision.ArchiveDigest)); err != nil {
 		return false, err
 	}
-	r.Verified.record(canonical, pin, revision)
+	r.Verified.record(canonical, pin, revision, pin.Acquisition == config.MarketplaceAcquisitionIndexOnly)
 	return true, nil
 }
 
@@ -288,7 +288,7 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
 		}
 	}
-	r.Verified.record(canonical, pin, latest)
+	r.Verified.record(canonical, pin, latest, false)
 	return registry, latest, nil
 }
 

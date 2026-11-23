@@ -112,26 +112,31 @@ type verifiedRevisionKey struct {
 	url, instanceID, registryID, kind, name, digest string
 }
 
-type VerifiedRevisions struct {
-	mu   sync.Mutex
-	revs map[verifiedRevisionKey]store.AssessedResourceRevision
+type verifiedRevision struct {
+	revision       store.AssessedResourceRevision
+	indexOnlyCache bool
 }
 
-func (v *VerifiedRevisions) record(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision) {
+type VerifiedRevisions struct {
+	mu   sync.Mutex
+	revs map[verifiedRevisionKey]verifiedRevision
+}
+
+func (v *VerifiedRevisions) record(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision, indexOnlyCache bool) {
 	if v == nil {
 		return
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.revs == nil {
-		v.revs = make(map[verifiedRevisionKey]store.AssessedResourceRevision)
+		v.revs = make(map[verifiedRevisionKey]verifiedRevision)
 	}
-	v.revs[verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))] = rev
+	v.revs[verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))] = verifiedRevision{revision: rev, indexOnlyCache: indexOnlyCache}
 }
 
-func (v *VerifiedRevisions) lookup(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.AssessedResourceRevision, bool) {
+func (v *VerifiedRevisions) lookup(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (verifiedRevision, bool) {
 	if v == nil {
-		return store.AssessedResourceRevision{}, false
+		return verifiedRevision{}, false
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -859,6 +864,15 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if pin.Kind == "collection" {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only collection resolution is not supported yet")
 	}
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		verified, ok := r.Verified.lookup(entry, pin)
+		verifiedCache := ok && verified.indexOnlyCache && !IndexOnlyOccurrenceChanged(pin, verified.revision)
+		if verifiedCache {
+			// Planning already verified this exact occurrence from cache. Use
+			// cached resolution before any online metadata writes or requests.
+			return r.resolveIndexOnlyPin(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCachedNoFetch, policy, allowedRegistries)
+		}
+	}
 	identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 	cacheDigest := pin.Digest
 	if mode != resolver.MarketplaceResolveModeInspect {
@@ -1326,9 +1340,12 @@ func mustIRKind(kind string) ir.ResourceKind {
 
 func (r *Resolver) fetchResourceRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if mode == resolver.MarketplaceResolveModeRefresh {
-		if rev, ok := r.Verified.lookup(entry, pin); ok && validateResourceRevision(entry, pin, rev) == nil &&
-			(pin.RegistryCommit == "" || (rev.Occurrence.Commit == pin.RegistryCommit && rev.Occurrence.ManifestDigest == store.RevisionDigest(pin.RegistryManifestDigest))) {
-			return rev, nil
+		if verified, ok := r.Verified.lookup(entry, pin); ok {
+			rev := verified.revision
+			if validateResourceRevision(entry, pin, rev) == nil &&
+				(pin.RegistryCommit == "" || (rev.Occurrence.Commit == pin.RegistryCommit && rev.Occurrence.ManifestDigest == store.RevisionDigest(pin.RegistryManifestDigest))) {
+				return rev, nil
+			}
 		}
 	}
 	return client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)

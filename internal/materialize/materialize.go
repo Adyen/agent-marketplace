@@ -1387,6 +1387,23 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 	for _, pin := range retainedPins {
 		for _, target := range pin.Targets {
 			key := outputKey{target: target, machineScope: pin.Source.IsMachineScope()}
+			if pin.Kind == ir.KindHook {
+				hookKey := key
+				if !allOutputs[hookKey] {
+					// Reconcile the shared hook file without activating the pin's scope.
+					other := outputKey{target: key.target, machineScope: !key.machineScope}
+					if allOutputs[other] && sameNativeHookOutput(key, other, repoRoot) {
+						hookKey = other
+					}
+				}
+				if allOutputs[hookKey] {
+					markNativeHookIncomplete(hookKey)
+					if selectedHookNames[hookKey] == nil {
+						selectedHookNames[hookKey] = make(map[string]bool)
+					}
+					selectedHookNames[hookKey][pin.Name] = true
+				}
+			}
 			if !allOutputs[key] {
 				continue
 			}

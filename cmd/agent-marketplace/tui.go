@@ -108,7 +108,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 			updateWarnings = checked.Warnings
 		}
 		if checkErr != nil {
-			return pipeline.SyncResult{Warnings: updateWarnings}, checkErr
+			return pipeline.SyncResult{Warnings: append(updateWarnings, lockWarnings...)}, checkErr
 		}
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}

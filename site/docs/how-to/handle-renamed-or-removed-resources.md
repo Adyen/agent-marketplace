@@ -146,7 +146,7 @@ If the required group lives in the organization file, ask its administrator to c
 
 ## 6. Replace a hosted Marketplace pin
 
-A pinned Marketplace revision keeps installing after a rename or removal upstream. Whether `update` can keep the pin depends on the pinned revision, not the latest one. The pin remains usable while the Marketplace still serves that exact revision, or while your verified local cache holds its revision metadata and artifact.
+After a rename or removal, whether `update` can keep a Marketplace pin depends on the exact revision in your lock, not the latest one. The pinned revision is usable if the Marketplace still serves it and it passes verification, or if your verified local cache holds its revision metadata and artifact. This does not change ordinary online `sync`, which still needs the exact revision from the Marketplace.
 
 When the pinned revision is usable, `update` keeps it at its current revision, updates your other pins, and prints a warning. The warning does not make `update` exit nonzero:
 
@@ -160,13 +160,15 @@ Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": ski
 
 The pin's lock entry and installed content stay byte-identical. When the Marketplace still serves the exact revision, online `agent-marketplace status` adds `removed from the Marketplace; pinned revision kept` to DETAIL without changing STATE. The warning repeats on every `update` while the pin stays selected. If no other errors occur, `update` exits `0`.
 
-A `required` pin behaves the same way except its warning names the configuration entry that marks it required instead of suggesting `remove`, because `agent-marketplace remove` refuses required resources:
+A `required` pin behaves the same way except its warning names the required setting and tells you where to edit the selection, because `agent-marketplace remove` refuses required resources:
 
 ```text
-warning: marketplace "https://marketplace.example.com" pin "shared-agents/skill/foo": removed from the Marketplace; pinned revision kept; change configuration entry "resources.marketplace.required" to drop it
+warning: marketplace "https://marketplace.example.com" pin "shared-agents/skill/foo": removed from the Marketplace; pinned revision kept; required by "resources.marketplace.required"; to drop it, remove the selection from "resources.marketplace.include" in its owning configuration
 ```
 
-To follow the upstream rename, remove the old pin and install the new name from the same scope:
+If the pin is required, replace the old coordinate with the new one in `resources.<alias>.include` in the file that owns the selection. Leave `required: true` in place for the group. If an organization file owns the selection, ask its administrator to make the edit. Run `agent-marketplace sync` to apply changes to a configuration you own.
+
+If the pin is not required, remove the old pin and install the new name from the same scope:
 
 ```bash
 agent-marketplace remove foo --scope repo
@@ -197,7 +199,7 @@ Error: 1 Marketplace resource(s) no longer exist:
 marketplace https://marketplace.example.com pin shared-agents/skill/foo: resource not found; remove the old pin with `agent-marketplace remove foo` and install the new name
 ```
 
-In that 404 case run the same `remove` and `install` commands above; the old pin cannot install again because the revision itself is gone.
+In that 404 case, follow the replacement procedure above for your pin. The old pin cannot install again because the revision itself is gone.
 
 ## 7. Commit the result
 
