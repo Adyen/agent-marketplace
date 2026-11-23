@@ -25,20 +25,19 @@ resources.
 
 ### Requirement: Prerequisites do not change selection
 
-The marketplace SHALL treat prerequisite declarations as advisory and SHALL NOT
-change resource selection because of them.
+When requirement expansion is unset or disabled, Agent Marketplace SHALL treat prerequisite declarations as advisory and SHALL NOT change resource selection because of them. When expansion is enabled, Agent Marketplace SHALL select configured, resolvable prerequisites transitively after collection expansion and required-shadow handling. An unavailable or explicitly excluded prerequisite MUST remain unmet without removing its requiring resource. Implied resources MUST NOT become required selections.
 
 #### Scenario: Install finds an unmet prerequisite
 
-- **WHEN** an installed resource declares a prerequisite that is not selected
+- **WHEN** install selects a resource whose prerequisite remains unmet after resolution, because expansion is disabled or no eligible candidate can be selected
 - **THEN** install MUST emit a remediable warning
-- **AND** it MUST NOT select the prerequisite
+- **AND** it MUST NOT select the unmet prerequisite
 
 #### Scenario: Prerequisite is explicitly excluded
 
 - **WHEN** a selected resource requires an explicitly excluded resource that is not `required: true`
 - **THEN** the marketplace MUST report the unmet prerequisite
-- **AND** it MUST preserve the explicit exclude
+- **AND** it MUST preserve the explicit exclude and the requiring resource's selection
 
 #### Scenario: Excluded prerequisite is required
 
@@ -120,14 +119,18 @@ repeat unmet prerequisites of resources that were already selected.
 
 ### Requirement: Status orders unmet prerequisites
 
-The `status` `UNMET REQUIREMENTS` table SHALL list one row per unmet
-prerequisite with `RESOURCE` and `REQUIRES` as `<kind>:<name>` and `FIX` as the
-remediation, sorted by resource and then by prerequisite.
+The `status` `UNMET REQUIREMENTS` table SHALL list one row per unmet prerequisite with `RESOURCE` and `REQUIRES` as `<kind>:<name>`, `REASON` as its typed `not-found`, `excluded` or `source-not-configured` reason, and `FIX` as the existing redacted, POSIX-literal remediation. Rows SHALL be sorted by resource and then by prerequisite.
 
 #### Scenario: Rows are sorted
 
 - **WHEN** several selected resources have unmet prerequisites
 - **THEN** status MUST print the rows sorted by `RESOURCE` and then by `REQUIRES`
+
+#### Scenario: Status reports typed reasons safely
+
+- **WHEN** selected resources have missing, excluded and unconfigured-source prerequisites, including a credential-bearing source hint
+- **THEN** status MUST show the corresponding typed reasons and existing installation remedies
+- **AND** credentials MUST be redacted before shell-literal formatting, and status MUST leave configuration, acquisition locks and materialized resources unchanged
 
 ### Requirement: Prerequisite kind syntax
 
@@ -206,10 +209,7 @@ it.
 
 ### Requirement: Prerequisite exit status
 
-Unmet prerequisites SHALL NOT change the exit status of ordinary `install`,
-`sync`, `sync --check`, `status`, or `doctor`. Under `sync --strict`, including
-`sync --strict --check`, they SHALL cause a nonzero exit status without changing
-resource selection.
+Unmet prerequisites SHALL NOT change the exit status of ordinary `install`, `sync`, `sync --check`, `status`, or `doctor`. Under `sync --strict`, including `sync --strict --check`, a prerequisite that remains unmet after resolution SHALL cause a nonzero exit status without changing resource selection. A prerequisite selected by enabled expansion SHALL NOT cause strict sync to fail.
 
 #### Scenario: Commands succeed with unmet prerequisites
 
@@ -220,11 +220,11 @@ resource selection.
 
 - **WHEN** `sync --strict` or `sync --strict --check` finds an unmet prerequisite
 - **THEN** sync MUST print the remediable warning and MUST exit nonzero
-- **AND** it MUST NOT select the prerequisite
+- **AND** it MUST NOT select the unavailable or explicitly excluded prerequisite
 
 #### Scenario: Strict sync succeeds when satisfied
 
-- **WHEN** a selected resource's prerequisites are also selected and `sync --strict` runs
+- **WHEN** a selected resource's prerequisites are selected, including by enabled expansion, and `sync --strict` runs
 - **THEN** sync MUST NOT print an unmet-prerequisite warning or fail because of it
 
 ### Requirement: Prerequisite remediation arguments are shell literals
@@ -240,3 +240,234 @@ Agent Marketplace MUST format registry-authored prerequisite resource names, reg
 
 - **WHEN** an otherwise selected resource declares an unmet prerequisite
 - **THEN** resolution MUST keep the selected resource and typed warning while its install hint represents the prerequisite name literally
+
+### Requirement: Prerequisite lookup uses configured source identity
+
+Agent Marketplace SHALL resolve an unmet prerequisite only from the requiring resource's exact source identity when it has no source hint. A Git `registry` hint SHALL identify an already configured source by normalized Git URL; an optional `path` hint SHALL narrow lookup to that configured root. A hint with no configured match SHALL remain unmet without fallback to the requiring resource's source or acquisition of another source. A directory hint SHALL match only an absolute, cleaned location of an already configured directory source. Lookup SHALL use already discovered catalog resources. A malformed candidate MUST retain its typed malformed diagnostic attributed to the requiring resource.
+
+#### Scenario: Unhinted prerequisite uses the requiring source root
+
+- **WHEN** an unmet prerequisite has no source hint and a matching resource exists only at a different URL, ref, or root
+- **THEN** lookup MUST leave the prerequisite unmet and MUST NOT select the resource from the other source identity
+
+#### Scenario: Configured Git hint narrows lookup to its root
+
+- **WHEN** an unmet prerequisite has a Git hint matching an already configured source and a path naming one of its configured roots
+- **THEN** lookup MUST consider matching resources from that root without acquiring or adding a source
+
+#### Scenario: Unconfigured Git hint has no fallback
+
+- **WHEN** an unmet prerequisite has a Git hint that matches no configured source and a same-named resource exists in the requiring resource's source
+- **THEN** the prerequisite MUST remain unmet with reason `source-not-configured`
+- **AND** the requiring resource's source MUST NOT be used as a fallback
+
+#### Scenario: Directory hints require an absolute configured location
+
+- **WHEN** a directory hint is compared with configured directory sources
+- **THEN** only an absolute, cleaned configured directory location MUST match
+- **AND** a relative path or source-name alias MUST NOT match a directory source
+
+#### Scenario: Malformed candidate keeps its diagnostic attribution
+
+- **WHEN** a candidate for an unmet prerequisite cannot be used because of malformed resource metadata
+- **THEN** Agent Marketplace MUST retain its typed malformed diagnostic attributed to the requiring resource
+- **AND** the requiring resource MUST remain selected
+
+### Requirement: Expanded prerequisites obey scope and selection precedence
+
+When expansion is enabled, Agent Marketplace SHALL admit a new implied resource separately in each scope containing a requiring resource, subject to the existing effective harness-target set. A prerequisite SHALL be satisfied by any resource actually selected in the same resolution with the same kind and name, regardless of source, configuration layer, install scope, or Marketplace selection; scope SHALL affect admission only for newly implied resources. An implied resource SHALL inherit the supplying source entry's targets intersected with the effective harness-target set. Explicit exclusions and exclude-all selections MUST prevent an implied selection unless an existing `required: true` selection supplies it, and a cross-scope exclusion MUST NOT change machine-scope selection. A direct selection MUST win over an implied selection with the same kind and name. Cycles MUST terminate, and deterministic resolved-resource and declaration order MUST determine the first implied winner.
+
+#### Scenario: Transitive prerequisites are selected after collections
+
+- **WHEN** expansion is enabled and a selected resource, including a collection member, requires a resource that itself has a resolvable prerequisite
+- **THEN** Agent Marketplace MUST select the transitive prerequisite closure after collection expansion and required-shadow handling
+- **AND** it MUST keep the original requiring resource selected
+
+#### Scenario: Existing selection satisfies by kind and name
+
+- **WHEN** any resource actually selected in the same resolution has the same kind and name as a prerequisite, regardless of source, configuration layer, install scope, or Marketplace selection
+- **THEN** the prerequisite MUST be considered satisfied without selecting a duplicate
+
+#### Scenario: Implied resources stay within scope and effective targets
+
+- **WHEN** a requiring resource is selected in a scope with an effective harness-target set and its prerequisite is supplied by an entry with declared targets
+- **THEN** the implied resource MUST be admitted only in that requiring scope
+- **AND** its targets MUST be the intersection of the supplying entry's targets and the effective target set
+- **AND** it MUST NOT become a `required: true` selection
+
+#### Scenario: Cross-scope exclusion does not change machine selection
+
+- **WHEN** an exclusion in one scope matches an implied prerequisite selected by a different scope
+- **THEN** the exclusion MUST NOT remove or replace the other scope's selection
+
+#### Scenario: Direct selection wins an implied collision
+
+- **WHEN** a resource is selected directly and a prerequisite resolves to the same kind and name from another source
+- **THEN** the direct selection MUST remain the winner
+
+#### Scenario: Cycles and competing implied candidates resolve deterministically
+
+- **WHEN** selected resources contain a prerequisite cycle or multiple declarations resolve to the same kind and name from different sources
+- **THEN** resolution MUST terminate and the first candidate in resolved-resource and declaration order MUST win
+
+### Requirement: Prerequisite provenance is distinct from collection provenance
+
+Agent Marketplace SHALL retain which selected resources require each implied resource separately from collection membership. Prerequisite expansion MUST NOT be represented as collection provenance, and existing collection provenance MUST remain unchanged.
+
+#### Scenario: Collection member requirement retains both relationships
+
+- **WHEN** a selected collection member requires an implied resource
+- **THEN** the result MUST identify the requiring collection member as the prerequisite source
+- **AND** the implied resource's collection provenance MUST continue to identify only its collection membership
+
+### Requirement: Disabled expansion reports an implied preview
+
+When `requires.expand` is unset or false, Agent Marketplace SHALL compute the transitive closure of eligible prerequisites as an advisory preview without appending implied resources to the actual selected resources or writing implied selections to configuration. Existing selection, warning, and strict-sync semantics MUST remain unchanged. Repeated resolution of the same selections and catalog MUST produce the same preview without duplicate implied resources.
+
+#### Scenario: Disabled expansion preserves selection while previewing prerequisites
+
+- **WHEN** expansion is disabled and a selected resource has a resolvable prerequisite
+- **THEN** the requiring resource MUST remain selected and the prerequisite MUST NOT be selected or written to configuration
+- **AND** the advisory preview MUST contain the transitive implied resources
+
+#### Scenario: Advisory preview is idempotent
+
+- **WHEN** resolution is repeated with the same direct selections, catalogs, and configuration while expansion is disabled
+- **THEN** it MUST produce the same implied preview and actual selection without duplicate implied resources
+
+### Requirement: Unmet prerequisite warnings carry typed reasons
+
+Each unmet prerequisite warning SHALL carry exactly one typed reason: `not-found`, `excluded`, `source-not-configured`, or `unrecorded`. The reason SHALL distinguish an absent candidate, a candidate prevented by an effective exclusion, a source hint with no configured match, and a Marketplace candidate that was found but could not be recorded. Warning text, credential redaction, and shell-literal remediation SHALL retain their existing requirements.
+
+#### Scenario: Missing candidate has not-found reason
+
+- **WHEN** lookup finds no eligible candidate for an unmet prerequisite and no source hint is unconfigured
+- **THEN** its warning MUST carry reason `not-found`
+
+#### Scenario: Excluded candidate has excluded reason
+
+- **WHEN** a matching candidate is prevented from selection by an effective explicit exclusion or exclude-all selection
+- **THEN** its warning MUST carry reason `excluded`
+
+#### Scenario: Unconfigured hint has source-not-configured reason
+
+- **WHEN** a prerequisite's source hint matches no configured source
+- **THEN** its warning MUST carry reason `source-not-configured`
+
+#### Scenario: Unrecordable Marketplace candidate has unrecorded reason
+
+- **WHEN** expansion is enabled and a Marketplace lookup candidate exists but cannot be recorded
+- **THEN** its warning MUST carry reason `unrecorded`
+
+### Requirement: List exposes prerequisite relationships
+
+Configured `list` SHALL include a `VIA` column showing resolved collection provenance and `requires <kind>:<name>` provenance separately when both apply. `list --from` SHALL include a `REQUIRES` column listing valid declared prerequisite kind/name pairs in declaration order, with canonical CLI kind labels and empty cells for resources with no prerequisites. Existing available and selected rows, kind filtering, malformed prerequisite diagnostics and browse-only behavior SHALL remain intact. Registry-authored text SHALL retain terminal escaping, and credential-bearing source information SHALL be redacted before display.
+
+#### Scenario: Configured list retains collection and requirement provenance
+
+- **WHEN** selected resources have collection membership, requirement provenance or both and configured list runs
+- **THEN** its VIA column MUST show the corresponding relationships without treating requirement provenance as a collection
+- **AND** kind filtering MUST retain the matching rows
+
+#### Scenario: Ad hoc list shows declarations without selecting them
+
+- **WHEN** list --from browses resources with multiple valid prerequisite declarations, no declarations or malformed declarations
+- **THEN** REQUIRES MUST show valid kind/name pairs in declaration order and remain empty for resources without valid declarations
+- **AND** malformed prerequisite diagnostics MUST retain their existing non-quoting behavior, and browse MUST NOT write configuration, locks or materialized output
+
+### Requirement: Doctor identifies unconfigured prerequisite hints
+
+Doctor SHALL explicitly identify unmet prerequisites with reason `source-not-configured` as a source-hint configuration warning and present the existing install remediation including `--from`. The check SHALL remain warning-only, SHALL NOT configure or acquire the hinted source, and SHALL retain existing credential redaction, POSIX-literal argument formatting, malformed diagnostics and suppression for selected pending Marketplace providers. A prerequisite satisfied by a selected resource with the same kind and name SHALL NOT produce an unconfigured-source accusation.
+
+#### Scenario: Doctor explains an unconfigured hint without mutation
+
+- **WHEN** a selected resource has an unmet prerequisite whose credential-bearing source hint names no configured source and doctor runs
+- **THEN** doctor MUST explicitly report the unconfigured source hint and the redacted literal install --from remedy with a successful ordinary exit status
+- **AND** it MUST NOT acquire the hinted source or change configuration, locks or materialized output
+
+#### Scenario: Doctor does not accuse satisfied or pending providers
+
+- **WHEN** a prerequisite is satisfied by an actually selected kind/name provider from another source, or its selected Marketplace provider is pending usable local evidence
+- **THEN** doctor MUST retain satisfaction or pending-provider suppression without an unconfigured-source accusation
+
+### Requirement: Marketplace prerequisite lookup uses the configured Marketplace
+
+For an unmet prerequisite declared by a Marketplace-selected resource, Agent Marketplace SHALL look up candidates only in the requiring resource's configured Marketplace entry. Without a registry hint, it SHALL use the requiring resource's registry. With a registry hint, it SHALL use a registry bound in that entry whose registry slug or registry ID equals the hint. A hint with no bound match SHALL remain unmet with reason `source-not-configured`, without fallback to the requiring registry or acquisition of another source. When the requiring pin records a registry commit and the target registry is the requiring registry, lookup SHALL consult only that exact registry occurrence and its verified registry revision manifest. If the Marketplace does not serve that occurrence, or the resource is absent from it, the prerequisite SHALL remain unmet with reason `not-found`, without falling back to the current revision. Otherwise lookup SHALL use the target registry's current revision. A `path` hint SHALL match only when the candidate's source root, the single root of its exact registry occurrence containing its source path, equals the normalized hint. When the source root cannot be established, the candidate SHALL be unresolved with reason `not-found`. An effective exact Marketplace exclusion SHALL give reason `excluded`. Offline resolution MUST NOT contact a Marketplace for lookup. Lookup failures other than an unserved occurrence or an unavailable resource SHALL surface through the existing Marketplace resolution error path. Git and directory prerequisite lookup SHALL remain unchanged.
+
+#### Scenario: Unhinted Marketplace prerequisite uses the requiring registry
+
+- **WHEN** an unmet prerequisite of a Marketplace resource has no hint and a matching resource exists only in another registry
+- **THEN** lookup MUST NOT use the other registry, and the prerequisite MUST remain unmet with reason `not-found`
+
+#### Scenario: Unbound Marketplace registry hint has no fallback
+
+- **WHEN** a Marketplace prerequisite's registry hint names no registry bound in the requiring Marketplace entry
+- **THEN** the prerequisite MUST remain unmet with reason `source-not-configured`
+- **AND** no Marketplace request MUST be made for that prerequisite
+
+#### Scenario: Registry commit lookup does not fall back to the current revision
+
+- **WHEN** the requiring pin records a registry commit whose occurrence the Marketplace does not serve, or which lacks the prerequisite
+- **THEN** the prerequisite MUST remain unmet with reason `not-found`
+- **AND** the current revision MUST NOT be used
+
+#### Scenario: Unestablished source root leaves a path hint unresolved
+
+- **WHEN** a Marketplace prerequisite has a path hint and the candidate's source root cannot be established or differs from the hint
+- **THEN** the prerequisite MUST remain unmet with reason `not-found`
+
+#### Scenario: Offline resolution makes no lookup request
+
+- **WHEN** resolution runs offline with an unmet Marketplace prerequisite
+- **THEN** no Marketplace request MUST be made for it
+
+### Requirement: Requires-held Marketplace pins are implied, never user-selected
+
+A Marketplace resource that the acquisition lock holds only through requires edges SHALL NOT be a user selection. It SHALL be matched through a requires edge whose parent is selected and still declares a prerequisite with its kind and name. When expansion is enabled, it SHALL be selected as an implied resource with prerequisite provenance naming each such parent. When expansion is disabled, it SHALL appear in the implied preview and SHALL NOT be selected. A requires-held resource with no such parent SHALL be neither selected nor previewed. Requires provenance MUST NOT be reported as collection provenance. Lock-to-configuration admission SHALL treat a resource reachable through requires edges from a reachable parent as reachable.
+
+#### Scenario: Enabled expansion selects a requires-held pin as implied
+
+- **WHEN** expansion is enabled and a selected Marketplace resource still requires a resource that the lock holds only through its requires edge
+- **THEN** that resource MUST be selected as an implied resource whose prerequisite provenance names the parent
+
+#### Scenario: Disabled expansion previews a requires-held pin
+
+- **WHEN** expansion is disabled and the lock holds a resource only through a requires edge of a selected resource that still requires it
+- **THEN** the resource MUST appear in the implied preview and MUST NOT be selected
+
+#### Scenario: Orphaned requires-held pin is ignored
+
+- **WHEN** no selected parent of a requires-held resource still declares its prerequisite
+- **THEN** the resource MUST be neither selected nor previewed
+
+#### Scenario: Requires provenance is not collection provenance
+
+- **WHEN** a requires-held resource is reported
+- **THEN** it MUST NOT be reported as a collection member
+
+### Requirement: Release N does not record Marketplace prerequisites
+
+Agent Marketplace SHALL NOT write a requires edge or create a Marketplace prerequisite pin. A lookup candidate SHALL appear in the implied preview, but it MUST NOT preserve materialized outputs or block their pruning. When expansion is enabled, the prerequisite SHALL remain unmet with reason `unrecorded`. Every acquisition-lock rewrite SHALL keep requires edges whose parent remains locked with the same content digest, drop requires edges whose parent is gone or has a different digest, and prune records that only dropped edges held. Lookup MUST NOT change configuration or acquisition-lock bytes.
+
+#### Scenario: Lookup candidate is previewed, not recorded
+
+- **WHEN** lookup finds a candidate for an unmet Marketplace prerequisite
+- **THEN** the candidate MUST appear in the implied preview
+- **AND** neither configuration nor the acquisition lock MUST change
+- **AND** the candidate MUST NOT preserve or block pruning of any materialized output
+
+#### Scenario: Enabled expansion reports an unrecorded candidate
+
+- **WHEN** expansion is enabled and lookup finds a candidate for an unmet Marketplace prerequisite
+- **THEN** the prerequisite MUST remain unmet with reason `unrecorded`
+
+#### Scenario: Updating a requiring resource prunes its stale requires-held pins
+
+- **WHEN** a requiring resource is updated to a new content digest and the lock holds another resource only through its requires edge
+- **THEN** the rewritten lock MUST drop that edge and the record it alone held
+- **AND** it MUST NOT contain any new requires edge
+
+#### Scenario: Unrelated lock rewrites keep valid requires edges
+
+- **WHEN** the lock is rewritten for an unrelated install, removal, or sync while a requires edge's parent stays locked with the same digest
+- **THEN** the rewritten lock MUST keep that edge and the record it holds

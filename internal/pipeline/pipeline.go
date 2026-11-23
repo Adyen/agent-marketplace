@@ -109,16 +109,19 @@ type ResolveOptions struct {
 }
 
 type ResolveResult struct {
-	OrgCfg                *config.Config
-	GlobalCfg             *config.Config
-	RepoCfg               *config.Config
-	LocalCfg              *config.LocalConfig
-	MergedCfg             *config.Config
-	LoadedCfg             *config.Config
-	MaterializationModes  config.MaterializationModes
-	CatalogLoad           catalog.LoadResult
-	Resolved              []resolver.ResolvedArtifact
-	PluginPlan            catalog.PluginSelectionPlan
+	OrgCfg               *config.Config
+	GlobalCfg            *config.Config
+	RepoCfg              *config.Config
+	LocalCfg             *config.LocalConfig
+	MergedCfg            *config.Config
+	LoadedCfg            *config.Config
+	MaterializationModes config.MaterializationModes
+	CatalogLoad          catalog.LoadResult
+	Resolved             []resolver.ResolvedArtifact
+	PluginPlan           catalog.PluginSelectionPlan
+	// ImpliedPreview is the advisory closure computed while requires.expand
+	// is disabled; it is never part of Resolved.
+	ImpliedPreview        []resolver.ResolvedArtifact
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
@@ -723,6 +726,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 		resolver.WithSelectedCollections(&selectedCollections),
+		resolver.WithImpliedPreview(&result.ImpliedPreview),
 	)
 	for i := range resolved {
 		if resolved[i].Kind != ir.KindPlugin {
@@ -1179,7 +1183,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			result.Warnings = append(result.Warnings, issue)
 		}
 	}
-	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(materializableImpliedPreview(resolved.ImpliedPreview))}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}

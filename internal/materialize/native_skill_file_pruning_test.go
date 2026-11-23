@@ -84,7 +84,7 @@ func testNativeMarkedFilePruning(t *testing.T, commandLane bool) {
 			}
 			var report TargetReport
 			if commandLane {
-				report, err = syncCommandFiles(out, nil, dryRun, true, boundary)
+				report, err = syncCommandFiles(out, nil, dryRun, true, portableSyncContext{boundary: boundary})
 			} else {
 				report, err = syncSkillLinks(out, nil, dryRun, true, portableSyncContext{boundary: boundary})
 			}

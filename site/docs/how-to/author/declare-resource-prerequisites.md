@@ -32,7 +32,7 @@ metadata:
 Review code with the documentation MCP server available.
 ```
 
-`kind` defaults to `skill`; `registry` and `path` are optional hints that the CLI copies into the `--from` and `--path` flags of the install command it suggests. They do not restrict where the prerequisite may come from. The [resource prerequisites reference](../../reference/resource-prerequisites.md) lists every accepted field and kind spelling.
+`kind` defaults to `skill` when you leave it out and accepts the same spellings as `--kind` (`agents`, `commands`, `mcp_servers`, and so on, matched case-insensitively). `registry` and `path` are optional hints: by default the CLI only copies them into the `--from` and `--path` flags of the install command it suggests, and they do not restrict where the prerequisite may come from. When a consumer opts in to [requirement expansion](../../reference/resource-prerequisites.md#requirement-expansion) (`requires.expand: true`), the same hints steer prerequisite lookup — a `registry` hint must match a source the consumer already configured (a Git source by normalized URL, with `path` narrowing to a configured root, or a directory source by absolute location), and an unconfigured hint is never fetched or replaced by a fallback source.
 
 ## 3. Use the shorthand for the simple case
 
@@ -61,7 +61,9 @@ warning: skill "review-code" requires mcp "docs-server", but it is not selected
 Installed review-code in this repo
 ```
 
-The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception: it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
+Remediation arguments are POSIX shell literals: simple values print unquoted, and values that need quoting are single-quoted. When `requires.expand: true` selects the prerequisite transitively, `install` instead ends its summary with `also selected mcp "docs-server" (required by skill "review-code")`; with expansion disabled an eligible prerequisite prints as `would also select` without being installed.
+
+The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception — it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
 
 ## 5. Verify with `status`
 
@@ -82,14 +84,16 @@ Status lists the same prerequisite in an `UNMET REQUIREMENTS` table sorted by `R
 
 ```text
 UNMET REQUIREMENTS
-RESOURCE           REQUIRES         FIX
-skill:review-code  mcp:docs-server  agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
+RESOURCE           REQUIRES         REASON                  FIX
+skill:review-code  mcp:docs-server  source-not-configured   agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
 ```
+
+`REASON` is `not-found`, `excluded`, `source-not-configured`, or `unrecorded`. The last applies only to a Marketplace prerequisite whose lookup found a candidate that this release does not record. Because this sample names a `registry` hint that the consumer never configured, `agent-marketplace doctor` also reports `unconfigured prerequisite source: skill "review-code" requires mcp "docs-server" from https://github.com/example-org/integrations.git`. That report is warning only; `doctor` does not configure or fetch the hinted source.
 
 ## Boundaries
 
-- A prerequisite is met when a resource with that kind and name is selected in the same run, from any source or configuration layer. `registry` and `path` are remediation hints only.
-- Prerequisites are advisory. The CLI never installs them automatically.
+- A prerequisite is met when a resource with that kind and name is selected in the same run, from any source or configuration layer.
+- Prerequisites are advisory by default. A consumer who sets `requires.expand: true` in a v4 configuration layer selects declared prerequisites transitively, and `registry`/`path` hints steer that lookup — but only against sources the consumer already configured; the CLI never fetches a new one. See [Requirement expansion](../../reference/resource-prerequisites.md#requirement-expansion).
 - URL credentials inside a `registry` hint are replaced with `***` in the suggested command.
 
 ## Troubleshooting

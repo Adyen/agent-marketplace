@@ -132,6 +132,50 @@ func TestV4MarketplaceLockHydration(t *testing.T) {
 	}
 }
 
+func TestV4MarketplaceRequiresEdgeAdmitsRequiresHeldPin(t *testing.T) {
+	doc := v4LockFixture(t, lockfile.ScopeRepo)
+	lint := v4LockResource("tools", "tools-id", "skill", "lint", v4sha("3"), v4sha("3"))
+	lint.ArchiveDigest = lockfile.Digest(v4sha("4"))
+	lint.SelectedBy = []lockfile.MarketplaceSelectionLock{
+		{RegistryID: "tools-id", Kind: "skill", Name: "review", Revision: lockfile.Digest(v4sha("a"))},
+	}
+	var err error
+	doc, err = lockfile.Normalize(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL:              doc.Marketplaces[0].URL,
+			InstanceID:       doc.Marketplaces[0].InstanceID,
+			RegistryBindings: doc.Marketplaces[0].RegistryBindings,
+			Resources:        append(append([]lockfile.MarketplaceResourceLock(nil), doc.Marketplaces[0].Resources...), lint),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := v4LockConfig(t).ToLegacyConfigWithLock(repoLayer, &doc)
+	if err != nil {
+		t.Fatalf("requires-held pin must be admitted: %v", err)
+	}
+	var lintPin *MarketplaceResourcePin
+	for i := range cfg.Marketplaces[0].Resources {
+		if cfg.Marketplaces[0].Resources[i].Name == "lint" {
+			lintPin = &cfg.Marketplaces[0].Resources[i]
+		}
+	}
+	if lintPin == nil {
+		t.Fatalf("lint pin missing: %#v", cfg.Marketplaces[0].Resources)
+		return
+	}
+	if lintPin.Direct || len(lintPin.SelectedBy.List()) != 0 {
+		t.Fatalf("requires edge leaked into collection selected_by: %#v", lintPin)
+	}
+	edges := lintPin.RequiresEdges.List()
+	if len(edges) != 1 || edges[0] != (MarketplaceRequirementEdge{RegistryID: "tools-id", Kind: "skill", Name: "review", Revision: v4sha("a")}) {
+		t.Fatalf("requires edges = %#v", lintPin.RequiresEdges.List())
+	}
+}
+
 func TestV4MarketplaceExplicitRequiredPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name, policy string
@@ -529,6 +573,7 @@ func TestLoadV4MarketplaceConfigUsesLogicalLockPathForApprovedLinks(t *testing.T
 	}
 	if cfg == nil || len(cfg.Marketplaces) != 1 || cfg.Marketplaces[0].InstanceID != "market-id" {
 		t.Fatalf("marketplaces = %#v, want the identity from the logical layer lock", cfg)
+		return
 	}
 }
 
@@ -591,6 +636,7 @@ func TestLoadV4MarketplaceConfigWrongScopeLockRejectedAtRead(t *testing.T) {
 			if tc.want == "" {
 				if err != nil || cfg == nil || len(cfg.Marketplaces) != 1 {
 					t.Fatalf("control load = %#v, err = %v", cfg, err)
+					return
 				}
 				return
 			}
@@ -650,6 +696,7 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 	cfg := ec.Repo.Config
 	if cfg == nil || len(cfg.Marketplaces) != 1 {
 		t.Fatalf("repo config = %#v", cfg)
+		return
 	}
 	var lockRead *ConfigRead
 	for i := range ec.Repo.Reads {
@@ -659,5 +706,6 @@ func TestLoadV4MarketplaceLockOverlayRead(t *testing.T) {
 	}
 	if lockRead == nil || !lockRead.Overlay || lockRead.Digest != fmt.Sprintf("%x", sha256.Sum256(lockData)) {
 		t.Fatalf("lock read = %#v, reads = %#v", lockRead, ec.Repo.Reads)
+		return
 	}
 }

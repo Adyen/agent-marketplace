@@ -23,7 +23,7 @@ func TestLegacyPrunePreservesUnmarkedHardlinks(t *testing.T) {
 			good := filepath.Join(root, "z-owned.json")
 			claudeDirectoryWrite(t, good, pruneWalkGood)
 			boundary := &destinationBoundary{machineScope: true, homeDir: root, roots: []string{root}}
-			report, diags := pruneUncoveredManagedMergeFiles(root, nil, dryRun, nil, nil, boundary)
+			report, diags := pruneUncoveredManagedMergeFiles(root, nil, dryRun, nil, nil, nil, boundary)
 			if len(diags) != 0 || len(report.Written) != 1 {
 				t.Fatalf("legacy unmarked file blocked cleanup: %+v, %+v", report, diags)
 			}

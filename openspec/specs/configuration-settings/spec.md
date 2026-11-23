@@ -39,3 +39,24 @@ Operational log attributes and returned errors that identify a telemetry endpoin
 - **WHEN** a telemetry URL that cannot be parsed, or whose query value contains whitespace, reaches a validation error, log attribute, or queued-delivery error
 - **THEN** no part of its userinfo or query value MUST appear in the resulting text
 - **AND** an unparseable value MUST appear only as the fixed redaction marker
+
+### Requirement: Resource-requirement expansion is a layered v4 setting
+
+A v4 configuration MAY declare `requires.expand` as a boolean. Agent Marketplace SHALL merge this setting across organization, user-personal, repository-committed, and personal-local layers using existing settings precedence. Recursive includes SHALL contribute below their containing configuration, and an absent value SHALL NOT override a value from a lower-precedence source. An explicit `false` SHALL remain distinguishable from an absent value.
+
+#### Scenario: Expansion setting follows layered and include precedence
+
+- **WHEN** configuration layers or recursively included fragments declare different `requires.expand` values
+- **THEN** the effective setting MUST follow existing settings precedence, with an included fragment below its containing file
+- **AND** an explicit `false` MUST override a lower-precedence `true`
+
+#### Scenario: Expansion is disabled when no layer sets it
+
+- **WHEN** no applicable configuration layer or include declares `requires.expand`
+- **THEN** resource-requirement expansion MUST default to `false`
+
+#### Scenario: Invalid expansion values are rejected
+
+- **WHEN** a v4 configuration declares `requires.expand` with a non-boolean value
+- **THEN** strict configuration validation MUST reject the invalid setting
+

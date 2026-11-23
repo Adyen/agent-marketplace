@@ -26,7 +26,7 @@ func TestClaudeDeclaredPruneInspectionErrors(t *testing.T) {
 			claudeDirectoryWrite(t, good, pruneWalkGood)
 			boundary := &destinationBoundary{machineScope: true, homeDir: root, roots: []string{root}}
 			report, diags := pruneUncoveredManagedMergeFiles(root, nil, false, nil,
-				map[string]bool{"a-problem/plugin.json": true, "z-good.json": true}, boundary)
+				map[string]bool{"a-problem/plugin.json": true, "z-good.json": true}, nil, boundary)
 			if shape == "cycle" {
 				if len(diags) != 1 || diags[0].Severity != diag.SeverityError || diags[0].Resource != "a-problem/plugin.json" {
 					t.Fatalf("inspection failure disappeared: %+v", diags)

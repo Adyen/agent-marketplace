@@ -66,6 +66,7 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 		bound[binding.RegistryID] = true
 	}
 
+	locked := make(map[string]MarketplaceResourceLock)
 	collections := make(map[string]MarketplaceResourceLock)
 	for j := range mp.Resources {
 		resource := &mp.Resources[j]
@@ -80,6 +81,7 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 		if !bound[resource.RegistryID] {
 			return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].registry_id %q has no registry binding", index, j, resource.RegistryID)
 		}
+		locked[marketplaceResourceIdentity(*resource)] = *resource
 		if resource.Kind == api.KindCollection {
 			collections[resource.RegistryID+"\x00"+resource.Name] = *resource
 		}
@@ -108,9 +110,23 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 			if !bound[selection.RegistryID] {
 				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d].registry_id %q has no registry binding", index, j, k, selection.RegistryID)
 			}
-			collection, exists := collections[selection.RegistryID+"\x00"+selection.Name]
-			if !exists || collection.ContentDigest != selection.Revision {
-				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d] does not resolve to a locked collection", index, j, k)
+			if selection.Kind == "" {
+				collection, exists := collections[selection.RegistryID+"\x00"+selection.Name]
+				if !exists || collection.ContentDigest != selection.Revision {
+					return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d] does not resolve to a locked collection", index, j, k)
+				}
+				continue
+			}
+			if !api.IsMarketplaceKind(selection.Kind) || selection.Kind == api.KindCollection {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d].kind %q is not a requires-edge kind", index, j, k, selection.Kind)
+			}
+			parent := MarketplaceResourceLock{RegistryID: selection.RegistryID, Kind: selection.Kind, Name: selection.Name}
+			if marketplaceResourceIdentity(parent) == marketplaceResourceIdentity(*resource) {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d] requires itself", index, j, k)
+			}
+			requiring, exists := locked[marketplaceResourceIdentity(parent)]
+			if !exists || requiring.ContentDigest != selection.Revision {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].selected_by[%d] does not resolve to a locked requiring resource", index, j, k)
 			}
 		}
 		sort.Slice(resource.SelectedBy, func(a, b int) bool {
@@ -203,5 +219,5 @@ func marketplaceResourceIdentity(resource MarketplaceResourceLock) string {
 }
 
 func marketplaceSelectionIdentity(selection MarketplaceSelectionLock) string {
-	return selection.RegistryID + "\x00" + selection.Name + "\x00" + selection.Revision.String()
+	return selection.RegistryID + "\x00" + selection.Kind + "\x00" + selection.Name + "\x00" + selection.Revision.String()
 }

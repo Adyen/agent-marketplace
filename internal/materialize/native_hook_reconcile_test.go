@@ -1013,7 +1013,7 @@ func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
 			t.Fatalf("stale = %#v, want only the owned hook identity", drift.Stale)
 		}
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true)
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true)
 		if len(patch.prune) != 0 || len(patch.deleteHookEvent) != 0 {
 			t.Fatal("incomplete run pruned or deleted content")
 		}
@@ -1035,7 +1035,7 @@ func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
 			t.Fatal("the retained entry aliases proof state")
 		}
 
-		complete := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, false)
+		complete := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, false)
 		if len(complete.owned) != 0 || len(complete.prune) != 1 {
 			t.Fatal("complete-run control did not prune the stale entry")
 		}
@@ -1070,7 +1070,7 @@ func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
 			t.Fatalf("stale = %#v, want only the recorded server identity", drift.Stale)
 		}
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true)
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true)
 		if len(patch.owned) != 1 || !reflect.DeepEqual(patch.owned[0], recorded) {
 			t.Fatalf("postponed retention = %#v, want the recorded entry %#v", patch.owned, recorded)
 		}
@@ -1081,7 +1081,7 @@ func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
 			t.Fatal("incomplete run wrote, pruned, or deleted keyed entries")
 		}
 
-		complete := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, false)
+		complete := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, false)
 		if len(complete.owned) != 0 || len(complete.prune) != 1 || len(complete.deleteMcp) != 1 {
 			t.Fatal("complete-run control did not prune the stale keyed entry")
 		}

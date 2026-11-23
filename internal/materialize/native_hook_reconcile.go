@@ -329,7 +329,7 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 			rel: registration.Path, additionalKeyedContainers: []string{"enabledPlugins", "extraKnownMarketplaces"},
 		})
 	}
-	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options, dryRun)
+	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options.preview, options, dryRun)
 }
 
 func nativeHookSharesAggregateRoute(key outputKey, repoRoot string) ([]harness.AggregateRoute, bool) {

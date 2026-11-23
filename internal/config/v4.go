@@ -171,6 +171,7 @@ type V4Config struct {
 	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	Requires            *RequiresConfig
 
 	telemetryFields v4TelemetryFields
 }
@@ -369,6 +370,7 @@ var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "allowed_registries": {}, "allowed_marketplaces": {},
 	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
+	"requires": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -386,7 +388,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, Requires: doc.requires, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		attachV4ValidationFile(err, declaringPath)
 		return nil, err
@@ -500,6 +502,7 @@ type v4Document struct {
 	updateCheck         *UpdateCheckConfig
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
+	requires            *RequiresConfig
 	telemetryFields     v4TelemetryFields
 }
 
@@ -694,7 +697,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 			}
 		}
 	}
-	for _, key := range []string{"backup", "logging", "update_check", "telemetry", "materialization"} {
+	for _, key := range []string{"backup", "logging", "update_check", "telemetry", "materialization", "requires"} {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
 			continue
@@ -709,6 +712,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		"update_check":    {"enabled": true},
 		"telemetry":       {"level": true, "endpoint": true, "community_reporting": true, "retention_policy": true, "ca_file": true, "allow_insecure": true, "headers": true},
 		"materialization": {"mode": true, "targets": true},
+		"requires":        {"expand": true},
 	}
 	for key, allowed := range auxiliaryKeys {
 		n := mappingValue(root, key)
@@ -725,6 +729,12 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		mode := mappingValue(n, "mode")
 		if mode != nil && (mode.Kind != yaml.ScalarNode || mode.Tag != "!!str" || (mode.Value != "symlink" && mode.Value != "file")) {
 			return v4err("v4.type", "materialization.mode", mode.Line, "must be symlink or file")
+		}
+	}
+	if n := mappingValue(root, "requires"); n != nil && n.Kind == yaml.MappingNode {
+		expand := mappingValue(n, "expand")
+		if expand != nil && (expand.Kind != yaml.ScalarNode || expand.Tag != "!!bool") {
+			return v4err("v4.type", "requires.expand", expand.Line, "must be a boolean")
 		}
 	}
 	return nil
@@ -816,6 +826,9 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 		}
 	}
 	if err := decode("materialization", &doc.materialization); err != nil {
+		return err
+	}
+	if err := decode("requires", &doc.requires); err != nil {
 		return err
 	}
 	for _, err := range validateBackup(doc.backup) {
@@ -1792,6 +1805,7 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.Telemetry = mergeV4Telemetry(dst.Telemetry, src.Telemetry, src.telemetryFields)
 	dst.telemetryFields = mergeV4TelemetryFields(dst.telemetryFields, src.telemetryFields)
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
+	dst.Requires = mergeV4Requires(dst.Requires, src.Requires)
 	for name, s := range src.Sources {
 		if old, ok := dst.Sources[name]; ok {
 			if old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness || old.Format != s.Format {
@@ -1914,6 +1928,14 @@ func mergeV4Materialization(dst, src *MaterializationConfig) *MaterializationCon
 	return mergeMaterializationConfig(dst, src)
 }
 
+func mergeV4Requires(dst, src *RequiresConfig) *RequiresConfig {
+	if src != nil && src.Expand != nil {
+		value := *src.Expand
+		return &RequiresConfig{Expand: &value}
+	}
+	return dst
+}
+
 func mergeV4TelemetryFields(dst, src v4TelemetryFields) v4TelemetryFields {
 	return v4TelemetryFields{
 		level: dst.level || src.level, endpoint: dst.endpoint || src.endpoint,
@@ -1986,7 +2008,7 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
-	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
+	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, Requires: doc.requires, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
@@ -2485,6 +2507,13 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		r := &mp.Resources[i]
 		resources[r.RegistryID+"\x00"+r.Kind+"\x00"+r.Name] = i
 	}
+	parentOf := func(registryID, kind, name string) (int, bool) {
+		if kind == "" {
+			kind = api.KindCollection
+		}
+		parent, ok := resources[registryID+"\x00"+kind+"\x00"+name]
+		return parent, ok
+	}
 	direct := make(map[int]V4ResourceRequest)
 	for _, request := range effectiveV4Requests(group) {
 		if request.HasHarnesses {
@@ -2508,13 +2537,6 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		direct[index] = request
 	}
 
-	collections := make(map[string]int)
-	for i := range mp.Resources {
-		if mp.Resources[i].Kind == api.KindCollection {
-			r := &mp.Resources[i]
-			collections[r.RegistryID+"\x00"+r.Name] = i
-		}
-	}
 	reachable := make([]bool, len(mp.Resources))
 	for i := range direct {
 		reachable[i] = true
@@ -2526,7 +2548,7 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 				continue
 			}
 			for _, edge := range mp.Resources[i].SelectedBy {
-				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+				parent, ok := parentOf(edge.RegistryID, edge.Kind, edge.Name)
 				if ok && mp.Resources[parent].ContentDigest == edge.Revision {
 					children[parent] = append(children[parent], i)
 				}
@@ -2570,16 +2592,22 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			LockSourcePath:               r.SourcePath,
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
+		var requiresEdges []MarketplaceRequirementEdge
 		for _, edge := range r.SelectedBy {
+			parent, exists := parentOf(edge.RegistryID, edge.Kind, edge.Name)
 			if projection {
-				parent, exists := collections[edge.RegistryID+"\x00"+edge.Name]
 				if !exists || !reachable[parent] || mp.Resources[parent].ContentDigest != edge.Revision {
 					continue
 				}
 			}
-			selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			if edge.Kind == "" {
+				selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			} else {
+				requiresEdges = append(requiresEdges, MarketplaceRequirementEdge{RegistryID: edge.RegistryID, Kind: edge.Kind, Name: edge.Name, Revision: edge.Revision.String()})
+			}
 		}
 		pin.SelectedBy = MarketplaceSelectionsFrom(selections)
+		pin.RequiresEdges = MarketplaceRequirementEdgesFrom(requiresEdges)
 		if request, ok := direct[i]; ok {
 			pin.Direct = true
 			if request.Options.HasAs {

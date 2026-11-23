@@ -61,7 +61,7 @@ func TestReconcileOwnedJSONAggregatesLoadsOwnershipOnceAcrossWrites(t *testing.T
 	loads = 0
 	options := codexHookJSONOptions()
 	options.store, options.sessionName = store, "load-count-test"
-	report := reconcileOwnedJSONAggregates(context.Background(), &Report{PerTarget: make(map[hcc.Target]TargetReport)}, outputKey{target: hcc.TargetCodex}, root, files, work, options, false)
+	report := reconcileOwnedJSONAggregates(context.Background(), &Report{PerTarget: make(map[hcc.Target]TargetReport)}, outputKey{target: hcc.TargetCodex}, root, files, work, nil, options, false)
 	requireNoErrorDiags(t, report.Diags)
 	if loads != 1 {
 		t.Fatalf("Proof-path state loads across two aggregate writes = %d, want 1", loads)

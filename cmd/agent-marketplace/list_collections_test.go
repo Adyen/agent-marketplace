@@ -27,12 +27,21 @@ func writeGitCollection(t *testing.T, working, name string, members ...string) {
 
 func listRowStatuses(t *testing.T, output, kind, name string) []string {
 	t.Helper()
-	_, rows := parseTable(t, output)
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	statusStart := strings.Index(lines[0], "STATUS")
+	statusEnd := strings.Index(lines[0], "VIA")
+	if statusStart < 0 {
+		t.Fatalf("missing STATUS heading in list output:\n%s", output)
+	}
 	var statuses []string
-	for _, row := range rows {
-		fields := strings.Split(row, "|")
-		if len(fields) >= 4 && fields[1] == kind && fields[2] == name {
-			statuses = append(statuses, fields[len(fields)-1])
+	for _, row := range lines[1:] {
+		fields := strings.Fields(row)
+		if len(fields) >= 4 && fields[1] == kind && fields[2] == name && len(row) > statusStart {
+			status := row[statusStart:]
+			if statusEnd > statusStart && len(row) > statusEnd {
+				status = row[statusStart:statusEnd]
+			}
+			statuses = append(statuses, strings.TrimSpace(status))
 		}
 	}
 	return statuses

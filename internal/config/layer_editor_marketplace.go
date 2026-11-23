@@ -89,7 +89,7 @@ func marketplacePinV4Request(pin MarketplaceResourcePin) (v4MarketplaceRequest, 
 	if err := ValidateMarketplaceResourcePin(pin); err != nil {
 		return v4MarketplaceRequest{}, false, err
 	}
-	if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
+	if !pin.Direct && (len(pin.SelectedBy.List()) > 0 || len(pin.RequiresEdges.List()) > 0) {
 		return v4MarketplaceRequest{}, true, nil
 	}
 	if pin.RegistrySlug == "" {
@@ -377,5 +377,34 @@ func (e *LayerEditor) ExcludeMarketplacePin(binding SourceBinding, pin Marketpla
 		v4ScalarAppend(excludes, locator)
 		e.changed = true
 	}
+	return nil
+}
+
+// ExcludeMarketplaceLocator appends a Marketplace exclusion locator
+// ("<registry>/<kind>/<name>") to the source's exclude list. Marketplace
+// exclusions take effect in the user configuration layer or in a layer that
+// acquires the Marketplace.
+func (e *LayerEditor) ExcludeMarketplaceLocator(binding SourceBinding, locator string) error {
+	if err := e.checkBinding(binding); err != nil {
+		return err
+	}
+	if err := validateV4ExclusionForSource(locator, V4SourceMarketplace); err != nil {
+		return err
+	}
+	name := binding.Name
+	group, err := e.ensureV4Group(name)
+	if err != nil {
+		return err
+	}
+	_, exclude := v4GroupSeqs(group)
+	if exclude != nil && v4EditSequenceContains(exclude, locator) {
+		return nil
+	}
+	seq, err := e.ensureV4GroupSeq(group, name, "exclude")
+	if err != nil {
+		return err
+	}
+	v4ScalarAppend(seq, locator)
+	e.changed = true
 	return nil
 }

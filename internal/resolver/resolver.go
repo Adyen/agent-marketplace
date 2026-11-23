@@ -12,6 +12,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -40,6 +41,18 @@ type ResolvedArtifact struct {
 	// directly configured. Format: "collection:<name>@<version>".
 	// Empty string for directly-configured artifacts.
 	Via string
+
+	// RequiredBy records which selected resources declared this artifact as a
+	// prerequisite when it joined the resolution as an implied resource (or
+	// appears in the advisory implied preview). Prerequisite provenance is
+	// kept separate from collection provenance: Via stays collection-only.
+	RequiredBy []ResourceRef
+	Implied    bool
+	// PreviewOnly marks an implied artifact that only joins the implied
+	// preview, never the resolved selection. Marketplace
+	// requirement lookup results stay preview-only because they are never
+	// recorded into configuration.
+	PreviewOnly bool
 
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
@@ -131,6 +144,9 @@ type UnmetRequirementWarning struct {
 	ResourceKind ir.ResourceKind
 	ResourceName string
 	Requirement  catalog.Requirement
+	// Reason is the typed classification of why the prerequisite remains
+	// unmet: not-found, excluded, or source-not-configured.
+	Reason UnmetRequirementReason
 }
 
 func (w *UnmetRequirementWarning) Error() string {
@@ -165,6 +181,7 @@ type resolveOptions struct {
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
 	selectedCollections         *[]ResolvedArtifact
 	pluginSink                  *pluginPlanSink
+	impliedPreview              *[]ResolvedArtifact
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -724,6 +741,10 @@ type SelectedMalformedError struct {
 	// Via is set when the selection originated from a collection expansion
 	// rather than a direct config entry. Format: "collection:<name>@<version>".
 	Via string
+	// RequiredBy is set only when the selection was a declared prerequisite
+	// of another resource; it attributes the diagnostic to the requiring
+	// resource without using collection provenance.
+	RequiredBy *ResourceRef
 	// DirName is the directory (or file) the ingester failed to load. It differs
 	// from Name when the selection matched the authored frontmatter name.
 	DirName string
@@ -740,6 +761,9 @@ func (e *SelectedMalformedError) Error() string {
 	}
 	loc += "@" + e.Ref
 	msg := fmt.Sprintf("%s %q was selected and found in %s but failed to load", skill.KindLabel(e.Kind), e.Name, loc)
+	if e.RequiredBy != nil {
+		msg = fmt.Sprintf("%s %q requires %s", skill.KindLabel(e.RequiredBy.Kind), e.RequiredBy.Name, msg)
+	}
 	if e.DirName != "" && e.DirName != e.Name {
 		// Not "authored as": Name is the authored frontmatter name in exactly
 		// this branch, and DirName is what the ingester saw on disk.
@@ -872,22 +896,24 @@ func malformedSelectionError(
 	url, path, ref string,
 	required bool,
 	via string,
+	requiredBy *ResourceRef,
 ) *SelectedMalformedError {
 	match, found := malformed.lookup(catalogKey, kind, name)
 	if !found {
 		return nil
 	}
 	return &SelectedMalformedError{
-		Kind:     kind,
-		Name:     name,
-		URL:      url,
-		Path:     path,
-		Ref:      ref,
-		Required: required,
-		Via:      via,
-		DirName:  strings.TrimSpace(match.DirName),
-		File:     skill.MalformedSourceFile(match),
-		Err:      match.Error,
+		Kind:       kind,
+		Name:       name,
+		URL:        url,
+		Path:       path,
+		Ref:        ref,
+		Required:   required,
+		Via:        via,
+		RequiredBy: requiredBy,
+		DirName:    strings.TrimSpace(match.DirName),
+		File:       skill.MalformedSourceFile(match),
+		Err:        match.Error,
 	}
 }
 
@@ -919,6 +945,9 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	}
 	if ro.context == nil {
 		ro.context = context.Background()
+	}
+	if ro.impliedPreview != nil {
+		*ro.impliedPreview = nil
 	}
 
 	if cfg == nil || (len(cfg.Registries) == 0 && (ro.marketplaceResolver == nil || len(cfg.Marketplaces) == 0)) {
@@ -962,10 +991,12 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	filterShadowedOccurrences(occurrencesByName, cfg.Registries)
 	slog.Debug("resolver occurrences built", "registries", len(cfg.Registries), "resources", len(occurrencesByName), "errors", len(errs))
 
-	// Phase 1b: Add Marketplace pins to the occurrence map.
+	// Phase 1b: Add Marketplace pins to the occurrence map. Pins held only
+	// through requires edges divert into prerequisite candidates.
+	held := make(map[resourceSelection][]marketplaceHeldCandidate)
 	if ro.marketplaceResolver != nil && len(cfg.Marketplaces) > 0 {
 		nextOrder := maxOccurrenceOrder(occurrencesByName)
-		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targets, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder)
+		mpOccurrences, mpErrs := buildMarketplaceOccurrences(ro.context, ro.marketplaceResolver, cfg, targets, ro.marketplaceMode, ro.marketplaceRevocationPolicy, nextOrder, held)
 		errs = append(errs, mpErrs...)
 		for sel, occs := range mpOccurrences {
 			occurrencesByName[sel] = append(occurrencesByName[sel], occs...)
@@ -1027,7 +1058,28 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 	// that still shadow a required artifact are removed here.
 	resolved, selectErrs = shadows.remove(resolved, selectErrs)
 	errs = append(errs, selectErrs...)
-	errs = append(errs, validateRequirements(resolved)...)
+
+	// Phase 5: Compute the prerequisite closure over the resolved resources.
+	// Marketplace requirement lookup results stay preview-only because they
+	// are never recorded, while requires-held pins may be admitted.
+	var mpLookup MarketplaceRequirementLookup
+	if ro.marketplaceResolver != nil && ro.marketplaceMode != MarketplaceResolveModeCachedNoFetch {
+		if lookup, ok := ro.marketplaceResolver.(MarketplaceRequirementLookup); ok {
+			mpLookup = lookup
+		}
+	}
+	implied, previewOnly, unmetReasons, reqErrs := expandRequirements(resolved, cfg, catalogs, ro.resources, malformedIdx, localExcludes, excludeAllKinds, targets, ro.context, held, mpLookup, cfg.RequiresExpansionEnabled())
+	errs = append(errs, reqErrs...)
+	if cfg.RequiresExpansionEnabled() {
+		resolved = append(resolved, implied...)
+	}
+	if ro.impliedPreview != nil {
+		*ro.impliedPreview = previewOnly
+		if !cfg.RequiresExpansionEnabled() {
+			*ro.impliedPreview = append(*ro.impliedPreview, implied...)
+		}
+	}
+	errs = append(errs, validateRequirements(resolved, unmetReasons)...)
 	logNameCollisions(errs)
 	slog.Debug("resolver end", "duration_ms", time.Since(start).Milliseconds(), "resolved", len(resolved), "errors", len(errs))
 
@@ -1132,7 +1184,7 @@ func maxOccurrenceOrder(occurrencesByName map[resourceSelection][]skillOccurrenc
 	return max
 }
 
-func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targets scopeTargets, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int) (map[resourceSelection][]skillOccurrence, []error) {
+func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceResolver, cfg *config.Config, targets scopeTargets, mode MarketplaceResolveMode, policy MarketplaceRevocationPolicy, startOrder int, held map[resourceSelection][]marketplaceHeldCandidate) (map[resourceSelection][]skillOccurrence, []error) {
 	var artifacts []ResolvedArtifact
 	var errs []error
 	if resolverWithPolicy, ok := mpResolver.(MarketplaceResolverWithPolicy); ok {
@@ -1158,8 +1210,29 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 			}
 		}
 	}
+	// Pins held only through requires edges are not ordinary selections:
+	// divert them into prerequisite candidates instead of the occurrence map.
+	type heldPin struct {
+		entry config.MarketplaceEntry
+		pin   config.MarketplaceResourcePin
+	}
+	heldPins := make(map[string]heldPin)
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if !pin.RequiresHeld() {
+				continue
+			}
+			key := entry.InstanceID + "\x00" + pin.RegistryID + "\x00" + pin.Kind + "\x00" + pin.Name + "\x00" + pin.Digest
+			heldPins[key] = heldPin{entry: entry, pin: pin}
+		}
+	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		if hp, ok := heldPins[a.MarketplaceInstanceID+"\x00"+a.MarketplaceRegistryID+"\x00"+mpapi.FromIR(a.Kind)+"\x00"+a.MarketplaceResourceName+"\x00"+a.MarketplaceDigest]; ok {
+			sel := resourceSelection{kind: a.Kind, name: a.Name}
+			held[sel] = append(held[sel], marketplaceHeldCandidate{artifact: a, entry: hp.entry, pin: hp.pin})
+			continue
+		}
 		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
 			continue
 		}
@@ -1180,7 +1253,7 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	return occurrencesByName, errs
 }
 
-func validateRequirements(resolved []ResolvedArtifact) []error {
+func validateRequirements(resolved []ResolvedArtifact, unmetReasons map[unmetKey]UnmetRequirementReason) []error {
 	firstRequirementIndex := -1
 	var firstRequirements []catalog.Requirement
 	for i, artifact := range resolved {
@@ -1217,16 +1290,25 @@ func validateRequirements(resolved []ResolvedArtifact) []error {
 			if _, ok := selected[resourceKey{kind: requirement.Kind, name: requirement.Name}]; ok {
 				continue
 			}
+			reason := unmetReasons[newUnmetKey(artifact, requirement)]
+			if reason == unmetReasonLookupFailed {
+				continue
+			}
+			if reason == "" {
+				reason = UnmetReasonNotFound
+			}
 			slog.Debug("unmet resource requirement",
 				"resource_kind", skill.KindLabel(artifact.Kind),
 				"resource_name", artifact.Name,
 				"requirement_kind", skill.KindLabel(requirement.Kind),
 				"requirement_name", requirement.Name,
+				"reason", string(reason),
 			)
 			warnings = append(warnings, &UnmetRequirementWarning{
 				ResourceKind: artifact.Kind,
 				ResourceName: artifact.Name,
 				Requirement:  requirement,
+				Reason:       reason,
 			})
 		}
 	}
@@ -1998,7 +2080,7 @@ func expandMembersRecursive(
 			// is present upstream, so reporting it as removed would send the
 			// user to edit a collection definition that is correct.
 			if sme := malformedSelectionError(malformed, memberCatalogKey, member.Kind, memberName,
-				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel); sme != nil {
+				memberRegistryURL, memberRegistryPath, memberRef, memberRequired, viaLabel, nil); sme != nil {
 				*errs = append(*errs, sme)
 				continue
 			}
@@ -2527,7 +2609,7 @@ func buildOccurrences(cfg *config.Config, catalogs map[string][]catalog.Entry, r
 					// and "removed upstream" is a misdiagnosis.
 					var selErr error
 					if sme := malformedSelectionError(malformed, catalogKey, selected.kind, selected.name,
-						entry.URL, entry.Path, entry.Ref, entry.Required, ""); sme != nil {
+						entry.URL, entry.Path, entry.Ref, entry.Required, "", nil); sme != nil {
 						selErr = sme
 					} else {
 						snf := &SelectedNotFoundError{

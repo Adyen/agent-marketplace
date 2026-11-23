@@ -14,7 +14,7 @@ func BenchmarkCLITableEscaping(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := writeListTable(io.Discard, rows); err != nil {
+				if err := writeListTable(io.Discard, rows, "VIA"); err != nil {
 					b.Fatal(err)
 				}
 			}

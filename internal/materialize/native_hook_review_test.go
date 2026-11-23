@@ -313,7 +313,7 @@ func TestNativeHookReviewPublishFaultLeavesNoReview(t *testing.T) {
 	sentinel := errors.New("interrupted native hook publication")
 	options := nativeHookReconcileOptionsFor(nil)
 	var finalizeDiags []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &finalizeDiags)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &finalizeDiags)
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras, err := finalize(ctx, store, output, outDir, aggregate, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)
 		extras.commitOptions = append(extras.commitOptions, dependencytxn.WithFaultHook(func(point dependencytxn.FaultPoint) error {

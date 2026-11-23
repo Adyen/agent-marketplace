@@ -72,9 +72,23 @@ func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()
 		deliverable, _ := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
 		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), deliverable,
 			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes),
-			materialize.WithPluginStateReconciliation())
+			materialize.WithPluginStateReconciliation(), materialize.WithImpliedPreview(materializableImpliedPreview(resolved.ImpliedPreview)))
 	}
 	return buildInspection(resolved, report, matErr), release
+}
+
+// materializableImpliedPreview drops preview-only artifacts from the implied
+// preview handed to materialization. Lookup candidates are reported in the
+// preview but are never recorded or materialized, and a candidate without a
+// resource must not block pruning of the outputs its key covers.
+func materializableImpliedPreview(preview []resolver.ResolvedArtifact) []resolver.ResolvedArtifact {
+	kept := make([]resolver.ResolvedArtifact, 0, len(preview))
+	for _, art := range preview {
+		if !art.PreviewOnly {
+			kept = append(kept, art)
+		}
+	}
+	return kept
 }
 
 func skipInspectionDryRun(resolved ResolveResult, onAnyError bool) bool {

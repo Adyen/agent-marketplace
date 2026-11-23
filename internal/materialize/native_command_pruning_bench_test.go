@@ -90,7 +90,7 @@ func BenchmarkNativeCommandSymlinkPruneDisk(b *testing.B) {
 					}
 					b.StartTimer()
 				}
-				report, err := syncCommandFiles(dir, nil, dryRun, true, boundary)
+				report, err := syncCommandFiles(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})
 				if err != nil || len(report.Removed) != 1 || report.Removed[0] != "stale.md" {
 					b.Fatalf("command symlink control: %+v %v", report, err)
 				}
