@@ -122,7 +122,9 @@ describe('Harness settings dialog', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await wrapper.find('button[aria-label="Sources"]').trigger('click')
+    await wrapper.find('button[aria-label="Settings"]').trigger('click')
+    await tick()
+    document.body.querySelector<HTMLElement>('#settings-tab-sources')!.click()
     await tick()
     const dialog = document.body.querySelector('[role="dialog"]')!
     const orgSection = dialog.querySelector('[aria-label="Organization sources"]')!
@@ -474,7 +476,9 @@ describe('tabbed Settings window', () => {
     dialog.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!.click()
     await tick()
 
-    await wrapper.get('button[aria-label="Sources"]').trigger('click')
+    await wrapper.get('button[aria-label="Settings"]').trigger('click')
+    await tick()
+    document.querySelector<HTMLElement>('#settings-tab-sources')!.click()
     await tick()
     expect(document.querySelector('#settings-tab-sources')?.getAttribute('aria-selected')).toBe('true')
   })

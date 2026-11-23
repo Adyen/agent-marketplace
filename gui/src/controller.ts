@@ -100,6 +100,7 @@ export interface WorkspaceState {
   error: string | null
   sourceError: string | null
   sourceErrorField: 'location' | null
+  addSourceBaseline: Diagnostic[] | null
   configuration: Configuration | null
   latestVersion: string
   releaseNotice: ReleaseNotice | null
@@ -152,6 +153,7 @@ export class WorkspaceController {
     error: null,
     sourceError: null,
     sourceErrorField: null,
+    addSourceBaseline: null,
     configuration: null,
     latestVersion: '',
     releaseNotice: null,
@@ -631,6 +633,7 @@ export class WorkspaceController {
   async addSource(source: SourceInput): Promise<boolean> {
     this.state.sourceError = null
     this.state.sourceErrorField = null
+    this.state.addSourceBaseline = this.state.diagnostics.filter((d) => d.severity === 'error' && d.category === 'mutation')
     const accepted = await this.requestOperation(
       () => this.client.configure({ action: 'add-source', source }),
       false,
@@ -641,6 +644,9 @@ export class WorkspaceController {
         }
       },
     )
+    if (!accepted) {
+      this.state.addSourceBaseline = null
+    }
     if (!accepted && this.state.sourceError == null) {
       this.state.sourceError = 'The action could not be started'
     }

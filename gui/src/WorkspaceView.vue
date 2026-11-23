@@ -18,6 +18,7 @@ import ResourceInspection from './ResourceInspection.vue'
 import DiagnosticsView from './DiagnosticsView.vue'
 import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
 import Sidebar, { type SidebarGroup, type SidebarSource, type StatusFacet } from './Sidebar.vue'
+import AddSourceModal from './AddSourceModal.vue'
 import SourceBrowseHeader from './SourceBrowseHeader.vue'
 import StatusBar from './StatusBar.vue'
 import { releaseVersionLabel } from './release-version'
@@ -48,7 +49,7 @@ const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsTab = ref<SettingsTab>('general')
 const sourceRevealRequest = ref<SourceRevealRequest | null>(null)
-const addSourceFocusRequest = ref(0)
+const addSourceOpen = ref(false)
 const selectedSourceId = ref<string | null>(null)
 const lastSelectedSourceLabel = ref('')
 const selectedKind = ref<string | null>(null)
@@ -238,8 +239,7 @@ function clearSourceFilter() {
 }
 
 function openSidebarAddSource() {
-  openSettingsWindow('sources')
-  addSourceFocusRequest.value += 1
+  addSourceOpen.value = true
 }
 
 function requestSidebarSourceRemoval() {
@@ -1512,7 +1512,7 @@ async function run(action: 'sync' | 'update') {
           class="gui-button--secondary"
           color="neutral"
           variant="soft"
-          @click="openSettingsWindow('sources')"
+          @click="addSourceOpen = true"
         />
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
@@ -1609,8 +1609,9 @@ async function run(action: 'sync' | 'update') {
       :tab="settingsTab"
       :controller="state"
       :reveal-request="sourceRevealRequest"
-      :add-source-focus-request="addSourceFocusRequest"
+      @add-source="addSourceOpen = true"
     />
+    <AddSourceModal v-if="state" v-model:open="addSourceOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" @cancelled="updateQuitCancelled" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />

@@ -170,7 +170,7 @@ alone separates it from the main column. It never folds.
   Selecting a row scrolls the main list to that group's header and moves
   selection there, using the existing section selection.
 - **Sources**: a label with a ＋ icon button ("Sources") that opens the
-  Settings window on its Sources tab with focus in the Add source form.
+  Add source modal with focus in its Source location field.
   Below it, one icon row per configured source shows the source label (see
   the sidebar rules below), with an ORG tag where it applies; sources that
   share a layer, kind, and location collapse under one foldable group row.
@@ -662,7 +662,7 @@ conflicts with an earlier section, this section wins.
   `aria-invalid`, and an instance-unique `aria-describedby` target. A field
   error clears on edit; hints for invalid values appear after blur or a submit
   attempt. Request errors without a field and add-owned mutation diagnostics
-  sit once below the form inside the Add source section.
+  sit once below the form inside the Add source modal.
 - *Rule — source action and validation*: Add source is aligned to the form's
   right edge at content width, without a fixed width. It stays disabled until
   a directory location is non-blank, a Git location accepted by the existing
@@ -683,14 +683,34 @@ conflicts with an earlier section, this section wins.
   Remove. The modal has one solid button, "Done". "Add source" is the
   secondary style.
 
+### Add source modal
+
+- *Observed*: adding a source meant an inline form at the top of Settings →
+  Sources, so the sidebar "+" opened Settings and the add outcome was not
+  visible where the user started it.
+- *Rule*: "Add source" is a modal titled "Add source" with the shared source
+  form (Directory registry, Git registry, Marketplace endpoint). It opens from
+  the sidebar "+", the empty-state "Add a source", and the Add source button in
+  Settings → Sources. Settings → Sources has no inline form.
+- *Rule — pending*: while the add is pending the primary button reads "Adding…"
+  and is disabled, and the modal is not dismissible.
+- *Rule — settle*: the modal closes when the add settles without an add-source
+  mutation failure. On failure it stays open, shows the diagnostics once
+  below the form, and keeps the submitted draft. Focus returns to the opener
+  when it is enabled, else to the selected Settings tab.
+- *Rule — stacking*: opened from Settings, Settings stays open beneath the
+  modal and keeps its tabs.
+- *Rule — no repeats*: Settings does not show the modal's add failure at its
+  top. Mutation errors from other operations keep their place at the top.
+
 ### Settings
 
 - *Observed*: Settings and Sources were separate modals, and Settings
   repeated the source lists.
 - *Rule*: one window, titled "Settings", with three tabs. The entry points
-  decide the first tab: the gear opens General, and the sidebar Sources
-  control (focusing the Add source form), source rows (revealing that
-  source), and the empty-state "Add a source" open Sources. The
+  decide the first tab: the gear opens General, and source rows (revealing
+  that source) open Sources. The sidebar "+" and the empty-state "Add a
+  source" open the Add source modal instead. The
   window is 960 px wide and a fixed 520 px tall (or the viewport minus 48 px,
   whichever is smaller), so switching tabs does not resize it. The pane scrolls
   inside the window, so long tabs such as Sources scroll rather than growing
@@ -885,8 +905,8 @@ Where a rule here conflicts with an earlier section, this section wins.
   scrolls its card into view, focuses it, and marks it highlighted
   (`data-highlighted` and `aria-current`). The highlight clears when
   Settings closes or another reveal happens. The ＋ "Sources" button opens
-  Sources with focus in the "Source location" field of the Add source form,
-  scrolled into view; its accessible name stays "Sources".
+  the Add source modal with focus in its "Source location" field; its
+  accessible name stays "Sources".
 
 ### Source search
 

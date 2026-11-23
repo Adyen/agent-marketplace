@@ -4,7 +4,7 @@ import type { SourceInput } from './api/client'
 import { validateSourceInput, type SourceField } from './source-input'
 import GuiIcon from './GuiIcon.vue'
 
-const props = defineProps<{ disabled: boolean; serverLocationError?: string }>()
+const props = defineProps<{ disabled: boolean; serverLocationError?: string; busy?: boolean }>()
 const emit = defineEmits<{
   add: [source: SourceInput]
   editLocation: []
@@ -157,8 +157,8 @@ function add() {
       </label>
     </template>
     <UButton
-      label="Add source"
-      aria-label="Add source"
+      :label="props.busy ? 'Adding…' : 'Add source'"
+      :aria-label="props.busy ? 'Adding source' : 'Add source'"
       class="gui-button--secondary source-form__submit"
       color="neutral"
       variant="soft"

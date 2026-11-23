@@ -34,7 +34,7 @@ const firstRunClient = (overrides: Partial<Configuration> = {}) =>
   fakeClient({ configuration: firstRunConfiguration(overrides) })
 
 function dialog(): HTMLElement {
-  const found = document.body.querySelector<HTMLElement>('[role="dialog"]')
+  const found = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"]')).at(-1)
   expect(found).not.toBeNull()
   return found!
 }
@@ -740,9 +740,11 @@ describe('First-run setup', () => {
     expect(controller.state.diagnostics.some((d) => d.code === 'localapi.optional-source-failed')).toBe(true)
     expect(controller.state.notifications.some((n) => n.message === "Couldn't save configuration")).toBe(true)
     expect(controller.state.notifications.some((n) => n.message === 'Configuration saved')).toBe(false)
-    const sourcesButton = wrapper.find('button[aria-label="Sources"]')
-    expect(sourcesButton.exists()).toBe(true)
-    await sourcesButton.trigger('click')
+    const settingsButton = wrapper.find('button[aria-label="Settings"]')
+    expect(settingsButton.exists()).toBe(true)
+    await settingsButton.trigger('click')
+    await tick()
+    document.body.querySelector<HTMLElement>('#settings-tab-sources')!.click()
     await tick()
     const settings = dialog()
     const registered = settings.querySelector('[aria-label="User sources"]')
@@ -750,6 +752,8 @@ describe('First-run setup', () => {
     expect(registered?.textContent).not.toContain(failedEndpoint)
     expect(settings.textContent).toContain('add optional source: Marketplace registration failed')
 
+    dialog().querySelector<HTMLElement>('#settings-panel-sources button[aria-label="Add source"]')!.click()
+    await tick()
     sourceKindRadio('marketplace').click()
     await tick()
     await setSourceField('Source location', failedEndpoint)

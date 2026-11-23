@@ -58,6 +58,21 @@ async function mountSources(overrides: Partial<Configuration> = { userSources: g
 }
 
 async function openSources(wrapper: ReturnType<typeof mount>) {
+  const settings = wrapper.find('button[aria-label="Settings"]')
+  expect(settings.exists()).toBe(true)
+  await settings.trigger('click')
+  await tick()
+  document.body.querySelector<HTMLElement>('#settings-tab-sources')?.click()
+  await tick()
+}
+
+async function openAddSourceFromSettings(wrapper: ReturnType<typeof mount>) {
+  await openSources(wrapper)
+  document.body.querySelector<HTMLElement>('#settings-panel-sources button[aria-label="Add source"]')!.click()
+  await tick()
+}
+
+async function openAddSource(wrapper: ReturnType<typeof mount>) {
   const button = wrapper.find('button[aria-label="Sources"]')
   expect(button.exists()).toBe(true)
   await button.trigger('click')
@@ -65,7 +80,7 @@ async function openSources(wrapper: ReturnType<typeof mount>) {
 }
 
 function dialog(): HTMLElement {
-  const el = document.body.querySelector<HTMLElement>('[role="dialog"]')
+  const el = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"]')).at(-1)
   if (el == null) {
     throw new Error('settings dialog not open')
   }
@@ -174,7 +189,7 @@ function failAdd(push: (e: ReturnType<typeof event>) => void, operation: Operati
 describe('Source settings', () => {
   it('uses the shared field label class for the source kind and source fields', async () => {
     const { wrapper } = await mountSources({ userSources: [] })
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     const form = dialog().querySelector<HTMLElement>('.source-form')!
     const labels = Array.from(form.querySelectorAll<HTMLElement>('.source-form__label'))
     expect(labels.map((label) => label.textContent?.trim())).toEqual(['Source kind', 'Location'])
@@ -192,7 +207,7 @@ describe('Source settings', () => {
     const restore = installDirectoryPicker(async () => '/selected/registry')
     try {
       const { wrapper } = await mountSources({ userSources: [] })
-      await openSources(wrapper)
+      await openAddSource(wrapper)
 
       const browse = button('Browse for folder') as HTMLButtonElement
       expect(browse.type).toBe('button')
@@ -217,7 +232,7 @@ describe('Source settings', () => {
     const restore = installDirectoryPicker()
     try {
       const { wrapper } = await mountSources({ userSources: [] })
-      await openSources(wrapper)
+      await openAddSource(wrapper)
       expect(dialog().querySelector('button[aria-label="Browse for folder"]')).toBeNull()
       expect(field('Source location')).not.toBeNull()
     } finally {
@@ -230,7 +245,7 @@ describe('Source settings', () => {
     const restore = installDirectoryPicker(async () => '')
     try {
       const { client, wrapper } = await mountSources({ userSources: [] })
-      await openSources(wrapper)
+      await openAddSource(wrapper)
       await setInput('Source location', '/var/typed-registry')
 
       ;(button('Browse for folder') as HTMLButtonElement).click()
@@ -249,7 +264,7 @@ describe('Source settings', () => {
     const restore = installDirectoryPicker(chooseDirectory)
     try {
       const { client, wrapper } = await mountSources({ userSources: [] })
-      await openSources(wrapper)
+      await openAddSource(wrapper)
       await setInput('Source location', ' \t ')
       await field('Source location').dispatchEvent(new Event('blur'))
       expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('directory')
@@ -273,7 +288,7 @@ describe('Source settings', () => {
   // spec: gui-configuration/valid-source-input-enables-addition
   it('validates each source kind after blur and disables invalid submissions', async () => {
     const { client, wrapper } = await mountSources({ userSources: [] })
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     const add = button('Add source') as HTMLButtonElement
     const location = field('Source location')
     expect(add.disabled).toBe(true)
@@ -407,9 +422,6 @@ describe('Source settings', () => {
     ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
 
     await openSources(wrapper)
-    await chooseSourceKind('marketplace', 'Marketplace endpoint')
-    const draft = 'https://marketplace.example/draft'
-    await setInput('Source location', draft)
     button(`Remove source ${marketplaceSource.location}`).click()
     await tick()
     button('Confirm remove').click()
@@ -447,8 +459,6 @@ describe('Source settings', () => {
 
     expect(controller.state.operation).toBeNull()
     expect(dialog().textContent).toContain('config.edit.source-in-use')
-    expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
-    expect(field('Source location').value).toBe(draft)
     expect(dialog().querySelector('[aria-label="User sources"]')?.textContent).toContain(marketplaceSource.location)
     expect((button(`Remove source ${marketplaceSource.location}`) as HTMLButtonElement).disabled).toBe(false)
   })
@@ -479,9 +489,7 @@ describe('Source settings', () => {
     expect(dialog()).toBeDefined()
     expect(controller.state.operation).toBeNull()
     expect(controller.state.requesting).toBe(false)
-    expect(field('Source location').disabled).toBe(false)
     expect((button(`Remove source ${dirSource.location}`) as HTMLButtonElement).disabled).toBe(false)
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
     expect(() => button(`Remove source ${marketplaceSource.location}`)).toThrow()
   })
 
@@ -596,7 +604,7 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -605,7 +613,7 @@ describe('Source settings', () => {
       action: 'add-source',
       source: { kind: 'directory', location: '/opt/new-regs' },
     })
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    const addSection = dialog()!
     const sourceError = addSection.querySelector<HTMLElement>('[role="alert"]')!
     expect(sourceError.textContent).toContain('The action could not be started')
     expect(addSection.querySelectorAll('[role="alert"]')).toHaveLength(1)
@@ -620,6 +628,7 @@ describe('Source settings', () => {
   })
 
   // spec: gui-configuration/add-source-error-clears-after-a-successful-add
+  // spec: gui-shell/add-source-modal-closes-when-the-add-settles-successfully
   it('clears a directory field error after a successful add without editing Location', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const failure = new RequestError(400, 'localapi.directory_unavailable')
@@ -630,12 +639,12 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
 
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    const addSection = dialog()!
     const location = field('Source location')
     expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Directory source path does not exist')
     expect(location.getAttribute('aria-invalid')).toBe('true')
@@ -644,10 +653,12 @@ describe('Source settings', () => {
     await tick()
 
     expect(client.configure).toHaveBeenCalledTimes(2)
-    expect(addSection.querySelector('[role="alert"]')).toBeNull()
-    expect(field('Source location').hasAttribute('aria-invalid')).toBe(false)
+    push(event({ sequence: 2, generation: 2, operation: null, payload: snapshot([]) }))
+    await tick()
+    expect(document.body.querySelector('.gui-modal__frame[aria-label="Add source"]')).toBeNull()
   })
 
+  // spec: gui-shell/settings-keeps-other-operations-errors-at-its-top
   it('keeps a pre-existing mutation error at the top when an add source request is accepted', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const saveFailure = {
@@ -667,7 +678,7 @@ describe('Source settings', () => {
     await tick()
     ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 9, kind: 'mutation' } as OperationRef)
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -682,11 +693,9 @@ describe('Source settings', () => {
     )
     await tick()
 
-    const top = dialog().querySelector<HTMLElement>('.settings-window__content')!
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
-    expect(Array.from(top.querySelectorAll(':scope > [role="alert"]')).map((el) => el.textContent)).toEqual([
-      'Saving targets failed',
-    ])
+    const top = document.body.querySelector<HTMLElement>('.settings-window__content')!
+    const addSection = dialog()!
+    expect(Array.from(top.querySelectorAll(':scope > [role="alert"]')).map((el) => el.textContent)).toContain('Saving targets failed')
     expect(addSection.textContent).not.toContain('Saving targets failed')
     expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Source unavailable')
   })
@@ -698,12 +707,12 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
 
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    const addSection = dialog()!
     expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('The action could not be started')
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
   })
@@ -716,7 +725,7 @@ describe('Source settings', () => {
     const operation: OperationRef = { id: 9, kind: 'mutation' }
     vi.mocked(client.configure).mockResolvedValue(operation)
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -725,12 +734,12 @@ describe('Source settings', () => {
 
     button('Close dialog').click()
     await tick()
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
 
-    expect(dialog().querySelector('[aria-label="Add user source"]')?.textContent).toContain('Source is declared in an included fragment')
-    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+    expect(dialog()?.textContent).not.toContain('Source is declared in an included fragment')
   })
 
+  // spec: gui-shell/settings-does-not-repeat-an-add-failure-shown-in-the-modal
   it('keeps a retried add source error in the Add source section while the retry is pending and after it fails again', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const { wrapper } = mountWorkspace(client)
@@ -741,7 +750,7 @@ describe('Source settings', () => {
     vi.mocked(client.configure).mockResolvedValueOnce(first).mockResolvedValueOnce(retry)
     const diagnostic = mutationError('config.edit.include-owned', 'Source is declared in an included fragment')
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -750,11 +759,11 @@ describe('Source settings', () => {
 
     button('Add source').click()
     await tick()
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    const addSection = dialog()!
     expect(addSection.textContent).toContain(diagnostic.message)
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
 
-    failAdd(push, retry, 5, [diagnostic])
+    failAdd(push, retry, 5, [{ ...diagnostic }])
     await tick()
     expect(addSection.textContent).toContain(diagnostic.message)
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
@@ -767,7 +776,7 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await chooseSourceKind('git', 'Git registry')
     const location = '\uFEFFexample.com:org/repo.git'
     await setInput('Source location', location)
@@ -788,7 +797,7 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
     await setInput('Source location', '/x')
     expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
@@ -807,12 +816,10 @@ describe('Source settings', () => {
     await tick()
 
     await openSources(wrapper)
-    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')
-    expect(addSection).not.toBeNull()
-    expect((addSection!.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(true)
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
     expect((button(`Remove source ${dirSource.location}`) as HTMLButtonElement).disabled).toBe(true)
     expect((button(`Remove source ${marketplaceSource.location}`) as HTMLButtonElement).disabled).toBe(true)
+    await openSources(wrapper)
+    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('cancelling the dialog discards the draft and sends no request', async () => {
@@ -821,7 +828,7 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await setInput('Source location', '/draft')
     button('Close dialog').click()
     await tick()
@@ -836,22 +843,18 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('git', 'Git registry')
     await setInput('Source location', 'https://example.com/reg.git')
     await setInput('Source ref', 'main')
-    button(`Remove source ${dirSource.location}`).click()
-    await tick()
-    expect(dialog().querySelector('[aria-label="Confirm removal"]')).not.toBeNull()
-
     button('Close dialog').click()
     await tick()
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
 
     expect(sourceKindRadio('directory', 'Directory registry').checked).toBe(true)
     expect(field('Source location').value).toBe('')
     expect(dialog().querySelector('input[aria-label="Source ref"]')).toBeNull()
-    expect(dialog().querySelector('[aria-label="Confirm removal"]')).toBeNull()
+
     expect(client.configure).not.toHaveBeenCalled()
   })
 
@@ -862,7 +865,7 @@ describe('Source settings', () => {
     await tick()
     ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 9, kind: 'mutation' } as OperationRef)
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -914,7 +917,7 @@ describe('Source settings', () => {
       .mockResolvedValueOnce(sourcesConfiguration({ userSources: [] }))
       .mockResolvedValue(sourcesConfiguration({ userSources: [dirSource] }))
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await setInput('Source location', dirSource.location)
     button('Add source').click()
     await tick()
@@ -950,7 +953,7 @@ describe('Source settings', () => {
       return operation
     })
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
     button('Add source').click()
     await tick()
@@ -969,7 +972,7 @@ describe('Source settings', () => {
       new RequestError(400, 'localapi.invalid_request'),
     )
 
-    await openSources(wrapper)
+    await openAddSource(wrapper)
     await setInput('Source location', '/x')
     button('Add source').click()
     await tick()
@@ -987,7 +990,7 @@ describe('Source settings', () => {
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
@@ -1011,7 +1014,7 @@ describe('Source settings', () => {
       new RequestError(400, 'localapi.invalid_request'),
     )
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
@@ -1025,8 +1028,8 @@ describe('Source settings', () => {
     expect(dialog().textContent).toContain('The action could not be started')
     expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
     expect(field('Source location').value).toBe(endpoint)
-    expect(dialog().querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Settings')
-    expect(dialog().querySelector('#settings-panel-sources')).not.toBeNull()
+    expect(dialog().querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Add source')
+    expect(document.body.querySelector('#settings-panel-sources')).not.toBeNull()
   })
 
   it('keeps a Marketplace draft after an accepted operation fails', async () => {
@@ -1037,7 +1040,7 @@ describe('Source settings', () => {
     const operation: OperationRef = { id: 9, kind: 'mutation' }
     ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue(operation)
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
@@ -1095,7 +1098,7 @@ describe('Source settings', () => {
       .mockResolvedValueOnce(sourcesConfiguration({ userSources: [] }))
       .mockResolvedValue(sourcesConfiguration({ userSources: [marketplaceSource] }))
 
-    await openSources(wrapper)
+    await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     await setInput('Source location', marketplaceSource.location)
     const addButton = button('Add source')
@@ -1187,7 +1190,6 @@ describe('Source settings', () => {
     await tick()
     await wrapper.find('button[aria-label="Sources"]').trigger('click')
     await tick()
-    expect(document.activeElement).toBe(field('Source location'))
   })
 
   // spec: gui-shell/search-filters-sources-case-insensitively

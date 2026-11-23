@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import type { Configuration, SourceDescription, SourceInput } from './api/client'
+import type { Configuration, SourceDescription } from './api/client'
 import { useAppearance, type AppearancePreference } from './appearance'
 import type { WorkspaceController } from './controller'
 import { operationLabel } from './feedback'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
-import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
 import { groupSources } from './source-groups'
 
@@ -21,9 +20,9 @@ const props = defineProps<{
   controller: WorkspaceController
   tab: SettingsTab
   revealRequest: SourceRevealRequest | null
-  addSourceFocusRequest: number
 }>()
 const open = defineModel<boolean>('open', { default: false })
+const emit = defineEmits<{ addSource: [] }>()
 
 const tabs: { id: SettingsTab; label: string; icon: IconName }[] = [
   { id: 'general', label: 'General', icon: 'gear' },
@@ -54,14 +53,7 @@ const loading = ref(false)
 const sourceRemovalConfigLoaded = ref(false)
 const actionError = ref<string | null>(null)
 const draft = ref<Set<string>>(new Set())
-const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
-const addSourceOwned = ref(new Set<string>())
-const addSourceClaim = ref<Set<string> | null>(null)
-const sourceLocationError = computed(() => {
-  if (props.controller.state.sourceErrorField !== 'location') return undefined
-  return props.controller.state.sourceError ?? undefined
-})
 let openEpoch = 0
 let handledRemoveSourceSequence = 0
 
@@ -86,37 +78,21 @@ const dirty = computed(() => {
   const saved = configuration.value.userTargets
   return draft.value.size !== saved.length || saved.some((id) => !draft.value.has(id))
 })
-const mutationErrors = computed(() =>
-  props.controller.state.diagnostics.filter((d) => d.severity === 'error' && d.category === 'mutation'),
-)
-const addSourceMutationErrors = computed(() => mutationErrors.value.filter((d) => addSourceOwned.value.has(d.code)))
-const topMutationErrors = computed(() => mutationErrors.value.filter((d) => !addSourceOwned.value.has(d.code)))
-watch([mutationErrors, addSourceClaim, () => props.controller.state.operation, () => props.controller.state.requesting], ([errors]) => {
-  const present = errors.map((d) => d.code)
-  const owned = new Set(present.filter((code) => addSourceOwned.value.has(code)))
-  if (addSourceClaim.value != null) {
-    for (const code of present) {
-      if (!addSourceClaim.value.has(code)) {
-        owned.add(code)
-      }
-    }
-  }
-  addSourceOwned.value = owned
-  if (props.controller.state.operation == null && !props.controller.state.requesting) {
-    addSourceClaim.value = null
-  }
+const mutationErrors = computed(() => {
+  const baseline = props.controller.state.addSourceBaseline
+  return props.controller.state.diagnostics.filter(
+    (d) => d.severity === 'error' && d.category === 'mutation' && (baseline == null || baseline.includes(d)),
+  )
 })
 const managedOutsideText = computed(() => {
   const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
   return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
 })
-let handledAddSourceFocusRequest = 0
 
 function resetDrafts() {
   draft.value = new Set<string>()
   pendingRemove.value = null
   sourceRemovalConfigLoaded.value = false
-  formEpoch.value += 1
 }
 
 watch(open, () => {
@@ -181,22 +157,6 @@ watch(
 )
 
 watch(
-  [() => props.addSourceFocusRequest, loading],
-  async ([request, isLoading]) => {
-    if (request <= handledAddSourceFocusRequest || isLoading || !open.value) {
-      return
-    }
-    handledAddSourceFocusRequest = request
-    await nextTick()
-    const location = document.querySelector<HTMLInputElement>('#settings-panel-sources input[aria-label="Source location"]')
-    if (location != null && !location.disabled) {
-      location.scrollIntoView?.({ block: 'center' })
-      location.focus()
-    }
-  },
-)
-
-watch(
   () => props.tab,
   (tab) => {
     active.value = tab
@@ -245,7 +205,6 @@ function revert() {
 }
 
 async function save() {
-  addSourceClaim.value = null
   const targets = options.value.filter((id) => draft.value.has(id))
   if (await props.controller.saveTargets(targets)) {
     actionError.value = null
@@ -259,28 +218,7 @@ function removable(source: SourceDescription) {
   return source.kind === 'git' || source.kind === 'directory' || source.kind === 'marketplace'
 }
 
-async function add(source: SourceInput) {
-  actionError.value = null
-  addSourceClaim.value = null
-  pendingRemove.value = null
-  const baseline = new Set(mutationErrors.value.map((d) => d.code).filter((code) => !addSourceOwned.value.has(code)))
-  addSourceClaim.value = (await props.controller.addSource(source)) ? baseline : null
-  void nextTick(() => {
-    if (document.activeElement == null || document.activeElement === document.body) {
-      document.querySelector<HTMLElement>('#settings-panel-sources')?.focus()
-    }
-  })
-}
-
-function clearSourceLocationError() {
-  if (props.controller.state.sourceErrorField === 'location') {
-    props.controller.state.sourceError = null
-    props.controller.state.sourceErrorField = null
-  }
-}
-
 async function confirmRemove() {
-  addSourceClaim.value = null
   const source = pendingRemove.value
   pendingRemove.value = null
   if (source == null) {
@@ -329,7 +267,7 @@ async function confirmRemove() {
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ actionError }}</span>
           </p>
-          <p v-for="d in topMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+          <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ d.message }}</span>
           </p>
@@ -517,26 +455,7 @@ async function confirmRemove() {
                 :organization="true" :reveal-request="props.revealRequest" :highlighted-source-id="highlightedSourceId" />
 
               <section class="settings__group" aria-label="Add user source">
-                <h3>Add a source</h3>
-                <SourceForm
-                  :key="formEpoch"
-                  :disabled="fieldsDisabled"
-                  :server-location-error="sourceLocationError"
-                  @add="add"
-                  @edit-location="clearSourceLocationError"
-                />
-                <p
-                  v-if="controller.state.sourceError && controller.state.sourceErrorField == null"
-                  role="alert"
-                  class="settings__notice settings__notice--danger"
-                >
-                  <GuiIcon name="error" class="settings__notice-icon" />
-                  <span>{{ controller.state.sourceError }}</span>
-                </p>
-                <p v-for="d in addSourceMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
-                  <GuiIcon name="error" class="settings__notice-icon" />
-                  <span>{{ d.message }}</span>
-                </p>
+                <UButton label="Add source" aria-label="Add source" class="gui-button--secondary" color="neutral" variant="soft" :disabled="fieldsDisabled" @click="emit('addSource')"><template #leading><GuiIcon name="plus" /></template></UButton>
               </section>
 
               <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__footnote" aria-label="Managed outside the GUI">
