@@ -1,3 +1,0 @@
-- [x] Add source keyboard submission and cancellation scenario coverage.
-- [x] Add backup and logging dependent-control scenario coverage.
-- [ ] Run focused Vitest, OpenSpec, and repository validation checks.

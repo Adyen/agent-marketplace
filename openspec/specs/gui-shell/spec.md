@@ -736,3 +736,15 @@ Settings SHALL NOT repeat a mutation error that belongs to the add operation sho
 
 - **WHEN** a mutation error from an operation other than the open add is in the diagnostics while the modal is open
 - **THEN** Settings MUST show that error at its top, as before
+
+### Requirement: Add source keyboard submission and cancellation
+
+The Add source dialog SHALL allow Enter in a text input to submit a valid form. Enter with invalid input SHALL NOT submit. The Cancel button SHALL close the dialog without submitting and SHALL be unavailable while an add is pending.
+
+#### Scenario: Cancel and Enter in Add source
+
+- **WHEN** the user selects Cancel, or presses Enter in a text input while the form is invalid
+- **THEN** no add request MUST be sent
+- **AND** Cancel MUST close the dialog
+- **WHEN** the user presses Enter in a text input with a valid form
+- **THEN** the add request MUST be sent
