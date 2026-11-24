@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 const checkoutProfileYAML = `apiVersion: agent-marketplace.io/target-profile/v1
@@ -89,6 +92,45 @@ func TestResolveCheckoutAssessmentProfile(t *testing.T) {
 				t.Fatalf("resolveCheckoutAssessmentProfile() error = %v, want %s refusal", err, tt.wantCode)
 			}
 		})
+	}
+}
+
+func TestPlaceCheckoutPaths(t *testing.T) {
+	profileBytes := []byte(checkoutProfileYAML)
+	identity := checkoutAssessmentProfileIdentity(profileBytes)
+	cfg := config.Config{HostPackageAssessmentProfiles: []config.HostPackageAssessmentProfile{{
+		RegistryID: "src-test", Kind: "invented-app/mod", Name: "sample", ProfileIdentity: identity,
+	}}}
+	registry := store.Registry{
+		ID: "src-test", Ref: "main", Origins: []string{checkoutProfileOrigin}, Acquisition: store.AcquisitionMirror,
+	}
+	got, err := PlaceCheckoutPaths(cfg, registry)
+	if err != nil {
+		t.Fatalf("PlaceCheckoutPaths: %v", err)
+	}
+	want := []string{"profiles/invented-app.yaml", "packages/invented-app/mod/sample"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("PlaceCheckoutPaths() = %q, want %q", got, want)
+	}
+
+	empty, err := PlaceCheckoutPaths(config.Config{}, registry)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("PlaceCheckoutPaths without selections = %q, %v; want empty", empty, err)
+	}
+	badRegistry := registry
+	badRegistry.Origins = []string{"https://git.example.com/other.git"}
+	if _, err := PlaceCheckoutPaths(cfg, badRegistry); err == nil || !strings.Contains(err.Error(), "marketplace.profile.unavailable") {
+		t.Fatalf("PlaceCheckoutPaths with different origin error = %v, want unavailable", err)
+	}
+	badRegistry = registry
+	badRegistry.Ref = "other"
+	if _, err := PlaceCheckoutPaths(cfg, badRegistry); err == nil || !strings.Contains(err.Error(), "marketplace.profile.unavailable") {
+		t.Fatalf("PlaceCheckoutPaths with different ref error = %v, want unavailable", err)
+	}
+	badRegistry = registry
+	badRegistry.Acquisition = store.AcquisitionIndexOnly
+	if _, err := PlaceCheckoutPaths(cfg, badRegistry); err == nil || !strings.Contains(err.Error(), "marketplace.package.acquisition-unsupported") {
+		t.Fatalf("PlaceCheckoutPaths in index-only mode error = %v, want acquisition refusal", err)
 	}
 }
 

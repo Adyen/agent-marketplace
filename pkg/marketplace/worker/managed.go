@@ -398,6 +398,11 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 		}
 	}()
 	limits := acquire.Limits{RepositoryBytes: cfg.Policy.Limits.RepositoryBytes, FileCount: cfg.Policy.Limits.FileCount, FileBytes: cfg.Policy.Limits.FileBytes}
+	exactPaths, err := ingest.PlaceCheckoutPaths(cfg, registry)
+	if err != nil {
+		return managedWorkFailure(workCtx, ErrManagedAcquire)
+	}
+	limits.ExactPaths = exactPaths
 	roots := make([]string, len(r.Roots))
 	for i := range r.Roots {
 		roots[i] = r.Roots[i].Path

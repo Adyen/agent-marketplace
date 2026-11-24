@@ -136,6 +136,13 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		inspectionBody    []byte
 		inspectionSupport analyze.FileSet
 	}
+	processedKindName := func(p processed) (string, string) {
+		kind, name := api.FromIR(p.entry.Kind), p.entry.Name
+		if p.result.Artifact.Manifest.HostPackageIdentity != nil {
+			kind, name = p.result.Kind, p.result.Name
+		}
+		return kind, name
+	}
 
 	var processedResults []processed
 	resourceResults := make(map[string]processed)
@@ -496,13 +503,41 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
+	for _, selection := range cfg.HostPackageAssessmentProfiles {
+		if selection.RegistryID != string(registry.ID) {
+			continue
+		}
+		result, sourcePath, inspectionBody, err := buildPlaceResult(ctx, cfg, registry, dir, selection, policy, limits, license)
+		if err != nil {
+			return rev, fmt.Errorf("build place package %q: %w", selection.Name, err)
+		}
+		kind, name := result.Kind, result.Name
+		coordinate := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: name}
+		projection, err := inspection.Build(
+			coordinate, result.ContentDigest, inspectionBody, nil,
+			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+		)
+		if err != nil {
+			return rev, fmt.Errorf("inspection projection for %s %q: %w", kind, name, err)
+		}
+		key := kind + "/" + name
+		inspectionDigests[key] = projection.Manifest.ManifestDigest
+		inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
+		for digest, data := range projection.Bodies {
+			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
+		}
+		processedResults = append(processedResults, processed{
+			sourcePath: sourcePath, result: result, inspectionBody: inspectionBody,
+		})
+	}
+
 	var manifest artifact.RegistryRevisionManifest
 	manifest.SchemaVersion = artifact.RegistryRevisionSchemaV1
 	manifest.Generator = artifact.RegistryRevisionGeneratorV1
 	manifest.Resources = make([]artifact.RevisionResource, 0, len(processedResults))
 
 	for _, p := range processedResults {
-		kind := api.FromIR(p.entry.Kind)
+		kind, name := processedKindName(p)
 		contentDigest := p.result.ContentDigest
 		archiveDigest := p.result.ArchiveDigest
 		if kind == "collection" {
@@ -513,7 +548,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		manifest.Resources = append(manifest.Resources, artifact.RevisionResource{
 			Kind:          kind,
-			Name:          p.entry.Name,
+			Name:          name,
 			ContentDigest: contentDigest,
 			ArchiveDigest: archiveDigest,
 			SupportFiles:  p.supportFiles,
@@ -543,12 +578,12 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionManifests []store.BlobUpload
 	var collections []store.CollectionRevision
 	for _, p := range processedResults {
-		kind := api.FromIR(p.entry.Kind)
+		kind, name := processedKindName(p)
 		coord := store.ResourceCoordinate{
 			Marketplace: mpID,
 			Registry:    registry.ID,
 			Kind:        kind,
-			Name:        p.entry.Name,
+			Name:        name,
 		}
 
 		contentDigest := p.result.ContentDigest
@@ -565,18 +600,25 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			Description:   p.result.Description,
 			Requires:      revisionRequires(p.entry),
 		}
+		var findings []store.Finding
+		if p.result.Artifact.Manifest.HostPackageIdentity != nil {
+			findings = placeStoreFindings(p.result.Findings)
+		} else {
+			findings = toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport)
+		}
 		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 			Coordinate:               coord,
 			ContentDigest:            rev.ContentDigest,
 			AnalyzerVersion:          analyze.AnalyzerVersionV1,
 			PolicyDigest:             policyDigest,
 			Decision:                 assessmentDecision(p.result),
-			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport),
-			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
+			Findings:                 findings,
+			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+name]),
 			AssessedAt:               time.Now().UTC(),
+			HostPackageIdentity:      p.result.Artifact.Manifest.HostPackageIdentity,
 		})
 		if err != nil {
-			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, p.entry.Name, err)
+			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, name, err)
 		}
 		resources = append(resources, rev)
 		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{
@@ -590,20 +632,20 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		if kind == "collection" {
 			if p.result.ManifestDigest == "" || len(p.result.ManifestPayload) == 0 {
-				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", p.entry.Name)
+				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", name)
 			}
 			collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(p.result.ManifestPayload))
 			if err != nil {
-				return Revision{}, fmt.Errorf("decode collection %q manifest: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("decode collection %q manifest: %w", name, err)
 			}
 			if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
-				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", name, err)
 			}
 			if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(collection, publishedCollectionManifests); err != nil {
-				return Revision{}, fmt.Errorf("collection %q manifest graph: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("collection %q manifest graph: %w", name, err)
 			}
 			if collection.ContentDigest != p.result.ManifestDigest {
-				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", p.entry.Name)
+				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", name)
 			}
 			collectionManifests = appendUpload(collectionManifests, store.ArchiveDigest(p.result.ManifestDigest), p.result.ManifestPayload)
 			members := make([]store.ResourceCoordinate, 0, len(collection.Members))

@@ -91,6 +91,11 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 		FileCount:       deps.Config.Policy.Limits.FileCount,
 		FileBytes:       deps.Config.Policy.Limits.FileBytes,
 	}
+	exactPaths, err := ingest.PlaceCheckoutPaths(deps.Config, merged)
+	if err != nil {
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
+	}
+	limits.ExactPaths = exactPaths
 	roots := make([]string, len(merged.Roots))
 	for i := range merged.Roots {
 		roots[i] = merged.Roots[i].Path

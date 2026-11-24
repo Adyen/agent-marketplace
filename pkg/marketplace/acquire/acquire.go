@@ -22,6 +22,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Limits cap the size of an acquired repository.
@@ -29,6 +31,7 @@ type Limits struct {
 	RepositoryBytes int64
 	FileCount       int
 	FileBytes       int64
+	ExactPaths      []string
 }
 
 // Credentials references server-side credential sources. No secret values are
@@ -287,6 +290,13 @@ func clone(ctx context.Context, origin, ref, exactCommit string, roots []string,
 	if err != nil {
 		return nil, err
 	}
+	if len(limits.ExactPaths) > 0 {
+		limits.ExactPaths, err = normalizeExactPaths(limits.ExactPaths)
+		if err != nil {
+			return nil, err
+		}
+		roots = nil
+	}
 
 	dir, err := os.MkdirTemp("", "marketplace-acquire-")
 	if err != nil {
@@ -452,6 +462,42 @@ func normalizeRoots(roots []string) ([]string, error) {
 		out = append(out, root)
 	}
 	return out, nil
+}
+
+func normalizeExactPaths(paths []string) ([]string, error) {
+	copied := append([]string(nil), paths...)
+	normalize := pathFoldNormalizer()
+	for _, exact := range copied {
+		if exact == "" || exact == "." || exact != strings.TrimSpace(exact) ||
+			strings.Contains(exact, `\`) ||
+			filepath.ToSlash(filepath.Clean(filepath.FromSlash(exact))) != exact {
+			return nil, fmt.Errorf("validate exact path: %q must be a canonical relative slash path", exact)
+		}
+		for _, segment := range strings.Split(exact, "/") {
+			if normalize(segment) == ".git" {
+				return nil, fmt.Errorf("validate exact path: %q cannot address Git metadata", exact)
+			}
+		}
+	}
+	normalized, err := normalizeRoots(copied)
+	if err != nil {
+		return nil, fmt.Errorf("validate exact path: %w", err)
+	}
+	if len(normalized) == 0 {
+		return nil, errors.New("validate exact path: at least one non-dot repository path is required")
+	}
+	return normalized, nil
+}
+
+func pathFoldNormalizer() func(string) string {
+	fold := cases.Fold()
+	return func(path string) string {
+		return norm.NFC.String(fold.String(norm.NFC.String(path)))
+	}
+}
+
+func checkoutPathsOverlap(left, right string) bool {
+	return left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
 }
 
 func escapeSparsePattern(path string) string {
@@ -662,6 +708,26 @@ func dereferenceRepositorySymlinks(ctx context.Context, dir string, limits Limit
 		return nil
 	}); err != nil {
 		return fmt.Errorf("find repository symlinks: %w", err)
+	}
+	if len(limits.ExactPaths) > 0 {
+		normalize := pathFoldNormalizer()
+		normalizedExactPaths := make([]string, len(limits.ExactPaths))
+		for i, exact := range limits.ExactPaths {
+			normalizedExactPaths[i] = normalize(exact)
+		}
+		for _, link := range links {
+			relative, err := filepath.Rel(dir, link)
+			if err != nil {
+				return fmt.Errorf("find repository symlink path: %w", err)
+			}
+			relative = filepath.ToSlash(relative)
+			normalizedRelative := normalize(relative)
+			for i, exact := range normalizedExactPaths {
+				if checkoutPathsOverlap(normalizedRelative, exact) {
+					return fmt.Errorf("marketplace.package.checkout-symlink: symlink %q overlaps exact checkout path %q", relative, limits.ExactPaths[i])
+				}
+			}
+		}
 	}
 	for _, link := range links {
 		if err := ctx.Err(); err != nil {
