@@ -106,6 +106,12 @@ func TestPlaceOwnershipProjection(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("PlaceFromSnapshot = %#v, %v; want %#v", got, err, want)
 	}
+	foundRoot, foundTarget, err := FindPlaceInstallation(context.Background(), stateRoot, func(root, targetID string) bool {
+		return root == st.CanonicalRoot() && targetID == profile.TargetID
+	})
+	if err != nil || foundRoot != st.CanonicalRoot() || foundTarget != profile.TargetID {
+		t.Fatalf("FindPlaceInstallation = %q, %q, %v", foundRoot, foundTarget, err)
+	}
 	got.Packages[0].Files[0].Path = "changed.txt"
 	got.Packages[0].Files[0].Parent.Inode++
 	got.Packages[0].Requires[0] = strings.Repeat("e", 64)

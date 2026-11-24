@@ -656,6 +656,14 @@ agent-marketplace target verify <target-id>%2F<kind>/<name> --installation <id>
 
 Runs the approved host version probe, when configured, and then only the named approved check for an already-installed package. It records exact version/check results without installing, activating, repairing, or synchronizing packages. The required `--installation` ID must identify the current approved target root. Unsupported, failed, or ambiguous probes are recorded as unknown and do not prevent the named check from running; drift detected after a probe still refuses the check.
 
+### `target retire`
+
+```text
+agent-marketplace target retire <installation-id>
+```
+
+Retires the installation recorded in the current XDG state root, even if its target profile is no longer selected or its root override has changed. The command shows the recorded root, removable files, and ceded files on standard error and requires typing `yes` in a terminal; `--yes` is rejected. It removes only unchanged files whose recorded parent identity is still proven; edited or unproven files are preserved. Ownership is updated transactionally. Target selection, approval receipts, deployed locks, caches, and directories are left intact. A still-enabled target can be installed again by a later sync.
+
 ## `telemetry`
 
 Reads and changes your telemetry preference and local telemetry state. When an organization config sets a telemetry level, that level applies instead of your preference, and the organization can also lock the endpoint. See the [telemetry reference](telemetry.md).

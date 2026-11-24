@@ -4,8 +4,6 @@ package pipeline
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -34,11 +32,7 @@ func VerifyDeployedPlace(
 	if !scoped || !nameutil.IsPlacePackageName(name) || validatePlaceTargetID(targetID) != nil {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.place.package-invalid: kind and name must identify a scoped place package")
 	}
-	var decoded [sha256.Size]byte
-	if len(installationID) != hex.EncodedLen(len(decoded)) {
-		return ownership.PlaceVerification{}, fmt.Errorf("target.place.installation-unavailable: installation ID is not a canonical lowercase SHA-256 identity")
-	}
-	if _, err := hex.Decode(decoded[:], []byte(installationID)); err != nil || hex.EncodeToString(decoded[:]) != installationID {
+	if !validPlaceInstallationID(installationID) {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.place.installation-unavailable: installation ID is not a canonical lowercase SHA-256 identity")
 	}
 	prepared, err := loadDeployedPlaceApproval(ctx, ws, targetID)

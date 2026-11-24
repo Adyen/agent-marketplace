@@ -37,8 +37,31 @@ type targetApprovalResult struct {
 
 func newTargetCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "target", Short: "Manage target-profile selection and approval"}
-	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"), newTargetVerifyCmd())
+	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"), newTargetVerifyCmd(), newTargetRetireCmd())
 	return cmd
+}
+
+func targetConfirmationInput(cmd *cobra.Command, action string) (io.Reader, error) {
+	if cmd.Flags().Changed("yes") {
+		return nil, fmt.Errorf("target.confirmation-required: --yes is not supported for target %s", action)
+	}
+	in := cmd.InOrStdin()
+	file, ok := in.(*os.File)
+	if !ok || !isTerminal(file.Fd()) {
+		return nil, fmt.Errorf("target.confirmation-required: target %s requires a terminal", action)
+	}
+	return in, nil
+}
+
+func confirmTargetLine(in io.Reader, action string) error {
+	answer, readErr := bufio.NewReaderSize(in, 64).ReadSlice('\n')
+	if readErr != nil || strings.TrimSpace(string(answer)) != "yes" {
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return fmt.Errorf("target.confirmation-required: %s confirmation must be a complete line containing yes", action)
+		}
+		return fmt.Errorf("target.confirmation-required: %s was not confirmed", action)
+	}
+	return nil
 }
 
 func newTargetToggleCmd(action string) *cobra.Command {
@@ -74,13 +97,9 @@ func newTargetApproveCmd() *cobra.Command {
 		Use:  "approve <target-id>",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("yes") {
-				return fmt.Errorf("target.confirmation-required: --yes is not supported for target approval")
-			}
-			in := cmd.InOrStdin()
-			file, ok := in.(*os.File)
-			if !ok || !isTerminal(file.Fd()) {
-				return fmt.Errorf("target.confirmation-required: target approval requires a terminal")
+			in, err := targetConfirmationInput(cmd, "approval")
+			if err != nil {
+				return err
 			}
 			ws, err := discoverSyncWorkspace()
 			if err != nil {
@@ -98,12 +117,8 @@ func newTargetApproveCmd() *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Approval binding (no host commands will run; approval does not enable the target):\n%s\nType yes to approve: ", presentation); err != nil {
 				return err
 			}
-			answer, readErr := bufio.NewReaderSize(in, 64).ReadSlice('\n')
-			if readErr != nil || strings.TrimSpace(string(answer)) != "yes" {
-				if readErr != nil && !errors.Is(readErr, io.EOF) {
-					return fmt.Errorf("target.confirmation-required: approval confirmation must be a complete line containing yes")
-				}
-				return fmt.Errorf("target.confirmation-required: approval was not confirmed")
+			if err := confirmTargetLine(in, "approval"); err != nil {
+				return err
 			}
 			current, err := pipeline.PrepareDeployedPlaceApproval(cmd.Context(), ws, args[0])
 			if err != nil {
@@ -130,6 +145,49 @@ func newTargetApproveCmd() *cobra.Command {
 	cmd.Flags().Bool("yes", false, "Skip confirmation (not supported)")
 	cmd.Flags().Bool("json", false, "Print the approval result as JSON")
 	return cmd
+}
+
+func newTargetRetireCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:  "retire <installation-id>",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			in, err := targetConfirmationInput(cmd, "retirement")
+			if err != nil {
+				return err
+			}
+			prepared, err := pipeline.PreparePlaceRetirement(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			preview := prepared.Preview()
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(),
+				"Retire installation %s for target %s at %q (state %q)?\nRemove:\n%s\nCede:\n%s\nType yes to retire: ",
+				preview.InstallationID, preview.TargetID, preview.CanonicalRoot, preview.StateRoot,
+				formatRetirementPaths(preview.Remove), formatRetirementPaths(preview.Ceded)); err != nil {
+				return err
+			}
+			if err := confirmTargetLine(in, "retirement"); err != nil {
+				return err
+			}
+			result, err := pipeline.CommitPreparedPlaceRetirement(cmd.Context(), prepared)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Retired %s. Removed: %s. Ceded: %s.\n",
+				preview.InstallationID, formatRetirementPaths(result.Removed), formatRetirementPaths(result.Ceded))
+			return err
+		},
+	}
+	cmd.Flags().Bool("yes", false, "Skip confirmation (not supported)")
+	return cmd
+}
+
+func formatRetirementPaths(paths []string) string {
+	if len(paths) == 0 {
+		return "(none)"
+	}
+	return strings.Join(paths, ", ")
 }
 
 func newTargetVerifyCmd() *cobra.Command {

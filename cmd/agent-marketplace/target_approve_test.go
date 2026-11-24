@@ -1067,6 +1067,15 @@ func resolvedTargetApprovalPackage(t *testing.T, fixture targetApprovalFixture) 
 		SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
 		Mode: 0o644, Bytes: []byte("owned place package\n"),
 	}}
+	return resolvedTargetApprovalPackageWithFiles(t, fixture, files)
+}
+
+func resolvedTargetApprovalPackageWithFiles(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	files []targetprofile.PackageFile,
+) ([]targetprofile.PackageFile, marketplace.ResolvedPlacePackage) {
+	t.Helper()
 	hostBinding, err := targetprofile.BuildBinding(fixture.identity, files)
 	if err != nil {
 		t.Fatal(err)
@@ -1273,7 +1282,7 @@ type targetApprovalPromptWriter struct {
 
 func (w targetApprovalPromptWriter) Write(p []byte) (int, error) {
 	n, err := w.output.Write(p)
-	if w.prompt != nil && strings.Contains(string(p), "Type yes to approve:") {
+	if w.prompt != nil && (strings.Contains(string(p), "Type yes to approve:") || strings.Contains(string(p), "Type yes to retire:")) {
 		w.prompt()
 	}
 	return n, err
