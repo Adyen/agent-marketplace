@@ -46,7 +46,7 @@ func SetDeployedPlaceTargetEnabled(ctx context.Context, ws Workspace, targetID s
 		return false, fmt.Errorf("target.config.user-root-required: target enable and disable require an existing v4 user config")
 	}
 	if enable {
-		if _, _, err := readSelectedDeployedPlaceProfile(ctx, intent, evidence, effective.Merged, targetID); err != nil {
+		if _, _, _, err := readSelectedDeployedPlaceProfile(ctx, intent, evidence, effective.Merged, targetID); err != nil {
 			return false, err
 		}
 	}

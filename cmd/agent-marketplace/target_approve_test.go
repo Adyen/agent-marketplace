@@ -41,6 +41,16 @@ roots: {user: {override: INVENTED_APP_HOME, default: {macos: {base: home, path: 
 kinds: {mod: {deliver: place, into: [mods/]}}
 `
 
+const targetVerifyProfileYAML = `apiVersion: agent-marketplace.io/target-profile/v1
+id: invented-app
+label: Invented App
+platforms: [macos, linux]
+roots: {user: {override: INVENTED_APP_HOME, default: {macos: {base: home, path: .config/invented-app}, linux: {base: home, path: .config/invented-app}}, allowed_bases: [home]}}
+host: {executable: target-verify-fixture}
+checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}}
+kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
+`
+
 type targetApprovalFixture struct {
 	home, repo, userConfig, userLock, targetRoot, stateRoot string
 	profileBytes                                            []byte
@@ -51,6 +61,10 @@ type targetApprovalFixture struct {
 }
 
 func newTargetApprovalFixture(t *testing.T) targetApprovalFixture {
+	return newTargetApprovalFixtureWithProfile(t, []byte(targetApproveProfileYAML))
+}
+
+func newTargetApprovalFixtureWithProfile(t *testing.T, profileBytes []byte) targetApprovalFixture {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -77,7 +91,6 @@ func newTargetApprovalFixture(t *testing.T) targetApprovalFixture {
 		t.Fatal(err)
 	}
 	runGit(t, sourceRepo, "init", "--object-format=sha1", "--initial-branch=main")
-	profileBytes := []byte(targetApproveProfileYAML)
 	profilePath := filepath.Join(sourceRepo, "profiles", "invented-app.yaml")
 	skillPath := filepath.Join(sourceRepo, "profiles", "skills", "machine-control", "SKILL.md")
 	for _, path := range []string{filepath.Dir(profilePath), filepath.Dir(skillPath)} {
@@ -303,7 +316,12 @@ func TestTargetApproveRecordsOnlyConfirmedBinding(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 		t.Fatalf("decode approval stdout %q: %v", stdout, err)
 	}
+	approvalBinding, err := pipeline.PrepareDeployedPlaceApproval(context.Background(), mustTargetWorkspace(t, fixture), fixture.identity.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != "approved" || result.Binding.Profile != fixture.identity || !result.Binding.NoExecution ||
+		result.Binding.InstallationID != pipeline.PlaceInstallationID(approvalBinding) ||
 		!strings.Contains(stderr, fixture.targetRoot) || !strings.Contains(stderr, "Type yes to approve:") {
 		t.Fatalf("approval result or pre-confirmation context: result=%#v stderr=%q", result, stderr)
 	}
@@ -338,6 +356,11 @@ func TestTargetApproveRecordsOnlyConfirmedBinding(t *testing.T) {
 		receipt.ProfileSourceID != fixture.identity.SourceID || receipt.CanonicalRoot != fixture.targetRoot ||
 		receipt.Executable != "no-execution" || receipt.StateStore.CanonicalRoot != fixture.stateRoot || receipt.StateStore.RootKey == "" {
 		t.Fatalf("receipt binding = %#v", receipt)
+	}
+	humanOutput, err := executeCommandAtTerminal(t, "yes\n", "target", "approve", fixture.identity.TargetID)
+	if err != nil || !strings.Contains(humanOutput, "future installation ID for this approved root") ||
+		!strings.Contains(humanOutput, pipeline.PlaceInstallationID(approvalBinding)) {
+		t.Fatalf("human approval output = %q, %v", humanOutput, err)
 	}
 }
 
@@ -480,6 +503,234 @@ func TestTargetDisablePreservesSelectionAndOwnedFiles(t *testing.T) {
 		}
 		assertTargetApprovalFixtureUnchanged(t, fixture)
 	})
+}
+
+// spec: target-profile-place/target-verify-runs-only-the-named-check
+func TestTargetVerifyRunsOnlyNamedCheck(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture, binding, marker, targetPath, statePath, generation := newInstalledTargetVerificationFixture(t)
+	installationID := expectedTargetInstallationID(binding)
+	if pipeline.PlaceInstallationID(binding) != installationID {
+		t.Fatalf("PlaceInstallationID() = %q, want %q", pipeline.PlaceInstallationID(binding), installationID)
+	}
+	revisedBinding := binding
+	revisedBinding.Profile.RevisionDigest = "sha256:" + strings.Repeat("f", 64)
+	if pipeline.PlaceInstallationID(revisedBinding) != installationID {
+		t.Fatal("profile revision unexpectedly changed the installation ID")
+	}
+	configBefore, err := os.ReadFile(fixture.userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockBefore, err := os.ReadFile(fixture.userLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetBefore, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerBefore, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := ownerBefore.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectionBefore, err := ownerBefore.PlaceFromSnapshot(snapshotBefore)
+	if err != nil || len(projectionBefore.Packages) != 1 {
+		t.Fatalf("pre-check installed projection = %#v, %v", projectionBefore, err)
+	}
+	packageDigest := projectionBefore.Packages[0].Binding.PackageContentDigest
+	receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json"))
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("approval receipts = %v, %v", receipts, err)
+	}
+	receiptBefore, err := os.ReadFile(receipts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTreeBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+	packageTreeBefore := snapshotTargetStateTree(t, filepath.Join(fixture.stateRoot, "packages"))
+
+	output, err := executeCommand(
+		"target", "verify", "invented-app%2Fmod/sample", "--installation", installationID,
+	)
+	if err != nil {
+		t.Fatalf("verify installed place package: %v\n%s", err, output)
+	}
+	if strings.Count(output, "\n") != 1 || strings.Contains(output, "sensitive") ||
+		!strings.Contains(output, "initial-load") || !strings.Contains(output, "pass") ||
+		!strings.Contains(output, fixture.identity.RevisionDigest) || !strings.Contains(output, generation) ||
+		!strings.Contains(output, packageDigest) || !strings.Contains(output, "target-verify") ||
+		!strings.Contains(output, "unknown") {
+		t.Fatalf("verification output = %q", output)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "invoked" {
+		t.Fatalf("check marker = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(fixture.userConfig); err != nil || !bytes.Equal(data, configBefore) {
+		t.Fatalf("verify changed config: %v", err)
+	}
+	if data, err := os.ReadFile(fixture.userLock); err != nil || !bytes.Equal(data, lockBefore) {
+		t.Fatalf("verify changed deployed lock: %v", err)
+	}
+	if data, err := os.ReadFile(targetPath); err != nil || !bytes.Equal(data, targetBefore) {
+		t.Fatalf("verify changed installed file: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(fixture.targetRoot, "keep.txt")); err != nil || !bytes.Equal(data, fixture.rootBytes) {
+		t.Fatalf("verify changed unrelated target file: %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(receipts[0]); err != nil || !bytes.Equal(data, receiptBefore) {
+		t.Fatalf("verify changed approval receipt: %v", err)
+	}
+	owner, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := owner.PlaceFromSnapshot(snapshot)
+	if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Verification == nil ||
+		projection.Packages[0].Verification.Outcome != "pass" ||
+		projection.Packages[0].Verification.GenerationKey != generation {
+		t.Fatalf("recorded verification projection = %#v, %v", projection, err)
+	}
+	beforePackage, afterPackage := projectionBefore.Packages[0], projection.Packages[0]
+	beforePackage.Verification, afterPackage.Verification = nil, nil
+	if !reflect.DeepEqual(beforePackage, afterPackage) {
+		t.Fatalf("verification changed package projection beyond result: before=%#v after=%#v", beforePackage, afterPackage)
+	}
+	assertTargetStateTreeUnchanged(t, rootTreeBefore, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, packageTreeBefore, filepath.Join(fixture.stateRoot, "packages"))
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// spec: target-profile-place/target-verify-refuses-drifted-files-without-running-checks
+func TestTargetVerifyRefusesDrift(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Run("installation mismatch refuses before execution", func(t *testing.T) {
+		_, binding, marker, _, statePath, _ := newInstalledTargetVerificationFixture(t)
+		stateBefore, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err := executeCommand(
+			"target", "verify", "invented-app%2Fmod/sample",
+			"--installation", strings.Repeat("0", 64),
+		)
+		if err == nil || !strings.Contains(err.Error(), "target.place.installation-unavailable") || strings.Contains(output, "Verified") {
+			t.Fatalf("installation mismatch = %v, %q", err, output)
+		}
+		if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+			t.Fatalf("installation mismatch ran the check: %v", err)
+		}
+		stateAfter, err := os.ReadFile(statePath)
+		if err != nil || !bytes.Equal(stateBefore, stateAfter) {
+			t.Fatalf("installation mismatch changed ownership: %v", err)
+		}
+		if got := expectedTargetInstallationID(binding); got == strings.Repeat("0", 64) {
+			t.Fatal("fixture installation ID unexpectedly equals the mismatch")
+		}
+	})
+	t.Run("edited file refuses before execution or result write", func(t *testing.T) {
+		_, binding, marker, targetPath, statePath, _ := newInstalledTargetVerificationFixture(t)
+		stateBefore, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edited := []byte("edited before verify\n")
+		if err := os.WriteFile(targetPath, edited, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		output, err := executeCommand(
+			"target", "verify", "invented-app%2Fmod/sample",
+			"--installation", expectedTargetInstallationID(binding),
+		)
+		if err == nil || !strings.Contains(err.Error(), "target.place.drift") ||
+			!strings.Contains(err.Error(), "mods/sample/guide.md") || strings.Contains(output, "Verified") {
+			t.Fatalf("drift refusal = %v, %q", err, output)
+		}
+		if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+			t.Fatalf("drift refusal ran the check: %v", err)
+		}
+		stateAfter, err := os.ReadFile(statePath)
+		if err != nil || !bytes.Equal(stateBefore, stateAfter) {
+			t.Fatalf("drift refusal changed ownership: %v", err)
+		}
+		if data, err := os.ReadFile(targetPath); err != nil || !bytes.Equal(data, edited) {
+			t.Fatalf("drift refusal changed edited file: %q, %v", data, err)
+		}
+	})
+}
+
+func newInstalledTargetVerificationFixture(
+	t *testing.T,
+) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
+	t.Helper()
+	fixture := newTargetApprovalFixtureWithProfile(t, []byte(targetVerifyProfileYAML))
+	hostDir := filepath.Join(fixture.home, "bin")
+	if err := os.Mkdir(hostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(fixture.home, "verify-invoked")
+	host := "#!/bin/sh\n" +
+		"if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " + targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) + " ]; then exit 81; fi\n" +
+		"if IFS= read -r input; then exit 82; fi\n" +
+		"printf invoked > " + targetVerifyShellQuote(marker) + "\nprintf 'sensitive diagnostic\\n'\nprintf 'sensitive stderr\\n' >&2\n"
+	hostPath := filepath.Join(hostDir, "target-verify-fixture")
+	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", hostDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	warmTargetApprovalProfileCache(t, fixture)
+	binding, err := pipeline.PrepareDeployedPlaceApproval(context.Background(), mustTargetWorkspace(t, fixture), fixture.identity.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetprofile.RecordApproval(binding); err != nil {
+		t.Fatal(err)
+	}
+	files, pkg := resolvedTargetApprovalPackage(t, fixture)
+	if _, err := pipeline.CommitPlaceUpserts(
+		context.Background(), binding, fixture.profileBytes, targetApprovalEnvironment(t, fixture),
+		[]marketplace.ResolvedPlacePackage{pkg},
+	); err != nil {
+		t.Fatalf("install owned verification package: %v", err)
+	}
+	targetPath := filepath.Join(fixture.targetRoot, filepath.FromSlash(files[0].DestinationPath))
+	owner, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := owner.PlaceFromSnapshot(snapshot)
+	if err != nil || len(projection.Packages) != 1 {
+		t.Fatalf("installed verification package = %#v, %v", projection, err)
+	}
+	return fixture, binding, marker, targetPath, owner.StateFile(), projection.Packages[0].GenerationKey
+}
+
+func expectedTargetInstallationID(binding targetprofile.ApprovalBinding) string {
+	sum := sha256.Sum256([]byte("agent-marketplace/place-installation/v1\x00" +
+		binding.Profile.TargetID + "\x00" + binding.CanonicalRoot + "\x00" + binding.CanonicalStateRoot))
+	return hex.EncodeToString(sum[:])
+}
+
+func targetVerifyShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func warmTargetApprovalProfileCache(t *testing.T, fixture targetApprovalFixture) {

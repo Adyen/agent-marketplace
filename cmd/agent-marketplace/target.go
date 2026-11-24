@@ -11,8 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 type targetApprovalDisplay struct {
@@ -25,6 +27,7 @@ type targetApprovalDisplay struct {
 	CommandRoles       []string                        `json:"command_roles"`
 	Executable         targetprofile.ExecutableBinding `json:"executable"`
 	NoExecution        bool                            `json:"no_execution"`
+	InstallationID     string                          `json:"installation_id"`
 }
 
 type targetApprovalResult struct {
@@ -34,7 +37,7 @@ type targetApprovalResult struct {
 
 func newTargetCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "target", Short: "Manage target-profile selection and approval"}
-	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"))
+	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"), newTargetVerifyCmd())
 	return cmd
 }
 
@@ -119,7 +122,8 @@ func newTargetApproveCmd() *cobra.Command {
 			if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target %s approval recorded; this does not enable or install the target.\n", current.Profile.TargetID)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target %s approval recorded; future installation ID for this approved root: %s. This does not enable or install the target.\n",
+				current.Profile.TargetID, pipeline.PlaceInstallationID(current))
 			return err
 		},
 	}
@@ -128,11 +132,57 @@ func newTargetApproveCmd() *cobra.Command {
 	return cmd
 }
 
+func newTargetVerifyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:  "verify <target-id>%2F<kind>/<name>",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kindToken, name, hasSeparator := strings.Cut(args[0], "/")
+			if !hasSeparator || strings.Contains(name, "/") {
+				return fmt.Errorf("target.place.package-invalid: expected one target-kind/package-name separator")
+			}
+			kind, ok := nameutil.DecodePlaceKindToken(kindToken)
+			if !ok || !nameutil.IsPlacePackageName(name) {
+				return fmt.Errorf("target.place.package-invalid: target kind token or package name is invalid")
+			}
+			installationID, _ := cmd.Flags().GetString("installation")
+			if installationID == "" {
+				return fmt.Errorf("target.place.installation-unavailable: --installation is required")
+			}
+			ws, err := discoverSyncWorkspace()
+			if err != nil {
+				return err
+			}
+			result, verifyErr := pipeline.VerifyDeployedPlace(cmd.Context(), ws, kind, name, installationID)
+			if result.Outcome != "" {
+				if err := writePlaceVerificationResult(cmd.OutOrStdout(), kind, name, result); err != nil {
+					return errors.Join(verifyErr, err)
+				}
+			}
+			return verifyErr
+		},
+	}
+	cmd.Flags().String("installation", "", "Current approved-root installation ID")
+	_ = cmd.MarkFlagRequired("installation")
+	return cmd
+}
+
+func writePlaceVerificationResult(out io.Writer, kind, name string, result ownership.PlaceVerification) error {
+	_, err := fmt.Fprintf(out,
+		"Verified %s/%s with check %s: %s (package %s, profile %s, generation %s, host version %s, evidence %s).\n",
+		kind, name, result.Check, result.Outcome,
+		result.Binding.PackageContentDigest, result.Binding.ProfileIdentity.RevisionDigest,
+		result.GenerationKey, result.HostVersionStatus, result.EvidenceSource,
+	)
+	return err
+}
+
 func approvalDisplay(binding targetprofile.ApprovalBinding) targetApprovalDisplay {
 	return targetApprovalDisplay{
 		OS: binding.OS, Profile: binding.Profile, CanonicalRoot: binding.CanonicalRoot,
 		CanonicalStateRoot: binding.CanonicalStateRoot, StateRootKey: binding.StateRootKey,
 		UsedOverride: binding.UsedOverride, CommandRoles: binding.CommandRoles,
 		Executable: binding.Executable, NoExecution: len(binding.CommandRoles) == 0,
+		InstallationID: pipeline.PlaceInstallationID(binding),
 	}
 }

@@ -4,6 +4,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +20,36 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
+
+// VerifyDeployedPlace verifies one installed package against the selected,
+// approved deployed profile and records only the exact check outcome.
+func VerifyDeployedPlace(
+	ctx context.Context,
+	ws Workspace,
+	kind, name, installationID string,
+) (ownership.PlaceVerification, error) {
+	targetID, _, scoped := nameutil.SplitPlaceKind(kind)
+	if !scoped || !nameutil.IsPlacePackageName(name) || validatePlaceTargetID(targetID) != nil {
+		return ownership.PlaceVerification{}, fmt.Errorf("target.place.package-invalid: kind and name must identify a scoped place package")
+	}
+	var decoded [sha256.Size]byte
+	if len(installationID) != hex.EncodedLen(len(decoded)) {
+		return ownership.PlaceVerification{}, fmt.Errorf("target.place.installation-unavailable: installation ID is not a canonical lowercase SHA-256 identity")
+	}
+	if _, err := hex.Decode(decoded[:], []byte(installationID)); err != nil || hex.EncodeToString(decoded[:]) != installationID {
+		return ownership.PlaceVerification{}, fmt.Errorf("target.place.installation-unavailable: installation ID is not a canonical lowercase SHA-256 identity")
+	}
+	prepared, err := loadDeployedPlaceApproval(ctx, ws, targetID)
+	if err != nil {
+		return ownership.PlaceVerification{}, err
+	}
+	if PlaceInstallationID(prepared.binding) != installationID {
+		return ownership.PlaceVerification{}, fmt.Errorf("target.place.installation-unavailable: installation ID does not match the current approved root")
+	}
+	return runPlaceVerification(ctx, prepared.binding, prepared.raw, prepared.environment, ws.RepoRoot(), kind, name)
+}
 
 func runPlaceVerification(
 	ctx context.Context,

@@ -625,6 +625,8 @@ agent-marketplace target approve <target-id> [--json]
 
 Reads the selected profile and its already-deployed Git lock from the local cache, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
 
+The approval binding includes the future installation ID for that approved target root. It identifies the root and state location, not an installed package.
+
 ### `target enable`
 
 ```text
@@ -640,6 +642,14 @@ agent-marketplace target disable <target-id>
 ```
 
 Removes a place target from the user target list without changing its Marketplace selection, approval receipt, or installed files. Removing the last target from a `harnesses:` list, or from an inherited list without an authored `targets:` key, is refused with guidance to upgrade readers and rename the key. To represent no targets explicitly, use a `targets:` list; `targets: []` disables inheritance. The command requires an existing v4 user config and does not sync or remove packages.
+
+### `target verify`
+
+```text
+agent-marketplace target verify <target-id>%2F<kind>/<name> --installation <id>
+```
+
+Runs only the named approved check for an already-installed package and records its result. It does not install, activate, repair, or synchronize packages. The required `--installation` ID must identify the current approved target root; verification refuses drifted files and profiles with a host version probe until that probe is supported.
 
 ## `telemetry`
 
