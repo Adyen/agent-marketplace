@@ -16,28 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func buildPlaceResult(ctx context.Context, cfg config.Config, registry store.Registry, dir string, selection config.HostPackageAssessmentProfile, policy analyze.Policy, limits config.Limits, license licensePolicy) (artifact.BuildResult, string, []byte, error) {
-	if err := requirePlaceMirror(registry); err != nil {
-		return artifact.BuildResult{}, "", nil, err
-	}
-	identity, err := cfg.AssessmentProfileFor(string(registry.ID), selection.Kind, selection.Name)
-	if err != nil {
-		return artifact.BuildResult{}, "", nil, err
-	}
-	if len(registry.Origins) == 0 {
-		return artifact.BuildResult{}, "", nil, fmt.Errorf("marketplace.profile.unavailable: registry %q has no origin", registry.ID)
-	}
-	checkout, err := fsboundary.OpenDir(dir)
-	if err != nil {
-		return artifact.BuildResult{}, "", nil, fmt.Errorf("open registry checkout for place package %q: %w", selection.Name, err)
-	}
-	defer func() { _ = checkout.Close() }()
-
-	origin := registry.Origins[len(registry.Origins)-1]
-	profileBytes, err := resolveCheckoutAssessmentProfile(checkout, origin, registry.Ref, identity)
-	if err != nil {
-		return artifact.BuildResult{}, "", nil, err
-	}
+func buildPlaceResult(ctx context.Context, registry store.Registry, checkout *fsboundary.Dir, selection config.HostPackageAssessmentProfile, identity targetprofile.Identity, profileBytes []byte, policy analyze.Policy, limits config.Limits, license licensePolicy) (artifact.BuildResult, string, []byte, error) {
 	pkg, err := targetprofile.LoadPackage(
 		checkout, selection.Kind, selection.Name, profileBytes, identity,
 		targetprofile.PackageLimits{FileCount: limits.FileCount, FileBytes: limits.FileBytes, TotalBytes: limits.RepositoryBytes},
@@ -104,6 +83,46 @@ func buildPlaceResult(ctx context.Context, cfg config.Config, registry store.Reg
 	}
 	result = applyPolicyToResult(result, registry.ID, limits, license, registry.Acquisition)
 	return result, sourcePath, inspectionBody, nil
+}
+
+type placeCheckoutResult struct {
+	result          artifact.BuildResult
+	sourcePath      string
+	inspectionBody  []byte
+	profileIdentity targetprofile.Identity
+	profileBytes    []byte
+}
+
+func buildPlaceCheckoutResult(ctx context.Context, cfg config.Config, registry store.Registry, dir string, selection config.HostPackageAssessmentProfile, policy analyze.Policy, limits config.Limits, license licensePolicy) (placeCheckoutResult, error) {
+	if err := requirePlaceMirror(registry); err != nil {
+		return placeCheckoutResult{}, err
+	}
+	identity, err := cfg.AssessmentProfileFor(string(registry.ID), selection.Kind, selection.Name)
+	if err != nil {
+		return placeCheckoutResult{}, err
+	}
+	if len(registry.Origins) == 0 {
+		return placeCheckoutResult{}, fmt.Errorf("marketplace.profile.unavailable: registry %q has no origin", registry.ID)
+	}
+	checkout, err := fsboundary.OpenDir(dir)
+	if err != nil {
+		return placeCheckoutResult{}, fmt.Errorf("open registry checkout for place package %q: %w", selection.Name, err)
+	}
+	defer func() { _ = checkout.Close() }()
+
+	origin := registry.Origins[len(registry.Origins)-1]
+	profileBytes, err := resolveCheckoutAssessmentProfile(checkout, origin, registry.Ref, identity)
+	if err != nil {
+		return placeCheckoutResult{}, err
+	}
+	result, sourcePath, inspectionBody, err := buildPlaceResult(ctx, registry, checkout, selection, identity, profileBytes, policy, limits, license)
+	if err != nil {
+		return placeCheckoutResult{}, err
+	}
+	return placeCheckoutResult{
+		result: result, sourcePath: sourcePath, inspectionBody: inspectionBody,
+		profileIdentity: identity, profileBytes: profileBytes,
+	}, nil
 }
 
 func placeStoreFindings(findings []analyze.Finding) []store.Finding {

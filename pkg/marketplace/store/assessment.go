@@ -152,7 +152,10 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 		if assessment.HostPackageIdentity != nil {
 			return fmt.Errorf("host package identity is only valid for scoped resource kinds")
 		}
-		if !IsMarketplaceResourceKind(assessment.Coordinate.Kind) {
+		if assessment.Coordinate.Kind == nameutil.TargetProfileKind && !nameutil.IsTargetIdentifier(assessment.Coordinate.Name) {
+			return fmt.Errorf("invalid target profile name %q", assessment.Coordinate.Name)
+		}
+		if !IsMarketplaceResourceKind(assessment.Coordinate.Kind) && assessment.Coordinate.Kind != nameutil.TargetProfileKind {
 			return fmt.Errorf("unsupported resource kind %q", assessment.Coordinate.Kind)
 		}
 	}

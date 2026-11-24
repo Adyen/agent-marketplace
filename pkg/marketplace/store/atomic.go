@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -154,6 +155,9 @@ type ResourceRevisionPublication struct {
 // PublishResourceRevision uploads the resource archive and writes the resource
 // revision in a single transaction.
 func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, pub ResourceRevisionPublication) error {
+	if pub.Revision.Coordinate.Kind == nameutil.TargetProfileKind {
+		return errors.New("virtual target profiles require an assessed registry publication")
+	}
 	if _, _, scoped := nameutil.SplitPlaceKind(pub.Revision.Coordinate.Kind); scoped {
 		return errors.New("scoped place packages require an assessed registry publication")
 	}
@@ -173,6 +177,16 @@ func validateRegistryRevisionPublication(req RegistryRevisionPublication) error 
 	for _, rev := range req.Resources {
 		if rev.Coordinate.Kind == "collection" && rev.ArchiveDigest != "" {
 			return fmt.Errorf("collection resource revision %s must not have an archive digest", rev.Coordinate)
+		}
+		if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+			if rev.ArchiveDigest != "" {
+				return fmt.Errorf("virtual target profile %s must not have an archive digest", rev.Coordinate)
+			}
+			if !slices.ContainsFunc(req.Assessments, func(a ResourceAssessment) bool {
+				return a.Coordinate == rev.Coordinate && a.ContentDigest == rev.ContentDigest
+			}) {
+				return fmt.Errorf("virtual target profile %s requires a matching assessment", rev.Coordinate)
+			}
 		}
 	}
 	return nil
@@ -281,6 +295,10 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 			if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
 				return errors.New("primary file media policy is not canonical")
 			}
+			if rev.Coordinate.Kind == nameutil.TargetProfileKind &&
+				(file.ContentDigest != string(rev.ContentDigest) || len(manifest.Files) != 1) {
+				return errors.New("virtual target profile requires its exact primary content")
+			}
 			primary = true
 		} else if !canonicalInspectionSupportPath(file.Path) {
 			return fmt.Errorf("non-canonical file path %q", file.Path)
@@ -352,6 +370,8 @@ func inspectionPrimaryPathForKind(kind string) string {
 		return ".mcp.json"
 	case "collection":
 		return "COLLECTION.json"
+	case nameutil.TargetProfileKind:
+		return nameutil.TargetProfileInspectionPath
 	default:
 		return ""
 	}
@@ -366,6 +386,8 @@ func inspectionPrimaryMediaPolicy(kind string) (string, string) {
 		return "text/markdown", "text"
 	case "mcpserver", "collection":
 		return "application/json", "text"
+	case nameutil.TargetProfileKind:
+		return "application/yaml", "text"
 	default:
 		return "", ""
 	}
@@ -449,7 +471,7 @@ func isUnsafeInspectionExtension(ext string) bool {
 
 func isInspectionPrimaryPath(value string) bool {
 	switch value {
-	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md":
+	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md", nameutil.TargetProfileInspectionPath:
 		return true
 	default:
 		return false

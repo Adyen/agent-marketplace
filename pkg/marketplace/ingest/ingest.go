@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -35,6 +36,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/google/licensecheck"
 )
@@ -138,7 +140,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	}
 	processedKindName := func(p processed) (string, string) {
 		kind, name := api.FromIR(p.entry.Kind), p.entry.Name
-		if p.result.Artifact.Manifest.HostPackageIdentity != nil {
+		if p.result.Artifact.Manifest.HostPackageIdentity != nil || p.result.Kind == nameutil.TargetProfileKind {
 			kind, name = p.result.Kind, p.result.Name
 		}
 		return kind, name
@@ -503,14 +505,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
-	for _, selection := range cfg.HostPackageAssessmentProfiles {
-		if selection.RegistryID != string(registry.ID) {
-			continue
-		}
-		result, sourcePath, inspectionBody, err := buildPlaceResult(ctx, cfg, registry, dir, selection, policy, limits, license)
-		if err != nil {
-			return rev, fmt.Errorf("build place package %q: %w", selection.Name, err)
-		}
+	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte) error {
 		kind, name := result.Kind, result.Name
 		coordinate := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: name}
 		projection, err := inspection.Build(
@@ -518,7 +513,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
 		)
 		if err != nil {
-			return rev, fmt.Errorf("inspection projection for %s %q: %w", kind, name, err)
+			return fmt.Errorf("inspection projection for %s %q: %w", kind, name, err)
 		}
 		key := kind + "/" + name
 		inspectionDigests[key] = projection.Manifest.ManifestDigest
@@ -529,6 +524,39 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		processedResults = append(processedResults, processed{
 			sourcePath: sourcePath, result: result, inspectionBody: inspectionBody,
 		})
+		return nil
+	}
+	profilePins := make(map[string]targetprofile.Identity)
+	for _, selection := range cfg.HostPackageAssessmentProfiles {
+		if selection.RegistryID != string(registry.ID) {
+			continue
+		}
+		place, err := buildPlaceCheckoutResult(ctx, cfg, registry, dir, selection, policy, limits, license)
+		if err != nil {
+			return rev, fmt.Errorf("build place package %q: %w", selection.Name, err)
+		}
+		identity := place.profileIdentity
+		if previous, ok := profilePins[identity.TargetID]; ok && previous != identity {
+			return rev, fmt.Errorf("marketplace.profile.selection-ambiguous: target %q has multiple profile identities", identity.TargetID)
+		}
+		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody); err != nil {
+			return rev, err
+		}
+		if _, exists := profilePins[identity.TargetID]; exists {
+			continue
+		}
+		profilePins[identity.TargetID] = identity
+		source, err := targetprofile.ParseSourceID(identity.SourceID)
+		if err != nil {
+			return rev, err
+		}
+		profileResult := applyPolicyToResult(artifact.BuildResult{
+			Kind: nameutil.TargetProfileKind, Name: identity.TargetID,
+			ContentDigest: identity.RevisionDigest, License: registry.License,
+		}, registry.ID, limits, license, registry.Acquisition)
+		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes); err != nil {
+			return rev, err
+		}
 	}
 
 	var manifest artifact.RegistryRevisionManifest

@@ -37,6 +37,20 @@ files:
 		t.Fatal(err)
 	}
 
+	otherPackageRoot := filepath.Join(root, "packages", "invented-app", "mod", "other")
+	writeAssessmentProfileFile(t, filepath.Join(otherPackageRoot, "agent-marketplace.yaml"), []byte(`target_id: invented-app
+kind: invented-app/mod
+name: other
+files:
+  - source_path: other.txt
+    destination_path: mods/other.txt
+`))
+	otherPayloadPath := filepath.Join(otherPackageRoot, "payload", "other.txt")
+	writeAssessmentProfileFile(t, otherPayloadPath, []byte("other package\n"))
+	if err := os.Chmod(otherPayloadPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	registry := store.Registry{
 		ID: "src-test", Slug: "src-test", Ref: "main",
 		Origins: []string{checkoutProfileOrigin}, Acquisition: store.AcquisitionMirror, License: "MIT",
@@ -44,6 +58,8 @@ files:
 	cfg := testConfig(t, root)
 	cfg.HostPackageAssessmentProfiles = []config.HostPackageAssessmentProfile{{
 		RegistryID: "src-test", Kind: "invented-app/mod", Name: "sample", ProfileIdentity: profileIdentity,
+	}, {
+		RegistryID: "src-test", Kind: "invented-app/mod", Name: "other", ProfileIdentity: profileIdentity,
 	}}
 	const marketplaceID store.MarketplaceID = "mp-test"
 	commit := strings.Repeat("e", 40)
@@ -146,13 +162,53 @@ files:
 	if persisted.Assessment.HostPackageIdentity == nil || *persisted.Assessment.HostPackageIdentity != *verified.Manifest.HostPackageIdentity {
 		t.Fatal("persisted assessment binding differs from verified artifact binding")
 	}
+	profileCoord := store.ResourceCoordinate{Marketplace: marketplaceID, Registry: registry.ID, Kind: "target-profile", Name: "invented-app"}
+	profileRevision, err := meta.GetLatestResourceRevision(ctx, profileCoord)
+	if err != nil {
+		t.Fatalf("get published virtual profile: %v", err)
+	}
+	if profileRevision.ContentDigest != store.RevisionDigest(profileIdentity.RevisionDigest) ||
+		profileRevision.ArchiveDigest != "" || profileRevision.Assessment.HostPackageIdentity != nil ||
+		profileRevision.Occurrence.SourcePath != "profiles/invented-app.yaml" || profileRevision.Occurrence.Commit != commit {
+		t.Fatalf("virtual profile revision = %#v; want exact identity, provenance, and no archive", profileRevision)
+	}
+	rawProfile, err := blobs.Get(ctx, store.ArchiveDigest(profileIdentity.RevisionDigest))
+	if err != nil || !bytes.Equal(rawProfile, profileBytes) {
+		t.Fatalf("published virtual profile bytes differ from pinned profile: %v", err)
+	}
+	profileCount := 0
+	for _, resource := range revision.Resources {
+		if resource.Coordinate.Kind == "target-profile" && resource.Coordinate.Name == "invented-app" {
+			profileCount++
+		}
+	}
+	if profileCount != 1 {
+		t.Fatalf("BuildRegistryRevision target-profile resources = %d, want one for the shared profile pin", profileCount)
+	}
+
+	alternateProfilePath := filepath.Join(root, "profiles", "invented-app-copy.yaml")
+	writeAssessmentProfileFile(t, alternateProfilePath, profileBytes)
+	alternateProfileIdentity := profileIdentity
+	alternateProfileIdentity.SourceID = strings.Replace(
+		profileIdentity.SourceID,
+		"profiles%2Finvented-app.yaml",
+		"profiles%2Finvented-app-copy.yaml",
+		1,
+	)
+	ambiguousConfig := cfg
+	ambiguousConfig.HostPackageAssessmentProfiles = append([]config.HostPackageAssessmentProfile(nil), cfg.HostPackageAssessmentProfiles...)
+	ambiguousConfig.HostPackageAssessmentProfiles[1].ProfileIdentity = alternateProfileIdentity
+	if _, err := BuildRegistryRevision(ctx, ambiguousConfig, marketplaceID, registry, root, commit); err == nil ||
+		!strings.Contains(err.Error(), "marketplace.profile.selection-ambiguous") {
+		t.Fatalf("BuildRegistryRevision with multiple profile identities for one target error = %v, want ambiguous selection refusal", err)
+	}
 
 	legacy, err := BuildRegistryRevision(ctx, testConfig(t, root), marketplaceID, registry, root, commit)
 	if err != nil {
 		t.Fatalf("BuildRegistryRevision without profile entry: %v", err)
 	}
 	for _, resource := range legacy.Resources {
-		if resource.Coordinate.Kind == "invented-app/mod" {
+		if resource.Coordinate.Kind == "invented-app/mod" || resource.Coordinate.Kind == "target-profile" {
 			t.Fatalf("unconfigured build produced scoped resource: %+v", resource)
 		}
 	}

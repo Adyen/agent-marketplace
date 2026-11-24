@@ -76,6 +76,8 @@ func PrimaryPath(kind string) string {
 		return PrimaryMCPServerPath
 	case "collection":
 		return PrimaryCollectionPath
+	case nameutil.TargetProfileKind:
+		return nameutil.TargetProfileInspectionPath
 	default:
 		return ""
 	}
@@ -226,6 +228,12 @@ func canonicalSupportPath(name string) (string, error) {
 }
 
 func mediaPolicy(name string, data []byte) (string, string, bool) {
+	if name == nameutil.TargetProfileInspectionPath {
+		if !IsValidText(data) {
+			return MediaMetadata, ClassMetadata, false
+		}
+		return MediaYAML, ClassText, true
+	}
 	ext := strings.ToLower(path.Ext(name))
 	if media := http.DetectContentType(data); media == MediaPNG || media == MediaJPEG || media == MediaGIF || media == MediaWEBP {
 		return media, ClassImage, true
@@ -265,6 +273,8 @@ func primaryMediaPolicy(kind string) (string, string) {
 		return MediaMarkdown, ClassText
 	case "mcpserver", "collection":
 		return MediaJSON, ClassText
+	case nameutil.TargetProfileKind:
+		return MediaYAML, ClassText
 	default:
 		return "", ""
 	}
@@ -450,7 +460,11 @@ func VerifyFileContent(file File, data []byte) error {
 			return fmt.Errorf("content media type does not match manifest")
 		}
 	case ClassText:
-		if file.MediaType == MediaMarkdown {
+		if file.Path == nameutil.TargetProfileInspectionPath {
+			if !IsValidText(data) {
+				return fmt.Errorf("target profile content is not valid text")
+			}
+		} else if file.MediaType == MediaMarkdown {
 			if !IsValidText(data) {
 				return fmt.Errorf("markdown content is not valid text")
 			}

@@ -12,6 +12,9 @@ const TargetProfileKind = "target-profile"
 // PlacePackageInspectionPath is the canonical inspection path for a place package.
 const PlacePackageInspectionPath = "PLACE-PACKAGE.json"
 
+// TargetProfileInspectionPath is the canonical inspection path for a target profile.
+const TargetProfileInspectionPath = "TARGET-PROFILE.yaml"
+
 var encodedPathSeparator = regexp.MustCompile("(?i)%(25)*(2f|5c)")
 
 // IsTargetIdentifier reports whether value follows the place target identifier grammar.

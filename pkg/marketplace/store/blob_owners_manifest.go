@@ -89,7 +89,9 @@ func decodeBlobRegistryManifest(payload []byte, digest ArchiveDigest) (blobRegis
 	for _, resource := range manifest.Resources {
 		key := resource.Kind + "/" + resource.Name
 		_, _, scoped := nameutil.SplitPlaceKind(resource.Kind)
-		validKind := IsMarketplaceResourceKind(resource.Kind) || (scoped && nameutil.IsPlacePackageName(resource.Name))
+		validKind := IsMarketplaceResourceKind(resource.Kind) ||
+			(scoped && nameutil.IsPlacePackageName(resource.Name)) ||
+			(resource.Kind == nameutil.TargetProfileKind && nameutil.IsTargetIdentifier(resource.Name) && resource.ArchiveDigest == "")
 		if !validKind || resource.Name == "" || !validInspectionDigest(resource.ContentDigest) || seen[key] || (resource.ArchiveDigest != "" && !validInspectionDigest(resource.ArchiveDigest)) {
 			return manifest, ErrBlobOwnershipInvalid
 		}
