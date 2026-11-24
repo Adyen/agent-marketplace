@@ -168,6 +168,16 @@ func (r ResolveResult) DisplayArtifacts() []resolver.ResolvedArtifact {
 	return slices.Concat(r.Resolved, r.SelectedCollections)
 }
 
+// StatusCompiledMarketplaceConfig removes virtual place pins from the
+// compiled-resource view used by status follow-up resolution.
+func StatusCompiledMarketplaceConfig(cfg *config.Config) *config.Config {
+	compiled, _ := marketplaceConfigViews(cfg, true, nil)
+	return compiled
+}
+
+// HasPlaceTargets reports whether resolution captured enabled deployed place targets.
+func (r ResolveResult) HasPlaceTargets() bool { return len(r.placeTargets) > 0 }
+
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
 // target harness set is configured.
 type TargetHarnessSetMissingError struct{}
@@ -745,8 +755,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 	if transientOrganizationMarketplaceLock != transientOrganizationMarketplaceLockUnused && mpMode != resolver.MarketplaceResolveModeInspect {
 		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
 	}
+	marketplaceCfg, placeConfig := loadedCfg, loadedCfg
+	if loadedCfg != nil && (opts.EnablePlaceSync || opts.MarketplaceSourceFilter != nil) {
+		marketplaceCfg, placeConfig = marketplaceConfigViews(loadedCfg, opts.EnablePlaceSync, opts.MarketplaceSourceFilter)
+	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
-		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, resolver.UnionTargetHarnesses(result.TargetHarnesses, result.MachineTargetHarnesses), mpMode)
+		inspectCfg := loadedCfg
+		if opts.EnablePlaceSync {
+			inspectCfg = marketplaceCfg
+		}
+		inspection := marketplaceResolver.Inspect(ctx, inspectCfg, resolver.UnionTargetHarnesses(result.TargetHarnesses, result.MachineTargetHarnesses), mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
@@ -763,10 +781,6 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			result.MarketplaceArtifactResolver = marketplaceCacheArtifactResolver{delegate: artifactDelegate, pins: inspection.Pins}
 			mpResolver = result.MarketplaceArtifactResolver
 		}
-	}
-	marketplaceCfg, placeConfig := loadedCfg, loadedCfg
-	if loadedCfg != nil && (opts.EnablePlaceSync || opts.MarketplaceSourceFilter != nil) {
-		marketplaceCfg, placeConfig = marketplaceConfigViews(loadedCfg, opts.EnablePlaceSync, opts.MarketplaceSourceFilter)
 	}
 	result.placeConfig = placeConfig
 	var selectedCollections []resolver.ResolvedArtifact

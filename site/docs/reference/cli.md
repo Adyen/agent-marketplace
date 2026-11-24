@@ -404,6 +404,8 @@ agent-marketplace status
 
 The report prints these sections in this order. Sections other than `TARGET HARNESS SET`, `SYNCED RESOURCES`, and `DRIFT` appear only when they have content.
 
+The optional `PLACE PACKAGES` section covers only enabled Git-backed place targets and installations at each target's current root. Recorded verification is historical evidence for the installed generation and is shown separately from current file drift; status never runs the host executable or probes its version.
+
 | Section | Contents |
 |---|---|
 | `MANAGED INSTALLATION` | Present when an organization config manages the installation: its path and validation result. |
@@ -411,6 +413,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and whether the cached snapshot is `available` or `missing`. |
 | `SYNCED RESOURCES` | Resource kind, name, harness, source, collection and prerequisite origin (`VIA`, including `requires <kind>:<name>` for selected resources with recorded requirement provenance, whether selected directly, through a collection, or transitively), target path, registry, ref, and cache state. |
 | `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
+| `PLACE PACKAGES` | Current-root installed packages, installation ID, recorded verification (`passed`, `failed`, pending, or unknown), and independently checked owned-file drift. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |

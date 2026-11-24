@@ -35,23 +35,7 @@ type ApprovalBinding struct {
 }
 
 func ResolveApprovalBinding(profile Profile, identity Identity, env ApprovalEnvironment) (ApprovalBinding, error) {
-	if err := identity.Validate(); err != nil {
-		return ApprovalBinding{}, err
-	}
-	if err := validateProfile(profile, identity.TargetID); err != nil {
-		return ApprovalBinding{}, err
-	}
-	if (env.Platform != "macos" && env.Platform != "linux") || !slices.Contains(profile.Platforms, env.Platform) {
-		return ApprovalBinding{}, fmt.Errorf("target.approval.unsupported-platform: %q", env.Platform)
-	}
-	if !filepath.IsAbs(env.CanonicalStateRoot) || filepath.Clean(env.CanonicalStateRoot) != env.CanonicalStateRoot {
-		return ApprovalBinding{}, fmt.Errorf("target.approval.state-root-invalid: state root must be absolute and clean")
-	}
-	bases, err := approvalBases(profile.Roots.User, env)
-	if err != nil {
-		return ApprovalBinding{}, err
-	}
-	root, usedOverride, err := approvalRoot(profile.Roots.User, env, bases)
+	root, usedOverride, err := ResolvePlaceRoot(profile, identity, env)
 	if err != nil {
 		return ApprovalBinding{}, err
 	}
@@ -69,6 +53,31 @@ func ResolveApprovalBinding(profile Profile, identity Identity, env ApprovalEnvi
 		StateRootKey:       rootkey.ForCanonicalRoot(env.CanonicalStateRoot),
 		UsedOverride:       usedOverride, CommandRoles: roles, Executable: executable,
 	}, nil
+}
+
+// ResolvePlaceRoot admits the current canonical target root without resolving a host executable.
+func ResolvePlaceRoot(profile Profile, identity Identity, env ApprovalEnvironment) (root string, usedOverride bool, err error) {
+	if err := identity.Validate(); err != nil {
+		return "", false, err
+	}
+	if err := validateProfile(profile, identity.TargetID); err != nil {
+		return "", false, err
+	}
+	if (env.Platform != "macos" && env.Platform != "linux") || !slices.Contains(profile.Platforms, env.Platform) {
+		return "", false, fmt.Errorf("target.approval.unsupported-platform: %q", env.Platform)
+	}
+	if !filepath.IsAbs(env.CanonicalStateRoot) || filepath.Clean(env.CanonicalStateRoot) != env.CanonicalStateRoot {
+		return "", false, fmt.Errorf("target.approval.state-root-invalid: state root must be absolute and clean")
+	}
+	bases, err := approvalBases(profile.Roots.User, env)
+	if err != nil {
+		return "", false, err
+	}
+	root, usedOverride, err = approvalRoot(profile.Roots.User, env, bases)
+	if err != nil {
+		return "", false, err
+	}
+	return root, usedOverride, nil
 }
 
 func (b ApprovalBinding) Match(current ApprovalBinding) error {

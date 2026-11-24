@@ -125,6 +125,10 @@ func PreparePlaceAdmission(
 }
 
 func resolvePlaceApprovalBinding(profile targetprofile.Profile, identity targetprofile.Identity, environment targetprofile.ApprovalEnvironment) (targetprofile.ApprovalBinding, error) {
+	return targetprofile.ResolveApprovalBinding(profile, identity, placeProfileEnvironment(profile, environment))
+}
+
+func placeProfileEnvironment(profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) targetprofile.ApprovalEnvironment {
 	profileEnvironment := environment
 	profileEnvironment.Override = nil
 	if key := profile.Roots.User.Override; key != "" {
@@ -132,7 +136,7 @@ func resolvePlaceApprovalBinding(profile targetprofile.Profile, identity targetp
 			profileEnvironment.Override = &value
 		}
 	}
-	return targetprofile.ResolveApprovalBinding(profile, identity, profileEnvironment)
+	return profileEnvironment
 }
 
 func selectedPlaceTargetIDs(cfg *config.Config) map[string]struct{} {

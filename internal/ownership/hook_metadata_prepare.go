@@ -29,6 +29,9 @@ type StateSnapshot struct {
 	rootKey    string
 }
 
+// HasRecord reports whether the snapshot contained a durable ownership record.
+func (snapshot StateSnapshot) HasRecord() bool { return snapshot.record != nil }
+
 func (s *Store) SnapshotState() (StateSnapshot, error) {
 	data, generation, mode, err := dependencytxn.ReadSnapshot(s.StateFile())
 	if err != nil {

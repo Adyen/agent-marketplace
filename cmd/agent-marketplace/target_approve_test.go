@@ -722,22 +722,193 @@ func TestTargetVerifyRefusesDrift(t *testing.T) {
 	})
 }
 
+func TestStatusReportsPlaceVerificationAndFileDrift(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture, binding, marker, targetPath, statePath, _ := newInstalledTargetVerificationFixtureWithFailure(t)
+	enabledConfig := bytes.Replace(fixture.userConfigBytes, []byte("apiVersion: agent-marketplace/v4\n"),
+		[]byte("apiVersion: agent-marketplace/v4\ntargets: [invented-app]\n"), 1)
+	if err := os.WriteFile(fixture.userConfig, enabledConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configBefore, err := os.ReadFile(fixture.userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockBefore, err := os.ReadFile(fixture.userLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json"))
+	if err != nil || len(receipts) != 1 {
+		t.Fatalf("approval receipts = %v, %v", receipts, err)
+	}
+	receiptBefore, err := os.ReadFile(receipts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetBefore, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetInfoBefore, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateInfoBefore, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pendingOutput, err := executeCommand("status")
+	if err != nil {
+		t.Fatalf("status before explicit verification: %v\n%s", err, pendingOutput)
+	}
+	for _, needle := range []string{"PLACE PACKAGES", "verification-pending", "in-sync",
+		"invented-app", "sample", pipeline.PlaceInstallationID(binding)} {
+		if !strings.Contains(pendingOutput, needle) {
+			t.Fatalf("pre-verification status missing %q:\n%s", needle, pendingOutput)
+		}
+	}
+	assertStatusReadOnlyState(t, fixture, targetPath, statePath, receipts[0],
+		configBefore, lockBefore, receiptBefore, targetBefore, targetInfoBefore,
+		stateBefore, stateInfoBefore)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("status ran a host check before explicit verification: %v", err)
+	}
+
+	verifyOutput, err := executeCommand(
+		"target", "verify", "invented-app%2Fmod/sample",
+		"--installation", pipeline.PlaceInstallationID(binding),
+	)
+	if err == nil || !strings.Contains(err.Error(), "target.place.check-failed") ||
+		!strings.Contains(verifyOutput, "failed") {
+		t.Fatalf("record failing explicit verification = %v\n%s", err, verifyOutput)
+	}
+	if markerBytes, err := os.ReadFile(marker); err != nil || string(markerBytes) != "check\n" {
+		t.Fatalf("explicit verification marker = %q, %v", markerBytes, err)
+	}
+	failedState, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedStateInfo, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedOutput, err := executeCommand("status")
+	if err != nil || !strings.Contains(failedOutput, "failed") || !strings.Contains(failedOutput, "in-sync") {
+		t.Fatalf("status after failed verification = %v\n%s", err, failedOutput)
+	}
+	assertStatusReadOnlyState(t, fixture, targetPath, statePath, receipts[0],
+		configBefore, lockBefore, receiptBefore, targetBefore, targetInfoBefore,
+		failedState, failedStateInfo)
+	if markerBytes, err := os.ReadFile(marker); err != nil || string(markerBytes) != "check\n" {
+		t.Fatalf("status reran the failed host check: %q, %v", markerBytes, err)
+	}
+
+	edited := []byte("edited after verification\n")
+	if err := os.WriteFile(targetPath, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	editedInfo, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftOutput, err := executeCommand("status")
+	if err != nil || !strings.Contains(driftOutput, "failed") ||
+		!strings.Contains(driftOutput, "mods/sample/guide.md") {
+		t.Fatalf("status after installed-file edit = %v\n%s", err, driftOutput)
+	}
+	assertStatusReadOnlyState(t, fixture, targetPath, statePath, receipts[0],
+		configBefore, lockBefore, receiptBefore, edited, editedInfo,
+		failedState, failedStateInfo)
+	if markerBytes, err := os.ReadFile(marker); err != nil || string(markerBytes) != "check\n" {
+		t.Fatalf("status ran a host check while reporting drift: %q, %v", markerBytes, err)
+	}
+	executable := filepath.Join(fixture.home, "bin", "target-verify-fixture")
+	if err := os.Rename(executable, executable+".removed"); err != nil {
+		t.Fatal(err)
+	}
+	withoutExecutable, err := executeCommand("status")
+	if err != nil || !strings.Contains(withoutExecutable, "failed") ||
+		!strings.Contains(withoutExecutable, "mods/sample/guide.md") {
+		t.Fatalf("status after executable removal = %v\n%s", err, withoutExecutable)
+	}
+	assertStatusReadOnlyState(t, fixture, targetPath, statePath, receipts[0],
+		configBefore, lockBefore, receiptBefore, edited, editedInfo,
+		failedState, failedStateInfo)
+	if markerBytes, err := os.ReadFile(marker); err != nil || string(markerBytes) != "check\n" {
+		t.Fatalf("status contacted removed executable: %q, %v", markerBytes, err)
+	}
+}
+
+func assertStatusReadOnlyState(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	targetPath, statePath, receiptPath string,
+	configBefore, lockBefore, receiptBefore, targetBefore []byte,
+	targetInfoBefore os.FileInfo,
+	stateBefore []byte,
+	stateInfoBefore os.FileInfo,
+) {
+	t.Helper()
+	for _, snapshot := range []struct {
+		path string
+		want []byte
+	}{
+		{fixture.userConfig, configBefore},
+		{fixture.userLock, lockBefore},
+		{receiptPath, receiptBefore},
+		{targetPath, targetBefore},
+		{statePath, stateBefore},
+	} {
+		got, err := os.ReadFile(snapshot.path)
+		if err != nil || !bytes.Equal(got, snapshot.want) {
+			t.Fatalf("status changed %s: %v", snapshot.path, err)
+		}
+	}
+	targetInfo, err := os.Stat(targetPath)
+	if err != nil || targetInfo.Mode() != targetInfoBefore.Mode() ||
+		!targetInfo.ModTime().Equal(targetInfoBefore.ModTime()) {
+		t.Fatalf("status changed installed-file metadata: before=%v after=%v err=%v", targetInfoBefore, targetInfo, err)
+	}
+	stateInfo, err := os.Stat(statePath)
+	if err != nil || stateInfo.Mode() != stateInfoBefore.Mode() ||
+		!stateInfo.ModTime().Equal(stateInfoBefore.ModTime()) {
+		t.Fatalf("status changed ownership metadata: before=%v after=%v err=%v", stateInfoBefore, stateInfo, err)
+	}
+}
+
 func newInstalledTargetVerificationFixture(
 	t *testing.T,
 ) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
-	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyProfileYAML), false)
+	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyProfileYAML), false, 0, false)
 }
 
 func newInstalledTargetVerificationFixtureWithProbe(
 	t *testing.T,
 ) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
-	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyVersionProfileYAML), true)
+	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyVersionProfileYAML), true, 0, false)
+}
+
+func newInstalledTargetVerificationFixtureWithFailure(
+	t *testing.T,
+) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
+	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyProfileYAML), false, 17, true)
 }
 
 func newInstalledTargetVerificationFixtureWithProfile(
 	t *testing.T,
 	profileBytes []byte,
 	hasVersionProbe bool,
+	checkExitCode int,
+	appendMarker bool,
 ) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
 	t.Helper()
 	fixture := newTargetApprovalFixtureWithProfile(t, profileBytes)
@@ -755,13 +926,16 @@ func newInstalledTargetVerificationFixtureWithProfile(
 		host += "if [ \"$#\" -eq 2 ] && [ \"$1\" = check ] && [ \"$2\" = " +
 			targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) +
 			" ]; then if IFS= read -r input; then exit 82; fi; printf 'check\\n' >> " + targetVerifyShellQuote(marker) +
-			"; printf 'sensitive diagnostic\\n'; printf 'sensitive stderr\\n' >&2; exit 0; fi\nexit 81\n"
+			"; printf 'sensitive diagnostic\\n'; printf 'sensitive stderr\\n' >&2; exit " +
+			fmt.Sprint(checkExitCode) + "; fi\nexit 81\n"
 	} else {
 		host += "if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " +
 			targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) + " ]; then exit 81; fi\n" +
 			"if IFS= read -r input; then exit 82; fi\n" +
-			"printf invoked > " + targetVerifyShellQuote(marker) +
-			"\nprintf 'sensitive diagnostic\\n'\nprintf 'sensitive stderr\\n' >&2\n"
+			"printf " + targetVerifyShellQuote(map[bool]string{true: "check\\n", false: "invoked"}[appendMarker]) +
+			" " + map[bool]string{true: ">>", false: ">"}[appendMarker] + " " + targetVerifyShellQuote(marker) +
+			"\nprintf 'sensitive diagnostic\\n'\nprintf 'sensitive stderr\\n' >&2\nexit " +
+			fmt.Sprint(checkExitCode) + "\n"
 	}
 	hostPath := filepath.Join(hostDir, "target-verify-fixture")
 	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {

@@ -74,8 +74,12 @@ func loadDeployedPlaceApproval(ctx context.Context, ws Workspace, targetID strin
 
 // PlaceInstallationID identifies a target root independently of profile and package revisions.
 func PlaceInstallationID(binding targetprofile.ApprovalBinding) string {
+	return placeInstallationID(binding.Profile.TargetID, binding.CanonicalRoot, binding.CanonicalStateRoot)
+}
+
+func placeInstallationID(targetID, canonicalRoot, canonicalStateRoot string) string {
 	sum := sha256.Sum256([]byte("agent-marketplace/place-installation/v1\x00" +
-		binding.Profile.TargetID + "\x00" + binding.CanonicalRoot + "\x00" + binding.CanonicalStateRoot))
+		targetID + "\x00" + canonicalRoot + "\x00" + canonicalStateRoot))
 	return hex.EncodeToString(sum[:])
 }
 

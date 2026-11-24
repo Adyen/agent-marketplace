@@ -145,18 +145,9 @@ func preparePlaceVerification(
 		return prepared, fmt.Errorf("target.place.check-subject-invalid: target %s package subject is outside its approved root", targetID)
 	}
 
-	files := append([]ownership.PlaceFile(nil), pkg.Files...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	var drift []string
-	for _, file := range files {
-		if err := ctx.Err(); err != nil {
-			return prepared, err
-		}
-		data, identity, err := root.ReadFile(filepath.FromSlash(file.Path), dependencytxn.PlaceFileLimit)
-		if err != nil || !identity.Mode.IsRegular() || identity.Mode.Perm() != file.Mode.Perm() ||
-			ownership.Digest(data) != file.Digest {
-			drift = append(drift, file.Path)
-		}
+	drift, err := placeOwnedFileDrift(ctx, root, pkg.Files)
+	if err != nil {
+		return prepared, err
 	}
 	if err := ctx.Err(); err != nil {
 		return prepared, err
@@ -207,4 +198,28 @@ func preparePlaceVerification(
 		subjectIdentity: subjectIdentity, stateDir: stateDir,
 	}
 	return prepared, nil
+}
+
+func placeOwnedFileDrift(
+	ctx context.Context,
+	root *fsboundary.Dir,
+	files []ownership.PlaceFile,
+) ([]string, error) {
+	files = append([]ownership.PlaceFile(nil), files...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	var drift []string
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, identity, err := root.ReadFile(filepath.FromSlash(file.Path), dependencytxn.PlaceFileLimit)
+		if err != nil || !identity.Mode.IsRegular() || identity.Mode.Perm() != file.Mode.Perm() ||
+			ownership.Digest(data) != file.Digest {
+			drift = append(drift, file.Path)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return drift, nil
 }
