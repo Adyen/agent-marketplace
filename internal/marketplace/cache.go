@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -202,10 +203,17 @@ func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, er
 			if acquisition == "" {
 				acquisition = config.MarketplaceAcquisitionMirror
 			}
-			if acquisition != config.MarketplaceAcquisitionMirror || pin.Kind == "collection" {
+			if acquisition != config.MarketplaceAcquisitionMirror || pin.Kind == "collection" || pin.Kind == nameutil.TargetProfileKind {
 				// Index-only pins and collection manifests are outside this
 				// artifact GC slice. Leave their cache entries untouched.
 				slog.Debug("marketplace cache garbage collection skipped non-artifact pin", "marketplace", entry.InstanceID, "pin_index", pinIndex, "kind", pin.Kind, "acquisition", acquisition)
+				continue
+			}
+			if _, _, scoped := nameutil.SplitPlaceKind(pin.Kind); scoped {
+				if err := validateSHA256Digest(pin.LockArchiveDigest); err != nil {
+					return nil, fmt.Errorf("active scoped marketplace %d pin %d has invalid locked archive digest: %w", entryIndex, pinIndex, err)
+				}
+				referenced[safeDigest(pin.LockArchiveDigest)] = struct{}{}
 				continue
 			}
 
@@ -231,7 +239,8 @@ func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, er
 	for entryIndex, locked := range roots.LockedResources {
 		for resourceIndex, resource := range locked.Resources {
 			acquisition := resource.Acquisition
-			if (acquisition != "" && acquisition != lockfile.MarketplaceAcquisitionMirror) || resource.Kind == "collection" {
+			if (acquisition != "" && acquisition != lockfile.MarketplaceAcquisitionMirror) ||
+				resource.Kind == "collection" || resource.Kind == nameutil.TargetProfileKind {
 				continue
 			}
 			if err := validateSHA256Digest(string(resource.ArchiveDigest)); err != nil {

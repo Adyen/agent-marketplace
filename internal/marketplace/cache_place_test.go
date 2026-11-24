@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -141,6 +142,111 @@ func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
 	}
 	finalRevision, returnedFiles, err := finalOnly.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
 	assertLockedPlaceFailure(t, finalRevision, returnedFiles, err, "")
+}
+
+func TestCacheGarbageCollectRetainsLockedPlaceArchives(t *testing.T) {
+	identity := targetprofile.Identity{TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: "sha256:" + strings.Repeat("d", 64)}
+	binding := &targetprofile.Binding{
+		PackageContentDigest:  "sha256:" + strings.Repeat("a", 64),
+		DeliveryMappingDigest: "sha256:" + strings.Repeat("b", 64),
+		ProfileDigest:         identity.RevisionDigest, ProfileIdentity: identity,
+	}
+	archiveDigest := "sha256:" + strings.Repeat("1", 64)
+	orphanDigest := "sha256:" + strings.Repeat("2", 64)
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	assessmentDigest := "sha256:" + strings.Repeat("c", 64)
+	packagePin := config.MarketplaceResourcePin{
+		RegistryID: "tools-id", RegistrySlug: "tools", Kind: "invented-app/mod", Name: "sample",
+		Revision: contentDigest, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+		LockArchiveDigest: archiveDigest, LockAssessmentDigest: assessmentDigest, LockHostPackageIdentity: *binding,
+	}
+	profilePin := config.MarketplaceResourcePin{
+		RegistryID: "tools-id", RegistrySlug: "tools", Kind: "target-profile", Name: "invented-app",
+		Revision: identity.RevisionDigest, Digest: identity.RevisionDigest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+		LockProfileIdentity: identity,
+	}
+	entry := config.MarketplaceEntry{
+		URL: "https://market.example", InstanceID: "market-id", Source: config.UserPersonal,
+		Resources: []config.MarketplaceResourcePin{packagePin, profilePin},
+	}
+	placeLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: packagePin.Kind, Name: packagePin.Name,
+		Revision: contentDigest, ContentDigest: lockfile.Digest(contentDigest), ArchiveDigest: lockfile.Digest(archiveDigest),
+		AssessmentDigest: lockfile.Digest(assessmentDigest), Acquisition: lockfile.MarketplaceAcquisitionMirror, HostPackageIdentity: binding,
+	}
+	profileLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: "target-profile", Name: "invented-app",
+		Revision: identity.RevisionDigest, ContentDigest: lockfile.Digest(identity.RevisionDigest),
+		Acquisition: lockfile.MarketplaceAcquisitionMirror, ProfileIdentity: &identity,
+	}
+	locked := lockfile.MarketplaceLock{
+		URL: entry.URL, InstanceID: entry.InstanceID,
+		RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "tools-id"}},
+		Resources:        []lockfile.MarketplaceResourceLock{placeLock, profileLock},
+	}
+	for _, tc := range []struct {
+		name  string
+		roots GCRoots
+	}{
+		{name: "exact pins", roots: GCRoots{ExactPins: []config.MarketplaceEntry{entry}}},
+		{name: "locked resources", roots: GCRoots{LockedResources: []lockfile.MarketplaceLock{locked}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := NewCache(t.TempDir())
+			for _, digest := range []string{archiveDigest, orphanDigest} {
+				if _, err := cache.writeArchive(placeholderForm, digest, []byte(digest)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			referencedPath := filepath.Dir(cache.PlaceholderArchivePath(archiveDigest))
+			orphanPath := filepath.Dir(cache.PlaceholderArchivePath(orphanDigest))
+			result, err := cache.GarbageCollect(true, tc.roots)
+			if err != nil {
+				t.Fatalf("GarbageCollect: %v", err)
+			}
+			if len(result.Removed) != 1 || result.Removed[0] != orphanPath {
+				t.Fatalf("dry-run removals = %v, want only %q", result.Removed, orphanPath)
+			}
+			for _, path := range []string{referencedPath, orphanPath} {
+				if _, err := os.Stat(filepath.Join(path, "artifact.tar.gz")); err != nil {
+					t.Fatalf("dry-run removed %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestCacheGarbageCollectRefusesMalformedScopedArchiveDigest(t *testing.T) {
+	entry := config.MarketplaceEntry{
+		URL: "https://market.example", InstanceID: "market-id", Source: config.UserPersonal,
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "tools-id", RegistrySlug: "tools", Kind: "invented-app/mod", Name: "sample",
+			Revision: "sha256:" + strings.Repeat("a", 64), Digest: "sha256:" + strings.Repeat("a", 64),
+			Acquisition: config.MarketplaceAcquisitionMirror, Direct: true, LockArchiveDigest: "not-a-digest",
+			LockAssessmentDigest: "sha256:" + strings.Repeat("c", 64),
+			LockHostPackageIdentity: targetprofile.Binding{
+				PackageContentDigest:  "sha256:" + strings.Repeat("a", 64),
+				DeliveryMappingDigest: "sha256:" + strings.Repeat("b", 64),
+				ProfileDigest:         "sha256:" + strings.Repeat("d", 64),
+				ProfileIdentity:       targetprofile.Identity{TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: "sha256:" + strings.Repeat("d", 64)},
+			},
+		}},
+	}
+	cache := NewCache(t.TempDir())
+	digest := "sha256:" + strings.Repeat("2", 64)
+	if _, err := cache.writeArchive(placeholderForm, digest, []byte("orphan")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := cache.GarbageCollect(false, GCRoots{ExactPins: []config.MarketplaceEntry{entry}})
+	if err == nil || !strings.Contains(err.Error(), "invalid locked archive digest") {
+		t.Fatalf("GarbageCollect error = %v, want invalid locked archive digest", err)
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("failed GC reported removals: %v", result.Removed)
+	}
+	if _, err := os.Stat(cache.PlaceholderArchivePath(digest)); err != nil {
+		t.Fatalf("failed GC removed orphan archive: %v", err)
+	}
 }
 
 func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
