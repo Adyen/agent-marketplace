@@ -1742,7 +1742,8 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	// the payload's manifest type, canonical representation, and identity before
 	// returning it. An arbitrary JSON or archive blob must never become a public
 	// manifest merely because it was stored under a digest-shaped key.
-	if err := validateManifestPayload(data, digest, manifestPayloadLimit(s.cfg)); err != nil {
+	requiresPlace, err := validateManifestPayload(data, digest, manifestPayloadLimit(s.cfg))
+	if err != nil {
 		if errors.Is(err, errManifestUnsupported) {
 			writeError(w, http.StatusUnsupportedMediaType, "manifest media type is not supported")
 			return
@@ -1750,6 +1751,13 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		slog.Error("manifest blob is invalid", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
+	}
+	if requiresPlace {
+		w.Header().Add("Vary", placeFeaturesHeader)
+		if !placeRequested(r) {
+			writeError(w, http.StatusNotFound, "manifest not found")
+			return
+		}
 	}
 	restriction, err := s.manifestRestriction(r.Context(), store.RevisionDigest(digest), data)
 	if err != nil {
@@ -1978,14 +1986,14 @@ func manifestPayloadLimit(cfg config.Config) int64 {
 // form with revision_digest is also accepted. Collection manifests carry their
 // content_digest in the payload. Both forms must be canonical and match the
 // digest in the URL.
-func validateManifestPayload(data []byte, digest string, limit int64) error {
+func validateManifestPayload(data []byte, digest string, limit int64) (bool, error) {
 	if limit > 0 && int64(len(data)) > limit {
-		return fmt.Errorf("manifest payload size %d exceeds limit %d", len(data), limit)
+		return false, fmt.Errorf("manifest payload size %d exceeds limit %d", len(data), limit)
 	}
 
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal(data, &shape); err != nil || shape == nil {
-		return errManifestUnsupported
+		return false, errManifestUnsupported
 	}
 
 	_, registryShape := shape["generator"]
@@ -1998,28 +2006,31 @@ func validateManifestPayload(data []byte, digest string, limit int64) error {
 	if registryShape {
 		manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(data))
 		if err != nil {
-			return fmt.Errorf("decode registry revision manifest: %w", err)
+			return false, fmt.Errorf("decode registry revision manifest: %w", err)
 		}
+		requiresPlace := slices.ContainsFunc(manifest.Resources, func(resource marketplaceartifact.RevisionResource) bool {
+			return isPlaceManifestKind(resource.Kind)
+		})
 		if manifest.RevisionDigest != "" {
 			if manifest.RevisionDigest != digest {
-				return fmt.Errorf("registry revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
+				return false, fmt.Errorf("registry revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
 			}
 			if err := marketplaceartifact.VerifyRegistryRevisionManifest(manifest, payload); err != nil {
-				return fmt.Errorf("verify registry revision manifest: %w", err)
+				return false, fmt.Errorf("verify registry revision manifest: %w", err)
 			}
-			return nil
+			return requiresPlace, nil
 		}
 		canonical, computed, err := marketplaceartifact.CanonicalRegistryRevisionPayload(manifest)
 		if err != nil {
-			return fmt.Errorf("validate registry revision manifest: %w", err)
+			return false, fmt.Errorf("validate registry revision manifest: %w", err)
 		}
 		if !bytes.Equal(canonical, payload) {
-			return errors.New("registry revision manifest is not canonical JSON")
+			return false, errors.New("registry revision manifest is not canonical JSON")
 		}
 		if computed != digest {
-			return fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", computed, digest)
+			return false, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", computed, digest)
 		}
-		return nil
+		return requiresPlace, nil
 	}
 
 	_, collectionShape := shape["name"]
@@ -2033,19 +2044,28 @@ func validateManifestPayload(data []byte, digest string, limit int64) error {
 		_, collectionShape = shape["supported_schema_versions"]
 	}
 	if !collectionShape {
-		return errManifestUnsupported
+		return false, errManifestUnsupported
 	}
 	collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("decode collection manifest: %w", err)
+		return false, fmt.Errorf("decode collection manifest: %w", err)
 	}
 	if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
-		return fmt.Errorf("verify collection manifest: %w", err)
+		return false, fmt.Errorf("verify collection manifest: %w", err)
 	}
 	if collection.ContentDigest != digest {
-		return fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
+		return false, fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
 	}
-	return nil
+	isPlaceMember := func(member hccartifact.CollectionMemberEntry) bool {
+		return isPlaceManifestKind(member.Kind)
+	}
+	return slices.ContainsFunc(collection.Members, isPlaceMember) ||
+		slices.ContainsFunc(collection.Leaves, isPlaceMember), nil
+}
+
+func isPlaceManifestKind(kind string) bool {
+	_, _, scoped := nameutil.SplitPlaceKind(kind)
+	return scoped || kind == nameutil.TargetProfileKind
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
