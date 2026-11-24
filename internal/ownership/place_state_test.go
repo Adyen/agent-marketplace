@@ -111,6 +111,117 @@ func TestPlaceOwnershipProjection(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(again, want) {
 		t.Fatalf("mutating projection view changed the next view: %#v, %v", again, err)
 	}
+	verification := PlaceVerification{
+		Binding: binding, GenerationKey: want.Packages[0].GenerationKey, Check: "herdr-app",
+		Scope: "eager-package-load", Outcome: "pass", EvidenceSource: "initial-load",
+		HostVersionStatus: "unknown",
+	}
+	legacyBytes, err := os.ReadFile(st.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(legacyBytes), `"verification"`) {
+		t.Fatal("unverified legacy place package encoded a verification field")
+	}
+	desired, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, verification)
+	if err != nil || desired.Path == "" {
+		t.Fatalf("PreparePlaceVerification = %#v, %v", desired, err)
+	}
+	if _, err := dependencytxn.Commit(context.Background(), stateDir, []dependencytxn.DesiredFile{desired}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = st.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.record.Version != stateVersion {
+		t.Fatalf("verification persistence changed schema version: %d", snapshot.record.Version)
+	}
+	verificationBytes, err := os.ReadFile(st.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"verification"`, `"generation_key"`, `"host_version_status"`, `"evidence_source"`} {
+		if !strings.Contains(string(verificationBytes), field) {
+			t.Fatalf("persisted verification is missing JSON field %s", field)
+		}
+	}
+	if strings.Contains(string(verificationBytes), `"host_version":`) {
+		t.Fatal("empty host version was not omitted")
+	}
+	got, err = st.PlaceFromSnapshot(snapshot)
+	if err != nil || got.Packages[0].Verification == nil || *got.Packages[0].Verification != verification {
+		t.Fatalf("recorded place verification = %#v, %v", got, err)
+	}
+	got.Packages[0].Verification.Check = "changed"
+	again, err = st.PlaceFromSnapshot(snapshot)
+	if err != nil || again.Packages[0].Verification == nil || *again.Packages[0].Verification != verification {
+		t.Fatalf("mutating verification view changed the next view: %#v, %v", again, err)
+	}
+	want.Packages[0].Verification = &verification
+	if noop, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, verification); err != nil ||
+		!reflect.DeepEqual(noop, dependencytxn.DesiredFile{}) {
+		t.Fatalf("identical place verification is not a no-op: %#v, %v", noop, err)
+	}
+	stale := verification
+	stale.GenerationKey = strings.Repeat("e", 64)
+	stateBeforeVerificationRefusal, err := os.ReadFile(st.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, stale); !errors.Is(err, ErrUnsafeStateValue) {
+		t.Fatalf("stale place verification error = %v, want ErrUnsafeStateValue", err)
+	}
+	stateAfterVerificationRefusal, err := os.ReadFile(st.StateFile())
+	if err != nil || !reflect.DeepEqual(stateBeforeVerificationRefusal, stateAfterVerificationRefusal) {
+		t.Fatalf("refused place verification changed state: %v", err)
+	}
+	if _, err := st.PreparePlaceVerification(foreign, want.Packages[0].ID, verification); !errors.Is(err, ErrStateRootMismatch) {
+		t.Fatalf("foreign snapshot verification error = %v, want ErrStateRootMismatch", err)
+	}
+	if _, err := st.PreparePlaceVerification(snapshot, "missing-package", verification); !errors.Is(err, ErrUnsafeStateValue) {
+		t.Fatalf("missing place package verification error = %v, want ErrUnsafeStateValue", err)
+	}
+	if _, err := st.PreparePlaceVerification(StateSnapshot{rootKey: st.rootKey}, want.Packages[0].ID, verification); !errors.Is(err, ErrStateMissing) {
+		t.Fatalf("missing ownership record verification error = %v, want ErrStateMissing", err)
+	}
+	validVersion := verification
+	validVersion.HostVersion = "1.2.3"
+	validVersion.HostVersionStatus = "verified"
+	validVersion.EvidenceSource = "target-verify"
+	if _, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, validVersion); err != nil {
+		t.Fatalf("valid host version verification = %v", err)
+	}
+	validVersion.HostVersionStatus = "outside-verified-range"
+	if _, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, validVersion); err != nil {
+		t.Fatalf("valid outside-range host version verification = %v", err)
+	}
+	invalidVerification := []struct {
+		name   string
+		change func(*PlaceVerification)
+	}{
+		{"invalid check", func(v *PlaceVerification) { v.Check = "not a target" }},
+		{"unsupported scope", func(v *PlaceVerification) { v.Scope = "lazy" }},
+		{"unsupported outcome", func(v *PlaceVerification) { v.Outcome = "pending" }},
+		{"unsupported evidence", func(v *PlaceVerification) { v.EvidenceSource = "manual" }},
+		{"unsupported host version status", func(v *PlaceVerification) { v.HostVersionStatus = "maybe" }},
+		{"unknown version is not empty", func(v *PlaceVerification) { v.HostVersion = "1.2.3" }},
+		{"verified version required", func(v *PlaceVerification) { v.HostVersionStatus = "verified" }},
+		{"version suffix refused", func(v *PlaceVerification) { v.HostVersion = "1.2.3-beta"; v.HostVersionStatus = "verified" }},
+		{"version component bounded", func(v *PlaceVerification) { v.HostVersion = "1234567890.2.3"; v.HostVersionStatus = "verified" }},
+		{"version normalized", func(v *PlaceVerification) { v.HostVersion = "01.2.3"; v.HostVersionStatus = "verified" }},
+		{"binding mismatch", func(v *PlaceVerification) { v.Binding.DeliveryMappingDigest = strings.Repeat("f", 64) }},
+		{"generation mismatch", func(v *PlaceVerification) { v.GenerationKey = strings.Repeat("e", 64) }},
+	}
+	for _, tc := range invalidVerification {
+		t.Run("invalid-verification/"+tc.name, func(t *testing.T) {
+			invalid := verification
+			tc.change(&invalid)
+			if _, err := st.PreparePlaceVerification(snapshot, want.Packages[0].ID, invalid); !errors.Is(err, ErrUnsafeStateValue) {
+				t.Fatalf("invalid verification error = %v, want ErrUnsafeStateValue", err)
+			}
+		})
+	}
 
 	nextAggregate := []byte(`{"mcpServers":{"original":{},"later":{}}}` + "\n")
 	mustApply(t, st, Mutation{

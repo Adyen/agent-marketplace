@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -32,6 +33,19 @@ type PlacePackage struct {
 	GenerationKey string                `json:"generation_key"`
 	Files         []PlaceFile           `json:"files"`
 	Requires      []string              `json:"requires,omitempty"`
+	Verification  *PlaceVerification    `json:"verification,omitempty"`
+}
+
+// PlaceVerification records an outcome for one exact installed package generation.
+type PlaceVerification struct {
+	Binding           targetprofile.Binding `json:"binding"`
+	GenerationKey     string                `json:"generation_key"`
+	Check             string                `json:"check"`
+	Scope             string                `json:"scope"`
+	HostVersion       string                `json:"host_version,omitempty"`
+	HostVersionStatus string                `json:"host_version_status"`
+	Outcome           string                `json:"outcome"`
+	EvidenceSource    string                `json:"evidence_source"`
 }
 
 type PlaceProjection struct {
@@ -76,6 +90,37 @@ func (s *Store) PreparePlace(snapshot StateSnapshot, next PlaceProjection) (depe
 	return s.desiredStateFile(snapshot, current)
 }
 
+// PreparePlaceVerification prepares a CAS update for an installed place package.
+func (s *Store) PreparePlaceVerification(
+	snapshot StateSnapshot,
+	packageID string,
+	result PlaceVerification,
+) (dependencytxn.DesiredFile, error) {
+	projection, err := s.PlaceFromSnapshot(snapshot)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, err
+	}
+	if snapshot.record == nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("%w: place verification requires an ownership record", ErrStateMissing)
+	}
+	for i := range projection.Packages {
+		pkg := &projection.Packages[i]
+		if pkg.ID != packageID {
+			continue
+		}
+		if err := validatePlaceVerification(*pkg, result); err != nil {
+			return dependencytxn.DesiredFile{}, err
+		}
+		if pkg.Verification != nil && *pkg.Verification == result {
+			return dependencytxn.DesiredFile{}, nil
+		}
+		verification := result
+		pkg.Verification = &verification
+		return s.PreparePlace(snapshot, projection)
+	}
+	return dependencytxn.DesiredFile{}, fmt.Errorf("%w: place package is not installed", ErrUnsafeStateValue)
+}
+
 func clonePlacePackages(packages []PlacePackage) []PlacePackage {
 	if packages == nil {
 		return nil
@@ -84,6 +129,10 @@ func clonePlacePackages(packages []PlacePackage) []PlacePackage {
 	for i, pkg := range packages {
 		pkg.Files = append([]PlaceFile(nil), pkg.Files...)
 		pkg.Requires = append([]string(nil), pkg.Requires...)
+		if pkg.Verification != nil {
+			verification := *pkg.Verification
+			pkg.Verification = &verification
+		}
 		cloned[i] = pkg
 	}
 	return cloned
@@ -104,6 +153,11 @@ func validatePlaceProjection(projection PlaceProjection) error {
 		}
 		if err := pkg.Binding.ValidateFor(pkg.Kind, pkg.Binding.PackageContentDigest); err != nil {
 			return invalid("package profile binding")
+		}
+		if pkg.Verification != nil {
+			if err := validatePlaceVerification(pkg, *pkg.Verification); err != nil {
+				return invalid("package verification")
+			}
 		}
 		if _, duplicate := packageIDs[pkg.ID]; duplicate {
 			return invalid("duplicate package identity")
@@ -142,6 +196,47 @@ func validatePlaceProjection(projection PlaceProjection) error {
 			return invalid("duplicate created directory")
 		}
 		directoryPaths[directory.Path] = struct{}{}
+	}
+	return nil
+}
+
+var canonicalPlaceHostVersion = regexp.MustCompile(`^([0-9]{1,9}\.){2}[0-9]{1,9}$`)
+
+func validatePlaceVerification(pkg PlacePackage, verification PlaceVerification) error {
+	invalid := func(reason string) error {
+		return fmt.Errorf("%w: invalid place verification: %s", ErrUnsafeStateValue, reason)
+	}
+	if verification.Binding != pkg.Binding || verification.GenerationKey != pkg.GenerationKey {
+		return invalid("package binding or generation")
+	}
+	if !nameutil.IsTargetIdentifier(verification.Check) {
+		return invalid("check target")
+	}
+	if verification.Scope != "eager-package-load" {
+		return invalid("verification scope")
+	}
+	if verification.Outcome != "pass" && verification.Outcome != "fail" {
+		return invalid("verification outcome")
+	}
+	if verification.EvidenceSource != "initial-load" && verification.EvidenceSource != "target-verify" {
+		return invalid("verification evidence source")
+	}
+	switch verification.HostVersionStatus {
+	case "unknown":
+		if verification.HostVersion != "" {
+			return invalid("unknown host version must be empty")
+		}
+	case "verified", "outside-verified-range":
+		if !canonicalPlaceHostVersion.MatchString(verification.HostVersion) {
+			return invalid("host version must be a bounded core version")
+		}
+		for _, component := range strings.Split(verification.HostVersion, ".") {
+			if len(component) > 1 && component[0] == '0' {
+				return invalid("host version must be normalized")
+			}
+		}
+	default:
+		return invalid("host version status")
 	}
 	return nil
 }

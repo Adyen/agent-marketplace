@@ -217,6 +217,91 @@ func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 			t.Fatalf("updated place projection = %#v, %v; want stable package ID %s and new binding", projection, err, packageID)
 		}
 	})
+
+	t.Run("verification survives identical upsert and clears on new generation", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		first := resolvedPlacePackageForPublish(t, fixture)
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{first}); err != nil {
+			t.Fatalf("commit initial package: %v", err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		projection, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil || len(projection.Packages) != 1 {
+			t.Fatalf("initial projection = %#v, %v", projection, err)
+		}
+		verification := ownership.PlaceVerification{
+			Binding: projection.Packages[0].Binding, GenerationKey: projection.Packages[0].GenerationKey,
+			Check: fixture.identity.TargetID, Scope: "eager-package-load", HostVersionStatus: "unknown",
+			Outcome: "pass", EvidenceSource: "initial-load",
+		}
+		desired, err := owner.PreparePlaceVerification(snapshot, projection.Packages[0].ID, verification)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateDir, err := dependencytxn.StateDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dependencytxn.Commit(context.Background(), stateDir, []dependencytxn.DesiredFile{desired}); err != nil {
+			t.Fatalf("persist place verification: %v", err)
+		}
+		stateBefore, err := os.ReadFile(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateInfo, err := os.Stat(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		targetPath := filepath.Join(fixture.root, "mods", "sample", "guide.md")
+		targetInfo, err := os.Stat(targetPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{first}); err != nil || len(result.Changed) != 0 {
+			t.Fatalf("identical upsert after verification = %#v, %v", result, err)
+		}
+		currentSnapshot, err := owner.SnapshotState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifiedProjection, err := owner.PlaceFromSnapshot(currentSnapshot)
+		if err != nil || verifiedProjection.Packages[0].Verification == nil ||
+			*verifiedProjection.Packages[0].Verification != verification {
+			t.Fatalf("verified projection before no-op = %#v, %v", verifiedProjection, err)
+		}
+		stateAfter, err := os.ReadFile(owner.StateFile())
+		stateAfterInfo, statErr := os.Stat(owner.StateFile())
+		targetAfter, targetStatErr := os.Stat(targetPath)
+		if err != nil || statErr != nil || targetStatErr != nil || !bytes.Equal(stateBefore, stateAfter) ||
+			!stateInfo.ModTime().Equal(stateAfterInfo.ModTime()) || !targetInfo.ModTime().Equal(targetAfter.ModTime()) {
+			t.Fatalf("identical upsert rewrote verification or package: read=%v stat=%v targetStat=%v", err, statErr, targetStatErr)
+		}
+
+		updated := resolvedPlacePackageForPublishWithFiles(t, fixture, []targetprofile.PackageFile{{
+			SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
+			Mode: 0o644, Bytes: []byte("new package generation\n"),
+		}})
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{updated}); err != nil {
+			t.Fatalf("commit updated package: %v", err)
+		}
+		updatedSnapshot, err := owner.SnapshotState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		updatedProjection, err := owner.PlaceFromSnapshot(updatedSnapshot)
+		if err != nil || len(updatedProjection.Packages) != 1 ||
+			updatedProjection.Packages[0].Binding == projection.Packages[0].Binding ||
+			updatedProjection.Packages[0].GenerationKey == projection.Packages[0].GenerationKey ||
+			updatedProjection.Packages[0].Verification != nil {
+			t.Fatalf("updated projection = %#v, %v; want changed binding and no verification", updatedProjection, err)
+		}
+		assertPlacePublishFile(t, targetPath, updated.Files[0].Bytes, updated.Files[0].Mode)
+	})
 }
 
 func resolvedPlacePackageForPublish(t *testing.T, fixture placeAdmissionFixture) marketplace.ResolvedPlacePackage {

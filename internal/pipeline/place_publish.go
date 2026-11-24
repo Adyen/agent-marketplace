@@ -177,6 +177,13 @@ func preparePlaceUpserts(
 		placeByID[pkg.ID] = projectionPlacePackage(pkg)
 	}
 	for id, upsert := range upserts {
+		if prior, exists := ownerByID[id]; exists &&
+			prior.Binding == upsert.owner.Binding && prior.GenerationKey == upsert.owner.GenerationKey &&
+			prior.Verification != nil {
+			verification := *prior.Verification
+			upsert.owner.Verification = &verification
+			upserts[id] = upsert
+		}
 		ownerByID[id] = upsert.owner
 		placeByID[id] = projectionPlacePackage(upsert.owner)
 	}
