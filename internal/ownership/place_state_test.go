@@ -66,11 +66,14 @@ func TestPlaceOwnershipProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	directoryIdentity := placeStateDirectoryIdentity(t, filepath.Join(f.targetRoot, "mods"))
+	parentIdentity := directoryIdentity
 	want := PlaceProjection{
 		Packages: []PlacePackage{{
 			ID: strings.Repeat("b", 64), Kind: "herdr-app/mod", Name: "sample",
 			Binding: binding, GenerationKey: strings.Repeat("c", 64),
-			Files:    []PlaceFile{{Path: "mods/a.txt", Digest: Digest([]byte("payload")), Mode: 0o644}},
+			Files: []PlaceFile{{
+				Path: "mods/a.txt", Digest: Digest([]byte("payload")), Mode: 0o644, Parent: &parentIdentity,
+			}},
 			Requires: []string{strings.Repeat("d", 64)},
 		}},
 		Directories: []dependencytxn.PlaceDirectory{{Path: "mods", Identity: directoryIdentity}},
@@ -104,12 +107,25 @@ func TestPlaceOwnershipProjection(t *testing.T) {
 		t.Fatalf("PlaceFromSnapshot = %#v, %v; want %#v", got, err, want)
 	}
 	got.Packages[0].Files[0].Path = "changed.txt"
+	got.Packages[0].Files[0].Parent.Inode++
 	got.Packages[0].Requires[0] = strings.Repeat("e", 64)
 	got.Directories[0].Path = "changed"
 	got.Directories[0].Identity.Inode++
 	again, err := st.PlaceFromSnapshot(snapshot)
 	if err != nil || !reflect.DeepEqual(again, want) {
 		t.Fatalf("mutating projection view changed the next view: %#v, %v", again, err)
+	}
+	for _, invalidParent := range []fsboundary.Identity{
+		{Mode: os.ModeDir},
+		{Inode: parentIdentity.Inode, Mode: 0o755},
+	} {
+		invalid := want
+		invalid.Packages = append([]PlacePackage(nil), want.Packages...)
+		invalid.Packages[0].Files = append([]PlaceFile(nil), want.Packages[0].Files...)
+		invalid.Packages[0].Files[0].Parent = &invalidParent
+		if _, err := st.PreparePlace(snapshot, invalid); !errors.Is(err, ErrUnsafeStateValue) {
+			t.Fatalf("invalid file parent %#v error = %v", invalidParent, err)
+		}
 	}
 	verification := PlaceVerification{
 		Binding: binding, GenerationKey: want.Packages[0].GenerationKey, Check: "herdr-app",

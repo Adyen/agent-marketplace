@@ -64,6 +64,94 @@ func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 		assertPlacePublishPathAbsent(t, filepath.Join(fixture.state, "packages"))
 	})
 
+	t.Run("pre-existing parent proof survives a no-op upsert", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		parentPath := filepath.Join(fixture.root, "mods", "sample")
+		if err := os.MkdirAll(parentPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent, err := root.OpenPath(filepath.Join("mods", "sample"))
+		if err != nil {
+			_ = root.Close()
+			t.Fatal(err)
+		}
+		parentIdentity := parent.Identity()
+		if err := parent.Close(); err != nil {
+			_ = root.Close()
+			t.Fatal(err)
+		}
+		if err := root.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		pkg := resolvedPlacePackageForPublish(t, fixture)
+		if result, err := CommitPlaceUpserts(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{pkg},
+		); err != nil || len(result.Changed) == 0 {
+			t.Fatalf("initial upsert = %#v, %v", result, err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		projection, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil || len(projection.Packages) != 1 || len(projection.Packages[0].Files) != 1 ||
+			projection.Packages[0].Files[0].Parent == nil ||
+			!projection.Packages[0].Files[0].Parent.SameObject(parentIdentity) {
+			t.Fatalf("installed file parent proof = %#v, %v", projection, err)
+		}
+		stateBefore, err := os.ReadFile(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateInfoBefore, err := os.Stat(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := CommitPlaceUpserts(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{pkg},
+		)
+		snapshot, snapshotErr := owner.SnapshotState()
+		after, projectionErr := owner.PlaceFromSnapshot(snapshot)
+		stateAfter, readErr := os.ReadFile(owner.StateFile())
+		stateInfoAfter, statErr := os.Stat(owner.StateFile())
+		if err != nil || snapshotErr != nil || projectionErr != nil || readErr != nil || statErr != nil ||
+			len(result.Changed) != 0 || !bytes.Equal(stateBefore, stateAfter) ||
+			!stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) ||
+			after.Packages[0].Files[0].Parent == nil ||
+			!after.Packages[0].Files[0].Parent.SameObject(parentIdentity) {
+			t.Fatalf("no-op upsert changed or lost parent proof: result=%#v err=%v snapshot=%v projection=%v read=%v stat=%v",
+				result, err, snapshotErr, projectionErr, readErr, statErr)
+		}
+	})
+
+	t.Run("missing parent is marked for transaction creation", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		pkg := resolvedPlacePackageForPublish(t, fixture)
+		prepared, err := preparePlaceUpserts(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{pkg},
+		)
+		if err != nil || !prepared.changed || len(prepared.plan.Writes) != 1 {
+			t.Fatalf("prepared missing-parent upsert = %#v, %v", prepared, err)
+		}
+		write := prepared.plan.Writes[0]
+		if write.Parent != nil || !write.ParentCreated {
+			t.Fatalf("missing-parent write proof = parent %#v, parent-created %t", write.Parent, write.ParentCreated)
+		}
+	})
+
 	t.Run("oversized package file is refused before generation", func(t *testing.T) {
 		fixture := newPlaceAdmissionFixture(t)
 		setPlacePublishEnvironment(t, fixture)
@@ -496,7 +584,7 @@ func TestPlanPlaceRetirement(t *testing.T) {
 		}
 	})
 
-	t.Run("pre-existing unrecorded parent is unproven", func(t *testing.T) {
+	t.Run("same bytes under a replaced pre-existing parent are unproven", func(t *testing.T) {
 		fixture := newPlaceAdmissionFixture(t)
 		setPlacePublishEnvironment(t, fixture)
 		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
@@ -515,6 +603,24 @@ func TestPlanPlaceRetirement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if installed.Packages[0].Files[0].Parent == nil {
+			t.Fatal("pre-existing directory install did not persist parent proof")
+		}
+		stateBefore, err := os.ReadFile(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldParent := parent + ".old"
+		if err := os.Rename(parent, oldParent); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		file := pkg.Files[0]
+		if err := os.WriteFile(filepath.Join(parent, "guide.md"), file.Bytes, file.Mode); err != nil {
+			t.Fatal(err)
+		}
 		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
 		if err != nil {
 			t.Fatal(err)
@@ -526,7 +632,66 @@ func TestPlanPlaceRetirement(t *testing.T) {
 		}
 		if len(planned.Prunes) != 0 ||
 			!slices.Equal(planned.Unproven, []string{"mods/sample/guide.md"}) {
-			t.Fatalf("unrecorded-parent plan = prunes %v, unproven %v", planned.Prunes, planned.Unproven)
+			t.Fatalf("replacement pre-existing parent plan = prunes %v, unproven %v", planned.Prunes, planned.Unproven)
+		}
+		got, readErr := os.ReadFile(filepath.Join(parent, "guide.md"))
+		stateAfter, stateErr := os.ReadFile(owner.StateFile())
+		if readErr != nil || stateErr != nil || !bytes.Equal(got, file.Bytes) || !bytes.Equal(stateBefore, stateAfter) {
+			t.Fatalf("replacement pre-existing parent planning changed data: read=%v state=%v", readErr, stateErr)
+		}
+	})
+
+	t.Run("pre-existing parent proof enables retirement and legacy files remain unproven", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(fixture.root, "mods", "sample")
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pkg := resolvedPlacePackageForPublish(t, fixture)
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err != nil {
+			t.Fatal(err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		installed, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(installed.Packages) != 1 || len(installed.Packages[0].Files) != 1 ||
+			installed.Packages[0].Files[0].Parent == nil {
+			t.Fatalf("pre-existing parent proof was not persisted: %#v", installed)
+		}
+		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		planned, planErr := planPlaceRetirement(context.Background(), root, installed, fixture.identity.TargetID)
+		legacy := installed
+		legacy.Packages = append([]ownership.PlacePackage(nil), installed.Packages...)
+		legacy.Packages[0].Files = append([]ownership.PlaceFile(nil), installed.Packages[0].Files...)
+		legacy.Packages[0].Files[0].Parent = nil
+		legacyPlanned, legacyErr := planPlaceRetirement(context.Background(), root, legacy, fixture.identity.TargetID)
+		closeErr := root.Close()
+		if planErr != nil || legacyErr != nil || closeErr != nil {
+			t.Fatalf("planPlaceRetirement() = %#v, %v; legacy=%#v, %v (close %v)",
+				planned, planErr, legacyPlanned, legacyErr, closeErr)
+		}
+		if len(planned.Prunes) != 1 || len(planned.Unproven) != 0 ||
+			!slices.Equal(planned.Prunes, []dependencytxn.PlacePrune{{
+				Path: "mods/sample/guide.md", Parent: *installed.Packages[0].Files[0].Parent,
+				Expected: dependencytxn.Generation{
+					Exists: true, Digest: strings.TrimPrefix(installed.Packages[0].Files[0].Digest, "sha256:"),
+				},
+				Mode: installed.Packages[0].Files[0].Mode,
+			}}) {
+			t.Fatalf("recorded pre-existing parent plan = prunes %v, unproven %v", planned.Prunes, planned.Unproven)
+		}
+		if len(legacyPlanned.Prunes) != 0 ||
+			!slices.Equal(legacyPlanned.Unproven, []string{"mods/sample/guide.md"}) {
+			t.Fatalf("legacy file plan = prunes %v, unproven %v", legacyPlanned.Prunes, legacyPlanned.Unproven)
 		}
 	})
 }

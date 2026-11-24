@@ -367,6 +367,95 @@ func TestPlaceRejectsReplacedRootBeforePublish(t *testing.T) {
 	}
 }
 
+func TestPlaceWriteParentProofBlocksReplacementAndRecovery(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	parentPath := filepath.Join(root, "mods")
+	if err := os.Mkdir(parentPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootDir, err := fsboundary.OpenDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentDir, err := rootDir.OpenPath("mods")
+	if err != nil {
+		_ = rootDir.Close()
+		t.Fatal(err)
+	}
+	parentIdentity := parentDir.Identity()
+	if err := parentDir.Close(); err != nil {
+		_ = rootDir.Close()
+		t.Fatal(err)
+	}
+	if err := rootDir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	plan.Writes[0].Parent = &parentIdentity
+	var replacementPath string
+	_, commitErr := CommitPlace(context.Background(), stateDir, plan, WithFaultHook(func(point FaultPoint) error {
+		if point.Stage != FaultPlaceBeforePublish || point.Path != "mods/new.txt" {
+			return nil
+		}
+		if err := os.Rename(parentPath, parentPath+".old"); err != nil {
+			return err
+		}
+		if err := os.Mkdir(parentPath, 0o755); err != nil {
+			return err
+		}
+		replacementPath = filepath.Join(parentPath, "new.txt")
+		return os.WriteFile(replacementPath, []byte("replacement owner\n"), 0o600)
+	}))
+	if commitErr == nil || !errors.Is(commitErr, ErrRecoveryBlocked) {
+		t.Fatalf("CommitPlace with replaced parent = %v", commitErr)
+	}
+	if replacementPath == "" {
+		t.Fatal("before-publish fault hook did not replace the parent")
+	}
+	assertFile(t, replacementPath, "replacement owner\n", 0o600)
+	if _, err := os.Lstat(filepath.Join(parentPath+".old", "new.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replaced directory received a write: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("parent replacement did not retain the transaction journal: %v", got)
+	}
+	if err := Recover(context.Background(), stateDir); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Fatalf("recovery with replaced pre-existing parent = %v", err)
+	}
+	assertFile(t, replacementPath, "replacement owner\n", 0o600)
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("blocked recovery changed journal set: %v", got)
+	}
+}
+
+func TestPlaceParentCreatedRejectsDirectoryAppearingAfterPlanning(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	plan.Writes[0].ParentCreated = true
+	parentPath := filepath.Join(root, "mods")
+	created := false
+	_, err := CommitPlace(context.Background(), stateDir, plan, WithFaultHook(func(point FaultPoint) error {
+		if point.Stage != FaultAfterLocks {
+			return nil
+		}
+		created = true
+		return os.Mkdir(parentPath, 0o755)
+	}))
+	if !created {
+		t.Fatal("after-locks fault hook did not create the parent")
+	}
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("CommitPlace after parent appeared = %v", err)
+	}
+	if info, statErr := os.Stat(parentPath); statErr != nil || !info.IsDir() {
+		t.Fatalf("independently-created parent was removed: info=%v err=%v", info, statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(parentPath, "new.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("CommitPlace wrote into the independently-created parent: %v", statErr)
+	}
+	if got := journals(t, stateDir); len(got) != 0 {
+		t.Fatalf("parent appearance left a journal: %v", got)
+	}
+}
+
 func TestPlaceMissingRootRefusesBeforeStage(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	if err := os.Rename(root, root+".moved"); err != nil {

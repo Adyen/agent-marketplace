@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -40,6 +41,10 @@ type PlaceWrite struct {
 	Digest        string
 	Mode          fs.FileMode
 	Size          int64
+	// Parent pins an already-existing destination parent.
+	Parent *fsboundary.Identity
+	// ParentCreated requires the transaction to create the immediate parent.
+	ParentCreated bool
 	Link          *fsboundary.CapturedLink
 }
 
@@ -95,6 +100,8 @@ type placeWriteIntent struct {
 	Digest        string                   `json:"digest"`
 	Mode          fs.FileMode              `json:"mode"`
 	Size          int64                    `json:"size"`
+	Parent        *fsboundary.Identity     `json:"parent,omitempty"`
+	ParentCreated bool                     `json:"parent_created,omitempty"`
 	Link          *fsboundary.CapturedLink `json:"link,omitempty"`
 	StageName     string                   `json:"stage_name"`
 }
@@ -125,6 +132,14 @@ const (
 	placeStageMode          = 0o700
 	placeFileMode           = 0o600
 )
+
+func clonePlaceIdentity(identity *fsboundary.Identity) *fsboundary.Identity {
+	if identity == nil {
+		return nil
+	}
+	copy := *identity
+	return &copy
+}
 
 // PlaceFileLimit is the maximum size of an observed or committed place file.
 const PlaceFileLimit int64 = maxDependencyFileSize
@@ -169,6 +184,9 @@ func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...O
 		return PlaceResult{}, err
 	}
 	defer releaseLocks(locks)
+	if err := inject(cfg, FaultPoint{Stage: FaultAfterLocks, Index: -1}); err != nil {
+		return PlaceResult{}, err
+	}
 	if err := checkPendingDestinations(stateDir, paths); err != nil {
 		return PlaceResult{}, err
 	}
@@ -374,6 +392,14 @@ func validatePlacePlan(plan PlacePlan, stateRoot string) error {
 		if !validPlaceKey(write.GenerationKey) || !validPlaceKey(write.Digest) || write.Size < 0 || write.Size > maxDependencyFileSize ||
 			write.Mode != write.Mode.Perm() || write.Mode == 0 || write.ExpectedMode != write.ExpectedMode.Perm() {
 			return fmt.Errorf("%w: invalid place write for %s", ErrUnsafePath, write.Path)
+		}
+		if write.Parent != nil && (write.Parent.Inode == 0 || !write.Parent.Mode.IsDir() || write.Link != nil) {
+			return fmt.Errorf("%w: invalid or redirected parent proof for %s", ErrUnsafePath, write.Path)
+		}
+		if write.ParentCreated && (write.Parent != nil || write.Link != nil ||
+			write.Expected.Exists || write.ExpectedMode != 0 ||
+			!slices.Contains(plan.Directories, placeParentPath(write.Path))) {
+			return fmt.Errorf("%w: invalid created-parent expectation for %s", ErrUnsafePath, write.Path)
 		}
 		if err := validateGeneration(write.Expected); err != nil ||
 			(!write.Expected.Exists && write.ExpectedMode != 0) {
@@ -611,8 +637,19 @@ func openPlaceParent(root *fsboundary.Dir, rel string) (*fsboundary.Dir, error) 
 }
 
 func validatePlaceWriteDestination(root *fsboundary.Dir, write PlaceWrite, missing []placeDirectoryIntent) error {
-	parent, err := openPlaceParent(root, write.Path)
+	destination, err := fsboundary.CaptureDestination(root, write.Path, fsboundary.LinkPolicyRepository)
 	if errors.Is(err, fs.ErrNotExist) {
+		if write.ParentCreated {
+			for _, directory := range missing {
+				if directory.Path == placeParentPath(write.Path) {
+					return nil
+				}
+			}
+			return fmt.Errorf("%w: created parent was not missing at preflight for %s", ErrGenerationConflict, write.Path)
+		}
+		if write.Parent != nil {
+			return fmt.Errorf("%w: parent proof missing for destination %s", ErrGenerationConflict, write.Path)
+		}
 		if write.Expected.Exists || write.ExpectedMode != 0 || write.Link != nil {
 			return fmt.Errorf("%w: missing parent for expected destination %s", ErrGenerationConflict, write.Path)
 		}
@@ -624,10 +661,19 @@ func validatePlaceWriteDestination(root *fsboundary.Dir, write PlaceWrite, missi
 		return fmt.Errorf("%w: unjournaled missing parent for %s", ErrUnsafePath, write.Path)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: inspect destination parent for %s: %v", ErrUnsafePath, write.Path, err)
+		return fmt.Errorf("%w: inspect destination for %s: %v", ErrUnsafePath, write.Path, err)
 	}
-	defer func() { _ = parent.Close() }()
-	generation, mode, err := inspectPlaceLeaf(root, write.Path, write.Link)
+	defer func() { _ = destination.Close() }()
+	if write.ParentCreated {
+		return fmt.Errorf("%w: created parent already exists for %s", ErrGenerationConflict, write.Path)
+	}
+	if err := verifyPlaceWriteParent(destination, write.Parent); err != nil {
+		return err
+	}
+	if !samePlaceLink(destination.Link(), write.Link) {
+		return fmt.Errorf("%w: captured link changed for %s", ErrGenerationConflict, write.Path)
+	}
+	generation, mode, err := readPlaceDestination(destination)
 	if err != nil {
 		return err
 	}
@@ -635,6 +681,80 @@ func validatePlaceWriteDestination(root *fsboundary.Dir, write PlaceWrite, missi
 		return fmt.Errorf("%w: place destination %s", ErrGenerationConflict, write.Path)
 	}
 	return nil
+}
+
+func verifyPlaceWriteParent(destination *fsboundary.Destination, expected *fsboundary.Identity) error {
+	if expected == nil {
+		return nil
+	}
+	parent, err := destination.StagingDir()
+	if err != nil {
+		return fmt.Errorf("%w: inspect proven write parent: %w", ErrGenerationConflict, err)
+	}
+	actual := parent.Identity()
+	closeErr := parent.Close()
+	if closeErr != nil {
+		return fmt.Errorf("close proven write parent: %w", closeErr)
+	}
+	if !actual.SameObject(*expected) {
+		return fmt.Errorf("%w: place write parent changed", ErrGenerationConflict)
+	}
+	return nil
+}
+
+func inspectPlaceWriteLeaf(
+	root *fsboundary.Dir,
+	write placeWriteIntent,
+	directories []placeDirectoryIntent,
+) (Generation, fs.FileMode, error) {
+	destination, err := fsboundary.CaptureDestination(root, write.Path, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return Generation{}, 0, fmt.Errorf("%w: capture place write %s: %w", ErrUnsafePath, write.Path, err)
+	}
+	defer func() { _ = destination.Close() }()
+	expected, err := placeWriteParentProof(write, directories)
+	if err != nil {
+		return Generation{}, 0, err
+	}
+	if err := verifyPlaceWriteParent(destination, expected); err != nil {
+		return Generation{}, 0, fmt.Errorf("inspect place write %s: %w", write.Path, err)
+	}
+	if !samePlaceLink(destination.Link(), write.Link) {
+		return Generation{}, 0, fmt.Errorf("%w: captured link changed for %s", ErrGenerationConflict, write.Path)
+	}
+	return readPlaceDestination(destination)
+}
+
+func placeWriteParentProof(
+	write placeWriteIntent,
+	directories []placeDirectoryIntent,
+) (*fsboundary.Identity, error) {
+	if write.Parent != nil {
+		return write.Parent, nil
+	}
+	parentPath := path.Dir(write.Path)
+	for _, directory := range directories {
+		if directory.Path != parentPath {
+			continue
+		}
+		if directory.Identity == nil && write.ParentCreated {
+			return nil, fmt.Errorf("%w: created parent identity is not recorded for %s", ErrRecoveryBlocked, write.Path)
+		}
+		return directory.Identity, nil
+	}
+	if write.ParentCreated {
+		return nil, fmt.Errorf("%w: created parent is not journaled for %s", ErrRecoveryBlocked, write.Path)
+	}
+	return nil, nil
+}
+
+func placeIntentHasDirectory(directories []placeDirectoryIntent, value string) bool {
+	for _, directory := range directories {
+		if directory.Path == value {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePlacePruneDestination(root *fsboundary.Dir, prune PlacePrune) error {
@@ -809,7 +929,8 @@ func newPlaceIntent(id, stateRoot string, plan PlacePlan, directories []placeDir
 		intent.Writes = append(intent.Writes, placeWriteIntent{
 			Path: write.Path, GenerationKey: write.GenerationKey, SourcePath: write.SourcePath,
 			Expected: write.Expected, ExpectedMode: write.ExpectedMode, Digest: write.Digest,
-			Mode: write.Mode, Size: write.Size, Link: write.Link,
+			Mode: write.Mode, Size: write.Size, Parent: clonePlaceIdentity(write.Parent),
+			ParentCreated: write.ParentCreated, Link: write.Link,
 			StageName: fmt.Sprintf("write-%06d", i),
 		})
 	}
@@ -1028,6 +1149,10 @@ func validatePlaceJournal(j *journal, stateRoot string) error {
 			write.ExpectedMode != write.ExpectedMode.Perm() || !validPlaceKey(write.Digest) ||
 			write.Size < 0 || write.Size > maxDependencyFileSize ||
 			write.Mode == 0 || write.Mode != write.Mode.Perm() ||
+			write.Parent != nil && (write.Parent.Inode == 0 || !write.Parent.Mode.IsDir() || write.Link != nil) ||
+			write.ParentCreated && (write.Parent != nil || write.Link != nil ||
+				write.Expected.Exists || write.ExpectedMode != 0 ||
+				!placeIntentHasDirectory(intent.Directories, placeParentPath(write.Path))) ||
 			write.StageName != fmt.Sprintf("write-%06d", i) {
 			return fmt.Errorf("%w: invalid or unordered place write %s", ErrRecoveryBlocked, write.Path)
 		}
@@ -1249,7 +1374,7 @@ func verifyPlaceCompletedPrefix(stateRoot, journalPath string, intent *placeInte
 			}
 		case "write":
 			write := intent.Writes[op.Index]
-			generation, mode, err := inspectPlaceLeaf(root, write.Path, write.Link)
+			generation, mode, err := inspectPlaceWriteLeaf(root, write, intent.Directories)
 			if err != nil || !generation.Exists || generation.Digest != write.Digest || mode != write.Mode {
 				if err == nil {
 					err = errors.New("published generation changed")
@@ -1356,7 +1481,7 @@ func placeJournalProblem(stateRoot, journalPath string, intent *placeIntent) (st
 		}
 		defer func() { _ = root.Close() }()
 		write := intent.Writes[op.Index]
-		generation, mode, err := inspectPlaceLeaf(root, write.Path, write.Link)
+		generation, mode, err := inspectPlaceWriteLeaf(root, write, intent.Directories)
 		if err != nil {
 			return op.Path, err
 		}
@@ -1505,7 +1630,7 @@ func initialPlaceOperationUnapplied(intent *placeIntent, stateRoot, journalPath 
 		}
 		defer func() { _ = root.Close() }()
 		write := intent.Writes[op.Index]
-		generation, mode, err := inspectPlaceLeaf(root, write.Path, write.Link)
+		generation, mode, err := inspectPlaceWriteLeaf(root, write, intent.Directories)
 		if err != nil {
 			return false, placeStop(ErrRecoveryBlocked, journalPath, write.Path, err)
 		}
@@ -1744,6 +1869,13 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 			return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
 		}
 		defer func() { _ = destination.Close() }()
+		expectedParent, err := placeWriteParentProof(write, intent.Directories)
+		if err != nil {
+			return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
+		}
+		if err := verifyPlaceWriteParent(destination, expectedParent); err != nil {
+			return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
+		}
 		if !samePlaceLink(destination.Link(), write.Link) {
 			return false, false, placeStop(ErrGenerationConflict, journalPath, op.Path, errors.New("captured link binding changed"))
 		}

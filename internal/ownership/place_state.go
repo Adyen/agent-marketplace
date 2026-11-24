@@ -13,15 +13,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 type PlaceFile struct {
-	Path   string      `json:"path"`
-	Digest string      `json:"digest"`
-	Mode   fs.FileMode `json:"mode"`
+	Path   string               `json:"path"`
+	Digest string               `json:"digest"`
+	Mode   fs.FileMode          `json:"mode"`
+	Parent *fsboundary.Identity `json:"parent,omitempty"`
 }
 
 type PlacePackage struct {
@@ -127,6 +129,12 @@ func clonePlacePackages(packages []PlacePackage) []PlacePackage {
 	cloned := make([]PlacePackage, len(packages))
 	for i, pkg := range packages {
 		pkg.Files = append([]PlaceFile(nil), pkg.Files...)
+		for j := range pkg.Files {
+			if pkg.Files[j].Parent != nil {
+				parent := *pkg.Files[j].Parent
+				pkg.Files[j].Parent = &parent
+			}
+		}
 		pkg.Requires = append([]string(nil), pkg.Requires...)
 		if pkg.Verification != nil {
 			verification := *pkg.Verification
@@ -169,6 +177,9 @@ func validatePlaceProjection(projection PlaceProjection) error {
 			if !validPlaceStatePath(file.Path) || !digestPattern.MatchString(file.Digest) ||
 				(file.Mode != 0o644 && file.Mode != 0o755) {
 				return invalid("package file")
+			}
+			if file.Parent != nil && (file.Parent.Inode == 0 || !file.Parent.Mode.IsDir()) {
+				return invalid("package file parent")
 			}
 			if _, duplicate := filePaths[file.Path]; duplicate {
 				return invalid("duplicate package file path")

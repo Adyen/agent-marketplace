@@ -80,6 +80,12 @@ func planPlaceRetirement(
 	observed := make(map[string]place.Observation)
 	provenParents := make(map[string]fsboundary.Identity)
 	var unproven []string
+	ownedFiles := make(map[string]ownership.PlaceFile)
+	for _, pkg := range retiring {
+		for _, file := range pkg.Files {
+			ownedFiles[file.Path] = file
+		}
+	}
 	directories := make(map[string]fsboundary.Identity, len(installed.Directories))
 	for _, directory := range installed.Directories {
 		directories[directory.Path] = directory.Identity
@@ -89,7 +95,11 @@ func planPlaceRetirement(
 			if err := ctx.Err(); err != nil {
 				return placeRetirementPlan{}, err
 			}
-			parent, recordedParent, proven, err := openPlaceRetirementParent(root, directories, file.Path)
+			ownedFile, ok := ownedFiles[file.Path]
+			if !ok {
+				return placeRetirementPlan{}, fmt.Errorf("place retirement plan references unknown file %s", file.Path)
+			}
+			parent, recordedParent, proven, err := openPlaceRetirementParent(root, directories, ownedFile)
 			if err != nil {
 				return placeRetirementPlan{}, err
 			}
@@ -173,11 +183,23 @@ func planPlaceRetirement(
 func openPlaceRetirementParent(
 	root *fsboundary.Dir,
 	directories map[string]fsboundary.Identity,
-	filePath string,
+	file ownership.PlaceFile,
 ) (*fsboundary.Dir, fsboundary.Identity, bool, error) {
-	parentPath := path.Dir(filePath)
-	recordedParent, recorded := directories[parentPath]
-	if parentPath == "." || !recorded || recordedParent.Inode == 0 || !recordedParent.Mode.IsDir() {
+	parentPath := path.Dir(file.Path)
+	var recordedParent fsboundary.Identity
+	if file.Parent != nil {
+		recordedParent = *file.Parent
+	} else {
+		if parentPath == "." {
+			return nil, fsboundary.Identity{}, false, nil
+		}
+		var recorded bool
+		recordedParent, recorded = directories[parentPath]
+		if !recorded {
+			return nil, fsboundary.Identity{}, false, nil
+		}
+	}
+	if recordedParent.Inode == 0 || !recordedParent.Mode.IsDir() {
 		return nil, fsboundary.Identity{}, false, nil
 	}
 	parent, err := root.OpenPath(filepath.FromSlash(parentPath))

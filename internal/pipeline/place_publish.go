@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -158,6 +159,12 @@ func preparePlaceUpserts(
 	}
 	current = normalizePlaceProjection(current)
 
+	priorFiles := make(map[string]ownership.PlaceFile)
+	for _, pkg := range current.Packages {
+		for _, file := range pkg.Files {
+			priorFiles[file.Path] = file
+		}
+	}
 	upserts := make(map[string]placeUpsert, len(packages))
 	for _, resolved := range packages {
 		upsert, err := planPlaceUpsert(binding, profile, stateRoot, resolved)
@@ -166,6 +173,12 @@ func preparePlaceUpserts(
 		}
 		if _, duplicate := upserts[upsert.owner.ID]; duplicate {
 			return prepared, fmt.Errorf("duplicate place package upsert %q", upsert.owner.ID)
+		}
+		for i := range upsert.owner.Files {
+			if prior, exists := priorFiles[upsert.owner.Files[i].Path]; exists && prior.Parent != nil {
+				parent := *prior.Parent
+				upsert.owner.Files[i].Parent = &parent
+			}
 		}
 		upserts[upsert.owner.ID] = upsert
 	}
@@ -208,6 +221,16 @@ func preparePlaceUpserts(
 	if len(plan.Removes) != 0 || len(plan.Ceded) != 0 {
 		return prepared, fmt.Errorf("place upsert plan contains unsupported removals")
 	}
+	writes, err := dependencyPlaceWrites(plan.Writes, upserts)
+	if err != nil {
+		return prepared, err
+	}
+	if err := preparePlaceWriteParentProofs(root, current, priorFiles, plan.Writes, upserts, writes); err != nil {
+		return prepared, err
+	}
+	for id, upsert := range upserts {
+		ownerByID[id] = upsert.owner
+	}
 
 	nextProjection := ownership.PlaceProjection{Directories: append([]dependencytxn.PlaceDirectory(nil), current.Directories...)}
 	for _, pkg := range plan.Next {
@@ -226,10 +249,6 @@ func preparePlaceUpserts(
 	if err != nil {
 		return prepared, fmt.Errorf("prepare place ownership state: %w", err)
 	}
-	writes, err := dependencyPlaceWrites(plan.Writes, upserts)
-	if err != nil {
-		return prepared, err
-	}
 	placePlan := dependencytxn.PlacePlan{
 		Root: binding.CanonicalRoot, RootIdentity: root.Identity(),
 		Directories: placeWriteDirectories(writes), Writes: writes, Ownership: ownershipFile,
@@ -238,6 +257,90 @@ func preparePlaceUpserts(
 	prepared.plan = placePlan
 	prepared.changed = true
 	return prepared, nil
+}
+
+func preparePlaceWriteParentProofs(
+	root *fsboundary.Dir,
+	current ownership.PlaceProjection,
+	priorFiles map[string]ownership.PlaceFile,
+	plannedWrites []place.Write,
+	upserts map[string]placeUpsert,
+	writes []dependencytxn.PlaceWrite,
+) error {
+	if len(plannedWrites) != len(writes) {
+		return fmt.Errorf("place write parent proofs do not match planned writes")
+	}
+	newOwnerFiles := make(map[string]*ownership.PlaceFile)
+	for id := range upserts {
+		upsert := upserts[id]
+		for i := range upsert.owner.Files {
+			file := &upsert.owner.Files[i]
+			if _, existed := priorFiles[file.Path]; existed {
+				continue
+			}
+			if _, duplicate := newOwnerFiles[file.Path]; duplicate {
+				return fmt.Errorf("multiple new place owners claim %s", file.Path)
+			}
+			newOwnerFiles[file.Path] = file
+		}
+		upserts[id] = upsert
+	}
+	directories := make(map[string]fsboundary.Identity, len(current.Directories))
+	for _, directory := range current.Directories {
+		directories[directory.Path] = directory.Identity
+	}
+	writeDirectories := placeWriteDirectories(writes)
+	for i, planned := range plannedWrites {
+		parentPath := path.Dir(planned.File.Path)
+		prior, existed := priorFiles[planned.File.Path]
+		var expected *fsboundary.Identity
+		if existed && prior.Parent != nil {
+			parent := *prior.Parent
+			expected = &parent
+		} else if identity, recorded := directories[parentPath]; existed && recorded {
+			parent := identity
+			expected = &parent
+		}
+		parent, err := root.OpenPath(filepath.FromSlash(parentPath))
+		if errors.Is(err, fs.ErrNotExist) {
+			if expected != nil {
+				return fmt.Errorf("target.place.parent-mismatch: recorded place write parent is missing at %s", parentPath)
+			}
+			if !slices.Contains(writeDirectories, parentPath) ||
+				writes[i].Expected.Exists || writes[i].ExpectedMode != 0 || writes[i].Link != nil {
+				return fmt.Errorf("place write parent %s is missing without a valid creation plan", parentPath)
+			}
+			writes[i].ParentCreated = true
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("open place write parent %s: %w", parentPath, err)
+		}
+		actual := parent.Identity()
+		closeErr := parent.Close()
+		if closeErr != nil {
+			return fmt.Errorf("close place write parent %s: %w", parentPath, closeErr)
+		}
+		if expected != nil && !actual.SameObject(*expected) {
+			return fmt.Errorf("target.place.parent-mismatch: place write parent changed at %s", parentPath)
+		}
+		if existed {
+			if expected != nil {
+				parent := *expected
+				writes[i].Parent = &parent
+			}
+			continue
+		}
+		ownerFile := newOwnerFiles[planned.File.Path]
+		if ownerFile == nil {
+			return fmt.Errorf("place write %s has no new ownership file", planned.File.Path)
+		}
+		parentProof := actual
+		ownerFile.Parent = &parentProof
+		writeProof := actual
+		writes[i].Parent = &writeProof
+	}
+	return nil
 }
 
 func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) error {
@@ -389,6 +492,12 @@ func normalizePlaceProjection(projection ownership.PlaceProjection) ownership.Pl
 	for i := range projection.Packages {
 		projection.Packages[i].Files = append([]ownership.PlaceFile(nil), projection.Packages[i].Files...)
 		projection.Packages[i].Requires = append([]string(nil), projection.Packages[i].Requires...)
+		for j := range projection.Packages[i].Files {
+			if parent := projection.Packages[i].Files[j].Parent; parent != nil {
+				copy := *parent
+				projection.Packages[i].Files[j].Parent = &copy
+			}
+		}
 		sort.Slice(projection.Packages[i].Files, func(a, b int) bool {
 			return projection.Packages[i].Files[a].Path < projection.Packages[i].Files[b].Path
 		})
