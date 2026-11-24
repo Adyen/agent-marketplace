@@ -29,7 +29,7 @@ Test-first for each requirement. Annotate every scenario's witness with `// spec
 ## 5. Drift and verification
 - [ ] 5.1 Edited and deleted files keep the projection, report drift, refuse upgrade as a unit, and cede on deselection.
 - [ ] 5.2 Initial-load check after commit and prune; per-generation result record; retry; failure keeps files.
-- [ ] 5.3 `target verify <locator> --installation <id>`: named check only; refuse drift without writes.
+- [x] 5.3 `target verify <locator> --installation <id>`: named check only; refuse drift without writes.
 
 ## 6. Delivery
 - [ ] 6.1 CLI reference and how-to docs for `target enable|disable|verify` and approval or retirement; public command witnesses in `TestPublicCommandPathsHaveBehaviorTests`.

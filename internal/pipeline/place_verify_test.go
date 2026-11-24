@@ -206,9 +206,16 @@ func TestPlaceVerificationProbeDriftStopsCheck(t *testing.T) {
 	if err := os.Mkdir(repoRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runPlaceVerification(
+	prepared, err := preparePlaceVerification(
 		context.Background(), fixture.admission.binding, fixture.admission.raw,
-		fixture.admission.env, repoRoot, "invented-app/mod", "sample",
+		fixture.admission.env, "invented-app/mod", "sample",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPreparedPlaceVerification(
+		context.Background(), prepared, fixture.admission.raw, fixture.admission.env,
+		repoRoot, "invented-app/mod", "sample", "initial-load",
 	); err == nil || !strings.Contains(err.Error(), "target.place.drift") {
 		t.Fatalf("probe that edits the installed package error = %v", err)
 	}

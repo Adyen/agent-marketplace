@@ -626,7 +626,7 @@ func TestTargetVerifyRunsOnlyNamedCheck(t *testing.T) {
 }
 
 // spec: target-profile-place/target-verify-runs-only-the-named-check
-func TestTargetVerifyRecordsProbedHostVersion(t *testing.T) {
+func TestTargetVerifyDoesNotRunVersionProbe(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -635,13 +635,13 @@ func TestTargetVerifyRecordsProbedHostVersion(t *testing.T) {
 		"target", "verify", "invented-app%2Fmod/sample",
 		"--installation", pipeline.PlaceInstallationID(binding),
 	)
-	if err != nil || strings.Count(output, "\n") != 1 ||
-		!strings.Contains(output, "1.2.3 (verified)") ||
-		!strings.Contains(output, fixture.identity.RevisionDigest) || strings.Contains(output, "sensitive") {
-		t.Fatalf("version-probed verification = %v, %q", err, output)
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\n" {
+		t.Fatalf("target verify must execute only the named check: marker = %q, %v", data, err)
 	}
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "version\ncheck\n" {
-		t.Fatalf("version/check execution order = %q, %v", data, err)
+	if err != nil || strings.Count(output, "\n") != 1 ||
+		!strings.Contains(output, "host version unknown") ||
+		!strings.Contains(output, fixture.identity.RevisionDigest) || strings.Contains(output, "sensitive") {
+		t.Fatalf("verification without a version probe = %v, %q", err, output)
 	}
 	owner, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
 	if err != nil {
@@ -656,9 +656,9 @@ func TestTargetVerifyRecordsProbedHostVersion(t *testing.T) {
 		t.Fatalf("version verification projection = %#v, %v", projection, err)
 	}
 	record := projection.Packages[0].Verification
-	if record.HostVersion != "1.2.3" || record.HostVersionStatus != "verified" ||
+	if record.HostVersion != "" || record.HostVersionStatus != "unknown" ||
 		record.Check != "initial-load" || record.Outcome != "pass" || record.EvidenceSource != "target-verify" {
-		t.Fatalf("version verification record = %#v", record)
+		t.Fatalf("verification record = %#v", record)
 	}
 }
 

@@ -89,11 +89,12 @@ func runPreparedPlaceVerification(
 	if err != nil || !filepath.IsAbs(home) {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.approval.home-invalid: approved home is unavailable")
 	}
-	hostVersion, hostVersionStatus, err := probePlaceHostVersion(ctx, binding, prepared.profile, home, binding.CanonicalRoot)
-	if err != nil {
-		return ownership.PlaceVerification{}, err
-	}
-	if prepared.profile.Host.VersionProbe != nil {
+	hostVersion, hostVersionStatus := "", "unknown"
+	if evidenceSource == "initial-load" && prepared.profile.Host.VersionProbe != nil {
+		hostVersion, hostVersionStatus, err = probePlaceHostVersion(ctx, binding, prepared.profile, home, binding.CanonicalRoot)
+		if err != nil {
+			return ownership.PlaceVerification{}, err
+		}
 		afterProbe, err := preparePlaceVerification(ctx, binding, raw, env, kind, name)
 		if err != nil {
 			return ownership.PlaceVerification{}, fmt.Errorf("target.place.check-state-changed: %w", err)
