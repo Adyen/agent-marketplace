@@ -20,6 +20,7 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -209,20 +210,23 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResponse,
 }
 
 func (c *Client) getJSON(ctx context.Context, requestURL string, dst any) error {
-	return c.getJSONMode(ctx, requestURL, dst, false)
+	return c.getJSONMode(ctx, requestURL, dst, false, "")
 }
 
 func (c *Client) getJSONStrict(ctx context.Context, requestURL string, dst any) error {
-	return c.getJSONMode(ctx, requestURL, dst, true)
+	return c.getJSONMode(ctx, requestURL, dst, true, "")
 }
 
-func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, strict bool) error {
+func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, strict bool, feature string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
+	}
+	if feature != "" {
+		req.Header.Set("X-Agent-Marketplace-Features", feature)
 	}
 
 	resp, err := c.do(req)
@@ -927,12 +931,20 @@ func validateAPIRegistry(registry mpapi.PublicRegistry) error {
 }
 
 func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
+	return validateAPIResourceRevisionFor(rev, false)
+}
+
+func validateAPIResourceRevisionFor(rev store.AssessedResourceRevision, allowPlace bool) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return fmt.Errorf("resource coordinate is incomplete")
 	}
-	if !mpapi.IsMarketplaceKind(coord.Kind) {
+	_, _, scoped := nameutil.SplitPlaceKind(coord.Kind)
+	if !mpapi.IsMarketplaceKind(coord.Kind) && (!allowPlace || !scoped || !nameutil.IsPlacePackageName(coord.Name)) {
 		return fmt.Errorf("resource kind %q is invalid", coord.Kind)
+	}
+	if scoped && rev.ArchiveDigest == "" {
+		return fmt.Errorf("scoped resource revision has no archive digest")
 	}
 	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
 		return fmt.Errorf("content digest: %w", err)
@@ -964,7 +976,11 @@ func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
 }
 
 func validateAPIResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest) error {
-	if err := validateAPIResourceRevision(rev); err != nil {
+	return validateAPIResourceRevisionMatchesFor(rev, expected, expectedDigest, false)
+}
+
+func validateAPIResourceRevisionMatchesFor(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest, allowPlace bool) error {
+	if err := validateAPIResourceRevisionFor(rev, allowPlace); err != nil {
 		return err
 	}
 	if expected.Marketplace != "" && rev.Coordinate.Marketplace != expected.Marketplace {
