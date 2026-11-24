@@ -18,13 +18,17 @@ import (
 )
 
 type preparedPlaceVerification struct {
-	pkg          ownership.PlacePackage
-	checkName    string
-	argv         []string
-	binding      targetprofile.ApprovalBinding
-	snapshot     ownership.StateSnapshot
-	owner        *ownership.Store
-	rootIdentity fsboundary.Identity
+	pkg             ownership.PlacePackage
+	checkName       string
+	profile         targetprofile.Profile
+	scope           string
+	argv            []string
+	binding         targetprofile.ApprovalBinding
+	snapshot        ownership.StateSnapshot
+	owner           *ownership.Store
+	rootIdentity    fsboundary.Identity
+	subjectIdentity fsboundary.Identity
+	stateDir        string
 }
 
 func preparePlaceVerification(
@@ -198,8 +202,9 @@ func preparePlaceVerification(
 		return prepared, fmt.Errorf("target.place.drift: verification subject %s changed during preflight", subject)
 	}
 	prepared = preparedPlaceVerification{
-		pkg: pkg, checkName: kindProfile.Verify, argv: argv, binding: binding,
-		snapshot: snapshot, owner: owner, rootIdentity: rootIdentity,
+		pkg: pkg, checkName: kindProfile.Verify, profile: profile, scope: check.Scope,
+		argv: argv, binding: binding, snapshot: snapshot, owner: owner, rootIdentity: rootIdentity,
+		subjectIdentity: subjectIdentity, stateDir: stateDir,
 	}
 	return prepared, nil
 }

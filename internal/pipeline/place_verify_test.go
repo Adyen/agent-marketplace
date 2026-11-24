@@ -9,8 +9,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
@@ -36,7 +38,7 @@ func TestPreparePlaceVerificationChecksInstalledProjection(t *testing.T) {
 		wantSubject := filepath.Join(fixture.admission.root, "mods", "sample")
 		if prepared.pkg.ID == "" || prepared.pkg.Kind != "invented-app/mod" || prepared.pkg.Name != "sample" ||
 			prepared.checkName != "initial-load" || len(prepared.argv) != 2 ||
-			prepared.argv[0] != "fixture-checker" || prepared.argv[1] != wantSubject ||
+			prepared.argv[0] != "check" || prepared.argv[1] != wantSubject ||
 			prepared.binding.Profile != fixture.admission.binding.Profile || prepared.owner == nil ||
 			prepared.rootIdentity.Inode == 0 {
 			t.Fatalf("prepared place verification = %#v", prepared)
@@ -196,6 +198,157 @@ func TestPreparePlaceVerificationChecksInstalledProjection(t *testing.T) {
 	})
 }
 
+func TestRunPlaceVerificationRecordsExactOutcome(t *testing.T) {
+	t.Run("pass and fail store bounded results without exposing output", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			exitCode int
+			outcome  string
+		}{
+			{name: "pass", exitCode: 0, outcome: "pass"},
+			{name: "fail", exitCode: 17, outcome: "fail"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fixture := newInstalledPlaceVerificationFixtureWithOutcome(t, tc.exitCode, false)
+				repoRoot := filepath.Join(fixture.admission.env.Home, "repo")
+				if err := os.Mkdir(repoRoot, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				result, err := runPlaceVerification(
+					context.Background(), fixture.admission.binding, fixture.admission.raw,
+					fixture.admission.env, repoRoot, "invented-app/mod", "sample",
+				)
+				if tc.exitCode == 0 && err != nil {
+					t.Fatalf("passing check = %#v, %v", result, err)
+				}
+				if tc.exitCode != 0 && (err == nil || !strings.Contains(err.Error(), "target.place.check-failed") ||
+					strings.Contains(err.Error(), "noisy")) {
+					t.Fatalf("failing check error = %v; want safe check-failed diagnostic", err)
+				}
+				if result.Outcome != tc.outcome || result.Check != "initial-load" ||
+					result.Scope != "eager-package-load" || result.EvidenceSource != "target-verify" ||
+					result.HostVersionStatus != "unknown" || result.HostVersion != "" {
+					t.Fatalf("recorded verification = %#v", result)
+				}
+				owner, snapshot := openPlacePublishOwnership(t, fixture.admission)
+				projection, err := owner.PlaceFromSnapshot(snapshot)
+				if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Verification == nil ||
+					*projection.Packages[0].Verification != result ||
+					result.Binding != projection.Packages[0].Binding ||
+					result.GenerationKey != projection.Packages[0].GenerationKey {
+					t.Fatalf("stored verification = %#v, %v", projection, err)
+				}
+				assertPlaceVerificationExecuted(t, fixture.marker)
+			})
+		}
+	})
+
+	t.Run("changed files during check are not recorded", func(t *testing.T) {
+		fixture := newInstalledPlaceVerificationFixtureWithOutcome(t, 0, true)
+		owner, _ := openPlacePublishOwnership(t, fixture.admission)
+		stateBefore, stateInfoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
+		repoRoot := filepath.Join(fixture.admission.env.Home, "repo")
+		if err := os.Mkdir(repoRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runPlaceVerification(
+			context.Background(), fixture.admission.binding, fixture.admission.raw,
+			fixture.admission.env, repoRoot, "invented-app/mod", "sample",
+		); err == nil || !strings.Contains(err.Error(), "target.place.drift") {
+			t.Fatalf("check that edits its installed package error = %v", err)
+		}
+		stateAfter, stateInfoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
+		if !bytes.Equal(stateBefore, stateAfter) || !stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) {
+			t.Fatal("check that changed installed files recorded a result")
+		}
+		got, err := os.ReadFile(fixture.target)
+		if err != nil || string(got) != "changed during check\n" {
+			t.Fatalf("fixture edit = %q, %v", got, err)
+		}
+		assertPlaceVerificationExecuted(t, fixture.marker)
+	})
+
+	for _, tc := range []struct {
+		name     string
+		mutate   func(*testing.T, installedPlaceVerificationFixture)
+		repoRoot func(installedPlaceVerificationFixture) string
+		want     string
+	}{
+		{
+			name: "dirty package refuses before execution",
+			mutate: func(t *testing.T, fixture installedPlaceVerificationFixture) {
+				if err := os.WriteFile(fixture.target, []byte("edited before check\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			repoRoot: func(fixture installedPlaceVerificationFixture) string {
+				return filepath.Join(fixture.admission.env.Home, "repo")
+			},
+			want: "target.place.drift",
+		},
+		{
+			name:     "repository-local executable is refused",
+			repoRoot: func(fixture installedPlaceVerificationFixture) string { return fixture.admission.env.Home },
+			want:     "target.place.repository-executable-refused",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newInstalledPlaceVerificationFixture(t)
+			if tc.mutate != nil {
+				tc.mutate(t, fixture)
+			}
+			repoRoot := tc.repoRoot(fixture)
+			if repoRoot != fixture.admission.env.Home {
+				if err := os.Mkdir(repoRoot, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			owner, _ := openPlacePublishOwnership(t, fixture.admission)
+			stateBefore, stateInfoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
+			if _, err := runPlaceVerification(
+				context.Background(), fixture.admission.binding, fixture.admission.raw,
+				fixture.admission.env, repoRoot, "invented-app/mod", "sample",
+			); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refused check error = %v, want %q", err, tc.want)
+			}
+			stateAfter, stateInfoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
+			if !bytes.Equal(stateBefore, stateAfter) || !stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) {
+				t.Fatal("refused check changed ownership state")
+			}
+			assertPlaceVerificationNotExecuted(t, fixture.marker)
+		})
+	}
+}
+
+func TestRunApprovedPlaceCheckHonorsCallerDeadline(t *testing.T) {
+	fixture := newInstalledPlaceVerificationFixture(t)
+	if err := os.WriteFile(fixture.hostExecutable, []byte("#!/bin/sh\nexec /bin/sleep 5\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := targetprofile.Parse(fixture.admission.raw, fixture.admission.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := targetprofile.ResolveApprovalBinding(profile, fixture.admission.identity, fixture.admission.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := openPlacePublishOwnership(t, fixture.admission)
+	stateBefore, stateInfoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = runApprovedPlaceCheck(ctx, binding, []string{"check"}, fixture.admission.env.Home, fixture.admission.root)
+	elapsed := time.Since(started)
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || err == nil || elapsed >= 2*time.Second {
+		t.Fatalf("deadline runner error=%v context=%v elapsed=%s", err, ctx.Err(), elapsed)
+	}
+	stateAfter, stateInfoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
+	if !bytes.Equal(stateBefore, stateAfter) || !stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) {
+		t.Fatal("timed out check changed ownership state")
+	}
+}
+
 type installedPlaceVerificationFixture struct {
 	admission      placeAdmissionFixture
 	target         string
@@ -204,13 +357,21 @@ type installedPlaceVerificationFixture struct {
 }
 
 func newInstalledPlaceVerificationFixture(t *testing.T) installedPlaceVerificationFixture {
+	return newInstalledPlaceVerificationFixtureWithOutcome(t, 0, false)
+}
+
+func newInstalledPlaceVerificationFixtureWithOutcome(
+	t *testing.T,
+	exitCode int,
+	mutate bool,
+) installedPlaceVerificationFixture {
 	t.Helper()
 	fixture := newPlaceAdmissionFixture(t)
 	raw := []byte(strings.Replace(
 		placeAdmissionProfileYAML,
 		"kinds: {mod: {deliver: place, into: [mods/]}}",
 		`host: {executable: fixture-checker}
-checks: {initial-load: {scope: eager-package-load, argv: [fixture-checker, "{subject}"], subject: {under: mods, component: package-name}}}
+checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}}
 kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 		1,
 	))
@@ -226,7 +387,20 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 	}
 	hostExecutable := filepath.Join(hostDir, "fixture-checker")
 	marker := filepath.Join(fixture.env.Home, "verification-executed")
-	if err := os.WriteFile(hostExecutable, []byte("#!/bin/sh\n: > \"$PLACE_VERIFY_MARKER\"\n"), 0o700); err != nil {
+	subject := filepath.Join(fixture.root, "mods", "sample")
+	script := "#!/bin/sh\n" +
+		"if [ \"$#\" -ne 2 ] || [ \"$1\" != \"check\" ] || [ \"$2\" != " + shellQuote(subject) + " ]; then exit 81; fi\n" +
+		"if [ \"$HOME\" != " + shellQuote(fixture.env.Home) + " ] || [ \"$LANG\" != \"C\" ] || [ \"${PLACE_VERIFY_MARKER+x}\" = \"x\" ]; then exit 82; fi\n" +
+		"if IFS= read -r input; then exit 83; fi\n" +
+		"printf 'noisy stdout\\n'\nprintf 'noisy stderr\\n' >&2\n"
+	if mutate {
+		script += "printf invoked > " + shellQuote(marker) + "\n"
+		script += "printf 'changed during check\\n' > " + shellQuote(filepath.Join(fixture.root, "mods", "sample", "guide.md")) + "\n"
+	} else {
+		script += "printf invoked > " + shellQuote(marker) + "\n"
+	}
+	script += "exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(hostExecutable, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", hostDir)
@@ -309,4 +483,15 @@ func assertPlaceVerificationNotExecuted(t *testing.T, marker string) {
 	if _, err := os.Lstat(marker); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("host verification command executed: marker stat error = %v", err)
 	}
+}
+
+func assertPlaceVerificationExecuted(t *testing.T, marker string) {
+	t.Helper()
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "invoked" {
+		t.Fatalf("verification execution marker = %q, %v", data, err)
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
