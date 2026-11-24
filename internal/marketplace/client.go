@@ -379,26 +379,42 @@ func (c *Client) getResourceInspection(ctx context.Context, registry, kind, name
 	if err != nil {
 		return manifest, rev, err
 	}
+	manifest, err = decodeVerifiedInspectionManifest(raw, rev)
+	if err != nil {
+		return manifest, rev, err
+	}
+	return manifest, rev, nil
+}
+
+func decodeVerifiedInspectionManifest(raw []byte, rev store.AssessedResourceRevision) (inspection.Manifest, error) {
+	var manifest inspection.Manifest
+	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
+	if manifestDigest == "" {
+		return manifest, fmt.Errorf("resource revision has no inspection manifest assessment")
+	}
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return manifest, fmt.Errorf("inspection manifest provenance: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+		return manifest, fmt.Errorf("decode inspection manifest: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return manifest, rev, fmt.Errorf("inspection manifest has trailing JSON")
+			return manifest, fmt.Errorf("inspection manifest has trailing JSON")
 		}
-		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+		return manifest, fmt.Errorf("decode inspection manifest: %w", err)
 	}
 	if err := inspection.Verify(manifest, raw, manifestDigest); err != nil {
-		return manifest, rev, fmt.Errorf("verify inspection manifest: %w", err)
+		return manifest, fmt.Errorf("verify inspection manifest: %w", err)
 	}
 	manifest.ManifestDigest = manifestDigest
 	if manifest.Coordinate != rev.Coordinate || manifest.RevisionDigest != string(rev.ContentDigest) {
-		return manifest, rev, fmt.Errorf("inspection manifest identity does not match resource revision")
+		return manifest, fmt.Errorf("inspection manifest identity does not match resource revision")
 	}
-	return manifest, rev, nil
+	return manifest, nil
 }
 
 func (c *Client) getResourceInspectionContent(ctx context.Context, registry, kind, name, revision, fileDigest string) (InspectionContent, error) {
@@ -624,12 +640,19 @@ func (c *Client) getRawLimited(ctx context.Context, requestURL string, limit int
 }
 
 func (c *Client) getRawResponseLimit(ctx context.Context, requestURL string, limit int64) ([]byte, http.Header, error) {
+	return c.getRawResponseMode(ctx, requestURL, limit, "")
+}
+
+func (c *Client) getRawResponseMode(ctx context.Context, requestURL string, limit int64, feature string) ([]byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
+	}
+	if feature != "" {
+		req.Header.Set("X-Agent-Marketplace-Features", feature)
 	}
 
 	resp, err := c.do(req)
@@ -940,11 +963,18 @@ func validateAPIResourceRevisionFor(rev store.AssessedResourceRevision, allowPla
 		return fmt.Errorf("resource coordinate is incomplete")
 	}
 	_, _, scoped := nameutil.SplitPlaceKind(coord.Kind)
-	if !mpapi.IsMarketplaceKind(coord.Kind) && (!allowPlace || !scoped || !nameutil.IsPlacePackageName(coord.Name)) {
+	targetProfile := coord.Kind == nameutil.TargetProfileKind
+	validPlaceResource := allowPlace &&
+		((scoped && nameutil.IsPlacePackageName(coord.Name)) ||
+			(targetProfile && nameutil.IsTargetIdentifier(coord.Name)))
+	if !mpapi.IsMarketplaceKind(coord.Kind) && !validPlaceResource {
 		return fmt.Errorf("resource kind %q is invalid", coord.Kind)
 	}
 	if scoped && rev.ArchiveDigest == "" {
 		return fmt.Errorf("scoped resource revision has no archive digest")
+	}
+	if targetProfile && rev.ArchiveDigest != "" {
+		return fmt.Errorf("virtual target profile revision must not have an archive digest")
 	}
 	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
 		return fmt.Errorf("content digest: %w", err)
