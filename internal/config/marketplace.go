@@ -5,7 +5,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +40,8 @@ func (x MarketplaceExclusion) Matches(entry MarketplaceEntry, pin MarketplaceRes
 	kind := pin.Kind
 	if kind == api.KindMcpServer {
 		kind = "mcp"
+	} else if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		kind = strings.Replace(kind, "/", "%2F", 1)
 	}
 	return x.Locator == pin.RegistrySlug+"/"+kind+"/"+pin.Name
 }
@@ -199,9 +203,11 @@ type MarketplaceResourcePin struct {
 
 	// Runtime-only integrity fields hydrated from the owning acquisition lock.
 	// They are never serialized to user-facing configuration.
-	LockArchiveDigest            string `yaml:"-"`
-	LockCollectionManifestDigest string `yaml:"-"`
-	LockSourcePath               string `yaml:"-"`
+	LockArchiveDigest            string                `yaml:"-"`
+	LockCollectionManifestDigest string                `yaml:"-"`
+	LockSourcePath               string                `yaml:"-"`
+	LockAssessmentDigest         string                `yaml:"-"`
+	LockHostPackageIdentity      targetprofile.Binding `yaml:"-"`
 	// RequiresEdges carries the requires edges this pin's lock record holds.
 	// It is runtime-only and always empty for configuration-authored pins:
 	// selected_by in configuration stays collection-only.
@@ -311,8 +317,20 @@ func validateMarketplacePin(entryIdx, pinIdx int, p MarketplaceResourcePin) []er
 			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
 		}
 	}
-	if !api.IsMarketplaceKind(p.Kind) {
+	_, _, scoped := nameutil.SplitPlaceKind(p.Kind)
+	if !api.IsMarketplaceKind(p.Kind) && !scoped {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].kind %q is not a valid marketplace kind", entryIdx, pinIdx, p.Kind))
+	}
+	if scoped {
+		if !nameutil.IsPlacePackageName(p.Name) {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].name %q is not a valid place package name", entryIdx, pinIdx, p.Name))
+		}
+		if !api.IsCanonicalSHA256Digest(p.LockAssessmentDigest) {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].lock_assessment_digest must be sha256:<64-hex>", entryIdx, pinIdx))
+		}
+		if err := p.LockHostPackageIdentity.ValidateFor(p.Kind, p.Digest); err != nil {
+			errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].lock_host_package_identity: %w", entryIdx, pinIdx, err))
+		}
 	}
 	if err := validateMarketplaceSegment("name", p.Name); err != nil {
 		errs = append(errs, fmt.Errorf("marketplaces[%d].resources[%d].%w", entryIdx, pinIdx, err))
