@@ -1,6 +1,10 @@
 package lockfile
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+)
 
 const (
 	APIVersionV1 = "agent-marketplace-lock/v1"
@@ -59,8 +63,10 @@ type MarketplaceResourceLock struct {
 	Name                     string                     `yaml:"name"`
 	Revision                 string                     `yaml:"revision"`
 	ContentDigest            Digest                     `yaml:"content_digest"`
+	AssessmentDigest         Digest                     `yaml:"assessment_digest,omitempty"`
 	ArchiveDigest            Digest                     `yaml:"archive_digest,omitempty"`
 	CollectionManifestDigest Digest                     `yaml:"collection_manifest_digest,omitempty"`
+	HostPackageIdentity      *targetprofile.Binding     `yaml:"host_package_identity,omitempty"`
 	Acquisition              string                     `yaml:"acquisition"`
 	RegistryCommit           string                     `yaml:"registry_commit,omitempty"`
 	RegistryManifestDigest   Digest                     `yaml:"registry_manifest_digest,omitempty"`

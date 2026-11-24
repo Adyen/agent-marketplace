@@ -20,10 +20,10 @@ type PackageFile struct {
 }
 
 type Binding struct {
-	PackageContentDigest  string   `json:"package_content_digest"`
-	DeliveryMappingDigest string   `json:"delivery_mapping_digest"`
-	ProfileDigest         string   `json:"profile_digest"`
-	ProfileIdentity       Identity `json:"profile_identity"`
+	PackageContentDigest  string   `json:"package_content_digest" yaml:"package_content_digest"`
+	DeliveryMappingDigest string   `json:"delivery_mapping_digest" yaml:"delivery_mapping_digest"`
+	ProfileDigest         string   `json:"profile_digest" yaml:"profile_digest"`
+	ProfileIdentity       Identity `json:"profile_identity" yaml:"profile_identity"`
 }
 
 func BuildBinding(profile Identity, files []PackageFile) (Binding, error) {

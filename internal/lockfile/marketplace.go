@@ -11,7 +11,7 @@ import (
 
 func normalizeMarketplaces(doc *Document) error {
 	for i := range doc.Marketplaces {
-		if err := normalizeMarketplace(&doc.Marketplaces[i], i); err != nil {
+		if err := normalizeMarketplace(&doc.Marketplaces[i], i, doc.Scope); err != nil {
 			return err
 		}
 	}
@@ -28,7 +28,7 @@ func normalizeMarketplaces(doc *Document) error {
 	return err
 }
 
-func normalizeMarketplace(mp *MarketplaceLock, index int) error {
+func normalizeMarketplace(mp *MarketplaceLock, index int, scope Scope) error {
 	canonical, err := urlutil.NormalizeEndpointURL(mp.URL)
 	if err != nil {
 		return fmt.Errorf("marketplaces[%d].url: %w", index, err)
@@ -70,7 +70,7 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 	collections := make(map[string]MarketplaceResourceLock)
 	for j := range mp.Resources {
 		resource := &mp.Resources[j]
-		if err := normalizeMarketplaceResource(resource, index, j); err != nil {
+		if err := normalizeMarketplaceResource(resource, index, j, scope); err != nil {
 			return err
 		}
 		if boundID, exists := bindings[resource.RegistryName]; !exists {
@@ -140,7 +140,7 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 	return nil
 }
 
-func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j int) error {
+func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j int, scope Scope) error {
 	field := func(name string) string {
 		return fmt.Sprintf("marketplaces[%d].resources[%d].%s", index, j, name)
 	}
@@ -150,8 +150,25 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 	if err := validateSegment(resource.RegistryID, field("registry_id")); err != nil {
 		return err
 	}
-	if !api.IsMarketplaceKind(resource.Kind) {
+	_, _, scoped := nameutil.SplitPlaceKind(resource.Kind)
+	if !api.IsMarketplaceKind(resource.Kind) && !scoped {
 		return coded(CodeInvalidDocument, "%s %q is not a selectable Marketplace kind", field("kind"), resource.Kind)
+	}
+	if scoped {
+		if scope != ScopeUser && scope != ScopeOrganization {
+			return coded(CodeInvalidScope, "%s scoped place resources require user or organization scope", field("kind"))
+		}
+		if !nameutil.IsPlacePackageName(resource.Name) {
+			return coded(CodeInvalidDocument, "%s %q is not a valid scoped place package name", field("name"), resource.Name)
+		}
+		if resource.AssessmentDigest == "" {
+			return coded(CodeInvalidDocument, "marketplace.cache.profile-binding-missing: %s is required", field("assessment_digest"))
+		}
+		if resource.HostPackageIdentity == nil {
+			return coded(CodeInvalidDocument, "marketplace.cache.profile-binding-missing: %s is required", field("host_package_identity"))
+		}
+	} else if resource.AssessmentDigest != "" || resource.HostPackageIdentity != nil {
+		return coded(CodeInvalidDocument, "%s and %s are only valid for scoped place resources", field("assessment_digest"), field("host_package_identity"))
 	}
 	if err := validateSegment(resource.Name, field("name")); err != nil {
 		return err
@@ -161,6 +178,17 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 	}
 	if err := validateDigest(resource.ContentDigest, field("content_digest")); err != nil {
 		return err
+	}
+	if scoped {
+		if resource.Revision != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s must equal %s for scoped place resources", field("revision"), field("content_digest"))
+		}
+		if err := validateDigest(resource.AssessmentDigest, field("assessment_digest")); err != nil {
+			return err
+		}
+		if err := resource.HostPackageIdentity.ValidateFor(resource.Kind, string(resource.ContentDigest)); err != nil {
+			return coded(CodeInvalidDocument, "%s: %w", field("host_package_identity"), err)
+		}
 	}
 	collection := resource.Kind == api.KindCollection
 	switch resource.Acquisition {

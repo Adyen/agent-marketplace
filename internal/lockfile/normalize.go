@@ -28,6 +28,10 @@ func cloneDocument(in Document) Document {
 		out.Marketplaces[i].Resources = append([]MarketplaceResourceLock(nil), in.Marketplaces[i].Resources...)
 		for j := range out.Marketplaces[i].Resources {
 			out.Marketplaces[i].Resources[j].SelectedBy = append([]MarketplaceSelectionLock(nil), in.Marketplaces[i].Resources[j].SelectedBy...)
+			if binding := in.Marketplaces[i].Resources[j].HostPackageIdentity; binding != nil {
+				copy := *binding
+				out.Marketplaces[i].Resources[j].HostPackageIdentity = &copy
+			}
 		}
 	}
 	return out
