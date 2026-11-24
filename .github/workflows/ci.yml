@@ -152,8 +152,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify explicit Helm image selection
-        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
+      - name: Verify Helm image selection and scanner isolation
+        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelm(ImageSelection|SkillspectorDefaultIsolation)$' -count=1
 
       - name: Verify PrometheusRule alert release identity
         run: AM_HELM_CHECK=1 CGO_ENABLED=0 go test ./tools/ci-plan -run '^TestAlertReleaseIdentity$'
@@ -275,8 +275,8 @@ jobs:
           helm lint --strict "$CHART_DIR" --values "$values_file"
           helm template marketplace "$CHART_DIR" --namespace marketplace --set image.tag=ci > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
-          if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
-            echo "default chart should render exactly one Deployment" >&2
+          if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 2 ]]; then
+            echo "default chart should render the Marketplace and SkillSpector Deployments" >&2
             exit 1
           fi
 

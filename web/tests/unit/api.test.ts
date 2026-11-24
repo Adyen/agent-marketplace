@@ -215,6 +215,28 @@ describe('Marketplace API URL handling', () => {
     expect(() => normalizeResourceRevision(mismatched)).toThrow(/assessment.content_digest does not match/)
   })
 
+  // spec: marketplace-web-ui/readers-can-compare-tool-reports
+  it('retains advisory reports when normalizing exact resource revisions', () => {
+    const digest = 'sha256:' + 'a'.repeat(64)
+    const base = revisionPayload(digest)
+    const advisoryReports = [{
+      tool: 'skillspector',
+      version: '2.13.6',
+      status: 'partial',
+      findings: [{ code: 'SC4', severity: 'high', summary: 'Dependency risk detected.', path: 'support/requirements.txt' }],
+    }]
+
+    const normalized = normalizeResourceRevision({
+      ...base,
+      assessment: { ...base.assessment, advisory_reports: advisoryReports },
+    })
+    expect(normalized.assessment.advisory_reports).toEqual(advisoryReports)
+    expect(() => normalizeResourceRevision({
+      ...base,
+      assessment: { ...base.assessment, advisory_reports: [{ ...advisoryReports[0], status: 'unknown' }] },
+    })).toThrow(/assessment\.advisory_reports\[0\]\.status is unsupported/)
+  })
+
   it('accepts the analyzer finding budget and rejects larger responses', () => {
     const digest = 'sha256:' + 'a'.repeat(64)
     const base = revisionPayload(digest)

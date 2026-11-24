@@ -104,6 +104,7 @@ function resource(item, contentDigest = item.content_digest, revocation) {
           findings: item.name === 'secure-review' ? [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 }, message: 'External reference requires review.' }] : [],
           inspection_manifest_digest: inspectionDigest,
           assessed_at: '2026-01-02T03:04:05Z',
+          ...(item.name === 'secure-review' && contentDigest === digest ? { advisory_reports: [{ tool: 'skillspector', version: '2.13.6', status: 'partial', findings: [{ code: 'SC4', severity: 'high', summary: 'Dependency risk detected.', path: 'support/requirements.txt' }] }] } : {}),
         },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
     ...(item.name === 'secure-review' ? { source: { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/secure-review/SKILL.md', commit: '8'.repeat(40) } } : {}),

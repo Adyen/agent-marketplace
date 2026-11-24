@@ -117,6 +117,8 @@ const assessmentDecision = computed(() => {
   }
 })
 const assessedAt = computed(() => formatDate(props.resource.assessment.assessed_at))
+const advisoryReports = computed(() => props.resource.assessment.advisory_reports ?? [])
+const hasSkillSpectorReport = computed(() => advisoryReports.value.some(report => report.tool === 'skillspector'))
 const sourceLink = computed(() => sourceBrowseUrl(props.resource.source))
 const sourceLabel = computed(() => sourceRepositoryLabel(props.resource.source?.repository_url ?? ''))
 const technicalEntries = computed<TechnicalEntry[]>(() => {
@@ -214,6 +216,16 @@ function revisionStatusClass(revision: ResourceRevision): string {
 
 function selectTab(tab: Tab) {
   activeTab.value = tab
+}
+
+function advisoryStatusLabel(status: string): string {
+  switch (status) {
+    case 'complete': return 'Complete'
+    case 'complete_with_caveats': return 'Complete with caveats'
+    case 'partial': return 'Partial coverage'
+    case 'failed': return 'Scan failed'
+    default: return 'Not run'
+  }
 }
 
 watch(() => props.resource.description, () => {
@@ -341,40 +353,70 @@ function formatValue(value: unknown): string {
     </section>
 
     <section v-else-if="activeTab === 'security'" id="security-panel" role="tabpanel" aria-labelledby="security-tab" class="py-6">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold text-highlighted">Automated scan</h2>
-          <p class="mt-1 text-sm font-medium text-highlighted">{{ assessmentDecision }}</p>
-        </div>
-        <time class="text-sm text-muted" :datetime="resource.assessment.assessed_at">Scanned {{ assessedAt }}</time>
+      <div class="space-y-6">
+        <section>
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 class="text-lg font-semibold text-highlighted">Marketplace policy</h2>
+              <p class="mt-1 text-sm font-medium text-highlighted">{{ assessmentDecision }}</p>
+            </div>
+            <time class="text-sm text-muted" :datetime="resource.assessment.assessed_at">Scanned {{ assessedAt }}</time>
+          </div>
+        </section>
+
+        <section>
+          <h3 class="text-base font-semibold text-highlighted">Marketplace analyzer</h3>
+          <p class="mt-1 text-sm text-toned">Version: {{ resource.assessment.analyzer_version }}</p>
+          <ul v-if="findings.length" class="mt-4 space-y-3" aria-label="Security findings">
+            <li v-for="finding in displayFindings" :id="`finding-${finding.index}`" :key="finding.index" class="border-l-2 border-warning pl-4 text-sm text-highlighted">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-semibold">{{ finding.code }}</span>
+                <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
+                <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
+              </div>
+              <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}<template v-if="finding.startByte !== undefined">:{{ finding.startByte }}-{{ finding.endByte ?? finding.startByte }}</template><template v-else-if="finding.line !== undefined">:{{ finding.line }}<template v-if="finding.column !== undefined">:{{ finding.column }}</template></template></p>
+              <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
+              <button v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" type="button" class="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline" @click="selectTab('content'); contentMode = 'raw'">View highlighted range</button>
+            </li>
+          </ul>
+          <p v-else class="mt-4 text-sm text-toned"><span class="font-medium text-highlighted">Automated scan: no issues detected.</span> Automated analysis is limited and is not a safety endorsement.</p>
+        </section>
+
+        <section v-for="report in advisoryReports" :key="report.tool" class="border-t border-default pt-5">
+          <h3 class="text-base font-semibold text-highlighted">{{ report.tool === 'skillspector' ? 'SkillSpector' : report.tool }}</h3>
+          <p class="mt-1 text-sm font-medium text-highlighted">{{ advisoryStatusLabel(report.status) }}</p>
+          <p v-if="report.version" class="mt-1 text-sm text-toned">Version: {{ report.version }}</p>
+          <ul v-if="report.findings?.length" class="mt-4 space-y-3" :aria-label="`${report.tool === 'skillspector' ? 'SkillSpector' : report.tool} findings`">
+            <li v-for="(finding, index) in report.findings" :key="`${finding.code}-${index}`" class="border-l-2 border-default pl-4 text-sm text-highlighted">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-semibold">{{ finding.code }}</span>
+                <span class="font-medium text-muted">Severity: {{ finding.severity }}</span>
+              </div>
+              <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}</p>
+              <p class="mt-1">{{ finding.summary }}</p>
+            </li>
+          </ul>
+          <p v-else-if="report.status === 'complete' || report.status === 'complete_with_caveats'" class="mt-4 text-sm text-toned">
+            No findings reported.
+          </p>
+          <p class="mt-4 text-sm text-muted">This report does not affect Marketplace policy.</p>
+        </section>
+
+        <p v-if="kind === 'skill' && !hasSkillSpectorReport" class="border-t border-default pt-5 text-sm text-muted" role="status">
+          No SkillSpector report for this revision
+        </p>
+
+        <details class="border-t border-default pt-4">
+          <summary class="cursor-pointer text-sm font-medium text-highlighted">Analyzer and assessment parameters</summary>
+          <dl class="mt-4 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
+            <div v-for="entry in [{ label: 'Assessment digest', value: resource.assessment.assessment_digest }, { label: 'Policy digest', value: resource.assessment.policy_digest }, { label: 'Inspection manifest digest', value: resource.assessment.inspection_manifest_digest }]" :key="entry.label" class="grid gap-2 py-3 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center">
+              <dt class="text-sm text-muted">{{ entry.label }}</dt>
+              <dd class="font-mono text-sm text-highlighted" :title="entry.value">{{ shortIdentifier(entry.value) }}</dd>
+              <CopyButton :copied="copied === `security-${entry.label}`" :copy-label="`Copy ${entry.label}`" :copied-label="`${entry.label} copied`" icon-only @click="copy(entry.value, `security-${entry.label}`)" />
+            </div>
+          </dl>
+        </details>
       </div>
-      <ul v-if="findings.length" class="mt-5 space-y-3" aria-label="Security findings">
-        <li v-for="finding in displayFindings" :id="`finding-${finding.index}`" :key="finding.index" class="border-l-2 border-warning pl-4 text-sm text-highlighted">
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span class="font-semibold">{{ finding.code }}</span>
-            <span class="font-medium text-warning">Severity: {{ finding.severity }}</span>
-            <span v-if="finding.policy" class="text-muted">Policy: {{ finding.policy }}</span>
-          </div>
-          <p v-if="finding.path" class="mt-1 font-mono text-xs text-muted">{{ finding.path }}<template v-if="finding.startByte !== undefined">:{{ finding.startByte }}-{{ finding.endByte ?? finding.startByte }}</template><template v-else-if="finding.line !== undefined">:{{ finding.line }}<template v-if="finding.column !== undefined">:{{ finding.column }}</template></template></p>
-          <p v-if="finding.message" class="mt-1">{{ finding.message }}</p>
-          <button v-if="selectedContent !== undefined && finding.path === selectedFile?.path && finding.startByte !== undefined && finding.endByte !== undefined" type="button" class="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline" @click="selectTab('content'); contentMode = 'raw'">View highlighted range</button>
-        </li>
-      </ul>
-      <p v-else class="mt-5 text-sm text-toned"><span class="font-medium text-highlighted">Automated scan: no issues detected.</span> Automated analysis is limited and is not a safety endorsement.</p>
-      <details class="mt-6 border-t border-default pt-4">
-        <summary class="cursor-pointer text-sm font-medium text-highlighted">Analyzer and assessment parameters</summary>
-        <dl class="mt-4 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
-          <div class="grid gap-2 py-3 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center">
-            <dt class="text-sm text-muted">Analyzer</dt>
-            <dd class="text-sm text-highlighted">{{ resource.assessment.analyzer_version }}</dd>
-          </div>
-          <div v-for="entry in [{ label: 'Assessment digest', value: resource.assessment.assessment_digest }, { label: 'Policy digest', value: resource.assessment.policy_digest }, { label: 'Inspection manifest digest', value: resource.assessment.inspection_manifest_digest }]" :key="entry.label" class="grid gap-2 py-3 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center">
-            <dt class="text-sm text-muted">{{ entry.label }}</dt>
-            <dd class="font-mono text-sm text-highlighted" :title="entry.value">{{ shortIdentifier(entry.value) }}</dd>
-            <CopyButton :copied="copied === `security-${entry.label}`" :copy-label="`Copy ${entry.label}`" :copied-label="`${entry.label} copied`" icon-only @click="copy(entry.value, `security-${entry.label}`)" />
-          </div>
-        </dl>
-      </details>
     </section>
 
     <section v-else-if="activeTab === 'revisions'" id="revisions-panel" role="tabpanel" aria-labelledby="revisions-tab" class="py-6">

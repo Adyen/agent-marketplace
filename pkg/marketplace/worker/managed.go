@@ -407,7 +407,7 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 		return managedWorkFailure(workCtx, ErrManagedAcquire)
 	}
 	defer func() { _ = result.Release() }()
-	revision, err := ingest.BuildRegistryRevision(workCtx, cfg, p.Marketplace, registry, result.Dir, result.Commit)
+	revision, err := ingest.BuildRegistryRevisionWithAdvisory(workCtx, cfg, p.Marketplace, registry, result.Dir, result.Commit, deps.SkillSpector)
 	if err != nil {
 		return managedWorkFailure(workCtx, ErrManagedRefresh)
 	}

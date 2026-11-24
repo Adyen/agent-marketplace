@@ -42,6 +42,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-%s" (include "agent-marketplace.fullname" .root) .component | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "agent-marketplace.skillspectorName" -}}
+{{- $full := include "agent-marketplace.fullname" . -}}
+{{- if le (len $full) 50 -}}
+{{- printf "%s-skillspector" $full -}}
+{{- else -}}
+{{- $prefix := $full | trunc 47 | trimSuffix "-" -}}
+{{- $hash := sha256sum $full | trunc 12 -}}
+{{- $name := printf "%s-%s-ss" $prefix $hash -}}
+{{- if eq $name $full -}}
+{{- printf "%s-%s-sr" $prefix $hash -}}
+{{- else -}}
+{{- $name -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
 {{- define "agent-marketplace.workerMetricSelector" -}}
 {{- $api := include "agent-marketplace.componentName" (dict "root" . "component" "api") -}}
 {{- $worker := include "agent-marketplace.componentName" (dict "root" . "component" "worker") -}}
@@ -93,6 +109,16 @@ runbook_url: {{ printf "%s#%s" . $.alertName | quote }}
 {{- printf "%s@%s" $image.repository $image.digest }}
 {{- else }}
 {{- printf "%s:%s" $image.repository (required (printf "%s: set an explicit image.tag or image.digest (use a verified digest in production)" $image.repository) $image.tag) }}
+{{- end }}
+{{- end }}
+
+{{- define "agent-marketplace.skillspectorImage" -}}
+{{- $image := .Values.skillspector.image -}}
+{{- if $image.digest }}
+{{- printf "%s@%s" $image.repository $image.digest }}
+{{- else }}
+{{- $tag := default .Values.image.tag $image.tag -}}
+{{- printf "%s:%s" $image.repository (required (printf "%s: set a runner image.tag or image.digest (the top-level image.tag is a local-test fallback)" $image.repository) $tag) }}
 {{- end }}
 {{- end }}
 
@@ -233,7 +259,7 @@ spec:
               protocol: TCP
           {{- end }}
           {{- end }}
-          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") $component.env }}
+          {{- if or (and $isMarketplace $root.Values.storage.dsnSecret.name) (eq $role "web") $component.env (and $root.Values.skillspector.enabled (has $role (list "worker" "all"))) }}
           env:
             {{- if and $isMarketplace $root.Values.storage.dsnSecret.name }}
             - name: {{ $root.Values.storage.dsnSecret.envName }}
@@ -241,6 +267,10 @@ spec:
                 secretKeyRef:
                   name: {{ $root.Values.storage.dsnSecret.name }}
                   key: {{ $root.Values.storage.dsnSecret.key }}
+            {{- end }}
+            {{- if and $root.Values.skillspector.enabled (has $role (list "worker" "all")) }}
+            - name: MARKETPLACE_SKILLSPECTOR_ENDPOINT
+              value: {{ printf "http://%s:8081" (include "agent-marketplace.skillspectorName" $root) | quote }}
             {{- end }}
             {{- if eq $role "web" }}
             - name: NUXT_APP_BASE_URL

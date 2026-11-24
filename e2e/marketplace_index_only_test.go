@@ -21,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: marketplace-delivery-security/consumer-and-standalone-server-do-not-require-the-runner
 func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	sourceRepo := t.TempDir()
 	writeMarketplaceAllKindsSource(t, sourceRepo)
@@ -44,6 +45,11 @@ func TestMarketplaceIndexOnlyRegistryMoveOfflineAndAllKinds(t *testing.T) {
 	built, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "marketplace-id", registry, acquired.Dir, commit)
 	if err != nil {
 		t.Fatalf("build registry revision: %v", err)
+	}
+	for _, assessment := range built.Assessments {
+		if assessment.Coordinate.Kind == "skill" && len(assessment.AdvisoryReports) != 0 {
+			t.Fatalf("unconfigured index-only build has supplementary reports: %#v", assessment.AdvisoryReports)
+		}
 	}
 
 	var revisions []store.AssessedResourceRevision

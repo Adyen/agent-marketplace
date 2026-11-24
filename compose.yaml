@@ -19,9 +19,12 @@ services:
         <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
     command: ["serve", "--config", "/app/marketplace.yaml", "--role", "all"]
+    environment:
+      MARKETPLACE_SKILLSPECTOR_ENDPOINT: ${MARKETPLACE_SKILLSPECTOR_ENDPOINT-unix:///run/skillspector/scan.sock}
     volumes:
       - ./deploy/compose/sqlite-filesystem/config.yaml:/app/marketplace.yaml:ro
       - marketplace-data:/var/lib/agent-marketplace
+      - skillspector-socket:/run/skillspector:ro
     read_only: true
     tmpfs:
       - /tmp:exec,mode=1777
@@ -38,6 +41,26 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  skillspector:
+    platform: *marketplace-platform
+    image: ${MARKETPLACE_SKILLSPECTOR_IMAGE:-agent-marketplace-skillspector:local}
+    pull_policy: never
+    network_mode: none
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    volumes:
+      - skillspector-socket:/run/skillspector
+    restart: unless-stopped
 
   web:
     platform: *marketplace-platform
@@ -99,3 +122,4 @@ services:
 
 volumes:
   marketplace-data:
+  skillspector-socket:

@@ -4,6 +4,43 @@ This example is a single-process, all-in-one deployment. The `app` service runs 
 
 The proxy routes the API, the well-known metadata document, and `/healthz` to `app`, and the remaining UI traffic to Nuxt. Without local docs, `/docs` and `/docs/` descendants return 404 and the UI links to `https://agent-marketplace.io/docs`. The operations endpoints (`/readyz` and `/metrics`) stay on the app's private listener, and public requests to them receive an explicit 404. The `app` container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container. The services use `restart: unless-stopped`. After a restart, check the app logs and the private readiness endpoint before you treat the deployment as healthy.
 
+## SkillSpector runner
+
+Before upgrading with `docker compose up --build`, stage the isolated
+SkillSpector runner image. Compose starts the runner by default and fails if
+the image is not already local. Stage the externally vetted offline wheels and
+`requirements.lock`, then build the local image as described in
+[`deploy/skillspector`](../../skillspector/README.md) before starting Compose.
+Alternatively, load a locally available verified
+runner image. `docker compose up --build` does not build or distribute the
+runner; Compose uses `agent-marketplace-skillspector:local` by default.
+Production can set `MARKETPLACE_SKILLSPECTOR_IMAGE` to an operator-approved
+checked image digest.
+The runner has `network_mode: none`, no published port or credentials, a
+read-only root, and only the private socket volume shared read-only with `app`.
+The `app` service has no required runner health dependency, so an unavailable
+runner does not stop built-in analysis or publication.
+For the required real-scan check, see [Verify a real scan](../../skillspector/README.md#verify-a-real-scan).
+
+Before exposing a deployment, verify that the runtime denies runner egress and
+that a positive control can still submit a scan from the Marketplace worker.
+After enabling the runner, reindex to produce current reports; historical
+revisions are not backfilled. With the `app` image already built, run the
+following commands from the repository root. Stop `app` before reindexing so
+only the reindex process opens the SQLite database. Leave the enabled
+SkillSpector runner running, and restart `app` even if reindexing fails.
+
+```bash
+docker compose stop app
+docker compose run --rm --no-deps app serve reindex --config /app/marketplace.yaml
+docker compose start app
+```
+
+To temporarily disable supplementary scans, set
+`MARKETPLACE_SKILLSPECTOR_ENDPOINT=` and start with
+`--scale skillspector=0`. This leaves Marketplace policy unchanged and does not
+turn a missing report into a clean scan.
+
 When upgrading from the combined site profile, the proxy temporarily redirects `/marketplace` and its descendants to the corresponding root routes while preserving query parameters. Keep `instance.browser_base` on the bare external origin, move any gateway protection from `/marketplace/admin/**` to `/admin/**`, and run `docker compose up --build --remove-orphans` so the old `site` container is removed. OIDC transactions started before the route switch may require a fresh sign-in.
 
 Before starting, review `config.yaml` and replace the `.example.invalid` canonical URL with the deployment's own value. Keep `instance.browser_base` on that same origin without a path suffix. The example keeps both SQLite metadata and filesystem blobs on one named volume (`marketplace-data`, mounted at `/var/lib/agent-marketplace`); that volume is the only persistent writable path in the otherwise read-only app container. The app can also write to `/tmp`, a tmpfs that holds the worker's Git clone scratch space and is emptied when the container stops. Stop the app before copying the volume for a backup; see [the backup guide](../../../docs/marketplace-backup-restore.md).

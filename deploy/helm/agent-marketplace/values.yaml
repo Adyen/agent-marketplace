@@ -183,6 +183,21 @@ all:
       timeoutSeconds: 5
       failureThreshold: 3
 
+skillspector:
+  enabled: true
+  image:
+    repository: agent-marketplace-skillspector
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 web:
   enabled: false
   replicas: 1
