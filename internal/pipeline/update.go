@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,8 +28,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/processstart"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"gopkg.in/yaml.v3"
@@ -57,7 +60,8 @@ type UpdateOptions struct {
 	// or materializing anything. The dependency reconciler still prepares the
 	// exact candidate state its callback inspects; the prepared publication
 	// is dropped instead of committed.
-	DryRun bool
+	DryRun          bool
+	RemovedPinsOnly bool
 	// PreseedLockEdits seeds the staged Marketplace lock edits with prepared
 	// in-memory documents (preview initial acquisition evidence) before
 	// planned pin replacements merge on top of them.
@@ -68,15 +72,16 @@ type UpdateOptions struct {
 // Marketplace pin. OldPin is always the pin observed during planning; NewPin
 // is populated for a prepared update or remains zero for a skipped pin.
 type MarketplacePinUpdate struct {
-	Entry         config.MarketplaceEntry
-	OldPin        config.MarketplaceResourcePin
-	NewPin        config.MarketplaceResourcePin
-	ArchiveDigest string
-	Source        config.Source
-	Required      bool
-	Updated       bool
-	Skipped       bool
-	Reason        string
+	Entry           config.MarketplaceEntry
+	OldPin          config.MarketplaceResourcePin
+	NewPin          config.MarketplaceResourcePin
+	ArchiveDigest   string
+	Source          config.Source
+	Required        bool
+	Updated         bool
+	Skipped         bool
+	Reason          string
+	verificationErr error
 }
 
 type marketplaceUpdatePlan struct {
@@ -104,23 +109,20 @@ func (e *MissingMarketplaceResourcesError) Error() string {
 		}
 		fmt.Fprintf(&b, "\nmarketplace %s pin %s/%s/%s: resource not found; remove the old pin with `agent-marketplace remove %s` and install the new name",
 			pin.Entry.URL, pin.OldPin.RegistryID, pin.OldPin.Kind, pin.OldPin.Name, name)
+		if pin.verificationErr != nil {
+			fmt.Fprintf(&b, "; verify pinned revision: %v", pin.verificationErr)
+		}
 	}
 	return b.String()
 }
 
-func missingMarketplacePins(plans []marketplaceUpdatePlan) error {
-	var missing *MissingMarketplaceResourcesError
+func missingMarketplacePinUpdates(plans []marketplaceUpdatePlan) []MarketplacePinUpdate {
+	var missing []MarketplacePinUpdate
 	for i := range plans {
 		if plans[i].Reason != marketplaceResourceMissingReason {
 			continue
 		}
-		if missing == nil {
-			missing = &MissingMarketplaceResourcesError{}
-		}
-		missing.Pins = append(missing.Pins, plans[i].MarketplacePinUpdate)
-	}
-	if missing == nil {
-		return nil
+		missing = append(missing, plans[i].MarketplacePinUpdate)
 	}
 	return missing
 }
@@ -133,7 +135,7 @@ type UpdateTarget struct {
 	Names    []string
 }
 
-type UpdateDependencyReconciler func(context.Context, string, string, []RefBump, []StagedConfigEdit, []StagedLockEdit) (DependencyLockView, error)
+type UpdateDependencyReconciler func(context.Context, string, string, []RefBump, []StagedConfigEdit, []StagedLockEdit, []MarketplacePinUpdate) (DependencyLockView, error)
 
 // UpdateResult holds the outcome of an update operation.
 type UpdateResult struct {
@@ -197,7 +199,14 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	for _, plan := range plans {
 		actionable = actionable || !plan.Skipped
 	}
-	missing := missingMarketplacePins(plans)
+	missingPins := missingMarketplacePinUpdates(plans)
+	var missing error
+	if len(missingPins) > 0 {
+		missing = &MissingMarketplaceResourcesError{Pins: missingPins}
+	}
+	if opts.RemovedPinsOnly {
+		return updateResult(updatedRegistries, nil, plans), missing
+	}
 	if !actionable {
 		return updateResult(updatedRegistries, nil, plans), missing
 	}
@@ -280,13 +289,14 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
+	pinsToSkip := marketplacePinsWithDependentLeaves(missingPins)
 	syncOpts := []silentSyncOpt{withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		ordered := make([]StagedLockEdit, 0, len(lockEditOrder))
 		for _, path := range lockEditOrder {
 			ordered = append(ordered, lockEdits[path])
 		}
-		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
-	})}
+		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered, pinsToSkip)
+	}), withMarketplacePinsSkipped(missingMarketplacePinIdentities(pinsToSkip)), withRetainedMarketplacePins(retainedMarketplacePins(pinsToSkip))}
 	if opts.DryRun {
 		// Preview: reconcile and validate the prepared candidate state without
 		// publishing config or locks and without materializing. The dependency
@@ -306,7 +316,8 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	syncOpts = append(syncOpts, withVerifiedMarketplaceRevisions(verifiedMarketplaceRevisions))
 	synced, syncErr := silentSyncCollect(ctx, ws, syncOpts...)
 	result = updateResult(updatedRegistries, bumps, plans)
-	result.Report, result.Warnings = synced.Report, synced.Warnings
+	result.Report = synced.Report
+	result.Warnings = append(result.Warnings, synced.Warnings...)
 	result.SkippedBumps = skippedBumps
 	if err := syncErr; err != nil {
 		if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
@@ -325,6 +336,9 @@ func updateResult(updatedRegistries int, bumps []RefBump, plans []marketplaceUpd
 	result := &UpdateResult{UpdatedRegistries: updatedRegistries, Bumps: bumps}
 	for _, plan := range plans {
 		result.MarketplacePins = append(result.MarketplacePins, plan.MarketplacePinUpdate)
+		if plan.Reason == marketplaceResourceRemovedReason {
+			result.Warnings = append(result.Warnings, marketplace.RemovedMarketplacePinWarning(plan.Entry, plan.OldPin))
+		}
 		if plan.Updated {
 			result.UpdatedMarketplacePins++
 		} else if plan.Skipped {
@@ -334,6 +348,50 @@ func updateResult(updatedRegistries int, bumps []RefBump, plans []marketplaceUpd
 	return result
 }
 
+func missingMarketplacePinIdentities(pins []MarketplacePinUpdate) map[marketplacePinIdentity]bool {
+	if len(pins) == 0 {
+		return nil
+	}
+	skip := make(map[marketplacePinIdentity]bool, len(pins))
+	for _, pin := range pins {
+		skip[marketplacePinIdentityOf(pin.Entry, pin.OldPin)] = true
+	}
+	return skip
+}
+
+func marketplacePinsWithDependentLeaves(pins []MarketplacePinUpdate) []MarketplacePinUpdate {
+	skipped := slices.Clone(pins)
+	for _, root := range pins {
+		if root.OldPin.Kind != "collection" {
+			continue
+		}
+		for _, leaf := range root.Entry.Resources {
+			for _, selected := range leaf.SelectedBy.List() {
+				if selected.RegistryID == root.OldPin.RegistryID && selected.Name == root.OldPin.Name && selected.Revision == root.OldPin.Revision {
+					skipped = append(skipped, MarketplacePinUpdate{Entry: root.Entry, OldPin: leaf, Source: root.Source})
+					break
+				}
+			}
+		}
+	}
+	return skipped
+}
+
+func retainedMarketplacePins(pins []MarketplacePinUpdate) []materialize.RetainedMarketplacePin {
+	var retained []materialize.RetainedMarketplacePin
+	for _, pin := range pins {
+		kind, ok := skill.ParseKind(pin.OldPin.Kind)
+		if !ok || kind == ir.KindCollection {
+			continue
+		}
+		name := pin.OldPin.InstalledName
+		if name == "" {
+			name = pin.OldPin.Name
+		}
+		retained = append(retained, materialize.RetainedMarketplacePin{Kind: kind, Name: name, Source: pin.Source})
+	}
+	return retained
+}
 func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.EffectiveConfig) ([]marketplaceUpdatePlan, error) {
 	if ec == nil || ec.Merged == nil || len(ec.Merged.Marketplaces) == 0 {
 		return nil, nil
@@ -375,7 +433,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 					}
 				}
 			}
-			plan, err := planMarketplaceCollectionUpdate(ctx, resolverMP, entry, pin, configPath, constrained[marketplaceV4PinKey(entry.Alias, pin)], len(leaves) > 0, targets)
+			plan, err := planMarketplaceCollectionUpdate(ctx, resolverMP, entry, pin, configPath, constrained[marketplaceV4PinKey(entry.Alias, pin)], len(leaves) > 0, targets, opts.RemovedPinsOnly)
 			if err != nil {
 				return nil, err
 			}
@@ -397,7 +455,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			err  error
 		}
 		results := marketplace.ResolveConcurrently(len(leafPins), func(i int) leafResult {
-			plan, err := planMarketplaceLeafUpdate(ctx, resolverMP, entry, leafPins[i], configPath, constrained, collectionLeaves, targets)
+			plan, err := planMarketplaceLeafUpdate(ctx, resolverMP, entry, leafPins[i], configPath, constrained, collectionLeaves, targets, opts.RemovedPinsOnly)
 			return leafResult{plan: plan, err: err}
 		})
 		for _, result := range results {
@@ -414,9 +472,10 @@ const (
 	contentDigestUnchangedReason     = "content digest unchanged"
 	collectionLeafPinnedReason       = "leaf is pinned by a collection revision"
 	marketplaceResourceMissingReason = "resource no longer exists on the Marketplace"
+	marketplaceResourceRemovedReason = "resource was removed from the Marketplace; pinned revision kept"
 )
 
-func planMarketplaceLeafUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained map[string]bool, collectionLeaves map[string]bool, targets []hcc.Target) (marketplaceUpdatePlan, error) {
+func planMarketplaceLeafUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained map[string]bool, collectionLeaves map[string]bool, targets []hcc.Target, removedPinsOnly bool) (marketplaceUpdatePlan, error) {
 	withReason := func(item MarketplacePinUpdate, reason string) (marketplaceUpdatePlan, error) {
 		item.Reason = reason
 		return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
@@ -436,13 +495,12 @@ func planMarketplaceLeafUpdate(ctx context.Context, resolverMP *marketplace.Reso
 	}
 	source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 	if err != nil {
-		var missingErr *marketplace.MissingResourceError
-		if errors.As(err, &missingErr) {
-			return withReason(MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}, marketplaceResourceMissingReason)
-		}
-		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+		return planMarketplaceLatestLookupFailure(ctx, resolverMP, entry, pin, configPath, err, removedPinsOnly)
 	}
 	item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true}
+	if removedPinsOnly {
+		return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
+	}
 	if source.Acquisition != "" && string(source.Acquisition) != config.MarketplaceAcquisitionMirror && string(source.Acquisition) != config.MarketplaceAcquisitionIndexOnly {
 		return withReason(item, "source uses unsupported acquisition")
 	}
@@ -486,7 +544,7 @@ func planMarketplaceLeafUpdate(ctx context.Context, resolverMP *marketplace.Reso
 	return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
 }
 
-func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained, expanded bool, targets []hcc.Target) (marketplaceUpdatePlan, error) {
+func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained, expanded bool, targets []hcc.Target, removedPinsOnly bool) (marketplaceUpdatePlan, error) {
 	item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
 	skip := func(reason string) (marketplaceUpdatePlan, error) {
 		item.Reason = reason
@@ -502,12 +560,10 @@ func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplac
 	}
 	source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 	if err != nil {
-		var missingErr *marketplace.MissingResourceError
-		if errors.As(err, &missingErr) {
-			item.Reason = marketplaceResourceMissingReason
-			return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
-		}
-		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+		return planMarketplaceLatestLookupFailure(ctx, resolverMP, entry, pin, configPath, err, removedPinsOnly)
+	}
+	if removedPinsOnly {
+		return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
 	}
 	if string(latest.ContentDigest) == pin.Digest {
 		return skip(contentDigestUnchangedReason)
@@ -529,6 +585,30 @@ func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplac
 	item.NewPin = prepared.Pin
 	item.ArchiveDigest = prepared.ArchiveDigest
 	return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: marketplaceInstallPins(prepared), CollectionUpdate: true}, nil
+}
+
+func planMarketplaceLatestLookupFailure(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, latestErr error, removedPinsOnly bool) (marketplaceUpdatePlan, error) {
+	plan := marketplaceUpdatePlan{
+		MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true},
+		ConfigPath:           configPath,
+	}
+	var missingErr *marketplace.MissingResourceError
+	if !errors.As(latestErr, &missingErr) {
+		if removedPinsOnly {
+			return plan, nil
+		}
+		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, latestErr)
+	}
+	usable, err := resolverMP.VerifyPinnedRevision(ctx, entry, pin)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return marketplaceUpdatePlan{}, ctxErr
+	}
+	plan.Reason = marketplaceResourceMissingReason
+	plan.verificationErr = err
+	if usable {
+		plan.Reason = marketplaceResourceRemovedReason
+	}
+	return plan, nil
 }
 
 func refreshDriftedArchiveEvidence(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, latest store.AssessedResourceRevision) (string, bool, error) {

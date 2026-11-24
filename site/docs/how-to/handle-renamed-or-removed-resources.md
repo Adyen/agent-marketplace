@@ -146,18 +146,29 @@ If the required group lives in the organization file, ask its administrator to c
 
 ## 6. Replace a hosted Marketplace pin
 
-A pinned Marketplace revision keeps installing after a rename. At `update`, the Marketplace answers that the resource is gone, so `update` keeps that pin at its current revision, updates your other pins, and exits `1` with an error that names each missing resource:
+After a rename or removal, whether `update` can keep a Marketplace pin depends on the exact revision in your lock, not the latest one. The pinned revision is usable if the Marketplace still serves it and it passes verification, or if your verified local cache holds its revision metadata and artifact. This does not change ordinary online `sync`, which still needs the exact revision from the Marketplace.
+
+When the pinned revision is usable, `update` keeps it at its current revision, updates your other pins, and prints a warning. The warning does not make `update` exit nonzero:
 
 ```text
+warning: marketplace "https://marketplace.example.com" pin "shared-agents/skill/foo": removed from the Marketplace; pinned revision kept; drop it with "agent-marketplace remove foo"
 Configured registry entries: 0
 Marketplace pins updated: 0
 Other Marketplace pins skipped: 1
-Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": skipped ("resource no longer exists on the Marketplace")
-Error: 1 Marketplace resource(s) no longer exist:
-marketplace https://marketplace.example.com pin shared-agents/skill/foo: resource not found; remove the old pin with `agent-marketplace remove foo` and install the new name
+Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": skipped ("resource was removed from the Marketplace; pinned revision kept")
 ```
 
-Remove the old pin and install the new name from the same scope:
+The pin's lock entry and installed content stay byte-identical. When the Marketplace still serves the exact revision, online `agent-marketplace status` adds `removed from the Marketplace; pinned revision kept` to DETAIL without changing STATE. The warning repeats on every `update` while the pin stays selected. If no other errors occur, `update` exits `0`.
+
+A `required` pin behaves the same way except its warning names the required setting and tells you where to edit the selection, because `agent-marketplace remove` refuses required resources:
+
+```text
+warning: marketplace "https://marketplace.example.com" pin "shared-agents/skill/foo": removed from the Marketplace; pinned revision kept; required by "resources.marketplace.required"; to drop it, remove the selection from "resources.marketplace.include" in its owning configuration
+```
+
+If the pin is required, replace the old coordinate with the new one in `resources.<alias>.include` in the file that owns the selection. Leave `required: true` in place for the group. If an organization file owns the selection, ask its administrator to make the edit. Run `agent-marketplace sync` to apply changes to a configuration you own.
+
+If the pin is not required, remove the old pin and install the new name from the same scope:
 
 ```bash
 agent-marketplace remove foo --scope repo
@@ -176,6 +187,19 @@ Source: shared-agents
 ```
 
 Replace `marketplace` with the alias of your Marketplace source, and `shared-agents` with its registry. Then run `agent-marketplace update` again to move your other pins.
+
+`update` still exits `1` when the pinned revision is unusable. One example is when the Marketplace answers 404 for that exact revision and your verified local cache does not hold it. It writes its normal report and then names every such resource with the remove-and-install remedy:
+
+```text
+Configured registry entries: 0
+Marketplace pins updated: 0
+Other Marketplace pins skipped: 1
+Marketplace "https://marketplace.example.com" "shared-agents"/"skill"/"foo": skipped ("resource no longer exists on the Marketplace")
+Error: 1 Marketplace resource(s) no longer exist:
+marketplace https://marketplace.example.com pin shared-agents/skill/foo: resource not found; remove the old pin with `agent-marketplace remove foo` and install the new name
+```
+
+In that 404 case, follow the replacement procedure above for your pin. The old pin cannot install again because the revision itself is gone.
 
 ## 7. Commit the result
 

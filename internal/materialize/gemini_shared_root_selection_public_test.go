@@ -10,6 +10,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func sharedRootHook(t *testing.T, source config.Source, name, definition string) resolver.ResolvedArtifact {
@@ -76,4 +78,70 @@ func TestGeminiSharedRootSelectionRetainsRepoAndPrunesDeselected(t *testing.T) {
 	if strings.Contains(string(final), "echo d78-third") {
 		t.Fatalf("independently deselected hook survived:\n%s", final)
 	}
+}
+
+// spec: update-output/unusable-pinned-revision-remains-an-error
+func TestGeminiSharedRootRetainedPinPreservesOwnedHook(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		newSiblingSource config.Source
+	}{
+		{"repo-output-active", config.RepoCommitted},
+		{"repo-output-absent", config.UserPersonal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testGeminiSharedRootRetainedPinPreservesOwnedHook(t, tc.newSiblingSource)
+		})
+	}
+}
+
+func testGeminiSharedRootRetainedPinPreservesOwnedHook(t *testing.T, newSiblingSource config.Source) {
+	t.Helper()
+	home := configureSharedGeminiHome(t)
+	root := filepath.Join(home, ".gemini")
+	seedNativeHookJSONLock(t, root)
+	modes := WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile})
+	hook := func(source config.Source, name string) resolver.ResolvedArtifact {
+		definition := `{"PostToolUse":[` + nativeHookJSONGroup("echo "+name, "Bash", "") + `]}`
+		return sharedRootHook(t, source, name, definition)
+	}
+	retained := hook(config.RepoCommitted, "retained-hook")
+	retained.InstalledName = "retained-alias"
+	sibling := hook(config.UserPersonal, "sibling-hook")
+	deselected := hook(config.RepoCommitted, "deselected-hook")
+	if _, err := Run(context.Background(), home, []resolver.ResolvedArtifact{retained, sibling, deselected}, modes); err != nil {
+		t.Fatalf("initial sync: %v", err)
+	}
+	store := nativeHookMetadataStore(t, root)
+	if proof := nativeHookMetadataProof(t, store, "settings.json"); proof.OwnedCount() != 3 {
+		t.Fatalf("initial owned entries = %d, want 3", proof.OwnedCount())
+	}
+
+	newSibling := hook(newSiblingSource, "new-sibling-hook")
+	pins := WithRetainedMarketplacePins([]RetainedMarketplacePin{{
+		Kind: ir.KindHook, Name: retained.InstalledName, Source: retained.Source, Targets: []hcc.Target{hcc.TargetGemini},
+	}})
+	report, err := Run(context.Background(), home, []resolver.ResolvedArtifact{sibling, newSibling}, modes, pins)
+	if err != nil {
+		t.Fatalf("partial sync: %v", err)
+	}
+	final, err := os.ReadFile(filepath.Join(root, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"retained-hook", "sibling-hook", "new-sibling-hook"} {
+		if got := strings.Count(string(final), `"echo `+name+`"`); got != 1 {
+			t.Errorf("%q handler copies after partial sync = %d, want 1:\n%s", name, got, final)
+		}
+	}
+	if strings.Contains(string(final), `"echo deselected-hook"`) {
+		t.Errorf("independently deselected hook survived:\n%s", final)
+	}
+	for _, d := range report.Diags {
+		if d.Code == "materialize.write.error" && d.Severity == diag.SeverityWarning &&
+			d.Source.File == "settings.json" && strings.Contains(d.Message, "1 stale owned entries") {
+			return
+		}
+	}
+	t.Errorf("expected one postponed prune in settings.json, got %v", report.Diags)
 }

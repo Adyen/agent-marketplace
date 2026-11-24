@@ -26,6 +26,7 @@ export interface FixtureOptions {
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
   userMarketplaceDrift?: boolean;
+  userMarketplaceRemoved?: boolean;
   // The stub serves placeholder archives that do not hash to their digest.
   mismatchedPlaceholderArchive?: boolean;
   // Leaves ~/.agents/config.yaml absent and skips the fixture sync so the TUI
@@ -91,6 +92,8 @@ export interface Fixture {
   marketplaceReleaseBrowsePages?: () => void;
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
+  removeMarketplaceLatest?: () => void;
+  removeMarketplaceExactRevision?: () => void;
   // Commits a file change to the Git registry and pushes it, moving the ref
   // past the commit the repository lock pins. Null content removes the path.
   pushRegistryChange(relativePath: string, content: string | null): void;
@@ -113,10 +116,10 @@ const orgLockContent = (stub: MarketplaceStub): string =>
 export const createFixture = async (name: string, options: FixtureOptions = {}): Promise<Fixture> => {
   if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`unsafe fixture name ${JSON.stringify(name)}`);
   if (!fs.existsSync(binary)) throw new Error(`TUI QA binary not found: ${binary}`);
-  if (options.firstRun && (options.directorySource || options.userMarketplaceDrift || options.organization)) {
+  if (options.firstRun && (options.directorySource || options.userMarketplaceDrift || options.userMarketplaceRemoved || options.organization)) {
     throw new Error("firstRun fixtures start without a user config and cannot combine with other layers");
   }
-  if (options.marketplaceDiscovery && (options.firstRun || options.directorySource || options.userMarketplaceDrift || options.organization)) {
+  if (options.marketplaceDiscovery && (options.firstRun || options.directorySource || options.userMarketplaceDrift || options.userMarketplaceRemoved || options.organization)) {
     throw new Error("marketplaceDiscovery fixtures own the user config and cannot combine with other layers");
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `agent-marketplace-tui-${name}-`));
@@ -138,7 +141,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceAcquisitionDataRequestPaths: (() => string[]) | undefined;
     let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
-    if (options.organization || options.userMarketplaceDrift || options.marketplaceDiscovery) {
+    if (options.organization || options.userMarketplaceDrift || options.userMarketplaceRemoved || options.marketplaceDiscovery) {
       stub = await createMarketplaceStub({
         acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
@@ -166,7 +169,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceDelayNextAcquisition = stub.delayNextAcquisition;
       marketplaceDelayedAcquisitionCount = stub.delayedAcquisitionCount;
     }
-    if ((options.userMarketplaceDrift || options.marketplaceDiscovery) && stub) {
+    if ((options.userMarketplaceDrift || options.userMarketplaceRemoved || options.marketplaceDiscovery) && stub) {
       expectedOrgSkillContent = stub.materializedSkillContent;
     }
 
@@ -238,9 +241,12 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
       const neutralSource = options.neutralConfiguredSkill ? `  quiet:\n    git: ${registryURL}\n    ref: main\n    path: helpers\n` : "";
       const neutralResource = options.neutralConfiguredSkill ? "  quiet:\n    include:\n      - skill/quiet-helper\n" : "";
-      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n${neutralSource}resources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}${neutralResource}`;
-      if (options.userMarketplaceDrift && stub) {
-        write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
+      // The removed-pin journey adds a Factory rule beside the skills after its successful updates.
+      const sourceLayout = options.userMarketplaceRemoved ? "    source_harness: factory\n" : "    path: skills\n";
+      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n${sourceLayout}${neutralSource}resources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}${neutralResource}`;
+      if ((options.userMarketplaceDrift || options.userMarketplaceRemoved) && stub) {
+        const required = options.userMarketplaceDrift ? "    required: true\n" : "";
+        write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n${required}`);
       } else if (options.firstRun) {
         fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
       } else if (options.marketplaceDiscovery && stub) {
@@ -351,7 +357,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedBetaSkillContent: betaSkillContent,
       expectedRepoConfig,
       expectedLocalConfig: `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n    source_harness: claude\nresources:\n  fixture:\n    include:\n      - skill/alpha-skill\n`,
-      userLockPath: options.userMarketplaceDrift ? path.join(home, ".agents", "lock.yaml") : undefined,
+      userLockPath: options.userMarketplaceDrift || options.userMarketplaceRemoved ? path.join(home, ".agents", "lock.yaml") : undefined,
       marketplaceDriftedArchiveDigest: stub?.driftedArchiveDigest,
       marketplaceArchiveDigest: stub?.archiveDigest,
       marketplaceURL: stub?.url,
@@ -371,6 +377,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceAcquisitionDataRequestPaths,
       marketplaceDelayNextAcquisition,
       marketplaceDelayedAcquisitionCount,
+      removeMarketplaceLatest: stub?.removeLatest,
+      removeMarketplaceExactRevision: stub?.removeExactRevision,
       pushRegistryChange: (relativePath, content) => {
         if (options.directorySource) throw new Error("directory sources have no Git registry to advance");
         const workingRegistry = options.adHocSource ? adHocSource : source;

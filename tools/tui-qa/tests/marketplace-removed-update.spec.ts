@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { after, before } from "node:test";
+
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { runAM } from "./process-helpers.js";
+
+// spec: tui-error-recovery/tui-update-shows-the-removed-resource-warning
+// spec: tui-error-recovery/tui-update-fails-when-the-pinned-revision-is-unusable
+const journey = defineFixture("marketplace-removed-update", ["tui"], 80, 24, { userMarketplaceRemoved: true });
+before(journey.setup);
+after(journey.cleanup);
+
+journey.test("update warns for a kept Marketplace pin and fails when its revision is unavailable", async (terminal) => {
+  const fixture = journey.current();
+  assert.ok(fixture.userLockPath, "fixture did not expose its Marketplace lock");
+  await step("settled Marketplace baseline", () => {}, async () => {
+    await locate(terminal, "org-review").expect();
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+  const lockBefore = fs.readFileSync(fixture.userLockPath);
+  const skillDirs = [
+    path.join(fixture.home, ".factory", "skills", "org-review"),
+    path.join(fixture.repo, ".factory", "skills", "beta-skill"),
+  ];
+  const configPaths = [
+    path.join(fixture.home, ".agents", "config.yaml"),
+    path.join(fixture.repo, ".agents", "config.yaml"),
+  ];
+  const snapshotConsumer = () => ({
+    skills: skillDirs.map((dir) => ({
+      content: fs.readFileSync(path.join(dir, "SKILL.md")),
+      link: fs.lstatSync(dir).isSymbolicLink() ? fs.readlinkSync(dir) : null,
+    })),
+    configs: configPaths.map((file) => fs.readFileSync(file)),
+  });
+  const consumerBefore = snapshotConsumer();
+  fixture.removeMarketplaceLatest?.();
+
+  await step("update completes with the removed-resource warning", () => terminal.write("u"), async () => {
+    await locate(terminal, "Update complete with 1 warning(s)").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "⚠ 1 warnings").unique().expect();
+  });
+  await step("diagnostics name the kept pin and its removal remedy", () => terminal.write("e"), async () => {
+    await locate(terminal, "Warnings (1)").unique().expect();
+    const screen = (await terminal.text()).replace(/\s+/g, "");
+    assert.ok(screen.includes("/skill/org-review"), `diagnostics omit the Marketplace coordinate:\n${await terminal.text()}`);
+    assert.ok(screen.includes("agent-marketplaceremoveorg-review"), `diagnostics omit the removal remedy:\n${await terminal.text()}`);
+  });
+  assert.deepEqual(fs.readFileSync(fixture.userLockPath), lockBefore, "kept update changed the acquisition lock");
+  assert.deepEqual(snapshotConsumer(), consumerBefore, "kept update changed installed skills or authored configuration");
+  await step("close warning diagnostics", () => terminal.write("e"), async () => {
+    await locate(terminal, "Warnings (1)").expect({ not: true });
+  });
+
+  fixture.removeMarketplaceExactRevision?.();
+  await locate(terminal, "Update complete with 1 warning(s)").expect({ not: true });
+  await step("update keeps the removed pin from its verified cache", () => terminal.write("u"), async () => {
+    await locate(terminal, "Update complete with 1 warning(s)").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "⚠ 1 warnings").unique().expect();
+  });
+  assert.deepEqual(fs.readFileSync(fixture.userLockPath), lockBefore, "cache-only update changed the acquisition lock");
+  assert.deepEqual(snapshotConsumer(), consumerBefore, "kept update changed installed skills or authored configuration");
+
+  // Pin the new Git revision first so the refusal exercises lock verification,
+  // not the selection guard for a Git lock change.
+  fixture.pushRegistryChange(".factory/rules/lock-warning.md", "Inert fixture rule.\n");
+  const gitLock = await runAM(fixture, ["lock", "--upgrade", "--scope", "repo"]);
+  assert.equal(gitLock.status, 0, `${gitLock.stdout}\n${gitLock.stderr}`);
+  assert.match(gitLock.stdout, /rule\/lock-warning/);
+
+  fs.rmSync(path.join(fixture.cacheDir, "marketplace"), { recursive: true, force: true });
+  await step("update fails when neither the endpoint nor verified cache has the pin", () => terminal.write("u"), async () => {
+    await locate(terminal, /! \d+ errors: update/).unique().expect({ timeout: 30_000 });
+  });
+  await step("diagnostics show the pin refusal and the Git lock warning", () => terminal.write("e"), async () => {
+    await locate(terminal, /Errors \(\d+\)/).unique().expect();
+    const screen = (await terminal.text()).replace(/\s+/g, "");
+    assert.ok(screen.includes("/skill/org-review"), `errors omit the Marketplace coordinate:\n${await terminal.text()}`);
+    assert.ok(screen.includes("agent-marketplaceremoveorg-review"), `errors omit the removal remedy:\n${await terminal.text()}`);
+    assert.ok(screen.includes("installthenewname"), `errors omit the install remedy:\n${await terminal.text()}`);
+    assert.ok(screen.includes("rule/lock-warning"), `diagnostics omit the Git lock warning:\n${await terminal.text()}`);
+  });
+  assert.deepEqual(fs.readFileSync(fixture.userLockPath), lockBefore, "failed update changed the acquisition lock");
+
+  await step("close error diagnostics", () => terminal.write("\u001b"), async () => {
+    await locate(terminal, /Errors \(\d+\)/).expect({ not: true });
+  });
+  await step("open the unsynced exit prompt", () => terminal.write("q"), async () => {
+    await locate(terminal, "Confirm").unique().expect();
+  });
+  await step("quit without syncing", () => terminal.write("n\r"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+});

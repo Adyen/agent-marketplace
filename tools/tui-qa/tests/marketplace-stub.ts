@@ -25,6 +25,8 @@ export interface MarketplaceStub {
   delayNextAcquisition(ms: number): void;
   delayedAcquisitionCount(): number;
   driftArchiveDigest(): void;
+  removeLatest(): void;
+  removeExactRevision(): void;
   close(): void;
 }
 
@@ -319,6 +321,8 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     holdFirstBrowsePage();
     holdNextBrowsePage();
   }
+  let latestMissing = false;
+  let exactMissing = false;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
@@ -442,6 +446,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
         url.pathname === `/api/v1/resources/${registryID}/skill/${resourceName}` ||
         url.pathname.startsWith(`/api/v1/resources/${registryID}/skill/${resourceName}/revisions/`))
     ) {
+      if (url.pathname.includes("/revisions/") ? exactMissing : latestMissing) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ message: "not found" }));
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
       const assessment = options.installFindings ? findingsAssessment : revision.assessment;
       response.end(JSON.stringify({ ...revision, assessment, archive_digest: servedArchiveDigest }));
@@ -504,6 +513,12 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     delayedAcquisitionCount: () => delayedAcquisitions,
     driftArchiveDigest: () => {
       servedArchiveDigest = driftedArchiveDigest;
+    },
+    removeLatest: () => {
+      latestMissing = true;
+    },
+    removeExactRevision: () => {
+      exactMissing = true;
     },
     close: () => {
       server.closeAllConnections();

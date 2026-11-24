@@ -526,6 +526,13 @@ func TestServeWorkerOperationalSignals(t *testing.T) {
 		t.Fatalf("remove local source branch: %s", result.Combined)
 	}
 	sourceLease := holdRegistryLease(t, meta, "src-serve")
+	beforeFailure, err := meta.GetRegistryObservation(t.Context(), "src-serve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeFailure.LastSuccessfulIndexAt.IsZero() {
+		t.Fatal("successful index timestamp was not persisted")
+	}
 	body = waitWorkerMetrics(t, operations)
 	lastObservation, found := workerMetricValue(body, "agent_marketplace_registry_last_successful_observation_timestamp_seconds",
 		map[string]string{"registry": "src-serve"})
@@ -557,9 +564,19 @@ func TestServeWorkerOperationalSignals(t *testing.T) {
 		map[string]string{"registry": "src-serve"}); !present || current != lastObservation {
 		t.Errorf("source failure changed last successful observation timestamp from %v to %v", lastObservation, current)
 	}
+	afterFailure, err := meta.GetRegistryObservation(t.Context(), "src-serve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterFailure.LastSuccessfulIndexAt.Equal(beforeFailure.LastSuccessfulIndexAt) {
+		t.Errorf("source failure changed persisted last successful index timestamp from %v to %v",
+			beforeFailure.LastSuccessfulIndexAt, afterFailure.LastSuccessfulIndexAt)
+	}
+	// Observation metrics read the persisted timestamp, which has microsecond precision.
+	wantIndex := float64(beforeFailure.LastSuccessfulIndexAt.UnixNano()) / float64(time.Second)
 	if current, present := workerMetricValue(body, "agent_marketplace_registry_last_successful_index_timestamp_seconds",
-		map[string]string{"registry": "src-serve"}); !present || current != lastIndex {
-		t.Errorf("source failure changed last successful index timestamp from %v to %v", lastIndex, current)
+		map[string]string{"registry": "src-serve"}); !present || current != wantIndex {
+		t.Errorf("last successful index timestamp gauge = %v (present %t), want %v", current, present, wantIndex)
 	}
 	if current, _ := workerMetricValue(body, "agent_marketplace_registry_refreshes_total",
 		map[string]string{"trigger": "source-change", "outcome": "failed"}); current != refreshFailures {

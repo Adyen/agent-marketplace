@@ -31,17 +31,18 @@ import (
 // preview inside lock preparation. It exists before any new publication so
 // requested comparisons complete before new config or lock bytes are written.
 type preparedUpdateView struct {
-	ws           pipeline.Workspace
-	offline      bool
-	priorJobs    []snapshotJob
-	desiredJobs  []snapshotJob
-	priorPlanner *pluginPlanSource
-	overlays     map[string][]byte
-	lockDesired  map[string][]byte
-	desiredSet   *exactLockSet
-	lookup       func(*exactLockSet, func() error) catalog.ExactSnapshotFunc
-	ec           config.EffectiveConfig
-	refBumps     []pipeline.RefBump
+	ws                    pipeline.Workspace
+	offline               bool
+	priorJobs             []snapshotJob
+	desiredJobs           []snapshotJob
+	priorPlanner          *pluginPlanSource
+	overlays              map[string][]byte
+	lockDesired           map[string][]byte
+	desiredSet            *exactLockSet
+	lookup                func(*exactLockSet, func() error) catalog.ExactSnapshotFunc
+	ec                    config.EffectiveConfig
+	refBumps              []pipeline.RefBump
+	marketplacePinsToSkip []pipeline.MarketplacePinUpdate
 }
 
 // updatePreview is the prepared report model for a previewed or applied
@@ -83,7 +84,7 @@ type previewLiveSource struct {
 // summary comparison digests admitted files instead of holding their bytes.
 func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDiffs bool) (*updatePreview, error) {
 	started := time.Now()
-	sides, err := resolvePriorAndDesired(ctx, view.ws, view.offline, view.priorJobs, view.desiredJobs, view.priorPlanner, view.overlays, view.lockDesired, view.desiredSet, view.lookup, true)
+	sides, err := resolvePriorAndDesired(ctx, view.ws, view.offline, view.priorJobs, view.desiredJobs, view.priorPlanner, view.overlays, view.lockDesired, view.desiredSet, view.lookup, true, view.marketplacePinsToSkip)
 	if err != nil {
 		return nil, err
 	}

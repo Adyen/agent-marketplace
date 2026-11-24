@@ -85,6 +85,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 	if err != nil {
 		return pipeline.SyncResult{}, err
 	}
+	var updateWarnings []error
 	var lockWarnings []error
 	mode := lockMode{upgrade: upgrade, warningSink: &lockWarnings}
 	if upgrade {
@@ -99,7 +100,19 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 	if err != nil {
 		return pipeline.SyncResult{}, err
 	}
+	if upgrade {
+		checked, checkErr := pipeline.Update(ctx, pipeline.UpdateOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), RemovedPinsOnly: true,
+		})
+		if checked != nil {
+			updateWarnings = checked.Warnings
+		}
+		if checkErr != nil {
+			return pipeline.SyncResult{Warnings: append(updateWarnings, lockWarnings...)}, checkErr
+		}
+	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
+	options.KeepRemovedMarketplacePinsFromCache = upgrade
 	result = runTUIExactSync(ctx, options)
 	errs := result.Errors
 	var persistedRefreshes map[archiveRefreshKey]bool
@@ -112,5 +125,6 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 	}
 	result.Warnings = stripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
 	result.Warnings = append(lockWarnings, result.Warnings...)
+	result.Warnings = append(updateWarnings, result.Warnings...)
 	return result, errors.Join(errs...)
 }

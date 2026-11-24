@@ -180,15 +180,16 @@ func TestIndexOnlyRefreshFallsBackFromDifferentVerifiedOccurrence(t *testing.T) 
 		name           string
 		commit         string
 		manifestDigest string
+		indexOnlyCache bool
 	}{
-		{name: "different commit", commit: differentCommit, manifestDigest: manifestDigest},
-		{name: "different manifest", commit: commit, manifestDigest: differentManifestDigest},
-		{name: "matching occurrence", commit: commit, manifestDigest: manifestDigest},
+		{name: "different cached commit", commit: differentCommit, manifestDigest: manifestDigest, indexOnlyCache: true},
+		{name: "different cached manifest", commit: commit, manifestDigest: differentManifestDigest, indexOnlyCache: true},
+		{name: "matching online occurrence", commit: commit, manifestDigest: manifestDigest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			verified := assessedRevisionOccurrence(revision.ResourceRevision, tc.commit, tc.manifestDigest)
 			verifiedRevisions := &VerifiedRevisions{}
-			verifiedRevisions.record(entry, pin, verified)
+			verifiedRevisions.record(entry, pin, verified, tc.indexOnlyCache)
 			resolved, errs := (&Resolver{Cache: NewCache(t.TempDir()), Verified: verifiedRevisions}).Resolve(
 				context.Background(),
 				&config.Config{Marketplaces: []config.MarketplaceEntry{entry}},

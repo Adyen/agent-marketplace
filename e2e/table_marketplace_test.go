@@ -326,8 +326,8 @@ func init() {
 				unchanged("./.agents/lock.local.yaml").
 				has("./.factory/skills/current/SKILL.md", "# current").
 				has("./.factory/skills/gone/SKILL.md", "# gone"),
-			exits(1, "update").
-				out("Marketplace pins updated: 1", "{{MKT:gone-hub}}", "gone-hub-id/skill/gone", "agent-marketplace remove gone", "install the new name").
+			ok("update").
+				out("Marketplace pins updated: 1", "{{MKT:gone-hub}}", "gone-hub-id/skill/gone", "pinned revision kept", "agent-marketplace remove gone").
 				unchanged("./.agents/lock.local.yaml", "./.agents/config.local.yaml", "./.agents/config.yaml").
 				has("./.factory/skills/current/SKILL.md", "Changed pin content").
 				has("./.factory/skills/gone/SKILL.md", "# gone").

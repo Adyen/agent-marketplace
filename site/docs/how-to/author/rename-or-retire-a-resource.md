@@ -18,7 +18,7 @@ Before you change a name, check how the change lands for each consumer:
 | Through your collection | Nothing breaks if the collection lists the new name in the same commit. |
 | As a collection that you rename | Their `update` refuses and names the collection, unless you keep a collection with the old name (step 4). A `sync` with no lock fails. |
 | With `required: true` | Their `update` refuses until they change their configuration; a `sync` whose lock moved without the update check fails. |
-| From a hosted Marketplace | Their pinned revision keeps working, but `agent-marketplace update` exits `1` and names the missing resource until they replace the pin. |
+| From a hosted Marketplace | If the pinned revision still works, `agent-marketplace update` keeps it, names it in a warning, and exits `0`. If that revision is no longer usable, `update` exits `1`. |
 
 Required and Marketplace consumers break hardest, so give them the most notice.
 
@@ -111,7 +111,9 @@ git rm -r skills/code-review
 git commit -m "Remove deprecated code-review skill"
 ```
 
-Release this as a major version. Consumers who still select the old name get an `update` refusal that names it. Their harness keeps the old output until their lock moves without the `update` check, when `sync` removes it with a `selected but not found` warning that tells them to run `agent-marketplace status` or remove the selection.
+Release this as a major version. Consumers who still select the old name from a Git registry get an `update` refusal that names it. Their harness keeps the old output until their lock moves without the `update` check, when `sync` removes it with a `selected but not found` warning that tells them to run `agent-marketplace status` or remove the selection.
+
+Hosted Marketplace consumers with a usable pinned revision keep the old output and get an `update` warning instead. If the pinned revision is no longer usable, `update` still exits `1`.
 
 ## Retire a resource without a replacement
 
