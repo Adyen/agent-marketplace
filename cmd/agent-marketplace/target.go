@@ -1,0 +1,110 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+)
+
+type targetApprovalDisplay struct {
+	OS                 string                          `json:"os"`
+	Profile            targetprofile.Identity          `json:"profile"`
+	CanonicalRoot      string                          `json:"canonical_root"`
+	CanonicalStateRoot string                          `json:"canonical_state_root"`
+	StateRootKey       string                          `json:"state_root_key"`
+	UsedOverride       bool                            `json:"used_override"`
+	CommandRoles       []string                        `json:"command_roles"`
+	Executable         targetprofile.ExecutableBinding `json:"executable"`
+	NoExecution        bool                            `json:"no_execution"`
+}
+
+type targetApprovalResult struct {
+	Status  string                `json:"status"`
+	Binding targetApprovalDisplay `json:"binding"`
+}
+
+func newTargetCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "target", Short: "Manage local target-profile approval"}
+	cmd.AddCommand(newTargetApproveCmd())
+	return cmd
+}
+
+func newTargetApproveCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:  "approve <target-id>",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("yes") {
+				return fmt.Errorf("target.confirmation-required: --yes is not supported for target approval")
+			}
+			in := cmd.InOrStdin()
+			file, ok := in.(*os.File)
+			if !ok || !isTerminal(file.Fd()) {
+				return fmt.Errorf("target.confirmation-required: target approval requires a terminal")
+			}
+			ws, err := discoverSyncWorkspace()
+			if err != nil {
+				return err
+			}
+			before, err := pipeline.PrepareDeployedPlaceApproval(cmd.Context(), ws, args[0])
+			if err != nil {
+				return err
+			}
+			display := approvalDisplay(before)
+			presentation, err := json.MarshalIndent(display, "", "  ")
+			if err != nil {
+				return fmt.Errorf("encode approval binding: %w", err)
+			}
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Approval binding (no host commands will run; approval does not enable the target):\n%s\nType yes to approve: ", presentation); err != nil {
+				return err
+			}
+			answer, readErr := bufio.NewReaderSize(in, 64).ReadSlice('\n')
+			if readErr != nil || strings.TrimSpace(string(answer)) != "yes" {
+				if readErr != nil && !errors.Is(readErr, io.EOF) {
+					return fmt.Errorf("target.confirmation-required: approval confirmation must be a complete line containing yes")
+				}
+				return fmt.Errorf("target.confirmation-required: approval was not confirmed")
+			}
+			current, err := pipeline.PrepareDeployedPlaceApproval(cmd.Context(), ws, args[0])
+			if err != nil {
+				return err
+			}
+			if err := before.Match(current); err != nil {
+				return fmt.Errorf("target.approval.context-changed: %w", err)
+			}
+			if err := cmd.Context().Err(); err != nil {
+				return fmt.Errorf("target.confirmation-required: approval interrupted: %w", err)
+			}
+			if err := targetprofile.RecordApproval(current); err != nil {
+				return err
+			}
+			result := targetApprovalResult{Status: "approved", Binding: approvalDisplay(current)}
+			if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target %s approval recorded; this does not enable or install the target.\n", current.Profile.TargetID)
+			return err
+		},
+	}
+	cmd.Flags().Bool("yes", false, "Skip confirmation (not supported)")
+	cmd.Flags().Bool("json", false, "Print the approval result as JSON")
+	return cmd
+}
+
+func approvalDisplay(binding targetprofile.ApprovalBinding) targetApprovalDisplay {
+	return targetApprovalDisplay{
+		OS: binding.OS, Profile: binding.Profile, CanonicalRoot: binding.CanonicalRoot,
+		CanonicalStateRoot: binding.CanonicalStateRoot, StateRootKey: binding.StateRootKey,
+		UsedOverride: binding.UsedOverride, CommandRoles: binding.CommandRoles,
+		Executable: binding.Executable, NoExecution: len(binding.CommandRoles) == 0,
+	}
+}

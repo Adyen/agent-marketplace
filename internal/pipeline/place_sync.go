@@ -23,24 +23,9 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 	if resolved.placeProfileReader == nil {
 		return PlaceSyncResult{}, fmt.Errorf("deployed place profile reader is unavailable")
 	}
-	home, err := os.UserHomeDir()
+	environment, err := currentPlaceApprovalEnvironment()
 	if err != nil {
-		return PlaceSyncResult{}, fmt.Errorf("resolve home for place sync: %w", err)
-	}
-	platform := runtime.GOOS
-	if platform == "darwin" {
-		platform = "macos"
-	}
-	if platform != "macos" && platform != "linux" {
-		return PlaceSyncResult{}, fmt.Errorf("target.approval.unsupported-platform: %q", platform)
-	}
-	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
-	if !filepath.IsAbs(xdgConfig) {
-		xdgConfig = filepath.Join(home, ".config")
-	}
-	stateDir, err := dependencytxn.StateDir()
-	if err != nil {
-		return PlaceSyncResult{}, fmt.Errorf("resolve state for place sync: %w", err)
+		return PlaceSyncResult{}, err
 	}
 	mode := resolver.MarketplaceResolveModeRefresh
 	if offline {
@@ -50,14 +35,33 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 	if cfg == nil {
 		cfg = resolved.MergedCfg
 	}
-	return SyncPlaceUpserts(
-		ctx, cfg, resolved.placeTargets,
-		targetprofile.ApprovalEnvironment{
-			Platform: platform, Home: home, XDGConfig: xdgConfig,
-			CanonicalStateRoot: filepath.Dir(stateDir),
-		},
-		resolved.placeProfileReader, marketplace.NewResolver(), mode,
-	)
+	return SyncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode)
+}
+
+func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return targetprofile.ApprovalEnvironment{}, fmt.Errorf("resolve home for place approval: %w", err)
+	}
+	platform := runtime.GOOS
+	if platform == "darwin" {
+		platform = "macos"
+	}
+	if platform != "macos" && platform != "linux" {
+		return targetprofile.ApprovalEnvironment{}, fmt.Errorf("target.approval.unsupported-platform: %q", platform)
+	}
+	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(xdgConfig) {
+		xdgConfig = filepath.Join(home, ".config")
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return targetprofile.ApprovalEnvironment{}, fmt.Errorf("resolve state for place approval: %w", err)
+	}
+	return targetprofile.ApprovalEnvironment{
+		Platform: platform, Home: home, XDGConfig: xdgConfig,
+		CanonicalStateRoot: filepath.Dir(stateDir),
+	}, nil
 }
 
 // PlaceSyncResult contains profiles awaiting approval and the independently

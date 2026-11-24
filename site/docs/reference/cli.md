@@ -611,6 +611,18 @@ The output reports `Removed <n> managed artifact(s)` (or `Would remove ...` with
 
 Unreadable configuration does not stop the teardown. The command prints a warning, assumes the default materialization mode, and notes that output created in another mode may remain.
 
+## `target`
+
+Manage local approval receipts for exact deployed target profiles.
+
+### `target approve`
+
+```text
+agent-marketplace target approve <target-id> [--json]
+```
+
+Reads the selected profile and its already-deployed Git lock from the local cache, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
+
 ## `telemetry`
 
 Reads and changes your telemetry preference and local telemetry state. When an organization config sets a telemetry level, that level applies instead of your preference, and the organization can also lock the endpoint. See the [telemetry reference](telemetry.md).
