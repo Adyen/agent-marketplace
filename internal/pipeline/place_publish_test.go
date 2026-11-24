@@ -7,11 +7,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
@@ -301,6 +303,231 @@ func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 			t.Fatalf("updated projection = %#v, %v; want changed binding and no verification", updatedProjection, err)
 		}
 		assertPlacePublishFile(t, targetPath, updated.Files[0].Bytes, updated.Files[0].Mode)
+	})
+}
+
+func TestPlanPlaceRetirement(t *testing.T) {
+	t.Run("prunes only unchanged owned files and cedes edits or absence", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		files := []targetprofile.PackageFile{
+			{SourcePath: "payload/keep.md", DestinationPath: "mods/sample/keep.md", Mode: 0o644, Bytes: []byte("keep\n")},
+			{SourcePath: "payload/edited.md", DestinationPath: "mods/sample/edited.md", Mode: 0o644, Bytes: []byte("owned\n")},
+			{SourcePath: "payload/missing.md", DestinationPath: "mods/sample/missing.md", Mode: 0o644, Bytes: []byte("missing\n")},
+		}
+		pkg := resolvedPlacePackageForPublishWithFiles(t, fixture, files)
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err != nil {
+			t.Fatal(err)
+		}
+		userPath := filepath.Join(fixture.root, "mods", "sample", "user.txt")
+		userBytes := []byte("user-owned\n")
+		if err := os.WriteFile(userPath, userBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		editedPath := filepath.Join(fixture.root, "mods", "sample", "edited.md")
+		if err := os.WriteFile(editedPath, []byte("operator edit\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		missingPath := filepath.Join(fixture.root, "mods", "sample", "missing.md")
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatal(err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		installed, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateBefore, err := os.ReadFile(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		editedBefore, err := os.ReadFile(editedPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keepPath := filepath.Join(fixture.root, "mods", "sample", "keep.md")
+		keepBefore, err := os.ReadFile(keepPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rootInfoBefore, err := os.Stat(fixture.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := planPlaceRetirement(context.Background(), nil, installed, fixture.identity.TargetID); err == nil {
+			t.Fatal("nil root was accepted")
+		}
+
+		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := planPlaceRetirement(context.Background(), root, installed, "not a target"); err == nil {
+			t.Fatal("invalid target ID was accepted")
+		}
+		if _, err := planPlaceRetirement(context.Background(),
+			root, ownership.PlaceProjection{Directories: installed.Directories}, fixture.identity.TargetID,
+		); err == nil || !strings.Contains(err.Error(), "target.place.not-installed") {
+			t.Fatalf("empty target projection error = %v", err)
+		}
+		survivor := installed.Packages[0]
+		survivor.ID = strings.Repeat("0", 64)
+		survivor.Kind = "other-app/mod"
+		survivor.Name = "dependent"
+		survivor.Binding.ProfileIdentity.TargetID = "other-app"
+		survivor.Files = nil
+		survivor.Requires = []string{installed.Packages[0].ID}
+		withDependent := ownership.PlaceProjection{
+			Packages:    append(append([]ownership.PlacePackage(nil), installed.Packages...), survivor),
+			Directories: append([]dependencytxn.PlaceDirectory(nil), installed.Directories...),
+		}
+		if _, err := planPlaceRetirement(context.Background(), root, withDependent, fixture.identity.TargetID); err == nil ||
+			!strings.Contains(err.Error(), "target.place.retirement-dependency") {
+			t.Fatalf("surviving dependent error = %v", err)
+		}
+		planned, planErr := planPlaceRetirement(context.Background(), root, installed, fixture.identity.TargetID)
+		closeErr := root.Close()
+		if planErr != nil || closeErr != nil {
+			t.Fatalf("planPlaceRetirement() = %#v, %v (close %v)", planned, planErr, closeErr)
+		}
+		var keepDigest string
+		for _, file := range installed.Packages[0].Files {
+			if file.Path == "mods/sample/keep.md" {
+				keepDigest = strings.TrimPrefix(file.Digest, "sha256:")
+			}
+		}
+		if len(planned.Prunes) != 1 || planned.Prunes[0].Path != "mods/sample/keep.md" ||
+			!planned.Prunes[0].Expected.Exists || planned.Prunes[0].Expected.Digest != keepDigest ||
+			planned.Prunes[0].Mode.Perm() != 0o644 {
+			t.Fatalf("retirement prunes = %#v", planned.Prunes)
+		}
+		var recordedParent fsboundary.Identity
+		for _, directory := range installed.Directories {
+			if directory.Path == "mods/sample" {
+				recordedParent = directory.Identity
+			}
+		}
+		if !planned.Prunes[0].Parent.SameObject(recordedParent) || recordedParent.Inode == 0 {
+			t.Fatalf("prune parent = %#v, recorded = %#v", planned.Prunes[0].Parent, recordedParent)
+		}
+		if !slices.Equal(planned.Ceded, []string{"mods/sample/edited.md", "mods/sample/missing.md"}) ||
+			len(planned.Unproven) != 0 {
+			t.Fatalf("ceded=%v unproven=%v", planned.Ceded, planned.Unproven)
+		}
+		if len(planned.Projection.Packages) != 0 ||
+			!slices.Equal(planned.Projection.Directories, installed.Directories) {
+			t.Fatalf("next projection = %#v; want packages removed and directories retained", planned.Projection)
+		}
+		for _, list := range [][]string{planned.Ceded, planned.Unproven} {
+			if slices.Contains(list, "mods/sample/user.txt") {
+				t.Fatalf("unowned file was classified: %v", list)
+			}
+		}
+		stateAfter, stateErr := os.ReadFile(owner.StateFile())
+		keepAfter, keepErr := os.ReadFile(keepPath)
+		editedAfter, editedErr := os.ReadFile(editedPath)
+		userAfter, userErr := os.ReadFile(userPath)
+		if stateErr != nil || keepErr != nil || editedErr != nil || userErr != nil ||
+			!bytes.Equal(stateBefore, stateAfter) || !bytes.Equal(keepBefore, keepAfter) ||
+			!bytes.Equal(editedBefore, editedAfter) || !bytes.Equal(userBytes, userAfter) {
+			t.Fatalf("planning mutated state or files: state=%v keep=%v edited=%v user=%v",
+				stateErr, keepErr, editedErr, userErr)
+		}
+		if _, err := os.Stat(missingPath); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("planning restored missing file: %v", err)
+		}
+		rootInfoAfter, err := os.Stat(fixture.root)
+		if err != nil || !os.SameFile(rootInfoBefore, rootInfoAfter) {
+			t.Fatalf("planning changed target root identity: before=%v after=%v err=%v", rootInfoBefore, rootInfoAfter, err)
+		}
+	})
+
+	t.Run("same bytes under a replaced parent are unproven", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		pkg := resolvedPlacePackageForPublish(t, fixture)
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err != nil {
+			t.Fatal(err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		installed, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateBefore, err := os.ReadFile(owner.StateFile())
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(fixture.root, "mods", "sample")
+		oldParent := parent + ".old"
+		if err := os.Rename(parent, oldParent); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		file := pkg.Files[0]
+		if err := os.WriteFile(filepath.Join(parent, "guide.md"), file.Bytes, file.Mode); err != nil {
+			t.Fatal(err)
+		}
+		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		planned, planErr := planPlaceRetirement(context.Background(), root, installed, fixture.identity.TargetID)
+		closeErr := root.Close()
+		if planErr != nil || closeErr != nil {
+			t.Fatalf("planPlaceRetirement() = %#v, %v (close %v)", planned, planErr, closeErr)
+		}
+		if len(planned.Prunes) != 0 ||
+			!slices.Equal(planned.Unproven, []string{"mods/sample/guide.md"}) {
+			t.Fatalf("replacement-parent plan = prunes %v, unproven %v", planned.Prunes, planned.Unproven)
+		}
+		got, readErr := os.ReadFile(filepath.Join(parent, "guide.md"))
+		stateAfter, stateErr := os.ReadFile(owner.StateFile())
+		if readErr != nil || stateErr != nil || !bytes.Equal(got, file.Bytes) || !bytes.Equal(stateBefore, stateAfter) {
+			t.Fatalf("replacement-parent planning changed data: read=%v state=%v", readErr, stateErr)
+		}
+	})
+
+	t.Run("pre-existing unrecorded parent is unproven", func(t *testing.T) {
+		fixture := newPlaceAdmissionFixture(t)
+		setPlacePublishEnvironment(t, fixture)
+		if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(fixture.root, "mods", "sample")
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pkg := resolvedPlacePackageForPublish(t, fixture)
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err != nil {
+			t.Fatal(err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		installed, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := fsboundary.OpenDir(fixture.binding.CanonicalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		planned, planErr := planPlaceRetirement(context.Background(), root, installed, fixture.identity.TargetID)
+		closeErr := root.Close()
+		if planErr != nil || closeErr != nil {
+			t.Fatalf("planPlaceRetirement() = %#v, %v (close %v)", planned, planErr, closeErr)
+		}
+		if len(planned.Prunes) != 0 ||
+			!slices.Equal(planned.Unproven, []string{"mods/sample/guide.md"}) {
+			t.Fatalf("unrecorded-parent plan = prunes %v, unproven %v", planned.Prunes, planned.Unproven)
+		}
 	})
 }
 
