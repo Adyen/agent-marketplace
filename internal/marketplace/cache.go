@@ -548,15 +548,19 @@ func (c *Cache) WriteArtifact(digest string, raw []byte) (string, error) {
 
 func (c *Cache) writeArchive(form archiveForm, digest string, raw []byte) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
-		p := c.archivePath(form, digest)
-		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
-			return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
-		}
-		if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
-			return "", fmt.Errorf("write artifact cache %q: %w", p, err)
-		}
-		return p, nil
+		return c.writeArchiveLocked(form, digest, raw)
 	})
+}
+
+func (c *Cache) writeArchiveLocked(form archiveForm, digest string, raw []byte) (string, error) {
+	p := c.archivePath(form, digest)
+	if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+		return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
+	}
+	if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
+		return "", fmt.Errorf("write artifact cache %q: %w", p, err)
+	}
+	return p, nil
 }
 
 // ReadArtifact reads the legacy final-form artifact bytes and reports whether the
@@ -709,7 +713,10 @@ func (c *Cache) WriteResourceRevision(baseURL, registryID, kind, name, revision 
 }
 
 func (c *Cache) writeResourceRevision(baseURL, registryID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
-	p := c.MetadataPath(baseURL, registryID, kind, name, revision)
+	return c.writeResourceRevisionAt(c.MetadataPath(baseURL, registryID, kind, name, revision), rev)
+}
+
+func (c *Cache) writeResourceRevisionAt(p string, rev store.AssessedResourceRevision) (string, error) {
 	raw, err := json.Marshal(rev)
 	if err != nil {
 		return "", fmt.Errorf("marshal resource revision: %w", err)

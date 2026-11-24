@@ -39,48 +39,56 @@ func (c *Client) AcquirePlacePackage(ctx context.Context, coordinate store.Resou
 		return fail(fmt.Errorf("scoped kind target %q does not match profile target %q", targetID, profileIdentity.TargetID))
 	}
 
-	var response resourceRevisionResponse
-	requestURL := c.requestURL([]string{
-		"api", "v1", "resources", string(coordinate.Registry), coordinate.Kind,
-		coordinate.Name, "revisions", string(revision),
-	}, nil)
-	if err := c.getJSONMode(ctx, requestURL, &response, false, mpapi.TargetProfilePlaceFeature); err != nil {
-		return fail(err)
-	}
-	rev, err := response.assessed()
+	rev, err := fetchPlaceRevision(ctx, c, coordinate, revision, profileIdentity)
 	if err != nil {
 		return fail(err)
 	}
-	if err := validateAPIResourceRevisionMatchesFor(rev, coordinate, revision, true); err != nil {
-		return fail(fmt.Errorf("invalid Marketplace place revision: %w", err))
-	}
-	if rev.Revocation != nil {
-		return fail(fmt.Errorf("marketplace resource revision is revoked"))
-	}
-	if err := enforceMarketplaceAssessment(rev); err != nil {
-		return fail(err)
-	}
-	if rev.EffectiveAvailability != string(mpapi.AvailabilityAvailable) &&
-		rev.EffectiveAvailability != string(mpapi.AvailabilityOperatorExposed) {
-		return fail(fmt.Errorf("place revision has unavailable or unrecognized effective availability %q", rev.EffectiveAvailability))
-	}
-	binding := rev.Assessment.HostPackageIdentity
-	if binding == nil {
-		return fail(fmt.Errorf("place revision has no package identity"))
-	}
-	if err := binding.MatchProfile(profileIdentity); err != nil {
-		return fail(fmt.Errorf("marketplace.profile.revision-mismatch: package %s profile %s: %w", coordinate.Name, profileIdentity.TargetID, err))
-	}
-
-	raw, err := c.GetPlaceholderArchive(ctx, string(rev.ArchiveDigest))
-	if err != nil {
-		return fail(err)
-	}
-	files, err := verifyPlacePackageArchive(rev, profile, raw)
+	files, _, err := fetchPlaceArchive(ctx, c, rev, profile)
 	if err != nil {
 		return fail(err)
 	}
 	return rev, files, nil
+}
+
+func fetchPlaceRevision(ctx context.Context, c *Client, coordinate store.ResourceCoordinate, revision store.RevisionDigest, profileIdentity targetprofile.Identity) (store.AssessedResourceRevision, error) {
+	var response resourceRevisionResponse
+	requestURL := c.requestURL([]string{"api", "v1", "resources", string(coordinate.Registry), coordinate.Kind, coordinate.Name, "revisions", string(revision)}, nil)
+	if err := c.getJSONMode(ctx, requestURL, &response, false, mpapi.TargetProfilePlaceFeature); err != nil {
+		return store.AssessedResourceRevision{}, err
+	}
+	rev, err := response.assessed()
+	if err != nil {
+		return store.AssessedResourceRevision{}, err
+	}
+	if err := validateAPIResourceRevisionMatchesFor(rev, coordinate, revision, true); err != nil {
+		return store.AssessedResourceRevision{}, fmt.Errorf("invalid Marketplace place revision: %w", err)
+	}
+	if rev.Revocation != nil {
+		return store.AssessedResourceRevision{}, fmt.Errorf("marketplace resource revision is revoked")
+	}
+	if err := enforceMarketplaceAssessment(rev); err != nil {
+		return store.AssessedResourceRevision{}, err
+	}
+	if rev.EffectiveAvailability != string(mpapi.AvailabilityAvailable) && rev.EffectiveAvailability != string(mpapi.AvailabilityOperatorExposed) {
+		return store.AssessedResourceRevision{}, fmt.Errorf("place revision has unavailable or unrecognized effective availability %q", rev.EffectiveAvailability)
+	}
+	binding := rev.Assessment.HostPackageIdentity
+	if binding == nil {
+		return store.AssessedResourceRevision{}, fmt.Errorf("place revision has no package identity")
+	}
+	if err := binding.MatchProfile(profileIdentity); err != nil {
+		return store.AssessedResourceRevision{}, fmt.Errorf("marketplace.profile.revision-mismatch: package %s profile %s: %w", coordinate.Name, profileIdentity.TargetID, err)
+	}
+	return rev, nil
+}
+
+func fetchPlaceArchive(ctx context.Context, c *Client, rev store.AssessedResourceRevision, profile targetprofile.Profile) ([]targetprofile.PackageFile, []byte, error) {
+	raw, err := c.GetPlaceholderArchive(ctx, string(rev.ArchiveDigest))
+	if err != nil {
+		return nil, nil, err
+	}
+	files, err := verifyPlacePackageArchive(rev, profile, raw)
+	return files, raw, err
 }
 
 func verifyPlacePackageArchive(rev store.AssessedResourceRevision, profile targetprofile.Profile, raw []byte) ([]targetprofile.PackageFile, error) {
