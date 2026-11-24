@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -180,6 +181,217 @@ func TestLockedGitPlaceProfileReaderUsesPinnedCommit(t *testing.T) {
 	if _, err := LockedGitPlaceProfileReader(symlinkLock, rawURL)(context.Background(), identity, resolver.MarketplaceResolveModeRefresh); err == nil ||
 		!strings.Contains(err.Error(), "marketplace.profile.unavailable") {
 		t.Fatalf("symlinked profile error = %v", err)
+	}
+}
+
+func TestDeployedGitPlaceProfileReaderRefusesAmbiguousLocks(t *testing.T) {
+	fixture := newDeployedGitPlaceProfileFixture(t)
+
+	t.Run("identical user candidates deduplicate and read offline", func(t *testing.T) {
+		home := t.TempDir()
+		setDeployedPlaceGitHome(t, home)
+		intent := readDeployedPlaceGitIntent(t, home,
+			deployedPlaceGitSources(fixture.rawURL, fixture.ref, "zeta", "alpha"), "")
+		doc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser,
+			Registries: []lockfile.GitRegistry{fixture.lockedFirst},
+		}
+		var evidence config.Evidence
+		evidence.RecordDeployedLock(config.UserPersonal, &doc, config.ConfigRead{})
+
+		if got, err := LockedGitPlaceProfileReader(fixture.lockedFirst, fixture.rawURL)(
+			context.Background(), fixture.identity, resolver.MarketplaceResolveModeRefresh,
+		); err != nil || !bytes.Equal(got, fixture.profile) {
+			t.Fatalf("seed exact Git snapshot = %q, %v", got, err)
+		}
+		reader := DeployedGitPlaceProfileReader(intent, evidence)
+		got, err := reader(context.Background(), fixture.identity, resolver.MarketplaceResolveModeCachedNoFetch)
+		if err != nil || !bytes.Equal(got, fixture.profile) {
+			t.Fatalf("deployed user profile read = %q, %v", got, err)
+		}
+	})
+
+	t.Run("different commits are ambiguous before Git access", func(t *testing.T) {
+		home := t.TempDir()
+		setDeployedPlaceGitHome(t, home)
+		intent := readDeployedPlaceGitIntent(t, home,
+			deployedPlaceGitSources(fixture.rawURL, fixture.ref, "alpha", "beta"), "")
+		doc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser,
+			Registries: []lockfile.GitRegistry{fixture.lockedFirst, fixture.lockedSecond},
+		}
+		var evidence config.Evidence
+		evidence.RecordDeployedLock(config.UserPersonal, &doc, config.ConfigRead{})
+		_, err := DeployedGitPlaceProfileReader(intent, evidence)(
+			context.Background(), fixture.identity, resolver.MarketplaceResolveModeRefresh,
+		)
+		if err == nil || !strings.Contains(err.Error(), "marketplace.profile.selection-ambiguous") ||
+			!strings.Contains(err.Error(), fixture.identity.TargetID) || !strings.Contains(err.Error(), "USER") {
+			t.Fatalf("conflicting lock error = %v", err)
+		}
+		assertDeployedPlaceGitCacheAbsent(t, home)
+	})
+
+	t.Run("repository-only source is not eligible", func(t *testing.T) {
+		home := t.TempDir()
+		setDeployedPlaceGitHome(t, home)
+		intent := readDeployedPlaceGitIntent(t, home,
+			"apiVersion: agent-marketplace/v4\n",
+			deployedPlaceGitSources(fixture.rawURL, fixture.ref, "repo"))
+		doc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Registries: []lockfile.GitRegistry{fixture.lockedFirst},
+		}
+		var evidence config.Evidence
+		evidence.RecordDeployedLock(config.RepoCommitted, &doc, config.ConfigRead{})
+		_, err := DeployedGitPlaceProfileReader(intent, evidence)(
+			context.Background(), fixture.identity, resolver.MarketplaceResolveModeRefresh,
+		)
+		if err == nil || !strings.Contains(err.Error(), "marketplace.profile.lock-missing") {
+			t.Fatalf("repository-only source error = %v", err)
+		}
+		assertDeployedPlaceGitCacheAbsent(t, home)
+	})
+
+	t.Run("user evidence with repository scope is not eligible", func(t *testing.T) {
+		home := t.TempDir()
+		setDeployedPlaceGitHome(t, home)
+		intent := readDeployedPlaceGitIntent(t, home,
+			deployedPlaceGitSources(fixture.rawURL, fixture.ref, "user"), "")
+		doc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Registries: []lockfile.GitRegistry{fixture.lockedFirst},
+		}
+		var evidence config.Evidence
+		evidence.RecordDeployedLock(config.UserPersonal, &doc, config.ConfigRead{})
+		_, err := DeployedGitPlaceProfileReader(intent, evidence)(
+			context.Background(), fixture.identity, resolver.MarketplaceResolveModeRefresh,
+		)
+		if err == nil || !strings.Contains(err.Error(), "marketplace.profile.lock-missing") {
+			t.Fatalf("scope-mismatched evidence error = %v", err)
+		}
+		assertDeployedPlaceGitCacheAbsent(t, home)
+	})
+}
+
+type deployedPlaceGitProfileFixture struct {
+	rawURL       string
+	origin       string
+	ref          string
+	root         string
+	profile      []byte
+	identity     targetprofile.Identity
+	lockedFirst  lockfile.GitRegistry
+	lockedSecond lockfile.GitRegistry
+}
+
+func newDeployedGitPlaceProfileFixture(t *testing.T) deployedPlaceGitProfileFixture {
+	t.Helper()
+	repo := t.TempDir()
+	runGit(t, repo, "init", "--object-format=sha1", "--initial-branch=main")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "config", "user.email", "test@example.invalid")
+	root := "profiles/invented-app.yaml"
+	profilePath := filepath.Join(repo, filepath.FromSlash(root))
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := []byte(placeAdmissionProfileYAML)
+	if err := os.WriteFile(profilePath, profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", root)
+	runGit(t, repo, "commit", "-m", "add profile")
+	first, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := bytes.Replace(profile, []byte("label: Invented App"), []byte("label: Changed App"), 1)
+	if err := os.WriteFile(profilePath, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", root)
+	runGit(t, repo, "commit", "-m", "change profile")
+	second, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL := (&url.URL{Scheme: "file", Path: canonicalRepo}).String()
+	origin, err := gitidentity.CanonicalV1(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := "refs/heads/main"
+	return deployedPlaceGitProfileFixture{
+		rawURL: rawURL, origin: origin, ref: ref, root: root, profile: profile,
+		identity: targetprofile.Identity{
+			TargetID: "invented-app", SourceID: gitPlaceProfileSourceID(origin, ref, root),
+			RevisionDigest: profileTestDigest(profile),
+		},
+		lockedFirst:  lockfile.GitRegistry{URL: origin, Ref: ref, Commit: first},
+		lockedSecond: lockfile.GitRegistry{URL: origin, Ref: ref, Commit: second},
+	}
+}
+
+func setDeployedPlaceGitHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+}
+
+func deployedPlaceGitSources(rawURL, ref string, names ...string) string {
+	body := "apiVersion: agent-marketplace/v4\nsources:\n"
+	for _, name := range names {
+		body += fmt.Sprintf("  %s:\n    git: %q\n    ref: %q\n", name, rawURL, ref)
+	}
+	return body
+}
+
+func readDeployedPlaceGitIntent(t *testing.T, home, userBody, repoBody string) config.Intent {
+	t.Helper()
+	repoRoot := filepath.Join(home, "workspace")
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+	organizationPath := filepath.Join(home, "organization", "config.yaml")
+	for path, body := range map[string]string{userPath: userBody, repoPath: repoBody} {
+		if body == "" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{
+		RepoRoot: repoRoot, GlobalPath: userPath, OrganizationPath: organizationPath,
+		RepoPath: repoPath, LocalPath: localPath,
+	})
+	for _, source := range []config.Source{config.UserPersonal, config.RepoCommitted} {
+		layer := intent.Layers[source]
+		if bodyPresent := source == config.UserPersonal && userBody != "" || source == config.RepoCommitted && repoBody != ""; bodyPresent {
+			if !layer.Present() || layer.Err() != nil {
+				t.Fatalf("read %s Git intent: present=%t err=%v", source, layer.Present(), layer.Err())
+			}
+		}
+	}
+	return intent
+}
+
+func assertDeployedPlaceGitCacheAbsent(t *testing.T, home string) {
+	t.Helper()
+	cacheRoot := filepath.Join(home, ".cache", "agent-marketplace", "exact-git")
+	if _, err := os.Stat(cacheRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected exact Git cache access: %v", err)
 	}
 }
 
