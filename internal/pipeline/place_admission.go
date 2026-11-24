@@ -95,14 +95,7 @@ func PreparePlaceAdmission(
 		if err != nil {
 			return PlaceAdmission{}, fmt.Errorf("target %s profile validation: %w", targetID, err)
 		}
-		profileEnvironment := environment
-		profileEnvironment.Override = nil
-		if key := profile.Roots.User.Override; key != "" {
-			if value, exists := os.LookupEnv(key); exists {
-				profileEnvironment.Override = &value
-			}
-		}
-		binding, err := targetprofile.ResolveApprovalBinding(profile, identity, profileEnvironment)
+		binding, err := resolvePlaceApprovalBinding(profile, identity, environment)
 		if err != nil {
 			return PlaceAdmission{}, fmt.Errorf("target %s approval binding: %w", targetID, err)
 		}
@@ -127,6 +120,17 @@ func PreparePlaceAdmission(
 	}
 	admission.Packages = resolved
 	return admission, nil
+}
+
+func resolvePlaceApprovalBinding(profile targetprofile.Profile, identity targetprofile.Identity, environment targetprofile.ApprovalEnvironment) (targetprofile.ApprovalBinding, error) {
+	profileEnvironment := environment
+	profileEnvironment.Override = nil
+	if key := profile.Roots.User.Override; key != "" {
+		if value, exists := os.LookupEnv(key); exists {
+			profileEnvironment.Override = &value
+		}
+	}
+	return targetprofile.ResolveApprovalBinding(profile, identity, profileEnvironment)
 }
 
 func selectedPlaceTargetIDs(cfg *config.Config) map[string]struct{} {

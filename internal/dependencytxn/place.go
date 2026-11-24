@@ -126,6 +126,9 @@ const (
 	placeFileMode           = 0o600
 )
 
+// PlaceFileLimit is the maximum size of an observed or committed place file.
+const PlaceFileLimit int64 = maxDependencyFileSize
+
 func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...Option) (PlaceResult, error) {
 	cfg := applyOptions(opts)
 	if !filepath.IsAbs(stateDir) || filepath.Clean(stateDir) != stateDir {

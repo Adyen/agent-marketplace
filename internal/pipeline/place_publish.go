@@ -1,0 +1,446 @@
+package pipeline
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"path"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/packagegen"
+	"github.com/Adyen/agent-marketplace/internal/place"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
+)
+
+type placeUpsert struct {
+	owner       ownership.PlacePackage
+	input       packagegen.PlaceInput
+	generation  packagegen.Generation
+	sourceFiles map[string]targetprofile.PackageFile
+}
+
+// CommitPlaceUpserts publishes approved locked place packages without pruning
+// packages or files that are absent from the input set.
+func CommitPlaceUpserts(
+	ctx context.Context,
+	binding targetprofile.ApprovalBinding,
+	profileBytes []byte,
+	environment targetprofile.ApprovalEnvironment,
+	packages []marketplace.ResolvedPlacePackage,
+) (result dependencytxn.PlaceResult, retErr error) {
+	slog.Debug("place upsert transaction started", "target_id", binding.Profile.TargetID, "packages", len(packages))
+	defer func() {
+		if retErr != nil {
+			slog.Warn("place upsert transaction failed", "target_id", binding.Profile.TargetID, "error", retErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	profileBytes = append([]byte(nil), profileBytes...)
+	profile, err := targetprofile.Parse(profileBytes, binding.Profile)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("target %s profile validation: %w", binding.Profile.TargetID, err)
+	}
+	if err := checkCurrentPlaceApproval(binding, profile, environment); err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("resolve place transaction state: %w", err)
+	}
+	stateRoot := filepath.Dir(stateDir)
+	if stateRoot != binding.CanonicalStateRoot {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.state-root-mismatch: transaction state root %q differs from approved state root %q", stateRoot, binding.CanonicalStateRoot)
+	}
+	if len(packages) == 0 {
+		return dependencytxn.PlaceResult{}, nil
+	}
+	if err := dependencytxn.CheckPending(stateDir); err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	packages = cloneResolvedPlacePackages(packages)
+
+	root, err := fsboundary.OpenDir(binding.CanonicalRoot)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("open approved place root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	if root.Path() != binding.CanonicalRoot {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.root-mismatch: approved root is no longer canonical")
+	}
+	ownerStore, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("open place ownership state: %w", err)
+	}
+	if ownerStore.CanonicalRoot() != binding.CanonicalRoot {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.root-mismatch: ownership root differs from approval")
+	}
+	snapshot, err := ownerStore.SnapshotState()
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("read place ownership state: %w", err)
+	}
+	current, err := ownerStore.PlaceFromSnapshot(snapshot)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("read place ownership projection: %w", err)
+	}
+	current = normalizePlaceProjection(current)
+
+	upserts := make(map[string]placeUpsert, len(packages))
+	for _, resolved := range packages {
+		upsert, err := planPlaceUpsert(binding, profile, stateRoot, resolved)
+		if err != nil {
+			return dependencytxn.PlaceResult{}, err
+		}
+		if _, duplicate := upserts[upsert.owner.ID]; duplicate {
+			return dependencytxn.PlaceResult{}, fmt.Errorf("duplicate place package upsert %q", upsert.owner.ID)
+		}
+		upserts[upsert.owner.ID] = upsert
+	}
+
+	ownerByID := make(map[string]ownership.PlacePackage, len(current.Packages)+len(upserts))
+	placeByID := make(map[string]place.Package, len(current.Packages)+len(upserts))
+	for _, pkg := range current.Packages {
+		ownerByID[pkg.ID] = pkg
+		placeByID[pkg.ID] = projectionPlacePackage(pkg)
+	}
+	for id, upsert := range upserts {
+		ownerByID[id] = upsert.owner
+		placeByID[id] = projectionPlacePackage(upsert.owner)
+	}
+	desiredPackages := make([]place.Package, 0, len(placeByID))
+	for _, pkg := range placeByID {
+		desiredPackages = append(desiredPackages, pkg)
+	}
+	sort.Slice(desiredPackages, func(i, j int) bool { return desiredPackages[i].ID < desiredPackages[j].ID })
+
+	observed, err := observePlaceProjection(root, current, desiredPackages)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	plan, err := place.BuildPlan(placeProjectionPackages(current), desiredPackages, observed)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("plan place upserts: %w", err)
+	}
+	if len(plan.Refused) != 0 {
+		refusal := plan.Refused[0]
+		return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert refused at %s: %s", refusal.Path, refusal.Reason)
+	}
+	if len(plan.Removes) != 0 || len(plan.Ceded) != 0 {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert plan contains unsupported removals")
+	}
+
+	nextProjection := ownership.PlaceProjection{Directories: append([]dependencytxn.PlaceDirectory(nil), current.Directories...)}
+	for _, pkg := range plan.Next {
+		ownerPkg, ok := ownerByID[pkg.ID]
+		if !ok {
+			return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert plan lost package ownership %q", pkg.ID)
+		}
+		nextProjection.Packages = append(nextProjection.Packages, ownerPkg)
+	}
+	nextProjection = normalizePlaceProjection(nextProjection)
+	if len(plan.Writes) == 0 && reflect.DeepEqual(current, nextProjection) {
+		slog.Debug("place upsert transaction is already current", "target_id", binding.Profile.TargetID, "packages", len(upserts))
+		return dependencytxn.PlaceResult{}, nil
+	}
+	ownershipFile, err := ownerStore.PreparePlace(snapshot, nextProjection)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, fmt.Errorf("prepare place ownership state: %w", err)
+	}
+	writes, err := dependencyPlaceWrites(plan.Writes, upserts)
+	if err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	placePlan := dependencytxn.PlacePlan{
+		Root: binding.CanonicalRoot, RootIdentity: root.Identity(),
+		Directories: placeWriteDirectories(writes), Writes: writes, Ownership: ownershipFile,
+	}
+
+	err = packagegen.WithPackagesLock(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := checkCurrentPlaceApproval(binding, profile, environment); err != nil {
+			return err
+		}
+		if err := dependencytxn.CheckPending(stateDir); err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(upserts))
+		for id := range upserts {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			upsert := upserts[id]
+			generation, err := packagegen.PublishPlaceUnderPackagesLock(upsert.input)
+			if err != nil {
+				return fmt.Errorf("publish place package generation %s/%s: %w", upsert.owner.Kind, upsert.owner.Name, err)
+			}
+			if generation != upsert.generation {
+				return fmt.Errorf("place package generation changed during publication")
+			}
+		}
+		var err error
+		result, err = dependencytxn.CommitPlace(ctx, stateDir, placePlan)
+		return err
+	})
+	if err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	slog.Info("place upsert transaction committed", "target_id", binding.Profile.TargetID, "packages", len(upserts), "changed_paths", len(result.Changed))
+	return result, nil
+}
+
+func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) error {
+	current, err := resolvePlaceApprovalBinding(profile, binding.Profile, environment)
+	if err != nil {
+		return fmt.Errorf("target %s approval binding: %w", binding.Profile.TargetID, err)
+	}
+	if err := binding.Match(current); err != nil {
+		return err
+	}
+	if err := targetprofile.RequireApproval(current); err != nil {
+		return fmt.Errorf("target %s approval: %w", binding.Profile.TargetID, err)
+	}
+	return nil
+}
+
+func cloneResolvedPlacePackages(packages []marketplace.ResolvedPlacePackage) []marketplace.ResolvedPlacePackage {
+	cloned := make([]marketplace.ResolvedPlacePackage, len(packages))
+	for i, pkg := range packages {
+		pkg.Files = append([]targetprofile.PackageFile(nil), pkg.Files...)
+		for j := range pkg.Files {
+			pkg.Files[j].Bytes = append([]byte(nil), pkg.Files[j].Bytes...)
+		}
+		if pkg.Revision.Assessment.HostPackageIdentity != nil {
+			identity := *pkg.Revision.Assessment.HostPackageIdentity
+			pkg.Revision.Assessment.HostPackageIdentity = &identity
+		}
+		cloned[i] = pkg
+	}
+	return cloned
+}
+
+func planPlaceUpsert(
+	binding targetprofile.ApprovalBinding,
+	profile targetprofile.Profile,
+	stateRoot string,
+	resolved marketplace.ResolvedPlacePackage,
+) (placeUpsert, error) {
+	entry, pin, revision := resolved.Entry, resolved.Pin, resolved.Revision
+	endpoint, err := urlutil.NormalizeEndpointURL(entry.URL)
+	if err != nil || endpoint != entry.URL {
+		return placeUpsert{}, fmt.Errorf("place package %s has a noncanonical Marketplace endpoint", pin.Name)
+	}
+	if err := nameutil.ValidateSegment(entry.InstanceID); err != nil {
+		return placeUpsert{}, fmt.Errorf("place package has invalid Marketplace instance ID: %w", err)
+	}
+	if err := nameutil.ValidateSegment(pin.RegistryID); err != nil {
+		return placeUpsert{}, fmt.Errorf("place package has invalid registry ID: %w", err)
+	}
+	targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+	if !scoped || targetID != binding.Profile.TargetID || !nameutil.IsPlacePackageName(pin.Name) {
+		return placeUpsert{}, fmt.Errorf("place package pin has invalid scoped coordinate")
+	}
+	expected := store.ResourceCoordinate{
+		Marketplace: store.MarketplaceID(entry.InstanceID), Registry: store.RegistryID(pin.RegistryID),
+		Kind: pin.Kind, Name: pin.Name,
+	}
+	if revision.Coordinate != expected || revision.Assessment.Coordinate != expected {
+		return placeUpsert{}, fmt.Errorf("place package %s coordinate differs from its pin", pin.Name)
+	}
+	if string(revision.ContentDigest) != pin.Digest || string(revision.ContentDigest) != pin.Revision ||
+		string(revision.Assessment.ContentDigest) != pin.Digest {
+		return placeUpsert{}, fmt.Errorf("place package %s content digest differs from its pin", pin.Name)
+	}
+	if !nameutil.IsCanonicalSHA256Digest(pin.LockArchiveDigest) ||
+		string(revision.ArchiveDigest) != pin.LockArchiveDigest ||
+		string(revision.Assessment.AssessmentDigest) != pin.LockAssessmentDigest {
+		return placeUpsert{}, fmt.Errorf("place package %s archive or assessment digest differs from its lock", pin.Name)
+	}
+	if err := revision.Assessment.Validate(); err != nil {
+		return placeUpsert{}, fmt.Errorf("place package %s assessment is invalid: %w", pin.Name, err)
+	}
+	if revision.Revocation != nil {
+		return placeUpsert{}, fmt.Errorf("place package %s revision is revoked", pin.Name)
+	}
+	if revision.Assessment.Decision == store.AssessmentDecisionReject {
+		return placeUpsert{}, fmt.Errorf("place package %s assessment is rejected", pin.Name)
+	}
+	if revision.Requires != "" && revision.Requires != "[]" {
+		return placeUpsert{}, fmt.Errorf("place package %s has unsupported indexed prerequisites", pin.Name)
+	}
+	if revision.Assessment.HostPackageIdentity == nil ||
+		*revision.Assessment.HostPackageIdentity != pin.LockHostPackageIdentity {
+		return placeUpsert{}, fmt.Errorf("place package %s host package binding differs from its pin", pin.Name)
+	}
+	if err := pin.LockHostPackageIdentity.MatchProfile(binding.Profile); err != nil {
+		return placeUpsert{}, fmt.Errorf("place package %s profile binding mismatch: %w", pin.Name, err)
+	}
+	if err := targetprofile.ValidatePackageDestinations(profile, pin.Kind, resolved.Files); err != nil {
+		return placeUpsert{}, fmt.Errorf("place package %s destinations: %w", pin.Name, err)
+	}
+	for _, file := range resolved.Files {
+		if int64(len(file.Bytes)) > dependencytxn.PlaceFileLimit {
+			return placeUpsert{}, fmt.Errorf("place package %s exceeds the placement file limit at %s", pin.Name, file.DestinationPath)
+		}
+	}
+	input := packagegen.PlaceInput{Binding: pin.LockHostPackageIdentity, Files: resolved.Files}
+	generation, err := packagegen.PlanPlace(input)
+	if err != nil {
+		return placeUpsert{}, fmt.Errorf("plan place package generation %s/%s: %w", pin.Kind, pin.Name, err)
+	}
+	if filepath.Dir(generation.Path) != filepath.Join(stateRoot, "packages") {
+		return placeUpsert{}, fmt.Errorf("place package generation is outside the approved state root")
+	}
+	id := dependencytxn.Digest([]byte(strings.Join([]string{
+		"agent-marketplace/place-package/v1", endpoint, string(expected.Marketplace),
+		string(expected.Registry), expected.Kind, expected.Name,
+	}, "\x00")))
+	owner := ownership.PlacePackage{
+		ID: id, Kind: pin.Kind, Name: pin.Name, Binding: pin.LockHostPackageIdentity,
+		GenerationKey: generation.Key,
+	}
+	sourceFiles := make(map[string]targetprofile.PackageFile, len(resolved.Files))
+	for _, file := range resolved.Files {
+		digest := ownership.Digest(file.Bytes)
+		owner.Files = append(owner.Files, ownership.PlaceFile{Path: file.DestinationPath, Digest: digest, Mode: file.Mode})
+		sourceFiles[file.DestinationPath] = file
+	}
+	sort.Slice(owner.Files, func(i, j int) bool { return owner.Files[i].Path < owner.Files[j].Path })
+	return placeUpsert{
+		owner: owner, input: input,
+		generation: generation, sourceFiles: sourceFiles,
+	}, nil
+}
+
+func projectionPlacePackage(pkg ownership.PlacePackage) place.Package {
+	files := make([]place.File, 0, len(pkg.Files))
+	for _, file := range pkg.Files {
+		files = append(files, place.File{Path: file.Path, Digest: file.Digest, Mode: file.Mode})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return place.Package{
+		ID: pkg.ID, Revision: pkg.Binding.PackageContentDigest,
+		Files: files, Requires: append([]string(nil), pkg.Requires...),
+	}
+}
+
+func placeProjectionPackages(projection ownership.PlaceProjection) []place.Package {
+	packages := make([]place.Package, 0, len(projection.Packages))
+	for _, pkg := range projection.Packages {
+		packages = append(packages, projectionPlacePackage(pkg))
+	}
+	sort.Slice(packages, func(i, j int) bool { return packages[i].ID < packages[j].ID })
+	return packages
+}
+
+func normalizePlaceProjection(projection ownership.PlaceProjection) ownership.PlaceProjection {
+	projection.Packages = append([]ownership.PlacePackage(nil), projection.Packages...)
+	for i := range projection.Packages {
+		projection.Packages[i].Files = append([]ownership.PlaceFile(nil), projection.Packages[i].Files...)
+		projection.Packages[i].Requires = append([]string(nil), projection.Packages[i].Requires...)
+		sort.Slice(projection.Packages[i].Files, func(a, b int) bool {
+			return projection.Packages[i].Files[a].Path < projection.Packages[i].Files[b].Path
+		})
+	}
+	sort.Slice(projection.Packages, func(i, j int) bool { return projection.Packages[i].ID < projection.Packages[j].ID })
+	projection.Directories = append([]dependencytxn.PlaceDirectory(nil), projection.Directories...)
+	return projection
+}
+
+func observePlaceProjection(root *fsboundary.Dir, installed ownership.PlaceProjection, desired []place.Package) (map[string]place.Observation, error) {
+	paths := make(map[string]struct{})
+	for _, pkg := range placeProjectionPackages(installed) {
+		for _, file := range pkg.Files {
+			paths[file.Path] = struct{}{}
+		}
+	}
+	for _, pkg := range desired {
+		for _, file := range pkg.Files {
+			paths[file.Path] = struct{}{}
+		}
+	}
+	ordered := make([]string, 0, len(paths))
+	for filePath := range paths {
+		ordered = append(ordered, filePath)
+	}
+	sort.Strings(ordered)
+	observed := make(map[string]place.Observation, len(paths))
+	for _, filePath := range ordered {
+		data, identity, err := root.ReadFile(filepath.FromSlash(filePath), dependencytxn.PlaceFileLimit)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("observe place path %s: %w", filePath, err)
+		}
+		observed[filePath] = place.Observation{Mode: identity.Mode, Digest: ownership.Digest(data)}
+	}
+	return observed, nil
+}
+
+func dependencyPlaceWrites(writes []place.Write, upserts map[string]placeUpsert) ([]dependencytxn.PlaceWrite, error) {
+	out := make([]dependencytxn.PlaceWrite, 0, len(writes))
+	for _, write := range writes {
+		upsert, ok := upserts[write.PackageID]
+		if !ok {
+			return nil, fmt.Errorf("place plan writes package without an upsert source: %s", write.PackageID)
+		}
+		source, ok := upsert.sourceFiles[write.File.Path]
+		if !ok {
+			return nil, fmt.Errorf("place plan writes path without package source: %s", write.File.Path)
+		}
+		expected := dependencytxn.Generation{}
+		var expectedMode fs.FileMode
+		if write.Prior != nil {
+			expected = dependencytxn.Generation{
+				Exists: true, Digest: strings.TrimPrefix(write.Prior.Digest, "sha256:"),
+			}
+			expectedMode = write.Prior.Mode
+		}
+		out = append(out, dependencytxn.PlaceWrite{
+			Path: write.File.Path, GenerationKey: upsert.owner.GenerationKey,
+			SourcePath: source.SourcePath, Expected: expected, ExpectedMode: expectedMode,
+			Digest: strings.TrimPrefix(write.File.Digest, "sha256:"),
+			Mode:   write.File.Mode, Size: int64(len(source.Bytes)),
+		})
+	}
+	return out, nil
+}
+
+func placeWriteDirectories(writes []dependencytxn.PlaceWrite) []string {
+	directories := make(map[string]struct{})
+	for _, write := range writes {
+		parent := path.Dir(write.Path)
+		for parent != "." {
+			directories[parent] = struct{}{}
+			parent = path.Dir(parent)
+		}
+	}
+	ordered := make([]string, 0, len(directories))
+	for directory := range directories {
+		ordered = append(ordered, directory)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		left, right := strings.Count(ordered[i], "/"), strings.Count(ordered[j], "/")
+		if left != right {
+			return left < right
+		}
+		return ordered[i] < ordered[j]
+	})
+	return ordered
+}
