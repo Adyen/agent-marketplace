@@ -3,11 +3,13 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -175,6 +177,19 @@ files:
 	rawProfile, err := blobs.Get(ctx, store.ArchiveDigest(profileIdentity.RevisionDigest))
 	if err != nil || !bytes.Equal(rawProfile, profileBytes) {
 		t.Fatalf("published virtual profile bytes differ from pinned profile: %v", err)
+	}
+	inspectionPayload, err := blobs.Get(ctx, store.ArchiveDigest(profileRevision.Assessment.InspectionManifestDigest))
+	if err != nil {
+		t.Fatalf("read virtual profile inspection payload: %v", err)
+	}
+	var evidence struct {
+		ProfileIdentity *targetprofile.Identity `json:"profile_identity"`
+	}
+	if err := json.Unmarshal(inspectionPayload, &evidence); err != nil {
+		t.Fatalf("decode virtual profile inspection payload: %v", err)
+	}
+	if evidence.ProfileIdentity == nil || *evidence.ProfileIdentity != profileIdentity {
+		t.Fatalf("virtual profile inspection identity = %#v, want %#v", evidence.ProfileIdentity, profileIdentity)
 	}
 	profileCount := 0
 	for _, resource := range revision.Resources {

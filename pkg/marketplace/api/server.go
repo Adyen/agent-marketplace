@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -1460,7 +1461,11 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "inspection content not available")
 		return
 	}
-	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), s.cfg.Policy.Limits.FileBytes)
+	limit := s.cfg.Policy.Limits.FileBytes
+	if kind == nameutil.TargetProfileKind && (limit <= 0 || limit > targetprofile.MaxProfileBytes) {
+		limit = targetprofile.MaxProfileBytes
+	}
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), limit)
 	if err != nil {
 		if errors.Is(err, errPayloadReadLimit) {
 			writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
@@ -1474,7 +1479,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection content")
 		return
 	}
-	if s.cfg.Policy.Limits.FileBytes > 0 && int64(len(data)) > s.cfg.Policy.Limits.FileBytes {
+	if limit > 0 && int64(len(data)) > limit {
 		writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
 		return
 	}
@@ -1482,6 +1487,13 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
 		return
+	}
+	if manifest.ProfileIdentity != nil {
+		if _, err := targetprofile.Parse(data, *manifest.ProfileIdentity); err != nil {
+			slog.Error("target profile inspection content is invalid", "digest", file.ContentDigest, "err", logvalue.Safe(err))
+			writeError(w, http.StatusInternalServerError, "inspection content does not match profile identity")
+			return
+		}
 	}
 	writeImmutable(w, file.MediaType, data)
 }
@@ -1502,6 +1514,20 @@ func (s *Server) getResourceInspection(r *http.Request, registrySlug, kind, name
 	rev, err := s.meta.GetResourceRevision(ctx, coord, store.RevisionDigest(digest))
 	if err != nil {
 		return inspection.Manifest{}, nil, err
+	}
+	if kind == nameutil.TargetProfileKind {
+		if err := validateRequestedResourceRevision(rev, coord, digest); err != nil {
+			return inspection.Manifest{}, nil, err
+		}
+		if s.cfg.Management.Mode != "database" {
+			switch s.fileResourceAvailability(rev) {
+			case AvailabilityRevoked:
+				return inspection.Manifest{}, nil, errContentRevoked
+			case AvailabilityAvailable, AvailabilityOperatorExposed:
+			default:
+				return inspection.Manifest{}, nil, errContentBlocked
+			}
+		}
 	}
 	if s.cfg.Management.Mode == "database" {
 		restriction, err := s.managedOwnerRestriction(ctx, []store.AssessedResourceRevision{rev})
@@ -1630,6 +1656,13 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 	if err := json.Unmarshal(data, &manifest); err != nil || inspection.Verify(manifest, data, digest) != nil {
 		writeError(w, http.StatusInternalServerError, "invalid inspection manifest")
 		return
+	}
+	if manifest.Coordinate.Kind == nameutil.TargetProfileKind {
+		w.Header().Add("Vary", placeFeaturesHeader)
+		if !placeRequested(r) {
+			writeError(w, http.StatusNotFound, "inspection not found")
+			return
+		}
 	}
 	writeImmutable(w, "application/json", data)
 }
@@ -2275,7 +2308,8 @@ func resourceAvailability(rev store.AssessedResourceRevision, registry store.Reg
 	if rev.Revocation != nil {
 		return AvailabilityRevoked
 	}
-	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
+	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection &&
+		rev.Coordinate.Kind != nameutil.TargetProfileKind && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
 			"coordinate", rev.Coordinate,
 			"content_digest", rev.ContentDigest,
@@ -2440,7 +2474,10 @@ func validateResourceRevision(rev store.AssessedResourceRevision, allowPlace boo
 		return errors.New("resource coordinate is incomplete")
 	}
 	_, _, placeKind := nameutil.SplitPlaceKind(coord.Kind)
-	if !IsMarketplaceKind(coord.Kind) && (!allowPlace || !placeKind || !nameutil.IsPlacePackageName(coord.Name)) {
+	virtualProfile := coord.Kind == nameutil.TargetProfileKind
+	allowedPlace := (placeKind && nameutil.IsPlacePackageName(coord.Name)) ||
+		(virtualProfile && nameutil.IsTargetIdentifier(coord.Name))
+	if !IsMarketplaceKind(coord.Kind) && (!allowPlace || !allowedPlace) {
 		return fmt.Errorf("resource coordinate kind %q is invalid", coord.Kind)
 	}
 	if placeKind && rev.ArchiveDigest == "" {
@@ -2449,13 +2486,16 @@ func validateResourceRevision(rev store.AssessedResourceRevision, allowPlace boo
 	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
 		return errors.New("resource content digest is not canonical")
 	}
-	if coord.Kind == KindCollection && rev.ArchiveDigest != "" {
-		return errors.New("virtual collection resource revision must not have an archive digest")
+	if (coord.Kind == KindCollection || virtualProfile) && rev.ArchiveDigest != "" {
+		if coord.Kind == KindCollection {
+			return errors.New("virtual collection resource revision must not have an archive digest")
+		}
+		return errors.New("virtual target profile resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
 		return errors.New("resource archive digest is not canonical")
 	}
-	if placeKind {
+	if placeKind || virtualProfile {
 		if err := rev.Assessment.Validate(); err != nil {
 			return err
 		}
@@ -2493,6 +2533,7 @@ func validatePublicResourceRevisionMatches(rev store.AssessedResourceRevision, e
 
 func validateRequestedResourceRevision(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
 	_, _, allowPlace := nameutil.SplitPlaceKind(expected.Kind)
+	allowPlace = allowPlace || expected.Kind == nameutil.TargetProfileKind
 	return validateResourceRevisionMatches(rev, expected, expectedDigest, allowPlace)
 }
 

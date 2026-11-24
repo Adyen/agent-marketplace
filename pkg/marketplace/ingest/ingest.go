@@ -505,13 +505,22 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
-	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte) error {
+	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte, identity *targetprofile.Identity) error {
 		kind, name := result.Kind, result.Name
 		coordinate := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: name}
-		projection, err := inspection.Build(
-			coordinate, result.ContentDigest, inspectionBody, nil,
-			limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
-		)
+		var projection inspection.Projection
+		var err error
+		if identity == nil {
+			projection, err = inspection.Build(
+				coordinate, result.ContentDigest, inspectionBody, nil,
+				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+			)
+		} else {
+			projection, err = inspection.BuildTargetProfile(
+				coordinate, *identity, inspectionBody,
+				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("inspection projection for %s %q: %w", kind, name, err)
 		}
@@ -539,7 +548,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		if previous, ok := profilePins[identity.TargetID]; ok && previous != identity {
 			return rev, fmt.Errorf("marketplace.profile.selection-ambiguous: target %q has multiple profile identities", identity.TargetID)
 		}
-		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody); err != nil {
+		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody, nil); err != nil {
 			return rev, err
 		}
 		if _, exists := profilePins[identity.TargetID]; exists {
@@ -554,7 +563,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			Kind: nameutil.TargetProfileKind, Name: identity.TargetID,
 			ContentDigest: identity.RevisionDigest, License: registry.License,
 		}, registry.ID, limits, license, registry.Acquisition)
-		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes); err != nil {
+		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes, &identity); err != nil {
 			return rev, err
 		}
 	}

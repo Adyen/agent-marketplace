@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -154,7 +155,8 @@ func (s *Server) evaluateAvailability(view *availabilityView, rev store.Assessed
 	switch {
 	case result.AdminWithdrawal || result.DeploymentRevocation:
 		result.Availability = AvailabilityRevoked
-	case registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "":
+	case registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection &&
+		rev.Coordinate.Kind != nameutil.TargetProfileKind && rev.ArchiveDigest == "":
 		result.Availability = AvailabilityNoArtifact
 	case license.Outcome == "reject" || rev.Assessment.Decision == store.AssessmentDecisionReject:
 		if effectiveRejectedResources(view, registry) == config.RejectedResourcesExpose {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
@@ -234,11 +235,12 @@ type inspectionPublicationFile struct {
 }
 
 type inspectionPublicationManifest struct {
-	SchemaVersion  string                      `json:"schema_version"`
-	Coordinate     ResourceCoordinate          `json:"coordinate"`
-	RevisionDigest string                      `json:"revision_digest"`
-	PrimaryPath    string                      `json:"primary_path"`
-	Files          []inspectionPublicationFile `json:"files"`
+	SchemaVersion   string                      `json:"schema_version"`
+	Coordinate      ResourceCoordinate          `json:"coordinate"`
+	RevisionDigest  string                      `json:"revision_digest"`
+	PrimaryPath     string                      `json:"primary_path"`
+	Files           []inspectionPublicationFile `json:"files"`
+	ProfileIdentity *targetprofile.Identity     `json:"profile_identity,omitempty"`
 }
 
 // validateInspectionManifestBytes mirrors inspection.Verify's canonical
@@ -277,6 +279,15 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 	if manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Registry == "" || manifest.Coordinate.Name == "" || !validInspectionDigest(manifest.RevisionDigest) {
 		return errors.New("identity or revision digest is invalid")
 	}
+	if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+		if manifest.ProfileIdentity == nil || manifest.ProfileIdentity.Validate() != nil ||
+			manifest.ProfileIdentity.TargetID != rev.Coordinate.Name ||
+			manifest.ProfileIdentity.RevisionDigest != string(rev.ContentDigest) {
+			return errors.New("virtual target profile identity does not match revision")
+		}
+	} else if manifest.ProfileIdentity != nil {
+		return errors.New("profile identity is only valid for virtual target profiles")
+	}
 	seen := make(map[string]struct{}, len(manifest.Files))
 	primary := false
 	for _, file := range manifest.Files {
@@ -311,6 +322,11 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 			}
 			if err := verifyInspectionBody(file, body); err != nil {
 				return fmt.Errorf("body for %q: %w", file.Path, err)
+			}
+			if manifest.ProfileIdentity != nil {
+				if _, err := targetprofile.Parse(body, *manifest.ProfileIdentity); err != nil {
+					return fmt.Errorf("body for %q: %w", file.Path, err)
+				}
 			}
 		}
 	}

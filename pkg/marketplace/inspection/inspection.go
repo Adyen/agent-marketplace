@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -92,12 +93,13 @@ type File struct {
 }
 
 type Manifest struct {
-	SchemaVersion  string                   `json:"schema_version"`
-	Coordinate     store.ResourceCoordinate `json:"coordinate"`
-	RevisionDigest string                   `json:"revision_digest"`
-	PrimaryPath    string                   `json:"primary_path"`
-	Files          []File                   `json:"files"`
-	ManifestDigest string                   `json:"-"`
+	SchemaVersion   string                   `json:"schema_version"`
+	Coordinate      store.ResourceCoordinate `json:"coordinate"`
+	RevisionDigest  string                   `json:"revision_digest"`
+	PrimaryPath     string                   `json:"primary_path"`
+	Files           []File                   `json:"files"`
+	ProfileIdentity *targetprofile.Identity  `json:"profile_identity,omitempty"`
+	ManifestDigest  string                   `json:"-"`
 }
 
 type Projection struct {
@@ -111,6 +113,23 @@ type Projection struct {
 // duplicating the projection builder; omitted or non-positive values use the
 // package default.
 func Build(coordinate store.ResourceCoordinate, revision string, body []byte, support map[string][]byte, maxFiles int, maxFileBytes, maxTotalBytes int64, manifestLimits ...int64) (Projection, error) {
+	if coordinate.Kind == nameutil.TargetProfileKind {
+		return Projection{}, fmt.Errorf("profile identity is required")
+	}
+	return build(coordinate, revision, body, support, maxFiles, maxFileBytes, maxTotalBytes, nil, manifestLimits...)
+}
+
+func BuildTargetProfile(coordinate store.ResourceCoordinate, identity targetprofile.Identity, body []byte, maxFiles int, maxFileBytes, maxTotalBytes int64) (Projection, error) {
+	if coordinate.Kind != nameutil.TargetProfileKind || coordinate.Name != identity.TargetID {
+		return Projection{}, fmt.Errorf("target profile identity does not match inspection coordinate")
+	}
+	if _, err := targetprofile.Parse(body, identity); err != nil {
+		return Projection{}, err
+	}
+	return build(coordinate, identity.RevisionDigest, body, nil, maxFiles, maxFileBytes, maxTotalBytes, &identity)
+}
+
+func build(coordinate store.ResourceCoordinate, revision string, body []byte, support map[string][]byte, maxFiles int, maxFileBytes, maxTotalBytes int64, profileIdentity *targetprofile.Identity, manifestLimits ...int64) (Projection, error) {
 	primaryPath := PrimaryPath(coordinate.Kind)
 	if primaryPath == "" {
 		return Projection{}, fmt.Errorf("unsupported inspection resource kind %q", coordinate.Kind)
@@ -187,7 +206,7 @@ func Build(coordinate store.ResourceCoordinate, revision string, body []byte, su
 		return Projection{}, fmt.Errorf("inspection content exceeds total limit %d", maxTotalBytes)
 	}
 
-	out := Manifest{SchemaVersion: SchemaVersion, Coordinate: coordinate, RevisionDigest: revision, PrimaryPath: primaryPath, Files: files}
+	out := Manifest{SchemaVersion: SchemaVersion, Coordinate: coordinate, RevisionDigest: revision, PrimaryPath: primaryPath, Files: files, ProfileIdentity: profileIdentity}
 	payload, err := canonicalJSON(out)
 	if err != nil {
 		return Projection{}, err
@@ -370,6 +389,17 @@ func Verify(manifest Manifest, payload []byte, expected string) error {
 		manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Registry == "" || manifest.Coordinate.Name == "" ||
 		!validDigest(manifest.RevisionDigest) || manifest.PrimaryPath != PrimaryPath(manifest.Coordinate.Kind) || len(manifest.Files) == 0 {
 		return fmt.Errorf("invalid inspection manifest")
+	}
+	if manifest.Coordinate.Kind == nameutil.TargetProfileKind {
+		if manifest.ProfileIdentity == nil || manifest.ProfileIdentity.Validate() != nil ||
+			manifest.ProfileIdentity.TargetID != manifest.Coordinate.Name ||
+			manifest.ProfileIdentity.RevisionDigest != manifest.RevisionDigest ||
+			len(manifest.Files) != 1 || manifest.Files[0].Path != manifest.PrimaryPath ||
+			manifest.Files[0].ContentDigest != manifest.RevisionDigest {
+			return fmt.Errorf("invalid target profile inspection identity")
+		}
+	} else if manifest.ProfileIdentity != nil {
+		return fmt.Errorf("profile identity is only valid for target profile inspection")
 	}
 	seen := make(map[string]struct{}, len(manifest.Files))
 	primary := false
