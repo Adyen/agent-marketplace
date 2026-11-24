@@ -76,25 +76,36 @@ func (c *Client) AcquirePlacePackage(ctx context.Context, coordinate store.Resou
 	if err != nil {
 		return fail(err)
 	}
+	files, err := verifyPlacePackageArchive(rev, profile, raw)
+	if err != nil {
+		return fail(err)
+	}
+	return rev, files, nil
+}
+
+func verifyPlacePackageArchive(rev store.AssessedResourceRevision, profile targetprofile.Profile, raw []byte) ([]targetprofile.PackageFile, error) {
+	if rev.Assessment.HostPackageIdentity == nil {
+		return nil, fmt.Errorf("place revision has no package identity")
+	}
 	archive, err := hccartifact.VerifyPlaceholderArchive(raw, string(rev.ArchiveDigest))
 	if err != nil {
-		return fail(fmt.Errorf("verify place package archive: %w", err))
+		return nil, fmt.Errorf("verify place package archive: %w", err)
 	}
 	manifest := archive.Manifest
-	if manifest.Kind != coordinate.Kind || manifest.Name != coordinate.Name ||
+	if manifest.Kind != rev.Coordinate.Kind || manifest.Name != rev.Coordinate.Name ||
 		manifest.ContentDigest != string(rev.ContentDigest) ||
-		(manifest.RegistryID != "" && manifest.RegistryID != string(coordinate.Registry)) {
-		return fail(fmt.Errorf("place package archive manifest does not match requested revision"))
+		(manifest.RegistryID != "" && manifest.RegistryID != string(rev.Coordinate.Registry)) {
+		return nil, fmt.Errorf("place package archive manifest does not match requested revision")
 	}
-	if manifest.HostPackageIdentity == nil || *manifest.HostPackageIdentity != *binding {
-		return fail(fmt.Errorf("place package archive binding does not match assessed revision"))
+	if manifest.HostPackageIdentity == nil || *manifest.HostPackageIdentity != *rev.Assessment.HostPackageIdentity {
+		return nil, fmt.Errorf("place package archive binding does not match assessed revision")
 	}
 	files, err := archive.PlaceFiles()
 	if err != nil {
-		return fail(fmt.Errorf("decode place package archive: %w", err))
+		return nil, fmt.Errorf("decode place package archive: %w", err)
 	}
-	if err := targetprofile.ValidatePackageDestinations(profile, coordinate.Kind, files); err != nil {
-		return fail(fmt.Errorf("validate place package destinations: %w", err))
+	if err := targetprofile.ValidatePackageDestinations(profile, rev.Coordinate.Kind, files); err != nil {
+		return nil, fmt.Errorf("validate place package destinations: %w", err)
 	}
-	return rev, files, nil
+	return files, nil
 }
