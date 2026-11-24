@@ -62,6 +62,17 @@ func runPlaceVerification(
 	if err != nil {
 		return ownership.PlaceVerification{}, err
 	}
+	return runPreparedPlaceVerification(ctx, prepared, raw, env, repoRoot, kind, name, "target-verify")
+}
+
+func runPreparedPlaceVerification(
+	ctx context.Context,
+	prepared preparedPlaceVerification,
+	raw []byte,
+	env targetprofile.ApprovalEnvironment,
+	repoRoot, kind, name, evidenceSource string,
+) (ownership.PlaceVerification, error) {
+	binding := prepared.binding
 	if repoRoot == "" || !filepath.IsAbs(repoRoot) {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.place.repository-invalid: repository root must be absolute")
 	}
@@ -123,7 +134,7 @@ func runPlaceVerification(
 		Binding: prepared.pkg.Binding, GenerationKey: prepared.pkg.GenerationKey,
 		Check: prepared.checkName, Scope: prepared.scope,
 		HostVersion: hostVersion, HostVersionStatus: hostVersionStatus,
-		Outcome: "pass", EvidenceSource: "target-verify",
+		Outcome: "pass", EvidenceSource: evidenceSource,
 	}
 	if exitCode != 0 {
 		result.Outcome = "fail"

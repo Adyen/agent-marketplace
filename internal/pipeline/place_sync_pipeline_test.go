@@ -34,6 +34,15 @@ import (
 func TestSyncUsesDeployedPlaceTargets(t *testing.T) {
 	ctx := context.Background()
 	gitFixture := newDeployedGitPlaceProfileFixture(t)
+	gitFixture.profile = []byte(strings.Replace(
+		string(gitFixture.profile),
+		"kinds: {mod: {deliver: place, into: [mods/]}}",
+		`host: {executable: place-sync-checker}
+checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}}
+kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
+		1,
+	))
+	gitFixture.identity.RevisionDigest = profileTestDigest(gitFixture.profile)
 	if err := os.WriteFile(filepath.Join(gitFixture.repo, filepath.FromSlash(gitFixture.root)), gitFixture.profile, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +77,22 @@ func TestSyncUsesDeployedPlaceTargets(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	t.Setenv("INVENTED_APP_HOME", targetRoot)
+	marker := filepath.Join(home, "place-initial-load-checks")
+	sentinel := filepath.Join(home, "allow-place-initial-load")
+	hostDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(hostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	host := "#!/bin/sh\n" +
+		"if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " + shellQuote(filepath.Join(targetRoot, "mods", "sample")) + " ]; then exit 91; fi\n" +
+		"if [ ! -f \"$2/guide.md\" ]; then exit 92; fi\n" +
+		"printf 'check\\n' >> " + shellQuote(marker) + "\n" +
+		"if [ -f " + shellQuote(sentinel) + " ]; then exit 0; fi\nexit 17\n"
+	hostPath := filepath.Join(hostDir, "place-sync-checker")
+	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", hostDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	profileReader := LockedGitPlaceProfileReader(gitFixture.lockedFirst, gitFixture.rawURL)
 	profileBytes, err := profileReader(ctx, gitFixture.identity, resolver.MarketplaceResolveModeRefresh)
@@ -310,6 +335,9 @@ resources:
 		len(pendingCheck.Drift) != 0 {
 		t.Fatalf("place check before approval = %#v, err=%v", pendingCheck, err)
 	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("unapproved sync or read-only check ran initial-load check: %v", err)
+	}
 	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
 		t.Fatalf("pending place check changed target root: %v, %v", entries, err)
 	}
@@ -364,6 +392,9 @@ resources:
 		approvedCheck.Drift[0] != gitFixture.identity.TargetID {
 		t.Fatalf("approved pre-install place check = %#v, err=%v", approvedCheck, err)
 	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("read-only check ran initial-load check: %v", err)
+	}
 	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
 		t.Fatalf("approved place check changed target root: %v, %v", entries, err)
 	}
@@ -381,6 +412,14 @@ resources:
 	if !ok || len(committed.Changed) == 0 {
 		t.Fatalf("approved offline place sync = %#v", approved.PlaceSync)
 	}
+	if len(approved.Errors) != 0 || len(approved.PlaceSync.VerificationWarnings) != 1 ||
+		!strings.Contains(approved.PlaceSync.VerificationWarnings[0].Error(), "target.place.check-failed") ||
+		!strings.Contains(fmt.Sprint(approved.Warnings), "target.place.check-failed") {
+		t.Fatalf("failed initial-load check was not a propagated warning: warnings=%v result=%#v", approved.Warnings, approved.PlaceSync)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\n" {
+		t.Fatalf("first approved initial-load check = %q, %v", data, err)
+	}
 	targetFile := filepath.Join(targetRoot, "mods", "sample", "guide.md")
 	assertPlacePublishFile(t, targetFile, files[0].Bytes, files[0].Mode)
 	info, err := os.Stat(targetFile)
@@ -389,6 +428,39 @@ resources:
 	}
 	owner, _ := openPlacePublishOwnership(t, placeAdmissionFixture{binding: binding})
 	ownershipPath := owner.StateFile()
+	failedSnapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedProjection, err := owner.PlaceFromSnapshot(failedSnapshot)
+	if err != nil || len(failedProjection.Packages) != 1 ||
+		failedProjection.Packages[0].Verification == nil ||
+		failedProjection.Packages[0].Verification.Outcome != "fail" ||
+		failedProjection.Packages[0].Verification.EvidenceSource != "initial-load" {
+		t.Fatalf("failed initial-load result = %#v, %v", failedProjection, err)
+	}
+	if err := os.WriteFile(sentinel, []byte("retry check\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retried := Sync(ctx, opts)
+	if len(retried.Errors) != 0 || len(retried.PlaceSync.VerificationWarnings) != 0 ||
+		len(retried.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
+		t.Fatalf("same-generation initial-load retry = %#v", retried)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("failed check was not retried after same-generation sync: %q, %v", data, err)
+	}
+	passedSnapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	passedProjection, err := owner.PlaceFromSnapshot(passedSnapshot)
+	if err != nil || len(passedProjection.Packages) != 1 ||
+		passedProjection.Packages[0].Verification == nil ||
+		passedProjection.Packages[0].Verification.Outcome != "pass" ||
+		passedProjection.Packages[0].Verification.EvidenceSource != "initial-load" {
+		t.Fatalf("passed initial-load result = %#v, %v", passedProjection, err)
+	}
 	ownershipBefore, err := os.ReadFile(ownershipPath)
 	if err != nil {
 		t.Fatal(err)
@@ -399,8 +471,12 @@ resources:
 	}
 	packageTreeBefore := snapshotPlaceCheckTree(t, filepath.Join(stateRoot, "packages"))
 	unchanged := Sync(ctx, opts)
-	if len(unchanged.Errors) != 0 || len(unchanged.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
+	if len(unchanged.Errors) != 0 || len(unchanged.PlaceSync.VerificationWarnings) != 0 ||
+		len(unchanged.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
 		t.Fatalf("second offline Sync = %#v", unchanged.PlaceSync)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("passing same-generation sync reran initial-load check: %q, %v", data, err)
 	}
 	after, err := os.Stat(targetFile)
 	if err != nil || !info.ModTime().Equal(after.ModTime()) {
@@ -418,6 +494,9 @@ resources:
 		t.Fatalf("clean place check changed installed state: check=%#v err=%v read=%v stat=%v targetStat=%v", cleanCheck, err, readErr, statErr, targetStatErr)
 	}
 	assertPlacePublishFile(t, targetFile, files[0].Bytes, files[0].Mode)
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("read-only clean check ran initial-load check: %q, %v", data, err)
+	}
 	tampered := []byte("operator edit remains untouched\n")
 	if err := os.WriteFile(targetFile, tampered, files[0].Mode); err != nil {
 		t.Fatal(err)
@@ -435,6 +514,9 @@ resources:
 	if err != nil || statErr != nil || readErr != nil || !bytes.Equal(tamperedAfter, tampered) ||
 		!tamperedInfo.ModTime().Equal(tamperedAfterInfo.ModTime()) || !bytes.Equal(ownershipBefore, stateAfterConflict) {
 		t.Fatalf("conflict check changed tampered installation: read=%v stat=%v state=%v", err, statErr, readErr)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("read-only tampered check ran initial-load check: %q, %v", data, err)
 	}
 	if err := os.WriteFile(targetFile, files[0].Bytes, files[0].Mode); err != nil {
 		t.Fatal(err)

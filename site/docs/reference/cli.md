@@ -344,6 +344,8 @@ A hard configuration, registry-load, or resolution error stops `--check` before 
 
 For enabled Git-backed place targets with deployed locks, `--check` reads only cached profile and package evidence. Missing approval is a warning; an approved target with pending changes reports `target.place.out-of-sync` and exits nonzero. The check does not write approval receipts, publish packages, or run host commands.
 
+Mutating `sync` runs each declared initial-load check after all approved place packages have committed successfully. Checks run locally from the approved target root, including during cached or offline sync; offline mode prohibits CLI fetching, not local checks. A failed check leaves installed files in place, reports a warning, and is retried by a later sync until it passes. A recorded pass is skipped for the same package generation. Read-only commands, including `sync --check`, never run host checks.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`

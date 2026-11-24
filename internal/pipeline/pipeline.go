@@ -1149,13 +1149,14 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 	if opts.EnablePlaceSync && len(resolved.placeTargets) > 0 {
-		placeResult, err := syncDeployedPlace(ctx, resolved, opts.Offline)
+		placeResult, err := syncDeployedPlace(ctx, resolved, opts.Offline, opts.Workspace.RepoRoot())
 		result.PlaceSync = placeResult
 		for _, identity := range placeResult.Pending {
 			result.Warnings = append(result.Warnings, fmt.Errorf(
 				"target.approval.required: target %s is pending local approval", identity.TargetID,
 			))
 		}
+		result.Warnings = append(result.Warnings, placeResult.VerificationWarnings...)
 		if err != nil {
 			wrapped := fmt.Errorf("sync deployed place targets: %w", err)
 			result.Errors = append(result.Errors, wrapped)

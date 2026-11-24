@@ -17,9 +17,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
-func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool) (PlaceSyncResult, error) {
+func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool, repoRoot string) (PlaceSyncResult, error) {
 	if resolved.placeProfileReader == nil {
 		return PlaceSyncResult{}, fmt.Errorf("deployed place profile reader is unavailable")
 	}
@@ -35,7 +36,7 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 	if cfg == nil {
 		cfg = resolved.MergedCfg
 	}
-	return SyncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode)
+	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot)
 }
 
 func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error) {
@@ -64,11 +65,12 @@ func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error
 	}, nil
 }
 
-// PlaceSyncResult contains profiles awaiting approval and the independently
-// committed result for each target root.
+// PlaceSyncResult contains pending profiles, independently committed roots,
+// and warnings from post-commit initial-load checks.
 type PlaceSyncResult struct {
-	Pending   []targetprofile.Identity
-	Committed map[string]dependencytxn.PlaceResult
+	Pending              []targetprofile.Identity
+	Committed            map[string]dependencytxn.PlaceResult
+	VerificationWarnings []error
 }
 
 // PlaceCheckResult reports pending approval and target IDs whose place plan
@@ -96,6 +98,19 @@ func SyncPlaceUpserts(
 	readProfile PlaceProfileReader,
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
+) (result PlaceSyncResult, retErr error) {
+	return syncPlaceUpserts(ctx, cfg, enabled, environment, readProfile, packages, mode, "")
+}
+
+func syncPlaceUpserts(
+	ctx context.Context,
+	cfg *config.Config,
+	enabled []string,
+	environment targetprofile.ApprovalEnvironment,
+	readProfile PlaceProfileReader,
+	packages *marketplace.Resolver,
+	mode resolver.MarketplaceResolveMode,
+	repoRoot string,
 ) (result PlaceSyncResult, retErr error) {
 	slog.Debug("place sync started", "enabled_targets", len(enabled))
 	defer func() {
@@ -126,8 +141,115 @@ func SyncPlaceUpserts(
 		}
 		result.Committed[group.identity.TargetID] = committed
 	}
+	if repoRoot != "" {
+		result.VerificationWarnings, err = runPlaceInitialLoadChecks(ctx, groups, environment, repoRoot)
+		if err != nil {
+			return result, err
+		}
+	}
 	slog.Info("place sync completed", "pending_profiles", len(result.Pending), "committed_targets", len(result.Committed))
 	return result, nil
+}
+
+func runPlaceInitialLoadChecks(
+	ctx context.Context,
+	groups []*placeSyncGroup,
+	environment targetprofile.ApprovalEnvironment,
+	repoRoot string,
+) ([]error, error) {
+	var warnings []error
+	for _, group := range groups {
+		if err := ctx.Err(); err != nil {
+			return warnings, err
+		}
+		profile, err := targetprofile.Parse(group.profile, group.identity)
+		if err != nil {
+			warnings = append(warnings, fmt.Errorf("target %s initial-load profile: %w", group.identity.TargetID, err))
+			continue
+		}
+		packages := append([]marketplace.ResolvedPlacePackage(nil), group.packages...)
+		sort.SliceStable(packages, func(i, j int) bool {
+			left, right := packages[i], packages[j]
+			if left.Pin.Kind != right.Pin.Kind {
+				return left.Pin.Kind < right.Pin.Kind
+			}
+			if left.Pin.Name != right.Pin.Name {
+				return left.Pin.Name < right.Pin.Name
+			}
+			if left.Pin.RegistryID != right.Pin.RegistryID {
+				return left.Pin.RegistryID < right.Pin.RegistryID
+			}
+			return left.Entry.InstanceID < right.Entry.InstanceID
+		})
+		for _, resolved := range packages {
+			if err := ctx.Err(); err != nil {
+				return warnings, err
+			}
+			targetID, localKind, scoped := nameutil.SplitPlaceKind(resolved.Pin.Kind)
+			if !scoped || targetID != group.identity.TargetID {
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.initial-load: target %s package %s has an invalid scoped kind",
+					group.identity.TargetID, resolved.Pin.Name,
+				))
+				continue
+			}
+			kind, ok := profile.Kinds[localKind]
+			if !ok || kind.Verify == "" {
+				continue
+			}
+			prepared, err := preparePlaceVerification(
+				ctx, group.binding, group.profile, environment, resolved.Pin.Kind, resolved.Pin.Name,
+			)
+			if err != nil {
+				if ctx.Err() != nil {
+					return warnings, ctx.Err()
+				}
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.initial-load: target %s package %s/%s: %w",
+					group.identity.TargetID, resolved.Pin.Kind, resolved.Pin.Name, err,
+				))
+				continue
+			}
+			expected, err := planPlaceUpsert(
+				group.binding, prepared.profile, filepath.Dir(prepared.stateDir), resolved,
+			)
+			if err != nil {
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.initial-load: target %s package %s/%s does not match admitted input: %w",
+					group.identity.TargetID, resolved.Pin.Kind, resolved.Pin.Name, err,
+				))
+				continue
+			}
+			if prepared.pkg.ID != expected.owner.ID ||
+				prepared.pkg.Binding != expected.owner.Binding ||
+				prepared.pkg.GenerationKey != expected.owner.GenerationKey {
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.initial-load: target %s package %s/%s does not match admitted installation",
+					group.identity.TargetID, resolved.Pin.Kind, resolved.Pin.Name,
+				))
+				continue
+			}
+			if verification := prepared.pkg.Verification; verification != nil &&
+				verification.Outcome == "pass" && verification.Check == prepared.checkName &&
+				verification.Scope == prepared.scope {
+				continue
+			}
+			_, err = runPreparedPlaceVerification(
+				ctx, prepared, group.profile, environment, repoRoot,
+				resolved.Pin.Kind, resolved.Pin.Name, "initial-load",
+			)
+			if ctx.Err() != nil {
+				return warnings, ctx.Err()
+			}
+			if err != nil {
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.initial-load: target %s package %s/%s: %w",
+					group.identity.TargetID, resolved.Pin.Kind, resolved.Pin.Name, err,
+				))
+			}
+		}
+	}
+	return warnings, nil
 }
 
 func buildPlaceSyncGroups(admission PlaceAdmission) ([]*placeSyncGroup, error) {
