@@ -1062,6 +1062,57 @@ func TestCommitPlaceDeselection(t *testing.T) {
 	})
 }
 
+func TestObservePlaceChangesUsesRealReadForSelectedOtherRevision(t *testing.T) {
+	rootPath := t.TempDir()
+	path := "mods/sample/guide.md"
+	absolutePath := filepath.Join(rootPath, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actual := []byte("operator edit\n")
+	if err := os.WriteFile(absolutePath, actual, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := fsboundary.OpenDir(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+
+	prior := ownership.PlacePackage{
+		ID: "package-id",
+		Binding: targetprofile.Binding{
+			ProfileIdentity: targetprofile.Identity{
+				TargetID: "invented-app", SourceID: "builtin:agent-marketplace",
+				RevisionDigest: "sha256:" + strings.Repeat("1", 64),
+			},
+		},
+		Files: []ownership.PlaceFile{{Path: path, Digest: ownership.Digest([]byte("recorded\n")), Mode: 0o644}},
+	}
+	selectedProfile := targetprofile.Identity{
+		TargetID: "invented-app", SourceID: "builtin:agent-marketplace",
+		RevisionDigest: "sha256:" + strings.Repeat("2", 64),
+	}
+	upsert := prior
+	upsert.Binding.ProfileIdentity = selectedProfile
+	upsert.Files = []ownership.PlaceFile{{Path: path, Digest: ownership.Digest([]byte("desired\n")), Mode: 0o644}}
+	observed, err := observePlaceChanges(
+		root,
+		ownership.PlaceProjection{Packages: []ownership.PlacePackage{prior}},
+		map[string]placeUpsert{"package-id": {owner: upsert}},
+		map[string]struct{}{"package-id": {}},
+		selectedProfile,
+		placeRetirementPlan{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := observed[path]
+	if !ok || got.Digest != ownership.Digest(actual) || got.Mode.Perm() != 0o600 {
+		t.Fatalf("selected prior-revision observation = %#v, want actual edited bytes/mode", got)
+	}
+}
+
 func installPlaceDeselectionPackages(
 	t *testing.T,
 ) (placeAdmissionFixture, marketplace.ResolvedPlacePackage, marketplace.ResolvedPlacePackage) {

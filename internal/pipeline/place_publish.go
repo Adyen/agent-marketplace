@@ -61,6 +61,7 @@ func commitPlaceChanges(
 	environment targetprofile.ApprovalEnvironment,
 	packages []marketplace.ResolvedPlacePackage,
 	pruneDeselected bool,
+	assertions ...dependencytxn.ReadAssertion,
 ) (result dependencytxn.PlaceResult, ceded []string, retErr error) {
 	slog.Debug("place upsert transaction started", "target_id", binding.Profile.TargetID, "packages", len(packages))
 	defer func() {
@@ -74,6 +75,14 @@ func commitPlaceChanges(
 	}
 	if !prepared.changed {
 		return dependencytxn.PlaceResult{}, append([]string(nil), prepared.ceded...), nil
+	}
+	if len(assertions) > 0 {
+		if !pruneDeselected {
+			return dependencytxn.PlaceResult{}, nil, fmt.Errorf("place selection assertions require explicit deselection mode")
+		}
+		if err := dependencytxn.ValidateReadAssertions(assertions); err != nil {
+			return dependencytxn.PlaceResult{}, nil, err
+		}
 	}
 	err = packagegen.WithPackagesLock(ctx, func() error {
 		if err := ctx.Err(); err != nil {
@@ -101,7 +110,11 @@ func commitPlaceChanges(
 			}
 		}
 		var err error
-		result, err = dependencytxn.CommitPlace(ctx, prepared.stateDir, prepared.plan)
+		var commitOptions []dependencytxn.Option
+		if len(assertions) > 0 {
+			commitOptions = append(commitOptions, dependencytxn.WithReadAssertions(assertions))
+		}
+		result, err = dependencytxn.CommitPlace(ctx, prepared.stateDir, prepared.plan, commitOptions...)
 		return err
 	})
 	if err != nil {
@@ -242,9 +255,6 @@ func preparePlaceChanges(
 			prior, exists := currentByID[id]
 			if !exists {
 				continue
-			}
-			if prior.Binding.ProfileIdentity != binding.Profile {
-				return prepared, fmt.Errorf("place package %s is reserved by a different profile revision", id)
 			}
 			desiredPaths := make(map[string]struct{}, len(upsert.owner.Files))
 			for _, file := range upsert.owner.Files {
@@ -645,7 +655,7 @@ func observePlaceChanges(
 	frozen := make(map[string]ownership.PlaceFile)
 	for _, pkg := range installed.Packages {
 		_, selected := selectedIDs[pkg.ID]
-		if selected && pkg.Binding.ProfileIdentity == profile {
+		if selected {
 			for _, file := range pkg.Files {
 				paths[file.Path] = struct{}{}
 			}

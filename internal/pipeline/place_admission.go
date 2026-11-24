@@ -40,6 +40,19 @@ func PreparePlaceAdmission(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 ) (PlaceAdmission, error) {
+	return preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, false)
+}
+
+func preparePlaceAdmission(
+	ctx context.Context,
+	cfg *config.Config,
+	enabled []string,
+	environment targetprofile.ApprovalEnvironment,
+	readProfile PlaceProfileReader,
+	packages *marketplace.Resolver,
+	mode resolver.MarketplaceResolveMode,
+	includeEmpty bool,
+) (PlaceAdmission, error) {
 	if err := ctx.Err(); err != nil {
 		return PlaceAdmission{}, err
 	}
@@ -54,7 +67,7 @@ func PreparePlaceAdmission(
 		return PlaceAdmission{}, nil
 	}
 	placeTargets := selectedPlaceTargetIDs(cfg)
-	if len(placeTargets) == 0 {
+	if len(placeTargets) == 0 && !includeEmpty {
 		return PlaceAdmission{}, nil
 	}
 	var allowed []string
@@ -74,8 +87,10 @@ func PreparePlaceAdmission(
 		if err := ctx.Err(); err != nil {
 			return PlaceAdmission{}, err
 		}
-		if _, ok := placeTargets[targetID]; !ok {
-			continue
+		if !includeEmpty {
+			if _, ok := placeTargets[targetID]; !ok {
+				continue
+			}
 		}
 		identity, ok := selected[targetID]
 		if !ok {

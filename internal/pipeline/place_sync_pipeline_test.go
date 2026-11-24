@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -536,6 +537,191 @@ resources:
 	}
 	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
 		t.Fatalf("offline approved Sync issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
+
+	if err := os.WriteFile(targetFile, tampered, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	configWithoutPackage := strings.Replace(userConfig, "      - tools/invented-app%2Fmod/sample\n", "", 1)
+	if configWithoutPackage == userConfig {
+		t.Fatal("could not remove scoped package pin from fixture")
+	}
+	if err := os.WriteFile(userConfigPath, []byte(configWithoutPackage), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deployedLock, err := lockfile.Decode(lockData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := deployedLock.Marketplaces[0].Resources[:0]
+	for _, resource := range deployedLock.Marketplaces[0].Resources {
+		if resource.Kind != "invented-app/mod" {
+			resources = append(resources, resource)
+		}
+	}
+	deployedLock.Marketplaces[0].Resources = resources
+	lockWithoutPackage, err := lockfile.Encode(deployedLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.CanonicalLock, lockWithoutPackage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ownershipBeforeDeselection, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := filepath.Glob(filepath.Join(binding.CanonicalStateRoot, "target-approval-*.json"))
+	if err != nil || len(receipts) == 0 {
+		t.Fatalf("approval receipts = %v, %v", receipts, err)
+	}
+	for _, receipt := range receipts {
+		if err := os.Remove(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := targetprofile.RequireApproval(binding); err == nil {
+		t.Fatal("test failed to remove local approval receipt")
+	}
+	unapprovedDeselection := Sync(ctx, opts)
+	if len(unapprovedDeselection.Errors) != 0 || len(unapprovedDeselection.PlaceSync.Pending) != 1 ||
+		len(unapprovedDeselection.PlaceSync.Ceded) != 0 ||
+		len(unapprovedDeselection.PlaceSync.Committed) != 0 {
+		t.Fatalf("missing approval authorized deselection: errors=%v pending=%v ceded=%v committed=%v",
+			unapprovedDeselection.Errors, unapprovedDeselection.PlaceSync.Pending,
+			unapprovedDeselection.PlaceSync.Ceded, unapprovedDeselection.PlaceSync.Committed)
+	}
+	if got, err := os.ReadFile(targetFile); err != nil || !bytes.Equal(got, tampered) {
+		t.Fatalf("missing approval changed edited place file: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(ownershipPath); err != nil || !bytes.Equal(got, ownershipBeforeDeselection) {
+		t.Fatalf("missing approval changed place ownership: %v", err)
+	}
+	currentEnvironment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err = resolvePlaceApprovalBinding(profile, gitFixture.identity, currentEnvironment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetprofile.RecordApproval(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetprofile.RequireApproval(binding); err != nil {
+		t.Fatalf("fresh profile approval = %v", err)
+	}
+
+	deselectionResolve := Resolve(ctx, opts)
+	if len(deselectionResolve.Errors) != 0 || len(deselectionResolve.placeSelectionReads) == 0 {
+		t.Fatalf("resolve final-pin deselection: %v", deselectionResolve.Errors)
+	}
+	var resolvedPlacePins []string
+	for _, entry := range deselectionResolve.placeConfig.Marketplaces {
+		for _, pin := range entry.Resources {
+			if _, _, scoped := nameutil.SplitPlaceKind(pin.Kind); scoped {
+				resolvedPlacePins = append(resolvedPlacePins, pin.Kind+"/"+pin.Name)
+			}
+		}
+	}
+	if len(resolvedPlacePins) != 0 {
+		t.Fatalf("final-pin fixture retained scoped Marketplace pins: %v", resolvedPlacePins)
+	}
+	pruneReads := deployedPlacePruneReads(deselectionResolve, deselectionResolve.placeConfig)
+	if len(pruneReads) == 0 {
+		t.Fatal("final-pin resolution has no prune authority")
+	}
+	selectedProfiles, profileSelectionErr := deselectionResolve.placeConfig.SelectedMarketplaceProfiles()
+	if profileSelectionErr != nil || len(selectedProfiles) != 1 {
+		t.Fatalf("final-pin profile selection = %v err=%v", selectedProfiles, profileSelectionErr)
+	}
+	deselectionEnvironment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deselectionAdmission, err := preparePlaceAdmission(
+		ctx, deselectionResolve.placeConfig, deselectionResolve.placeTargets, deselectionEnvironment,
+		deselectionResolve.placeProfileReader, marketplace.NewResolver(),
+		resolver.MarketplaceResolveModeCachedNoFetch, true,
+	)
+	if err != nil || len(deselectionAdmission.Approvals) != 1 || len(deselectionAdmission.Packages) != 0 {
+		t.Fatalf("final-pin admission = approvals %v packages %d err=%v",
+			deselectionAdmission.Approvals, len(deselectionAdmission.Packages), err)
+	}
+	deselectionGroups, err := buildPlaceSyncGroups(deselectionAdmission, true)
+	if err != nil || len(deselectionGroups) != 1 {
+		t.Fatalf("final-pin groups=%v err=%v", deselectionGroups, err)
+	}
+	deselectionPlan, err := preparePlaceChanges(
+		ctx, deselectionGroups[0].binding, deselectionGroups[0].profile,
+		deselectionEnvironment, deselectionGroups[0].packages, true,
+	)
+	if err != nil || !deselectionPlan.changed {
+		t.Fatalf("final-pin place plan changed=%v err=%v", deselectionPlan.changed, err)
+	}
+	beforeCheckInfo, err := os.Stat(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeCheckStateInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deselectionCheck, err := CheckDeployedPlace(ctx, deselectionResolve)
+	afterCheckFile, fileReadErr := os.ReadFile(targetFile)
+	afterCheckState, stateReadErr := os.ReadFile(ownershipPath)
+	afterCheckFileInfo, fileStatErr := os.Stat(targetFile)
+	afterCheckStateInfo, stateStatErr := os.Stat(ownershipPath)
+	if err != nil || !reflect.DeepEqual(deselectionCheck.Drift, []string{gitFixture.identity.TargetID}) ||
+		fileReadErr != nil || stateReadErr != nil || fileStatErr != nil || stateStatErr != nil ||
+		!bytes.Equal(afterCheckFile, tampered) || !bytes.Equal(afterCheckState, ownershipBeforeDeselection) ||
+		!beforeCheckInfo.ModTime().Equal(afterCheckFileInfo.ModTime()) ||
+		!beforeCheckStateInfo.ModTime().Equal(afterCheckStateInfo.ModTime()) {
+		t.Fatalf("read-only final-pin deselection check changed state: result=%#v err=%v file=%v state=%v",
+			deselectionCheck, err, fileReadErr, stateReadErr)
+	}
+	deselected := Sync(ctx, opts)
+	if len(deselected.Errors) != 0 || !slices.Equal(deselected.PlaceSync.Ceded[gitFixture.identity.TargetID], []string{"mods/sample/guide.md"}) {
+		t.Fatalf("final-pin deselection sync = %#v", deselected.PlaceSync)
+	}
+	if !strings.Contains(fmt.Sprint(deselected.Warnings), "target.place.ceded") {
+		t.Fatalf("ceded path warning was not propagated: %v", deselected.Warnings)
+	}
+	if got, err := os.ReadFile(targetFile); err != nil || !bytes.Equal(got, tampered) {
+		t.Fatalf("deselection pruned edited file: %q, %v", got, err)
+	}
+	afterDeselection, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterDeselectionProjection, err := owner.PlaceFromSnapshot(afterDeselection)
+	if err != nil || len(afterDeselectionProjection.Packages) != 0 {
+		t.Fatalf("deselection ownership = %#v, %v", afterDeselectionProjection, err)
+	}
+	stateAfterDeselection, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateAfterDeselectionInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerAfterDeselection, err := os.ReadFile(marker)
+	if err != nil || string(markerAfterDeselection) != "check\ncheck\n" {
+		t.Fatalf("deselection ran a host check: %q, %v", markerAfterDeselection, err)
+	}
+	repeatedDeselection := Sync(ctx, opts)
+	stateAfterRepeat, readErr := os.ReadFile(ownershipPath)
+	stateAfterRepeatInfo, statErr := os.Stat(ownershipPath)
+	if len(repeatedDeselection.Errors) != 0 || readErr != nil || statErr != nil ||
+		!bytes.Equal(stateAfterDeselection, stateAfterRepeat) ||
+		!stateAfterDeselectionInfo.ModTime().Equal(stateAfterRepeatInfo.ModTime()) {
+		t.Fatalf("repeated deselection rewrote ownership: result=%#v read=%v stat=%v", repeatedDeselection, readErr, statErr)
+	}
+	markerAfterRepeat, err := os.ReadFile(marker)
+	if err != nil || string(markerAfterRepeat) != "check\ncheck\n" {
+		t.Fatalf("repeated deselection ran a host check: %q, %v", markerAfterRepeat, err)
 	}
 }
 

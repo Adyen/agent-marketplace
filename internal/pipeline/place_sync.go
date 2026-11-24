@@ -36,7 +36,16 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 	if cfg == nil {
 		cfg = resolved.MergedCfg
 	}
-	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot)
+	reads := deployedPlacePruneReads(resolved, cfg)
+	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot, reads)
+}
+
+func deployedPlacePruneReads(resolved ResolveResult, cfg *config.Config) []dependencytxn.ReadAssertion {
+	if len(resolved.placeTargets) == 0 || resolved.placeProfileReader == nil ||
+		len(resolved.placeSelectionReads) == 0 || cfg == nil || len(cfg.MarketplaceExclusions) != 0 {
+		return nil
+	}
+	return append([]dependencytxn.ReadAssertion(nil), resolved.placeSelectionReads...)
 }
 
 func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error) {
@@ -66,10 +75,11 @@ func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error
 }
 
 // PlaceSyncResult contains pending profiles, independently committed roots,
-// and warnings from post-commit initial-load checks.
+// ceded files, and warnings from post-commit checks.
 type PlaceSyncResult struct {
 	Pending              []targetprofile.Identity
 	Committed            map[string]dependencytxn.PlaceResult
+	Ceded                map[string][]string
 	VerificationWarnings []error
 }
 
@@ -99,7 +109,7 @@ func SyncPlaceUpserts(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 ) (result PlaceSyncResult, retErr error) {
-	return syncPlaceUpserts(ctx, cfg, enabled, environment, readProfile, packages, mode, "")
+	return syncPlaceUpserts(ctx, cfg, enabled, environment, readProfile, packages, mode, "", nil)
 }
 
 func syncPlaceUpserts(
@@ -111,6 +121,7 @@ func syncPlaceUpserts(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 	repoRoot string,
+	reads []dependencytxn.ReadAssertion,
 ) (result PlaceSyncResult, retErr error) {
 	slog.Debug("place sync started", "enabled_targets", len(enabled))
 	defer func() {
@@ -118,7 +129,8 @@ func syncPlaceUpserts(
 			slog.Warn("place sync failed", "committed_targets", len(result.Committed), "error", retErr)
 		}
 	}()
-	admission, err := PreparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode)
+	pruneDeselected := len(reads) > 0
+	admission, err := preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, pruneDeselected)
 	if err != nil {
 		return PlaceSyncResult{}, err
 	}
@@ -127,7 +139,7 @@ func syncPlaceUpserts(
 		Committed: make(map[string]dependencytxn.PlaceResult),
 	}
 
-	groups, err := buildPlaceSyncGroups(admission)
+	groups, err := buildPlaceSyncGroups(admission, pruneDeselected)
 	if err != nil {
 		return result, err
 	}
@@ -135,11 +147,19 @@ func syncPlaceUpserts(
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		committed, err := CommitPlaceUpserts(ctx, group.binding, group.profile, environment, group.packages)
+		committed, ceded, err := commitPlaceChanges(
+			ctx, group.binding, group.profile, environment, group.packages, pruneDeselected, reads...,
+		)
 		if err != nil {
 			return result, fmt.Errorf("commit place upserts for target %s: %w", group.identity.TargetID, err)
 		}
 		result.Committed[group.identity.TargetID] = committed
+		if len(ceded) > 0 {
+			if result.Ceded == nil {
+				result.Ceded = make(map[string][]string)
+			}
+			result.Ceded[group.identity.TargetID] = append([]string(nil), ceded...)
+		}
 	}
 	if repoRoot != "" {
 		result.VerificationWarnings, err = runPlaceInitialLoadChecks(ctx, groups, environment, repoRoot)
@@ -252,8 +272,19 @@ func runPlaceInitialLoadChecks(
 	return warnings, nil
 }
 
-func buildPlaceSyncGroups(admission PlaceAdmission) ([]*placeSyncGroup, error) {
+func buildPlaceSyncGroups(admission PlaceAdmission, includeEmpty bool) ([]*placeSyncGroup, error) {
 	groupsByIdentity := make(map[targetprofile.Identity]*placeSyncGroup)
+	if includeEmpty {
+		for identity, approval := range admission.Approvals {
+			profile, profileLoaded := admission.profiles[identity]
+			if !profileLoaded || len(profile) == 0 || approval.Profile != identity {
+				return nil, fmt.Errorf("target %s approval is missing its admitted profile", identity.TargetID)
+			}
+			groupsByIdentity[identity] = &placeSyncGroup{
+				identity: identity, binding: approval, profile: profile,
+			}
+		}
+	}
 	for _, pkg := range admission.Packages {
 		identity := pkg.Pin.LockHostPackageIdentity.ProfileIdentity
 		approval, approved := admission.Approvals[identity]
@@ -333,9 +364,16 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 	if cfg == nil {
 		return result, fmt.Errorf("deployed place config is unavailable")
 	}
-	admission, err := PreparePlaceAdmission(
+	reads := deployedPlacePruneReads(resolved, cfg)
+	pruneDeselected := len(reads) > 0
+	if pruneDeselected {
+		if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+			return result, err
+		}
+	}
+	admission, err := preparePlaceAdmission(
 		ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader,
-		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch,
+		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch, pruneDeselected,
 	)
 	if err != nil {
 		return result, fmt.Errorf("prepare deployed place check: %w", err)
@@ -344,7 +382,7 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 	sort.Slice(result.Pending, func(i, j int) bool {
 		return result.Pending[i].TargetID < result.Pending[j].TargetID
 	})
-	groups, err := buildPlaceSyncGroups(admission)
+	groups, err := buildPlaceSyncGroups(admission, pruneDeselected)
 	if err != nil {
 		return result, err
 	}
@@ -352,14 +390,19 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		prepared, err := preparePlaceUpserts(
-			ctx, group.binding, group.profile, environment, group.packages,
+		prepared, err := preparePlaceChanges(
+			ctx, group.binding, group.profile, environment, group.packages, pruneDeselected,
 		)
 		if err != nil {
 			return result, fmt.Errorf("check place upserts for target %s: %w", group.identity.TargetID, err)
 		}
 		if prepared.changed {
 			result.Drift = append(result.Drift, group.identity.TargetID)
+		}
+	}
+	if pruneDeselected {
+		if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+			return result, err
 		}
 	}
 	sort.Strings(result.Drift)

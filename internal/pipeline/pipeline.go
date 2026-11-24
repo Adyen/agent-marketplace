@@ -1183,6 +1183,19 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			))
 		}
 		result.Warnings = append(result.Warnings, placeResult.VerificationWarnings...)
+		cededTargets := make([]string, 0, len(placeResult.Ceded))
+		for targetID := range placeResult.Ceded {
+			cededTargets = append(cededTargets, targetID)
+		}
+		slices.Sort(cededTargets)
+		for _, targetID := range cededTargets {
+			for _, filePath := range placeResult.Ceded[targetID] {
+				result.Warnings = append(result.Warnings, fmt.Errorf(
+					"target.place.ceded: target %s released ownership of %s without removing it",
+					targetID, filePath,
+				))
+			}
+		}
 		if err != nil {
 			wrapped := fmt.Errorf("sync deployed place targets: %w", err)
 			result.Errors = append(result.Errors, wrapped)
