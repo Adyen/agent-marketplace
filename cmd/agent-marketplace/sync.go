@@ -167,6 +167,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		MarketplaceRevocationPolicy:           marketplacePolicy,
 		MarketplaceLockEvidenceStrict:         locked,
 		MarketplaceReportArchiveEvidenceDrift: !locked && !offline,
+		EnablePlaceSync:                       true,
 	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
@@ -249,6 +250,21 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	style := newSyncOutputStyle(out)
 	if err := writeSyncSummary(out, style, totalWritten, totalRemoved, malformedCount, len(errs)); err != nil {
 		return err
+	}
+	placeTargets := make([]string, 0, len(syncResult.PlaceSync.Committed))
+	for target, result := range syncResult.PlaceSync.Committed {
+		if len(result.Changed) > 0 {
+			placeTargets = append(placeTargets, target)
+		}
+	}
+	sort.Strings(placeTargets)
+	for _, target := range placeTargets {
+		if _, err := fmt.Fprintf(
+			out, "Place delivery: %s: %d changed path(s)\n",
+			target, len(syncResult.PlaceSync.Committed[target].Changed),
+		); err != nil {
+			return err
+		}
 	}
 	for _, choice := range syncResult.PluginDeliveries {
 		if _, err := fmt.Fprintf(out, "Plugin delivery: plugin/%s on %s: %s\n", choice.Plugin, choice.Target, choice.Delivery); err != nil {

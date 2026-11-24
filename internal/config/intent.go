@@ -672,12 +672,14 @@ func validateEnabledPlaceIntent(intent *Intent) {
 			if _, admitted := admittedProfiles[targetID]; admitted {
 				continue
 			}
+			code := "v4.harness"
 			reason := "has no declared machine-scope Marketplace target-profile request"
 			if _, known := knownProfiles[targetID]; known {
+				code = "marketplace.profile.selection-invalid"
 				reason = "has no Marketplace target-profile request admitted by allowed_marketplaces"
 			}
 			path := fmt.Sprintf("%s[%d]", targetListKey(layer.v4.Targets), index)
-			err := v4err("marketplace.profile.selection-invalid", path, 0, "target %q %s", targetID, reason)
+			err := v4err(code, path, 0, "target %q %s", targetID, reason)
 			attachV4ValidationContext(err, layer.Path, layerForIntentSource(source))
 			layer.errors = append(layer.errors, err)
 		}
@@ -824,11 +826,11 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
-	if len(ec.Errors) == 0 && len(ec.PlaceTargets) > 0 {
+	if len(ec.Errors) == 0 {
 		selected, err := merged.SelectedMarketplaceProfiles()
 		if err != nil {
 			ec.Errors = append(ec.Errors, err)
-		} else {
+		} else if len(ec.PlaceTargets) > 0 {
 			for _, targetID := range ec.PlaceTargets {
 				if _, ok := selected[targetID]; !ok {
 					ec.Errors = append(ec.Errors, fmt.Errorf(

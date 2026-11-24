@@ -34,6 +34,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
@@ -106,6 +107,8 @@ type ResolveOptions struct {
 	MarketplaceArtifactsFromCache bool
 	// ReportDeclaredHarnesses preserves the parsed target set for status output.
 	ReportDeclaredHarnesses bool
+	// EnablePlaceSync enables deployed-lock-backed place publication for headless sync.
+	EnablePlaceSync bool
 }
 
 type ResolveResult struct {
@@ -152,6 +155,9 @@ type ResolveResult struct {
 	// SelectedCollections are display-only collection roots that were
 	// selected but expanded into members in Resolved. Never materialize them.
 	SelectedCollections []resolver.ResolvedArtifact
+	placeTargets        []string
+	placeProfileReader  PlaceProfileReader
+	placeConfig         *config.Config
 }
 
 // DisplayArtifacts returns the materializable artifacts followed by the
@@ -178,6 +184,7 @@ type SyncResult struct {
 	ResolveResult
 	Report           *materialize.Report
 	PluginDeliveries []PluginDeliveryChoice
+	PlaceSync        PlaceSyncResult
 
 	// CatalogTrustErrors are the hard failures raised BEFORE materialization:
 	// config load/validation, catalog load, and resolve. They are the errors
@@ -216,6 +223,36 @@ func hccTargetsFromStrings(targets []string) []hcc.Target {
 		out[i] = hcc.Target(t)
 	}
 	return out
+}
+
+func marketplaceConfigViews(cfg *config.Config, enablePlaceSync bool, sourceFilter func(config.Source) bool) (*config.Config, *config.Config) {
+	if cfg == nil || (!enablePlaceSync && sourceFilter == nil) {
+		return cfg, cfg
+	}
+	compiled := *cfg
+	compiled.Marketplaces = nil
+	place := *cfg
+	place.Marketplaces = nil
+	for _, entry := range cfg.Marketplaces {
+		if sourceFilter != nil && !sourceFilter(entry.Source) {
+			continue
+		}
+		place.Marketplaces = append(place.Marketplaces, entry)
+		if !enablePlaceSync {
+			compiled.Marketplaces = append(compiled.Marketplaces, entry)
+			continue
+		}
+		hadResources := len(entry.Resources) > 0
+		entry.Resources = slices.DeleteFunc(slices.Clone(entry.Resources), func(pin config.MarketplaceResourcePin) bool {
+			_, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			return pin.Kind == nameutil.TargetProfileKind || scoped
+		})
+		if hadResources && len(entry.Resources) == 0 {
+			continue
+		}
+		compiled.Marketplaces = append(compiled.Marketplaces, entry)
+	}
+	return &compiled, &place
 }
 
 // targetHarnessSetFromEC returns the effective target harness set and its
@@ -457,6 +494,21 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			result.DeclaredMachineTargetSource = machineSource
 		}
 	}
+	var deployedIntent config.Intent
+	var deployedEvidence config.Evidence
+	var deployedEvidenceCaptured bool
+	loadEffectiveForResolve := func() (config.EffectiveConfig, transientOrganizationMarketplaceLockUse) {
+		var deployedCallback func(config.Intent, config.Evidence)
+		if opts.EnablePlaceSync {
+			deployedCallback = func(intent config.Intent, evidence config.Evidence) {
+				deployedIntent, deployedEvidence, deployedEvidenceCaptured = intent, evidence, true
+			}
+		}
+		return loadEffective(
+			ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy,
+			opts.BrowsingConfigReady, provisionalReady, intentReady, deployedCallback,
+		)
+	}
 	if useLoaders {
 		loaders := opts.Loaders
 		if loaders.Org == nil {
@@ -497,10 +549,10 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			Errors:       errs,
 		}
 		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady, intentReady)
+			ec, transientOrganizationMarketplaceLock = loadEffectiveForResolve()
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady, intentReady)
+		ec, transientOrganizationMarketplaceLock = loadEffectiveForResolve()
 	}
 
 	result.Diagnostics = ec.Diagnostics
@@ -526,6 +578,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
 		return result, releaseExactLease
+	}
+	if opts.EnablePlaceSync && len(ec.PlaceTargets) > 0 {
+		if !deployedEvidenceCaptured {
+			err := fmt.Errorf("deployed place lock evidence was not captured")
+			result.ConfigErrors = []error{err}
+			result.Errors = []error{err}
+			return result, releaseExactLease
+		}
+		result.placeTargets = append([]string(nil), ec.PlaceTargets...)
+		result.placeProfileReader = DeployedGitPlaceProfileReader(deployedIntent, deployedEvidence)
 	}
 	if opts.Gitignore {
 		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
@@ -701,22 +763,13 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			mpResolver = result.MarketplaceArtifactResolver
 		}
 	}
-	marketplaceCfg := loadedCfg
-	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
-		filtered := *loadedCfg
-		filtered.Marketplaces = make([]config.MarketplaceEntry, 0, len(loadedCfg.Marketplaces))
-		for _, entry := range loadedCfg.Marketplaces {
-			if opts.MarketplaceSourceFilter(entry.Source) {
-				filtered.Marketplaces = append(filtered.Marketplaces, entry)
-			}
-		}
-		marketplaceCfg = &filtered
+	marketplaceCfg, placeConfig := loadedCfg, loadedCfg
+	if loadedCfg != nil && (opts.EnablePlaceSync || opts.MarketplaceSourceFilter != nil) {
+		marketplaceCfg, placeConfig = marketplaceConfigViews(loadedCfg, opts.EnablePlaceSync, opts.MarketplaceSourceFilter)
 	}
+	result.placeConfig = placeConfig
 	var selectedCollections []resolver.ResolvedArtifact
-	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
-		marketplaceCfg,
-		catalog.EntriesByKey(loadResult.Catalogs),
-		result.LocalCfg,
+	resolveOptions := []resolver.ResolveOption{
 		resolver.WithResources(loadResult.ResourceCatalogs),
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithContext(ctx),
@@ -727,6 +780,12 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 		resolver.WithSelectedCollections(&selectedCollections),
 		resolver.WithImpliedPreview(&result.ImpliedPreview),
+	}
+	if len(ec.PlaceTargets) > 0 && len(result.MachineTargetHarnesses) == 0 {
+		resolveOptions = append(resolveOptions, resolver.WithNoMachineHarnesses())
+	}
+	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
+		marketplaceCfg, catalog.EntriesByKey(loadResult.Catalogs), result.LocalCfg, resolveOptions...,
 	)
 	for i := range resolved {
 		if resolved[i].Kind != ir.KindPlugin {
@@ -1085,6 +1144,21 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall, opts.marketplaceInstallSource); err != nil {
 			slog.Warn("Marketplace install refused after dependency resolution", "error", err)
 			result.addMaterializeError(err)
+			return result
+		}
+	}
+	if opts.EnablePlaceSync && len(resolved.placeTargets) > 0 {
+		placeResult, err := syncDeployedPlace(ctx, resolved, opts.Offline)
+		result.PlaceSync = placeResult
+		for _, identity := range placeResult.Pending {
+			result.Warnings = append(result.Warnings, fmt.Errorf(
+				"target.approval.required: target %s is pending local approval", identity.TargetID,
+			))
+		}
+		if err != nil {
+			wrapped := fmt.Errorf("sync deployed place targets: %w", err)
+			result.Errors = append(result.Errors, wrapped)
+			result.CatalogTrustErrors = append(result.CatalogTrustErrors, wrapped)
 			return result
 		}
 	}

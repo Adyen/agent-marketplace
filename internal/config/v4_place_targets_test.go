@@ -158,7 +158,7 @@ func TestV4MachinePlaceTargetSeparation(t *testing.T) {
 		fixture := newV4OnlyFixture(t)
 		v4OnlyWriteFixture(t, fixture.paths[UserPersonal], "apiVersion: agent-marketplace/v4\ntargets: [invented-app]\n")
 		intent := ReadIntent(t.Context(), LoadEffectiveOptions{RepoRoot: fixture.repo})
-		if !strings.Contains(strings.Join(errorStrings(intent.Errors), "\n"), "marketplace.profile.selection-invalid") {
+		if !strings.Contains(strings.Join(errorStrings(intent.Errors), "\n"), "v4.harness") {
 			t.Fatalf("ReadIntent errors = %v, want profile selection refusal", intent.Errors)
 		}
 		if !strings.Contains(strings.Join(errorStrings(intent.Errors), "\n"), "targets[0]") {
@@ -201,6 +201,26 @@ func TestV4MachinePlaceTargetSeparation(t *testing.T) {
 			"    include:\n", "    harnesses: [invented-app]\n    include:\n", 1)
 		if _, err := ParseV4([]byte(nested)); err == nil || !strings.Contains(err.Error(), "v4.harness") {
 			t.Fatalf("nested place target filter error = %v, want compiled-target refusal", err)
+		}
+	})
+
+	t.Run("scoped packages require a selected profile without enabled place targets", func(t *testing.T) {
+		fixture := newV4OnlyFixture(t)
+		v4OnlyWriteFixture(t, fixture.paths[UserPersonal], v4PlaceMarketplaceYAML)
+		intent := ReadIntent(t.Context(), LoadEffectiveOptions{RepoRoot: fixture.repo})
+		if len(intent.Errors) != 0 {
+			t.Fatalf("ReadIntent errors = %v", intent.Errors)
+		}
+		identity := v4PlaceTargetIdentity()
+		doc := v4VirtualProfileLock(t, targetprofile.Identity{}, &identity)
+		var evidence Evidence
+		evidence.RecordDeployedLock(UserPersonal, &doc, ConfigRead{})
+		effective := Bind(intent, evidence)
+		if len(effective.PlaceTargets) != 0 {
+			t.Fatalf("enabled place targets = %v, want none", effective.PlaceTargets)
+		}
+		if !strings.Contains(strings.Join(errorStrings(effective.Errors), "\n"), "marketplace.profile.deselected-package") {
+			t.Fatalf("Bind errors = %v, want scoped package selection error", effective.Errors)
 		}
 	})
 }

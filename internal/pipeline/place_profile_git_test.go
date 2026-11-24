@@ -275,6 +275,7 @@ func TestDeployedGitPlaceProfileReaderRefusesAmbiguousLocks(t *testing.T) {
 }
 
 type deployedPlaceGitProfileFixture struct {
+	repo         string
 	rawURL       string
 	origin       string
 	ref          string
@@ -327,6 +328,7 @@ func newDeployedGitPlaceProfileFixture(t *testing.T) deployedPlaceGitProfileFixt
 	}
 	ref := "refs/heads/main"
 	return deployedPlaceGitProfileFixture{
+		repo:   repo,
 		rawURL: rawURL, origin: origin, ref: ref, root: root, profile: profile,
 		identity: targetprofile.Identity{
 			TargetID: "invented-app", SourceID: gitPlaceProfileSourceID(origin, ref, root),

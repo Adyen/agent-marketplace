@@ -333,6 +333,13 @@ func WithMachineTargetHarnesses(targets []hcc.Target) ResolveOption {
 	}
 }
 
+// WithNoMachineHarnesses explicitly disables machine-scope harness output.
+func WithNoMachineHarnesses() ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.machineTargetHarnesses = []hcc.Target{}
+	}
+}
+
 // Remediable is an error that provides a user-facing remediation hint.
 type Remediable = remedy.Remediable
 
@@ -3137,7 +3144,7 @@ type scopeTargets struct {
 
 // forSource returns the target set for output selected by source.
 func (s scopeTargets) forSource(source config.Source) []hcc.Target {
-	if source.IsMachineScope() && len(s.machine) > 0 {
+	if source.IsMachineScope() && s.machine != nil {
 		return s.machine
 	}
 	return s.repository

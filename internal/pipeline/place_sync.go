@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -16,6 +18,47 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
+
+func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool) (PlaceSyncResult, error) {
+	if resolved.placeProfileReader == nil {
+		return PlaceSyncResult{}, fmt.Errorf("deployed place profile reader is unavailable")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return PlaceSyncResult{}, fmt.Errorf("resolve home for place sync: %w", err)
+	}
+	platform := runtime.GOOS
+	if platform == "darwin" {
+		platform = "macos"
+	}
+	if platform != "macos" && platform != "linux" {
+		return PlaceSyncResult{}, fmt.Errorf("target.approval.unsupported-platform: %q", platform)
+	}
+	xdgConfig := os.Getenv("XDG_CONFIG_HOME")
+	if !filepath.IsAbs(xdgConfig) {
+		xdgConfig = filepath.Join(home, ".config")
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return PlaceSyncResult{}, fmt.Errorf("resolve state for place sync: %w", err)
+	}
+	mode := resolver.MarketplaceResolveModeRefresh
+	if offline {
+		mode = resolver.MarketplaceResolveModeCachedNoFetch
+	}
+	cfg := resolved.placeConfig
+	if cfg == nil {
+		cfg = resolved.MergedCfg
+	}
+	return SyncPlaceUpserts(
+		ctx, cfg, resolved.placeTargets,
+		targetprofile.ApprovalEnvironment{
+			Platform: platform, Home: home, XDGConfig: xdgConfig,
+			CanonicalStateRoot: filepath.Dir(stateDir),
+		},
+		resolved.placeProfileReader, marketplace.NewResolver(), mode,
+	)
+}
 
 // PlaceSyncResult contains profiles awaiting approval and the independently
 // committed result for each target root.
