@@ -243,6 +243,7 @@ func (s *Server) capabilities() Capabilities {
 			return feature == CatalogProjectionV1Alpha1Feature
 		})
 	}
+	caps.Features = append(caps.Features, TargetProfilePlaceFeature)
 	return caps
 }
 
@@ -756,7 +757,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	kind := q.Get("kind")
 	_, _, scopedKind := nameutil.SplitPlaceKind(kind)
-	if kind != "" && !IsMarketplaceKind(kind) && (!allowPlace || !scopedKind) {
+	validPlaceKind := scopedKind || kind == nameutil.TargetProfileKind
+	if kind != "" && !IsMarketplaceKind(kind) && (!allowPlace || !validPlaceKind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -796,12 +798,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keep virtual profiles out of search and omit scoped rows from legacy requests before validation, totals, and pagination.
-	revs = slices.DeleteFunc(revs, func(rev store.AssessedResourceRevision) bool {
-		kind := rev.Coordinate.Kind
-		_, _, scoped := nameutil.SplitPlaceKind(kind)
-		return kind == nameutil.TargetProfileKind || (scoped && !allowPlace)
-	})
+	if !allowPlace {
+		revs = slices.DeleteFunc(revs, func(rev store.AssessedResourceRevision) bool {
+			return isPlaceKind(rev.Coordinate.Kind)
+		})
+	}
 
 	registries, err := s.registryIndex(r.Context())
 	if err != nil {
@@ -2042,7 +2043,7 @@ func validateManifestPayload(data []byte, digest string, limit int64) (bool, err
 			return false, fmt.Errorf("decode registry revision manifest: %w", err)
 		}
 		requiresPlace := slices.ContainsFunc(manifest.Resources, func(resource marketplaceartifact.RevisionResource) bool {
-			return isPlaceManifestKind(resource.Kind)
+			return isPlaceKind(resource.Kind)
 		})
 		if manifest.RevisionDigest != "" {
 			if manifest.RevisionDigest != digest {
@@ -2090,13 +2091,13 @@ func validateManifestPayload(data []byte, digest string, limit int64) (bool, err
 		return false, fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
 	}
 	isPlaceMember := func(member hccartifact.CollectionMemberEntry) bool {
-		return isPlaceManifestKind(member.Kind)
+		return isPlaceKind(member.Kind)
 	}
 	return slices.ContainsFunc(collection.Members, isPlaceMember) ||
 		slices.ContainsFunc(collection.Leaves, isPlaceMember), nil
 }
 
-func isPlaceManifestKind(kind string) bool {
+func isPlaceKind(kind string) bool {
 	_, _, scoped := nameutil.SplitPlaceKind(kind)
 	return scoped || kind == nameutil.TargetProfileKind
 }

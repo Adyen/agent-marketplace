@@ -33,11 +33,12 @@ func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 	server.cfg.Management.Mode = "file"
 	legacy := meta.rev
 	scoped := boundPlaceRevision(t, meta.rev)
-	virtual := meta.rev
-	virtual.Coordinate.Kind = nameutil.TargetProfileKind
-	virtual.Coordinate.Name = "invented-app"
-	virtual.Assessment.Coordinate = virtual.Coordinate
-	virtual.Occurrence.Coordinate = virtual.Coordinate
+	virtualRevision := meta.rev.ResourceRevision
+	virtualRevision.Coordinate.Kind = nameutil.TargetProfileKind
+	virtualRevision.Coordinate.Name = "invented-app"
+	virtualRevision.ArchiveDigest = ""
+	virtualRevision.ContentDigest = store.RevisionDigest("sha256:" + strings.Repeat("9", 64))
+	virtual := testAssessedRevision(t, virtualRevision, store.AssessmentDecisionAllow)
 	rows := []store.AssessedResourceRevision{legacy, scoped, virtual}
 	searchMeta := &placeSearchStore{availabilityRouteStore: meta, rows: rows}
 	server.meta = searchMeta
@@ -80,10 +81,11 @@ func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 		t.Fatalf("opted-in search status = %d: %s", response.Code, response.Body.String())
 	}
 	total, items := decode(response)
-	if total != 2 || len(items) != 2 ||
+	if total != 3 || len(items) != 3 ||
 		items[0].Kind != "invented-app/mod" || items[0].Name != "sample" ||
-		items[1].Kind != "mcpserver" || items[1].Name != "example" {
-		t.Fatalf("opted-in search total/items = %d/%+v, want scoped then mcpserver/example", total, items)
+		items[1].Kind != "mcpserver" || items[1].Name != "example" ||
+		items[2].Kind != nameutil.TargetProfileKind || items[2].Name != "invented-app" {
+		t.Fatalf("opted-in search total/items = %d/%+v, want invented-app/mod, mcpserver/example, target-profile/invented-app", total, items)
 	}
 	assertVary(response)
 
@@ -97,12 +99,26 @@ func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 	if total != 1 || len(items) != 1 || items[0].Kind != "invented-app/mod" || items[0].Name != "sample" {
 		t.Fatalf("scoped kind search total/items = %d/%+v, want invented-app/mod/sample", total, items)
 	}
-	for _, features := range [][]string{nil, {TargetProfilePlaceFeature, TargetProfilePlaceFeature}} {
-		response = search(scopedQuery, features...)
-		if response.Code != http.StatusBadRequest {
-			t.Fatalf("scoped kind search with features %q status = %d, want 400", features, response.Code)
+
+	targetProfileQuery := "/api/v1/search?kind=target-profile"
+	response = search(targetProfileQuery, TargetProfilePlaceFeature)
+	if response.Code != http.StatusOK {
+		t.Fatalf("target-profile search status = %d: %s", response.Code, response.Body.String())
+	}
+	assertVary(response)
+	total, items = decode(response)
+	if total != 1 || len(items) != 1 || items[0].Kind != nameutil.TargetProfileKind || items[0].Name != "invented-app" {
+		t.Fatalf("target-profile search total/items = %d/%+v, want target-profile/invented-app", total, items)
+	}
+
+	for _, query := range []string{scopedQuery, targetProfileQuery} {
+		for _, features := range [][]string{nil, {TargetProfilePlaceFeature, TargetProfilePlaceFeature}} {
+			response = search(query, features...)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("search for %q with features %q status = %d, want 400", query, features, response.Code)
+			}
+			assertVary(response)
 		}
-		assertVary(response)
 	}
 
 	malformed := scoped
@@ -126,6 +142,25 @@ func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 	total, items = decode(response)
 	if total != 1 || len(items) != 1 || items[0].Kind != "mcpserver" || items[0].Name != "example" {
 		t.Fatalf("legacy search total/items = %d/%+v, want mcpserver/example", total, items)
+	}
+
+	capabilities := httptest.NewRecorder()
+	server.handleCapabilities(capabilities, httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil))
+	if capabilities.Code != http.StatusOK {
+		t.Fatalf("capabilities status = %d: %s", capabilities.Code, capabilities.Body.String())
+	}
+	var advertised struct {
+		Features      []string `json:"features"`
+		ResourceKinds []string `json:"resource_kinds"`
+	}
+	if err := json.NewDecoder(capabilities.Body).Decode(&advertised); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(advertised.Features, TargetProfilePlaceFeature) {
+		t.Fatalf("capability features = %v, want %q", advertised.Features, TargetProfilePlaceFeature)
+	}
+	if want := []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"}; !slices.Equal(advertised.ResourceKinds, want) {
+		t.Fatalf("capability resource kinds = %v, want %v", advertised.ResourceKinds, want)
 	}
 }
 
