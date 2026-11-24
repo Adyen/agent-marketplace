@@ -582,7 +582,8 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	doc := &v4Document{path: file, sources: map[string]V4Source{}, groups: map[string]V4ResourceGroup{}}
-	if err := decodeV4AuxiliaryFields(raw, doc); err != nil {
+	allowPlaceIDs := len(kinds) > 0 && (kinds[0] == userLayer || kinds[0] == organizationLayer)
+	if err := decodeV4AuxiliaryFields(raw, doc, allowPlaceIDs); err != nil {
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	if len(kinds) > 0 {
@@ -757,7 +758,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 	return nil
 }
 
-func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
+func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document, allowPlaceIDs bool) error {
 	decode := func(key string, dst any) error {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
@@ -788,9 +789,10 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 			return err
 		}
 		for i, harness := range doc.harnesses {
-			if !target.IsValid(harness) {
-				return v4err("v4.harness", fmt.Sprintf("%s[%d]", listKey, i), n.Line, "unknown target %q", harness)
+			if target.IsValid(harness) || allowPlaceIDs && nameutil.IsTargetIdentifier(harness) {
+				continue
 			}
+			return v4err("v4.harness", fmt.Sprintf("%s[%d]", listKey, i), n.Line, "unknown target %q", harness)
 		}
 	}
 	for _, auxiliary := range []struct {
