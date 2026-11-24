@@ -14,29 +14,9 @@ import (
 func TestScopedExactRevisionRequiresOptInAndBinding(t *testing.T) {
 	server, meta, _, _, _ := managedRouteFixture(t)
 	server.cfg.Management.Mode = "file"
-	coordinate := store.ResourceCoordinate{Marketplace: "market", Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
-	revision := meta.rev
-	revision.Coordinate = coordinate
-	revision.Occurrence.Coordinate = coordinate
-	assessment := revision.Assessment
-	assessment.Coordinate = coordinate
-	assessment.ContentDigest = revision.ContentDigest
-	profileDigest := "sha256:" + strings.Repeat("b", 64)
-	binding := &targetprofile.Binding{
-		PackageContentDigest:  string(revision.ContentDigest),
-		DeliveryMappingDigest: "sha256:" + strings.Repeat("a", 64),
-		ProfileDigest:         profileDigest,
-		ProfileIdentity: targetprofile.Identity{
-			TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: profileDigest,
-		},
-	}
-	assessment.HostPackageIdentity = binding
-	assessment.AssessmentDigest = ""
-	var err error
-	revision.Assessment, err = store.FinalizeResourceAssessment(assessment)
-	if err != nil {
-		t.Fatalf("FinalizeResourceAssessment: %v", err)
-	}
+	revision := boundPlaceRevision(t, meta.rev)
+	coordinate := revision.Coordinate
+	binding := revision.Assessment.HostPackageIdentity
 	meta.rev = revision
 	path := "/api/v1/resources/source/invented-app%2Fmod/sample/revisions/" + string(revision.ContentDigest)
 	request := func(values ...string) *http.Request {
@@ -93,4 +73,30 @@ func TestScopedExactRevisionRequiresOptInAndBinding(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("malformed stored binding status = %d, want 500: %s", response.Code, response.Body.String())
 	}
+}
+
+func boundPlaceRevision(t *testing.T, revision store.AssessedResourceRevision) store.AssessedResourceRevision {
+	t.Helper()
+	coordinate := store.ResourceCoordinate{Marketplace: "market", Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
+	revision.Coordinate = coordinate
+	revision.Occurrence.Coordinate = coordinate
+	assessment := revision.Assessment
+	assessment.Coordinate = coordinate
+	assessment.ContentDigest = revision.ContentDigest
+	profileDigest := "sha256:" + strings.Repeat("b", 64)
+	assessment.HostPackageIdentity = &targetprofile.Binding{
+		PackageContentDigest:  string(revision.ContentDigest),
+		DeliveryMappingDigest: "sha256:" + strings.Repeat("a", 64),
+		ProfileDigest:         profileDigest,
+		ProfileIdentity: targetprofile.Identity{
+			TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: profileDigest,
+		},
+	}
+	assessment.AssessmentDigest = ""
+	var err error
+	revision.Assessment, err = store.FinalizeResourceAssessment(assessment)
+	if err != nil {
+		t.Fatalf("FinalizeResourceAssessment: %v", err)
+	}
+	return revision
 }

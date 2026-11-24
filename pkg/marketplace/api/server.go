@@ -750,9 +750,12 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", placeFeaturesHeader)
+	allowPlace := placeRequested(r)
 	q := r.URL.Query()
 	kind := q.Get("kind")
-	if kind != "" && !IsMarketplaceKind(kind) {
+	_, _, scopedKind := nameutil.SplitPlaceKind(kind)
+	if kind != "" && !IsMarketplaceKind(kind) && (!allowPlace || !scopedKind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -792,11 +795,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove place rows before legacy validation, totals, and pagination.
+	// Keep virtual profiles out of search and omit scoped rows from legacy requests before validation, totals, and pagination.
 	revs = slices.DeleteFunc(revs, func(rev store.AssessedResourceRevision) bool {
 		kind := rev.Coordinate.Kind
 		_, _, scoped := nameutil.SplitPlaceKind(kind)
-		return scoped || kind == nameutil.TargetProfileKind
+		return kind == nameutil.TargetProfileKind || (scoped && !allowPlace)
 	})
 
 	registries, err := s.registryIndex(r.Context())
@@ -807,7 +810,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, rev := range revs {
-		if err := validatePublicResourceRevision(rev); err != nil {
+		if err := validateResourceRevision(rev, allowPlace); err != nil {
 			slog.Error("search returned invalid resource revision", "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
@@ -1125,8 +1128,7 @@ func resourceCoordinateAllowed(r *http.Request, kind, name string) bool {
 	if IsMarketplaceKind(kind) {
 		return true
 	}
-	values := r.Header.Values(placeFeaturesHeader)
-	if len(values) != 1 || values[0] != TargetProfilePlaceFeature {
+	if !placeRequested(r) {
 		return false
 	}
 	if kind == nameutil.TargetProfileKind {
@@ -1134,6 +1136,11 @@ func resourceCoordinateAllowed(r *http.Request, kind, name string) bool {
 	}
 	_, _, scoped := nameutil.SplitPlaceKind(kind)
 	return scoped && nameutil.IsPlacePackageName(name)
+}
+
+func placeRequested(r *http.Request) bool {
+	values := r.Header.Values(placeFeaturesHeader)
+	return len(values) == 1 && values[0] == TargetProfilePlaceFeature
 }
 
 func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
