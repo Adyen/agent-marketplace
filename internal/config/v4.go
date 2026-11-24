@@ -92,7 +92,7 @@ type V4ResourceRequest struct {
 }
 
 func (r V4ResourceRequest) MarketplaceKind() string {
-	if _, _, scoped := nameutil.SplitPlaceKind(r.Kind); scoped {
+	if _, _, scoped := nameutil.SplitPlaceKind(r.Kind); scoped || r.Kind == nameutil.TargetProfileKind {
 		return r.Kind
 	}
 	return api.FromIR(v4KindToIR(r.Kind))
@@ -1352,8 +1352,9 @@ func parseV4Includes(source string, n *yaml.Node, file string) ([]V4ResourceRequ
 			return nil, v4err("v4.duplicate-request", p, item.Line, "duplicate locator %q in one include list", locator)
 		}
 		seen[locator] = true
-		if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped && opts.HasAs {
-			return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for scoped place packages")
+		_, _, scoped := nameutil.SplitPlaceKind(kind)
+		if (scoped || kind == nameutil.TargetProfileKind) && opts.HasAs {
+			return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for scoped place packages and target profiles")
 		}
 		if kind == "plugin" {
 			if opts.HasAs {
@@ -1492,6 +1493,10 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 		kind = scopedKind
 	} else if strings.Contains(kind, "%") {
 		return "", "", "", errors.New("marketplace.locator.invalid-encoding: kind requires a single uppercase %2F escape")
+	} else if kind == nameutil.TargetProfileKind {
+		if !nameutil.IsTargetIdentifier(name) {
+			return "", "", "", errors.New("marketplace.locator.invalid-name: invalid target-profile name")
+		}
 	} else if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
 		return "", "", "", errors.New("has invalid kind or resource name")
 	}
@@ -2119,8 +2124,9 @@ func normalizeV4Tree(c *V4Config) error {
 		}
 		formatSource := src.Format != ""
 		for i := range g.Include {
-			if _, _, scoped := nameutil.SplitPlaceKind(g.Include[i].Kind); scoped && src.Kind != V4SourceMarketplace {
-				return v4err("v4.locator", "resources."+name+".include", 0, "scoped place packages require a Marketplace source")
+			_, _, scoped := nameutil.SplitPlaceKind(g.Include[i].Kind)
+			if (scoped || g.Include[i].Kind == nameutil.TargetProfileKind) && src.Kind != V4SourceMarketplace {
+				return v4err("v4.locator", "resources."+name+".include", 0, "scoped place packages and target profiles require a Marketplace source")
 			}
 			if g.Include[i].Kind == "plugin" && !formatSource {
 				return v4err("v4.locator", "resources."+name+".include", 0, "plugin requests are only valid for sources declaring a format")
@@ -2328,8 +2334,9 @@ func (c *V4Config) validateScopedMarketplaceLayer(kind layerKind) error {
 	sort.Strings(groupNames)
 	for _, name := range groupNames {
 		for _, request := range c.Groups[name].Include {
-			if _, _, scoped := nameutil.SplitPlaceKind(request.Kind); scoped {
-				return v4RequestError("marketplace.profile.invalid-scope", request, "scoped package %s requires user or organization scope", request.Locator)
+			_, _, scoped := nameutil.SplitPlaceKind(request.Kind)
+			if scoped || request.Kind == nameutil.TargetProfileKind {
+				return v4RequestError("marketplace.profile.invalid-scope", request, "place selection %s requires user or organization scope", request.Locator)
 			}
 		}
 	}
@@ -2673,6 +2680,9 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		}
 		if r.HostPackageIdentity != nil {
 			pin.LockHostPackageIdentity = *r.HostPackageIdentity
+		}
+		if r.ProfileIdentity != nil {
+			pin.LockProfileIdentity = *r.ProfileIdentity
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
 		var requiresEdges []MarketplaceRequirementEdge
