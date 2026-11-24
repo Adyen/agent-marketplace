@@ -342,6 +342,8 @@ With `--check`, an in-sync result prints no verdict and returns exit status 0. D
 
 A hard configuration, registry-load, or resolution error stops `--check` before it predicts output changes. It reports the refusal without treating an unloadable registry's installed hooks as deselected or counting them as drift. Warning-only checks still report genuine pending changes.
 
+For enabled Git-backed place targets with deployed locks, `--check` reads only cached profile and package evidence. Missing approval is a warning; an approved target with pending changes reports `target.place.out-of-sync` and exits nonzero. The check does not write approval receipts, publish packages, or run host commands.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`

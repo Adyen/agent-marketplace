@@ -533,6 +533,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
 		ConfigLoadMode: configLoadMode, MarketplaceLockEvidenceStrict: true,
+		EnablePlaceSync: true,
 	}
 	resolveOpts.RequireTargetSet = true
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
@@ -546,6 +547,11 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	resolvedResult := inspection.ResolveResult
 	report := inspection.Report
 	matErr := inspection.MaterializeErr
+	var placeCheck pipeline.PlaceCheckResult
+	var placeCheckErr error
+	if len(resolvedResult.Errors) == 0 {
+		placeCheck, placeCheckErr = pipeline.CheckDeployedPlace(ctx, resolvedResult)
+	}
 
 	// Surface every warning the run produced, not just the ineffective-subdir
 	// ones. --check used to recompute the ancestor-materialized exclude warnings
@@ -566,6 +572,11 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		}
 	}
 	allWarnings := slices.Concat(lockWarnings, inspectionWarnings)
+	for _, identity := range placeCheck.Pending {
+		allWarnings = append(allWarnings, fmt.Errorf(
+			"target.approval.required: target %s is pending local approval", identity.TargetID,
+		))
+	}
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err
@@ -585,6 +596,14 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		return err
 	}
 	checkErrs := slices.Clone(resolvedResult.Errors)
+	if placeCheckErr != nil {
+		checkErrs = append(checkErrs, placeCheckErr)
+	}
+	for _, targetID := range placeCheck.Drift {
+		checkErrs = append(checkErrs, fmt.Errorf(
+			"target.place.out-of-sync: target %s has pending place changes", targetID,
+		))
+	}
 	if matErr != nil {
 		checkErrs = append(checkErrs, matErr)
 	}

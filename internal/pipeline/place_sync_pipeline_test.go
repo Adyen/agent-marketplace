@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -299,6 +300,24 @@ resources:
 	}
 	pending := Sync(ctx, opts)
 	assertPending(pending)
+	checkResolved, releaseCheck := ResolveWithExactLockLease(ctx, opts)
+	defer releaseCheck()
+	if len(checkResolved.Errors) != 0 {
+		t.Fatalf("resolve for place check = %v", checkResolved.Errors)
+	}
+	pendingCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	if err != nil || len(pendingCheck.Pending) != 1 || pendingCheck.Pending[0] != gitFixture.identity ||
+		len(pendingCheck.Drift) != 0 {
+		t.Fatalf("place check before approval = %#v, err=%v", pendingCheck, err)
+	}
+	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("pending place check changed target root: %v, %v", entries, err)
+	}
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "ownership"))
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "packages"))
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("pending place check issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
 	if !containsResolvedSource(pending.Resolved, config.RepoCommitted, "review") || pending.Report == nil {
 		t.Fatalf("compiled directory source did not materialize independently: resolved=%#v report=%#v", pending.Resolved, pending.Report)
 	}
@@ -340,6 +359,19 @@ resources:
 	if err := targetprofile.RecordApproval(binding); err != nil {
 		t.Fatalf("record local approval receipt: %v", err)
 	}
+	approvedCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	if err != nil || len(approvedCheck.Pending) != 0 || len(approvedCheck.Drift) != 1 ||
+		approvedCheck.Drift[0] != gitFixture.identity.TargetID {
+		t.Fatalf("approved pre-install place check = %#v, err=%v", approvedCheck, err)
+	}
+	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("approved place check changed target root: %v, %v", entries, err)
+	}
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "ownership"))
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "packages"))
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("approved place check issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
 
 	approved := Sync(ctx, opts)
 	if len(approved.Errors) != 0 {
@@ -355,6 +387,17 @@ resources:
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner, _ := openPlacePublishOwnership(t, placeAdmissionFixture{binding: binding})
+	ownershipPath := owner.StateFile()
+	ownershipBefore, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownershipInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageTreeBefore := snapshotPlaceCheckTree(t, filepath.Join(stateRoot, "packages"))
 	unchanged := Sync(ctx, opts)
 	if len(unchanged.Errors) != 0 || len(unchanged.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
 		t.Fatalf("second offline Sync = %#v", unchanged.PlaceSync)
@@ -363,9 +406,79 @@ resources:
 	if err != nil || !info.ModTime().Equal(after.ModTime()) {
 		t.Fatalf("repeat offline Sync changed place file timestamp: before=%v after=%v err=%v", info, after, err)
 	}
+	cleanCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	ownershipAfter, readErr := os.ReadFile(ownershipPath)
+	ownershipAfterInfo, statErr := os.Stat(ownershipPath)
+	targetAfterCheck, targetStatErr := os.Stat(targetFile)
+	packageTreeAfter := snapshotPlaceCheckTree(t, filepath.Join(stateRoot, "packages"))
+	if err != nil || len(cleanCheck.Pending) != 0 || len(cleanCheck.Drift) != 0 || readErr != nil || statErr != nil ||
+		targetStatErr != nil || !bytes.Equal(ownershipBefore, ownershipAfter) ||
+		!ownershipInfo.ModTime().Equal(ownershipAfterInfo.ModTime()) ||
+		!info.ModTime().Equal(targetAfterCheck.ModTime()) || !reflect.DeepEqual(packageTreeBefore, packageTreeAfter) {
+		t.Fatalf("clean place check changed installed state: check=%#v err=%v read=%v stat=%v targetStat=%v", cleanCheck, err, readErr, statErr, targetStatErr)
+	}
+	assertPlacePublishFile(t, targetFile, files[0].Bytes, files[0].Mode)
+	tampered := []byte("operator edit remains untouched\n")
+	if err := os.WriteFile(targetFile, tampered, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	tamperedInfo, err := os.Stat(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckDeployedPlace(ctx, checkResolved); err == nil {
+		t.Fatal("place check accepted a tampered owned file")
+	}
+	tamperedAfter, err := os.ReadFile(targetFile)
+	tamperedAfterInfo, statErr := os.Stat(targetFile)
+	stateAfterConflict, readErr := os.ReadFile(ownershipPath)
+	if err != nil || statErr != nil || readErr != nil || !bytes.Equal(tamperedAfter, tampered) ||
+		!tamperedInfo.ModTime().Equal(tamperedAfterInfo.ModTime()) || !bytes.Equal(ownershipBefore, stateAfterConflict) {
+		t.Fatalf("conflict check changed tampered installation: read=%v stat=%v state=%v", err, statErr, readErr)
+	}
+	if err := os.WriteFile(targetFile, files[0].Bytes, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
 	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
 		t.Fatalf("offline approved Sync issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
 	}
+}
+
+type placeCheckTreeEntry struct {
+	bytes   []byte
+	mode    os.FileMode
+	modTime time.Time
+}
+
+func snapshotPlaceCheckTree(t *testing.T, root string) map[string]placeCheckTreeEntry {
+	t.Helper()
+	snapshot := make(map[string]placeCheckTreeEntry)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		var data []byte
+		if !entry.IsDir() {
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		snapshot[relative] = placeCheckTreeEntry{bytes: data, mode: info.Mode(), modTime: info.ModTime()}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot place check tree %s: %v", root, err)
+	}
+	return snapshot
 }
 
 func deployedPlaceTestGitRoot(t *testing.T, ctx context.Context, fixture deployedPlaceGitProfileFixture) lockfile.GitRoot {

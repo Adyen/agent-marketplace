@@ -71,6 +71,13 @@ type PlaceSyncResult struct {
 	Committed map[string]dependencytxn.PlaceResult
 }
 
+// PlaceCheckResult reports pending approval and target IDs whose place plan
+// would change their installed projection.
+type PlaceCheckResult struct {
+	Pending []targetprofile.Identity
+	Drift   []string
+}
+
 type placeSyncGroup struct {
 	identity targetprofile.Identity
 	binding  targetprofile.ApprovalBinding
@@ -105,13 +112,32 @@ func SyncPlaceUpserts(
 		Committed: make(map[string]dependencytxn.PlaceResult),
 	}
 
+	groups, err := buildPlaceSyncGroups(admission)
+	if err != nil {
+		return result, err
+	}
+	for _, group := range groups {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		committed, err := CommitPlaceUpserts(ctx, group.binding, group.profile, environment, group.packages)
+		if err != nil {
+			return result, fmt.Errorf("commit place upserts for target %s: %w", group.identity.TargetID, err)
+		}
+		result.Committed[group.identity.TargetID] = committed
+	}
+	slog.Info("place sync completed", "pending_profiles", len(result.Pending), "committed_targets", len(result.Committed))
+	return result, nil
+}
+
+func buildPlaceSyncGroups(admission PlaceAdmission) ([]*placeSyncGroup, error) {
 	groupsByIdentity := make(map[targetprofile.Identity]*placeSyncGroup)
 	for _, pkg := range admission.Packages {
 		identity := pkg.Pin.LockHostPackageIdentity.ProfileIdentity
 		approval, approved := admission.Approvals[identity]
 		profile, profileLoaded := admission.profiles[identity]
 		if !approved || !profileLoaded || len(profile) == 0 || approval.Profile != identity {
-			return result, fmt.Errorf("target %s package is missing its admitted profile or approval", identity.TargetID)
+			return nil, fmt.Errorf("target %s package is missing its admitted profile or approval", identity.TargetID)
 		}
 		group := groupsByIdentity[identity]
 		if group == nil {
@@ -136,31 +162,85 @@ func SyncPlaceUpserts(
 		for j := i + 1; j < len(groups); j++ {
 			overlap, err := placeSyncRootsOverlap(groups[i].binding.CanonicalRoot, groups[j].binding.CanonicalRoot)
 			if err != nil {
-				return result, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"check target roots for %s and %s: %w",
 					groups[i].identity.TargetID, groups[j].identity.TargetID, err,
 				)
 			}
 			if overlap {
-				return result, fmt.Errorf(
+				return nil, fmt.Errorf(
 					"target roots for %s and %s overlap",
 					groups[i].identity.TargetID, groups[j].identity.TargetID,
 				)
 			}
 		}
 	}
+	return groups, nil
+}
 
+// CheckDeployedPlace prepares the same deployed place inputs as sync but never
+// publishes package generations or target files.
+func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result PlaceCheckResult, retErr error) {
+	slog.Debug("deployed place check started", "enabled_targets", len(resolved.placeTargets))
+	defer func() {
+		slog.Debug("deployed place check completed",
+			"pending_profiles", len(result.Pending), "drift_targets", len(result.Drift),
+			"error", retErr != nil,
+		)
+	}()
+	if len(resolved.placeTargets) == 0 {
+		return result, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if len(resolved.Errors) > 0 {
+		return result, fmt.Errorf("resolve errors block deployed place check: %w", errors.Join(resolved.Errors...))
+	}
+	if resolved.placeProfileReader == nil {
+		return result, fmt.Errorf("deployed place profile reader is unavailable")
+	}
+	environment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		return result, err
+	}
+	cfg := resolved.placeConfig
+	if cfg == nil {
+		cfg = resolved.MergedCfg
+	}
+	if cfg == nil {
+		return result, fmt.Errorf("deployed place config is unavailable")
+	}
+	admission, err := PreparePlaceAdmission(
+		ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader,
+		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch,
+	)
+	if err != nil {
+		return result, fmt.Errorf("prepare deployed place check: %w", err)
+	}
+	result.Pending = append([]targetprofile.Identity(nil), admission.Pending...)
+	sort.Slice(result.Pending, func(i, j int) bool {
+		return result.Pending[i].TargetID < result.Pending[j].TargetID
+	})
+	groups, err := buildPlaceSyncGroups(admission)
+	if err != nil {
+		return result, err
+	}
 	for _, group := range groups {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		committed, err := CommitPlaceUpserts(ctx, group.binding, group.profile, environment, group.packages)
+		prepared, err := preparePlaceUpserts(
+			ctx, group.binding, group.profile, environment, group.packages,
+		)
 		if err != nil {
-			return result, fmt.Errorf("commit place upserts for target %s: %w", group.identity.TargetID, err)
+			return result, fmt.Errorf("check place upserts for target %s: %w", group.identity.TargetID, err)
 		}
-		result.Committed[group.identity.TargetID] = committed
+		if prepared.changed {
+			result.Drift = append(result.Drift, group.identity.TargetID)
+		}
 	}
-	slog.Info("place sync completed", "pending_profiles", len(result.Pending), "committed_targets", len(result.Committed))
+	sort.Strings(result.Drift)
 	return result, nil
 }
 

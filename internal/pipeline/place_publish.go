@@ -31,6 +31,14 @@ type placeUpsert struct {
 	sourceFiles map[string]targetprofile.PackageFile
 }
 
+type preparedPlaceUpserts struct {
+	profile  targetprofile.Profile
+	stateDir string
+	upserts  map[string]placeUpsert
+	plan     dependencytxn.PlacePlan
+	changed  bool
+}
+
 // CommitPlaceUpserts publishes approved locked place packages without pruning
 // packages or files that are absent from the input set.
 func CommitPlaceUpserts(
@@ -46,55 +54,107 @@ func CommitPlaceUpserts(
 			slog.Warn("place upsert transaction failed", "target_id", binding.Profile.TargetID, "error", retErr)
 		}
 	}()
-	if err := ctx.Err(); err != nil {
+	prepared, err := preparePlaceUpserts(ctx, binding, profileBytes, environment, packages)
+	if err != nil {
 		return dependencytxn.PlaceResult{}, err
+	}
+	if !prepared.changed {
+		return dependencytxn.PlaceResult{}, nil
+	}
+	err = packagegen.WithPackagesLock(ctx, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := checkCurrentPlaceApproval(binding, prepared.profile, environment); err != nil {
+			return err
+		}
+		if err := dependencytxn.CheckPending(prepared.stateDir); err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(prepared.upserts))
+		for id := range prepared.upserts {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			upsert := prepared.upserts[id]
+			generation, err := packagegen.PublishPlaceUnderPackagesLock(upsert.input)
+			if err != nil {
+				return fmt.Errorf("publish place package generation %s/%s: %w", upsert.owner.Kind, upsert.owner.Name, err)
+			}
+			if generation != upsert.generation {
+				return fmt.Errorf("place package generation changed during publication")
+			}
+		}
+		var err error
+		result, err = dependencytxn.CommitPlace(ctx, prepared.stateDir, prepared.plan)
+		return err
+	})
+	if err != nil {
+		return dependencytxn.PlaceResult{}, err
+	}
+	slog.Info("place upsert transaction committed", "target_id", binding.Profile.TargetID, "packages", len(prepared.upserts), "changed_paths", len(result.Changed))
+	return result, nil
+}
+
+func preparePlaceUpserts(
+	ctx context.Context,
+	binding targetprofile.ApprovalBinding,
+	profileBytes []byte,
+	environment targetprofile.ApprovalEnvironment,
+	packages []marketplace.ResolvedPlacePackage,
+) (prepared preparedPlaceUpserts, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return prepared, err
 	}
 	profileBytes = append([]byte(nil), profileBytes...)
 	profile, err := targetprofile.Parse(profileBytes, binding.Profile)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("target %s profile validation: %w", binding.Profile.TargetID, err)
+		return prepared, fmt.Errorf("target %s profile validation: %w", binding.Profile.TargetID, err)
 	}
 	if err := checkCurrentPlaceApproval(binding, profile, environment); err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return prepared, err
 	}
 	stateDir, err := dependencytxn.StateDir()
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("resolve place transaction state: %w", err)
+		return prepared, fmt.Errorf("resolve place transaction state: %w", err)
 	}
 	stateRoot := filepath.Dir(stateDir)
 	if stateRoot != binding.CanonicalStateRoot {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.state-root-mismatch: transaction state root %q differs from approved state root %q", stateRoot, binding.CanonicalStateRoot)
+		return prepared, fmt.Errorf("target.approval.state-root-mismatch: transaction state root %q differs from approved state root %q", stateRoot, binding.CanonicalStateRoot)
 	}
+	prepared.profile = profile
+	prepared.stateDir = stateDir
 	if len(packages) == 0 {
-		return dependencytxn.PlaceResult{}, nil
+		return prepared, nil
 	}
 	if err := dependencytxn.CheckPending(stateDir); err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return prepared, err
 	}
 	packages = cloneResolvedPlacePackages(packages)
 
 	root, err := fsboundary.OpenDir(binding.CanonicalRoot)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("open approved place root: %w", err)
+		return prepared, fmt.Errorf("open approved place root: %w", err)
 	}
-	defer func() { _ = root.Close() }()
+	defer func() { retErr = errors.Join(retErr, root.Close()) }()
 	if root.Path() != binding.CanonicalRoot {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.root-mismatch: approved root is no longer canonical")
+		return prepared, fmt.Errorf("target.approval.root-mismatch: approved root is no longer canonical")
 	}
 	ownerStore, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("open place ownership state: %w", err)
+		return prepared, fmt.Errorf("open place ownership state: %w", err)
 	}
 	if ownerStore.CanonicalRoot() != binding.CanonicalRoot {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("target.approval.root-mismatch: ownership root differs from approval")
+		return prepared, fmt.Errorf("target.approval.root-mismatch: ownership root differs from approval")
 	}
 	snapshot, err := ownerStore.SnapshotState()
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("read place ownership state: %w", err)
+		return prepared, fmt.Errorf("read place ownership state: %w", err)
 	}
 	current, err := ownerStore.PlaceFromSnapshot(snapshot)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("read place ownership projection: %w", err)
+		return prepared, fmt.Errorf("read place ownership projection: %w", err)
 	}
 	current = normalizePlaceProjection(current)
 
@@ -102,10 +162,10 @@ func CommitPlaceUpserts(
 	for _, resolved := range packages {
 		upsert, err := planPlaceUpsert(binding, profile, stateRoot, resolved)
 		if err != nil {
-			return dependencytxn.PlaceResult{}, err
+			return prepared, err
 		}
 		if _, duplicate := upserts[upsert.owner.ID]; duplicate {
-			return dependencytxn.PlaceResult{}, fmt.Errorf("duplicate place package upsert %q", upsert.owner.ID)
+			return prepared, fmt.Errorf("duplicate place package upsert %q", upsert.owner.ID)
 		}
 		upserts[upsert.owner.ID] = upsert
 	}
@@ -128,80 +188,49 @@ func CommitPlaceUpserts(
 
 	observed, err := observePlaceProjection(root, current, desiredPackages)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return prepared, err
 	}
 	plan, err := place.BuildPlan(placeProjectionPackages(current), desiredPackages, observed)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("plan place upserts: %w", err)
+		return prepared, fmt.Errorf("plan place upserts: %w", err)
 	}
 	if len(plan.Refused) != 0 {
 		refusal := plan.Refused[0]
-		return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert refused at %s: %s", refusal.Path, refusal.Reason)
+		return prepared, fmt.Errorf("place upsert refused at %s: %s", refusal.Path, refusal.Reason)
 	}
 	if len(plan.Removes) != 0 || len(plan.Ceded) != 0 {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert plan contains unsupported removals")
+		return prepared, fmt.Errorf("place upsert plan contains unsupported removals")
 	}
 
 	nextProjection := ownership.PlaceProjection{Directories: append([]dependencytxn.PlaceDirectory(nil), current.Directories...)}
 	for _, pkg := range plan.Next {
 		ownerPkg, ok := ownerByID[pkg.ID]
 		if !ok {
-			return dependencytxn.PlaceResult{}, fmt.Errorf("place upsert plan lost package ownership %q", pkg.ID)
+			return prepared, fmt.Errorf("place upsert plan lost package ownership %q", pkg.ID)
 		}
 		nextProjection.Packages = append(nextProjection.Packages, ownerPkg)
 	}
 	nextProjection = normalizePlaceProjection(nextProjection)
 	if len(plan.Writes) == 0 && reflect.DeepEqual(current, nextProjection) {
 		slog.Debug("place upsert transaction is already current", "target_id", binding.Profile.TargetID, "packages", len(upserts))
-		return dependencytxn.PlaceResult{}, nil
+		return prepared, nil
 	}
 	ownershipFile, err := ownerStore.PreparePlace(snapshot, nextProjection)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, fmt.Errorf("prepare place ownership state: %w", err)
+		return prepared, fmt.Errorf("prepare place ownership state: %w", err)
 	}
 	writes, err := dependencyPlaceWrites(plan.Writes, upserts)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return prepared, err
 	}
 	placePlan := dependencytxn.PlacePlan{
 		Root: binding.CanonicalRoot, RootIdentity: root.Identity(),
 		Directories: placeWriteDirectories(writes), Writes: writes, Ownership: ownershipFile,
 	}
-
-	err = packagegen.WithPackagesLock(ctx, func() error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := checkCurrentPlaceApproval(binding, profile, environment); err != nil {
-			return err
-		}
-		if err := dependencytxn.CheckPending(stateDir); err != nil {
-			return err
-		}
-		ids := make([]string, 0, len(upserts))
-		for id := range upserts {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			upsert := upserts[id]
-			generation, err := packagegen.PublishPlaceUnderPackagesLock(upsert.input)
-			if err != nil {
-				return fmt.Errorf("publish place package generation %s/%s: %w", upsert.owner.Kind, upsert.owner.Name, err)
-			}
-			if generation != upsert.generation {
-				return fmt.Errorf("place package generation changed during publication")
-			}
-		}
-		var err error
-		result, err = dependencytxn.CommitPlace(ctx, stateDir, placePlan)
-		return err
-	})
-	if err != nil {
-		return dependencytxn.PlaceResult{}, err
-	}
-	slog.Info("place upsert transaction committed", "target_id", binding.Profile.TargetID, "packages", len(upserts), "changed_paths", len(result.Changed))
-	return result, nil
+	prepared.upserts = upserts
+	prepared.plan = placePlan
+	prepared.changed = true
+	return prepared, nil
 }
 
 func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) error {

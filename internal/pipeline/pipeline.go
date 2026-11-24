@@ -107,7 +107,8 @@ type ResolveOptions struct {
 	MarketplaceArtifactsFromCache bool
 	// ReportDeclaredHarnesses preserves the parsed target set for status output.
 	ReportDeclaredHarnesses bool
-	// EnablePlaceSync enables deployed-lock-backed place publication for headless sync.
+	// EnablePlaceSync enables deployed-lock-backed place input capture for
+	// headless sync and sync --check resolution.
 	EnablePlaceSync bool
 }
 
