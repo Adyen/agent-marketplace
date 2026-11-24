@@ -42,6 +42,7 @@ const defaultServerVersion = "dev"
 
 // TargetProfilePlaceFeature is the opt-in feature token for place resource routes.
 const TargetProfilePlaceFeature = "target-profile-place-v1"
+const placeFeaturesHeader = "X-Agent-Marketplace-Features"
 
 type ServerOption func(*Server)
 
@@ -1041,6 +1042,12 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid resource path")
 		return
 	}
+	if len(parts) >= 2 {
+		_, _, scoped := nameutil.SplitPlaceKind(parts[1])
+		if scoped || parts[1] == nameutil.TargetProfileKind {
+			w.Header().Add("Vary", placeFeaturesHeader)
+		}
+	}
 
 	switch len(parts) {
 	case 3:
@@ -1118,7 +1125,7 @@ func resourceCoordinateAllowed(r *http.Request, kind, name string) bool {
 	if IsMarketplaceKind(kind) {
 		return true
 	}
-	values := r.Header.Values("X-Agent-Marketplace-Features")
+	values := r.Header.Values(placeFeaturesHeader)
 	if len(values) != 1 || values[0] != TargetProfilePlaceFeature {
 		return false
 	}
@@ -1155,7 +1162,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+	if err := validateRequestedResourceRevision(rev, coord, ""); err != nil {
 		slog.Error("resource detail contains invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
@@ -1361,7 +1368,7 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	for i, rev := range revs {
-		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+		if err := validateRequestedResourceRevision(rev, coord, ""); err != nil {
 			slog.Error("resource revisions contain invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
@@ -1409,7 +1416,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
+	if err := validateRequestedResourceRevision(rev, coord, digest); err != nil {
 		slog.Error("revision detail contains invalid revision", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
@@ -2397,12 +2404,20 @@ func validatePublicRegistryOccurrence(occ store.RegistryOccurrence) error {
 }
 
 func validatePublicResourceRevision(rev store.AssessedResourceRevision) error {
+	return validateResourceRevision(rev, false)
+}
+
+func validateResourceRevision(rev store.AssessedResourceRevision, allowPlace bool) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return errors.New("resource coordinate is incomplete")
 	}
-	if !IsMarketplaceKind(coord.Kind) {
+	_, _, placeKind := nameutil.SplitPlaceKind(coord.Kind)
+	if !IsMarketplaceKind(coord.Kind) && (!allowPlace || !placeKind || !nameutil.IsPlacePackageName(coord.Name)) {
 		return fmt.Errorf("resource coordinate kind %q is invalid", coord.Kind)
+	}
+	if placeKind && rev.ArchiveDigest == "" {
+		return errors.New("scoped place resource revision must have an archive digest")
 	}
 	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
 		return errors.New("resource content digest is not canonical")
@@ -2413,7 +2428,11 @@ func validatePublicResourceRevision(rev store.AssessedResourceRevision) error {
 	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
 		return errors.New("resource archive digest is not canonical")
 	}
-	if err := validatePublicResourceAssessment(rev.Assessment); err != nil {
+	if placeKind {
+		if err := rev.Assessment.Validate(); err != nil {
+			return err
+		}
+	} else if err := validatePublicResourceAssessment(rev.Assessment); err != nil {
 		return err
 	}
 	if rev.Assessment.Coordinate != coord || rev.Assessment.ContentDigest != rev.ContentDigest {
@@ -2442,7 +2461,16 @@ func validatePublicResourceAssessment(assessment store.ResourceAssessment) error
 }
 
 func validatePublicResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
-	if err := validatePublicResourceRevision(rev); err != nil {
+	return validateResourceRevisionMatches(rev, expected, expectedDigest, false)
+}
+
+func validateRequestedResourceRevision(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
+	_, _, allowPlace := nameutil.SplitPlaceKind(expected.Kind)
+	return validateResourceRevisionMatches(rev, expected, expectedDigest, allowPlace)
+}
+
+func validateResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string, allowPlace bool) error {
+	if err := validateResourceRevision(rev, allowPlace); err != nil {
 		return err
 	}
 	if rev.Coordinate != expected {
