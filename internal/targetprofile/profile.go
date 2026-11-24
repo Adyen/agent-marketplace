@@ -21,6 +21,26 @@ const MaxProfileBytes = 4 << 20
 const profileInvalidCode = "marketplace.profile.invalid"
 const profileDigestMismatchCode = "marketplace.profile.digest-mismatch"
 
+// IsCanonicalHostCoreVersion reports whether version is a normalized,
+// bounded three-component numeric host version.
+func IsCanonicalHostCoreVersion(version string) bool {
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > 9 || len(part) > 1 && part[0] == '0' {
+			return false
+		}
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 type (
 	Profile struct {
 		APIVersion string           `yaml:"apiVersion"`

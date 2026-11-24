@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -200,8 +199,6 @@ func validatePlaceProjection(projection PlaceProjection) error {
 	return nil
 }
 
-var canonicalPlaceHostVersion = regexp.MustCompile(`^([0-9]{1,9}\.){2}[0-9]{1,9}$`)
-
 func validatePlaceVerification(pkg PlacePackage, verification PlaceVerification) error {
 	invalid := func(reason string) error {
 		return fmt.Errorf("%w: invalid place verification: %s", ErrUnsafeStateValue, reason)
@@ -227,13 +224,8 @@ func validatePlaceVerification(pkg PlacePackage, verification PlaceVerification)
 			return invalid("unknown host version must be empty")
 		}
 	case "verified", "outside-verified-range":
-		if !canonicalPlaceHostVersion.MatchString(verification.HostVersion) {
-			return invalid("host version must be a bounded core version")
-		}
-		for _, component := range strings.Split(verification.HostVersion, ".") {
-			if len(component) > 1 && component[0] == '0' {
-				return invalid("host version must be normalized")
-			}
+		if !targetprofile.IsCanonicalHostCoreVersion(verification.HostVersion) {
+			return invalid("host version must be a bounded normalized core version")
 		}
 	default:
 		return invalid("host version status")

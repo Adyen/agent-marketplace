@@ -198,6 +198,32 @@ func TestPreparePlaceVerificationChecksInstalledProjection(t *testing.T) {
 	})
 }
 
+func TestPlaceVerificationProbeDriftStopsCheck(t *testing.T) {
+	fixture := newInstalledPlaceVerificationFixtureWithVersionProbe(t, true)
+	owner, _ := openPlacePublishOwnership(t, fixture.admission)
+	stateBefore, stateInfoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
+	repoRoot := filepath.Join(fixture.admission.env.Home, "repo")
+	if err := os.Mkdir(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPlaceVerification(
+		context.Background(), fixture.admission.binding, fixture.admission.raw,
+		fixture.admission.env, repoRoot, "invented-app/mod", "sample",
+	); err == nil || !strings.Contains(err.Error(), "target.place.drift") {
+		t.Fatalf("probe that edits the installed package error = %v", err)
+	}
+	stateAfter, stateInfoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
+	if !bytes.Equal(stateBefore, stateAfter) || !stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) {
+		t.Fatal("probe drift recorded a verification result")
+	}
+	if data, err := os.ReadFile(fixture.marker); err != nil || string(data) != "version\n" {
+		t.Fatalf("version/check markers = %q, %v; named check must not run", data, err)
+	}
+	if data, err := os.ReadFile(fixture.target); err != nil || string(data) != "changed during version probe\n" {
+		t.Fatalf("version probe fixture edit = %q, %v", data, err)
+	}
+}
+
 func TestRunPlaceVerificationRecordsExactOutcome(t *testing.T) {
 	t.Run("pass and fail store bounded results without exposing output", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -360,21 +386,43 @@ func newInstalledPlaceVerificationFixture(t *testing.T) installedPlaceVerificati
 	return newInstalledPlaceVerificationFixtureWithOutcome(t, 0, false)
 }
 
+func newInstalledPlaceVerificationFixtureWithVersionProbe(
+	t *testing.T,
+	mutateProbe bool,
+) installedPlaceVerificationFixture {
+	return newInstalledPlaceVerificationFixtureForProbe(t, 0, false, true, mutateProbe)
+}
+
 func newInstalledPlaceVerificationFixtureWithOutcome(
 	t *testing.T,
 	exitCode int,
 	mutate bool,
 ) installedPlaceVerificationFixture {
+	return newInstalledPlaceVerificationFixtureForProbe(t, exitCode, mutate, false, false)
+}
+
+func newInstalledPlaceVerificationFixtureForProbe(
+	t *testing.T,
+	exitCode int,
+	mutate, withProbe, mutateProbe bool,
+) installedPlaceVerificationFixture {
 	t.Helper()
 	fixture := newPlaceAdmissionFixture(t)
-	raw := []byte(strings.Replace(
+	profileText := strings.Replace(
 		placeAdmissionProfileYAML,
 		"kinds: {mod: {deliver: place, into: [mods/]}}",
 		`host: {executable: fixture-checker}
 checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}}
 kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 		1,
-	))
+	)
+	if withProbe {
+		profileText = strings.Replace(profileText, "host: {executable: fixture-checker}",
+			`host: {executable: fixture-checker, version_probe: {argv: [--version], pattern: '(\d+\.\d+\.\d+)'}, verified: [{range: ">=1.0.0 <2.0.0", date: 2026-11-12, evidence: fixture}]}`,
+			1,
+		)
+	}
+	raw := []byte(profileText)
 	digest := sha256.Sum256(raw)
 	fixture.identity.RevisionDigest = "sha256:" + hex.EncodeToString(digest[:])
 	profile, err := targetprofile.Parse(raw, fixture.identity)
@@ -388,14 +436,25 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 	hostExecutable := filepath.Join(hostDir, "fixture-checker")
 	marker := filepath.Join(fixture.env.Home, "verification-executed")
 	subject := filepath.Join(fixture.root, "mods", "sample")
-	script := "#!/bin/sh\n" +
-		"if [ \"$#\" -ne 2 ] || [ \"$1\" != \"check\" ] || [ \"$2\" != " + shellQuote(subject) + " ]; then exit 81; fi\n" +
+	script := "#!/bin/sh\n"
+	if withProbe {
+		script += "if [ \"$#\" -eq 1 ] && [ \"$1\" = \"--version\" ]; then printf 'version\\n' >> " +
+			shellQuote(marker) + "; "
+		if mutateProbe {
+			script += "printf 'changed during version probe\\n' > " +
+				shellQuote(filepath.Join(fixture.root, "mods", "sample", "guide.md")) + "; "
+		}
+		script += "printf 'version 1.2.3\\n'; exit 0; fi\n"
+	}
+	script += "if [ \"$#\" -ne 2 ] || [ \"$1\" != \"check\" ] || [ \"$2\" != " + shellQuote(subject) + " ]; then exit 81; fi\n" +
 		"if [ \"$HOME\" != " + shellQuote(fixture.env.Home) + " ] || [ \"$LANG\" != \"C\" ] || [ \"${PLACE_VERIFY_MARKER+x}\" = \"x\" ]; then exit 82; fi\n" +
 		"if IFS= read -r input; then exit 83; fi\n" +
 		"printf 'noisy stdout\\n'\nprintf 'noisy stderr\\n' >&2\n"
 	if mutate {
 		script += "printf invoked > " + shellQuote(marker) + "\n"
 		script += "printf 'changed during check\\n' > " + shellQuote(filepath.Join(fixture.root, "mods", "sample", "guide.md")) + "\n"
+	} else if withProbe {
+		script += "printf 'check\\n' >> " + shellQuote(marker) + "\n"
 	} else {
 		script += "printf invoked > " + shellQuote(marker) + "\n"
 	}

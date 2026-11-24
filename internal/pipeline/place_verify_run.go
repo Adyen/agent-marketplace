@@ -62,9 +62,6 @@ func runPlaceVerification(
 	if err != nil {
 		return ownership.PlaceVerification{}, err
 	}
-	if prepared.profile.Host.VersionProbe != nil {
-		return ownership.PlaceVerification{}, fmt.Errorf("target.place.version-probe-unsupported: host version probes are not supported yet")
-	}
 	if repoRoot == "" || !filepath.IsAbs(repoRoot) {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.place.repository-invalid: repository root must be absolute")
 	}
@@ -87,6 +84,19 @@ func runPlaceVerification(
 	if err != nil || !filepath.IsAbs(home) {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.approval.home-invalid: approved home is unavailable")
 	}
+	hostVersion, hostVersionStatus, err := probePlaceHostVersion(ctx, binding, prepared.profile, home, binding.CanonicalRoot)
+	if err != nil {
+		return ownership.PlaceVerification{}, err
+	}
+	if prepared.profile.Host.VersionProbe != nil {
+		afterProbe, err := preparePlaceVerification(ctx, binding, raw, env, kind, name)
+		if err != nil {
+			return ownership.PlaceVerification{}, fmt.Errorf("target.place.check-state-changed: %w", err)
+		}
+		if err := comparePreparedPlaceVerification(prepared, afterProbe); err != nil {
+			return ownership.PlaceVerification{}, err
+		}
+	}
 	commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	exitCode, err := runApprovedPlaceCheck(commandCtx, binding, prepared.argv, home, binding.CanonicalRoot)
@@ -106,16 +116,13 @@ func runPlaceVerification(
 	if err != nil {
 		return ownership.PlaceVerification{}, fmt.Errorf("target.place.check-state-changed: %w", err)
 	}
-	beforePkg, afterPkg := prepared.pkg, post.pkg
-	beforePkg.Verification, afterPkg.Verification = nil, nil
-	if !prepared.rootIdentity.SameObject(post.rootIdentity) ||
-		!prepared.subjectIdentity.SameObject(post.subjectIdentity) ||
-		!reflect.DeepEqual(beforePkg, afterPkg) {
-		return ownership.PlaceVerification{}, fmt.Errorf("target.place.check-state-changed: installed package changed during check")
+	if err := comparePreparedPlaceVerification(prepared, post); err != nil {
+		return ownership.PlaceVerification{}, err
 	}
 	result := ownership.PlaceVerification{
 		Binding: prepared.pkg.Binding, GenerationKey: prepared.pkg.GenerationKey,
-		Check: prepared.checkName, Scope: prepared.scope, HostVersionStatus: "unknown",
+		Check: prepared.checkName, Scope: prepared.scope,
+		HostVersion: hostVersion, HostVersionStatus: hostVersionStatus,
 		Outcome: "pass", EvidenceSource: "target-verify",
 	}
 	if exitCode != 0 {
@@ -140,11 +147,32 @@ func runPlaceVerification(
 	return result, nil
 }
 
+func comparePreparedPlaceVerification(before, after preparedPlaceVerification) error {
+	beforePkg, afterPkg := before.pkg, after.pkg
+	beforePkg.Verification, afterPkg.Verification = nil, nil
+	if !before.rootIdentity.SameObject(after.rootIdentity) ||
+		!before.subjectIdentity.SameObject(after.subjectIdentity) ||
+		!reflect.DeepEqual(beforePkg, afterPkg) {
+		return fmt.Errorf("target.place.check-state-changed: installed package changed during check")
+	}
+	return nil
+}
+
 func runApprovedPlaceCheck(
 	ctx context.Context,
 	binding targetprofile.ApprovalBinding,
 	argv []string,
 	home, dir string,
+) (int, error) {
+	return runApprovedPlaceCommand(ctx, binding, argv, home, dir, io.Discard)
+}
+
+func runApprovedPlaceCommand(
+	ctx context.Context,
+	binding targetprofile.ApprovalBinding,
+	argv []string,
+	home, dir string,
+	stdout io.Writer,
 ) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -153,7 +181,7 @@ func runApprovedPlaceCheck(
 	cmd.Dir = dir
 	cmd.Env = []string{"HOME=" + home, "LANG=C"}
 	cmd.Stdin = nil
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	cmd.Stdout, cmd.Stderr = stdout, io.Discard
 	cmd.WaitDelay = 250 * time.Millisecond
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

@@ -649,7 +649,7 @@ Removes a place target from the user target list without changing its Marketplac
 agent-marketplace target verify <target-id>%2F<kind>/<name> --installation <id>
 ```
 
-Runs only the named approved check for an already-installed package and records its result. It does not install, activate, repair, or synchronize packages. The required `--installation` ID must identify the current approved target root; verification refuses drifted files and profiles with a host version probe until that probe is supported.
+Runs the approved host version probe, when configured, and then only the named approved check for an already-installed package. It records exact version/check results without installing, activating, repairing, or synchronizing packages. The required `--installation` ID must identify the current approved target root. Unsupported, failed, or ambiguous probes are recorded as unknown and do not prevent the named check from running; drift detected after a probe still refuses the check.
 
 ## `telemetry`
 

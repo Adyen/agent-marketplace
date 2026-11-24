@@ -51,6 +51,18 @@ checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], s
 kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
 `
 
+const targetVerifyVersionProfileYAML = `apiVersion: agent-marketplace.io/target-profile/v1
+id: invented-app
+label: Invented App
+platforms: [macos, linux]
+roots: {user: {override: INVENTED_APP_HOME, default: {macos: {base: home, path: .config/invented-app}, linux: {base: home, path: .config/invented-app}}, allowed_bases: [home]}}
+host: {executable: target-verify-fixture, version_probe: {argv: [--version], pattern: '(\d+\.\d+\.\d+)'}, verified: [{range: ">=1.0.0 <2.0.0", date: 2026-11-12, evidence: fixture}]}
+checks:
+  initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}
+  other-check: {scope: eager-package-load, argv: [other, "{subject}"], subject: {under: mods, component: package-name}}
+kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
+`
+
 type targetApprovalFixture struct {
 	home, repo, userConfig, userLock, targetRoot, stateRoot string
 	profileBytes                                            []byte
@@ -613,6 +625,43 @@ func TestTargetVerifyRunsOnlyNamedCheck(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/target-verify-runs-only-the-named-check
+func TestTargetVerifyRecordsProbedHostVersion(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture, binding, marker, _, _, _ := newInstalledTargetVerificationFixtureWithProbe(t)
+	output, err := executeCommand(
+		"target", "verify", "invented-app%2Fmod/sample",
+		"--installation", pipeline.PlaceInstallationID(binding),
+	)
+	if err != nil || strings.Count(output, "\n") != 1 ||
+		!strings.Contains(output, "1.2.3 (verified)") ||
+		!strings.Contains(output, fixture.identity.RevisionDigest) || strings.Contains(output, "sensitive") {
+		t.Fatalf("version-probed verification = %v, %q", err, output)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "version\ncheck\n" {
+		t.Fatalf("version/check execution order = %q, %v", data, err)
+	}
+	owner, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := owner.PlaceFromSnapshot(snapshot)
+	if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Verification == nil {
+		t.Fatalf("version verification projection = %#v, %v", projection, err)
+	}
+	record := projection.Packages[0].Verification
+	if record.HostVersion != "1.2.3" || record.HostVersionStatus != "verified" ||
+		record.Check != "initial-load" || record.Outcome != "pass" || record.EvidenceSource != "target-verify" {
+		t.Fatalf("version verification record = %#v", record)
+	}
+}
+
 // spec: target-profile-place/target-verify-refuses-drifted-files-without-running-checks
 func TestTargetVerifyRefusesDrift(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -676,17 +725,44 @@ func TestTargetVerifyRefusesDrift(t *testing.T) {
 func newInstalledTargetVerificationFixture(
 	t *testing.T,
 ) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
+	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyProfileYAML), false)
+}
+
+func newInstalledTargetVerificationFixtureWithProbe(
+	t *testing.T,
+) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
+	return newInstalledTargetVerificationFixtureWithProfile(t, []byte(targetVerifyVersionProfileYAML), true)
+}
+
+func newInstalledTargetVerificationFixtureWithProfile(
+	t *testing.T,
+	profileBytes []byte,
+	hasVersionProbe bool,
+) (targetApprovalFixture, targetprofile.ApprovalBinding, string, string, string, string) {
 	t.Helper()
-	fixture := newTargetApprovalFixtureWithProfile(t, []byte(targetVerifyProfileYAML))
+	fixture := newTargetApprovalFixtureWithProfile(t, profileBytes)
 	hostDir := filepath.Join(fixture.home, "bin")
 	if err := os.Mkdir(hostDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(fixture.home, "verify-invoked")
-	host := "#!/bin/sh\n" +
-		"if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " + targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) + " ]; then exit 81; fi\n" +
-		"if IFS= read -r input; then exit 82; fi\n" +
-		"printf invoked > " + targetVerifyShellQuote(marker) + "\nprintf 'sensitive diagnostic\\n'\nprintf 'sensitive stderr\\n' >&2\n"
+	host := "#!/bin/sh\n"
+	if hasVersionProbe {
+		host += "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then printf 'version\\n' >> " +
+			targetVerifyShellQuote(marker) + "; printf 'version 1.2.3\\n'; exit 0; fi\n"
+		host += "if [ \"$#\" -eq 2 ] && [ \"$1\" = other ]; then printf 'other\\n' >> " +
+			targetVerifyShellQuote(marker) + "; exit 0; fi\n"
+		host += "if [ \"$#\" -eq 2 ] && [ \"$1\" = check ] && [ \"$2\" = " +
+			targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) +
+			" ]; then if IFS= read -r input; then exit 82; fi; printf 'check\\n' >> " + targetVerifyShellQuote(marker) +
+			"; printf 'sensitive diagnostic\\n'; printf 'sensitive stderr\\n' >&2; exit 0; fi\nexit 81\n"
+	} else {
+		host += "if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " +
+			targetVerifyShellQuote(filepath.Join(fixture.targetRoot, "mods", "sample")) + " ]; then exit 81; fi\n" +
+			"if IFS= read -r input; then exit 82; fi\n" +
+			"printf invoked > " + targetVerifyShellQuote(marker) +
+			"\nprintf 'sensitive diagnostic\\n'\nprintf 'sensitive stderr\\n' >&2\n"
+	}
 	hostPath := filepath.Join(hostDir, "target-verify-fixture")
 	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {
 		t.Fatal(err)

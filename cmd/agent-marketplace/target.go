@@ -168,11 +168,15 @@ func newTargetVerifyCmd() *cobra.Command {
 }
 
 func writePlaceVerificationResult(out io.Writer, kind, name string, result ownership.PlaceVerification) error {
+	version := result.HostVersionStatus
+	if result.HostVersion != "" {
+		version = result.HostVersion + " (" + result.HostVersionStatus + ")"
+	}
 	_, err := fmt.Fprintf(out,
 		"Verified %s/%s with check %s: %s (package %s, profile %s, generation %s, host version %s, evidence %s).\n",
 		kind, name, result.Check, result.Outcome,
 		result.Binding.PackageContentDigest, result.Binding.ProfileIdentity.RevisionDigest,
-		result.GenerationKey, result.HostVersionStatus, result.EvidenceSource,
+		result.GenerationKey, version, result.EvidenceSource,
 	)
 	return err
 }
