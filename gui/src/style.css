@@ -26,7 +26,7 @@ textarea:focus-visible,
 .resource-inspection__treeitem:focus-visible,
 .gui-nav-row:focus-visible,
 .choice-list__row:focus-within,
-.segmented__option:focus-within {
+.segmented__option:has(input:focus-visible) {
   outline: 2px solid var(--gui-signal);
   outline-offset: 2px;
 }
@@ -639,6 +639,11 @@ textarea:focus-visible,
   width: 100%;
 }
 
+.gui-input.mono {
+  font-family: var(--gui-mono);
+  font-size: 12px;
+}
+
 .gui-input::placeholder {
   color: var(--gui-ink-3);
   opacity: 1;
@@ -675,14 +680,48 @@ textarea:focus-visible,
 }
 
 .source-form__location {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
 
+.source-form__location .gui-input {
+  flex: 1 1 0;
+}
+
+.source-form__location .source-form__browse {
+  height: 40px;
+}
+
 .source-form__location .source-form__error {
-  grid-column: 1 / -1;
+  flex-basis: 100%;
+}
+
+.source-form__hint {
+  color: var(--gui-ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 8px 0 0;
+}
+
+.source-form__pair {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.source-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.add-source-modal .source-form__actions > button {
+  height: 32px;
+  padding: 0 14px;
 }
 
 .source-form .source-form__kind > legend.source-form__label,
@@ -705,9 +744,6 @@ textarea:focus-visible,
   line-height: 1.35;
 }
 
-.source-form__submit {
-  align-self: flex-end;
-}
 
 .gui-search-field {
   align-items: center;
@@ -1849,9 +1885,22 @@ button:disabled {
   cursor: pointer;
   display: flex;
   gap: 10px;
-  height: 44px;
-  padding: 0 12px;
+  min-height: 44px;
+  padding: 8px 12px;
   position: relative;
+}
+
+.choice-list:disabled .choice-list__row {
+  cursor: default;
+}
+
+.choice-list__hint {
+  color: var(--gui-ink-2);
+  display: block;
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 1px;
+  max-width: 64ch;
 }
 
 .choice-list__row:first-of-type {
@@ -1884,6 +1933,7 @@ button:disabled {
 
 .choice-list__check {
   color: var(--gui-ink);
+  flex: none;
 }
 
 .segmented {
@@ -1914,6 +1964,58 @@ button:disabled {
   background: var(--gui-canvas);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   color: var(--gui-ink);
+}
+
+.segmented--fill {
+  display: flex;
+}
+
+.segmented--fill .segmented__option {
+  flex: 1 1 auto;
+  text-align: center;
+}
+
+.segmented__option:has(input:disabled) {
+  cursor: default;
+}
+
+.gui-switch {
+  background: var(--gui-s0400);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: none;
+  height: 20px;
+  padding: 0;
+  position: relative;
+  transition: background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  width: 36px;
+}
+
+.gui-switch::after {
+  background: var(--gui-canvas);
+  border-radius: 50%;
+  content: "";
+  height: 16px;
+  inset-inline-start: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  width: 16px;
+}
+
+.gui-switch[aria-checked="true"] {
+  background: var(--gui-solid-bg);
+}
+
+.gui-switch[aria-checked="true"]::after {
+  background: var(--gui-solid-ink);
+  transform: translateX(16px);
+}
+
+.gui-switch:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .settings__error {
@@ -2513,12 +2615,13 @@ button:disabled {
 
 .settings-window__panel {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 20px;
 }
 
-.settings-window__panel--targets {
-  flex: 1 1 auto;
+.settings-window__panel--flush {
+  gap: 0;
 }
 
 .settings-window__section {
@@ -2534,10 +2637,11 @@ button:disabled {
 
 .settings-window__row {
   align-items: center;
+  border-bottom: 1px solid var(--gui-s0200);
   display: flex;
-  gap: 16px;
+  gap: 24px;
   justify-content: space-between;
-  padding: 4px 0;
+  padding: 10px 0 14px;
 }
 
 .settings-window__row-text {
@@ -2566,7 +2670,7 @@ button:disabled {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
-  margin: 0 -24px -24px;
+  margin: auto -24px -24px;
   padding: 12px 24px;
   position: sticky;
 }
@@ -2577,12 +2681,8 @@ button:disabled {
 
 .settings-global {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
-  gap: 12px;
-}
-
-.settings-global__heading {
-  margin: 0;
 }
 
 .settings-global__fields {
@@ -2591,31 +2691,96 @@ button:disabled {
 }
 
 .settings-global__field {
-  align-items: start;
-  border-bottom: 1px solid var(--gui-line);
+  align-items: center;
+  border-bottom: 1px solid var(--gui-s0200);
   display: grid;
-  gap: 16px;
-  grid-template-columns: 220px minmax(0, 1fr);
-  padding: 12px 0;
+  gap: 8px 24px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 52px;
+  padding: 10px 0;
+}
+
+.settings-global__field:last-child {
+  border-bottom: 0;
+}
+
+.settings-global__field--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: 14px;
+}
+
+.settings-global__field--off .settings-global__label,
+.settings-global__field--off .settings-global__unit {
+  opacity: 0.45;
 }
 
 .settings-global__label {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .settings-global__name {
   font-size: 13px;
   font-weight: 500;
+  margin: 0;
+}
+
+.settings-global__agent {
+  font-size: 13px;
+}
+
+.settings-global__meta {
+  align-items: baseline;
+  color: var(--gui-ink-2);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  margin: 0;
+}
+
+.settings__link {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--gui-ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-color: var(--gui-line);
+  text-underline-offset: 2px;
+}
+
+.settings__link:hover {
+  text-decoration-color: currentColor;
 }
 
 .settings-global__control {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  justify-content: flex-end;
   min-width: 0;
+}
+
+.settings-global__field--stacked .settings-global__control {
+  display: block;
+}
+
+.settings-global__control .gui-input {
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 10px;
+}
+
+.settings-global__control .gui-input:disabled,
+.settings-global__control .segmented:has(input:disabled) {
+  opacity: 0.45;
+}
+
+.settings-global__control .gui-input[aria-invalid="true"] {
+  border-color: var(--am-color-status-danger);
 }
 
 .settings-global__number-row {
@@ -2625,39 +2790,46 @@ button:disabled {
 }
 
 .settings-global__number {
-  width: 96px;
+  appearance: textfield;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 64px;
+}
+
+.settings-global__number::-webkit-inner-spin-button,
+.settings-global__number::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .settings-global__unit {
-  color: var(--gui-ink-3);
+  color: var(--gui-ink-2);
   font-size: 13px;
+  width: 32px;
 }
 
-.settings-global__wide {
-  width: 280px;
+.settings-global__path {
+  font-family: var(--gui-mono);
+  font-size: 12px;
+  width: 360px;
 }
 
-.settings-global__choices {
+.settings-global__group {
+  border-top: 1px solid var(--gui-s0200);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
+  padding-top: 14px;
 }
 
-.settings-global__choice {
-  align-items: center;
-  display: flex;
-  font-size: 13px;
-  gap: 8px;
+.settings-global__group .settings-global__fields {
+  margin-top: 4px;
 }
 
 .settings-global__error {
   color: var(--am-color-status-danger);
   font-size: 12px;
   margin: 0;
-}
-
-.settings-global__field:last-child {
-  border-bottom: 0;
 }
 
 @media (max-width: 720px) {
@@ -3003,6 +3175,8 @@ fieldset:disabled .settings__list > .settings__option {
   .gui-nav-row,
   .gui-search-pill,
   .workspace__row,
+  .gui-switch,
+  .gui-switch::after,
   .resource-actions__risk input[type="checkbox"],
   .resource-actions__risk input[type="checkbox"]::after {
     transition: none;

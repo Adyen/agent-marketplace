@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { Configuration } from './api/client'
+import ChoiceList from './ChoiceList.vue'
 import type { WorkspaceController } from './controller'
+import GuiSwitch from './GuiSwitch.vue'
+import { harnessDisplayName } from './harness-names'
+import SegmentedControl from './SegmentedControl.vue'
 import {
   draftFromSettings,
   settingsDraftErrors,
@@ -10,7 +14,6 @@ import {
   type SettingsDraft,
   type SettingsDraftKey,
   type SettingsSection,
-  type TelemetryChoice,
 } from './settings-model'
 
 type Settings = Configuration['settings']
@@ -19,17 +22,19 @@ type SettingField = Settings['backup']['enabled']
 interface Option {
   value: string
   label: string
+  hint?: string
 }
 
 interface FieldUI {
   key: SettingsDraftKey
   label: string
-  kind: 'switch' | 'number' | 'select' | 'text' | 'radio'
+  kind: 'switch' | 'number' | 'segmented' | 'text' | 'choice'
   field: (settings: Settings) => SettingField
+  hint?: string
   options?: Option[]
   placeholder?: string
   unit?: string
-  wide?: boolean
+  dependsOn?: SettingsDraftKey
 }
 
 const props = defineProps<{
@@ -41,14 +46,23 @@ const props = defineProps<{
 }>()
 
 const TELEMETRY_OPTIONS: Option[] = [
-  { value: 'off', label: "Don't share" },
-  { value: 'basic', label: 'Share basic telemetry' },
-  { value: 'detailed', label: 'Share detailed telemetry' },
+  { value: 'off', label: "Don't share", hint: 'Nothing is sent.' },
+  {
+    value: 'basic',
+    label: 'Share basic telemetry',
+    hint: 'App version, OS, command names, agent types, outcome and rough duration. Never command arguments.',
+  },
+  {
+    value: 'detailed',
+    label: 'Share detailed telemetry',
+    hint: "Everything in basic, plus your configuration, including registry and resource names, and a trace of each command's steps.",
+  },
 ]
 const INSTALL_OPTIONS: Option[] = [
-  { value: 'symlink', label: 'Symlinks' },
-  { value: 'file', label: 'Copies' },
+  { value: 'symlink', label: 'Symlinks', hint: 'Agent folders link to one cached copy, so nothing is duplicated.' },
+  { value: 'file', label: 'Copies', hint: "Regular files are written into each agent folder. Use this where links aren't followed." },
 ]
+const TARGET_MODE_OPTIONS: Option[] = [{ value: 'default', label: 'Default' }, ...INSTALL_OPTIONS]
 const LOG_LEVEL_OPTIONS: Option[] = [
   { value: 'debug', label: 'Debug' },
   { value: 'info', label: 'Info' },
@@ -58,25 +72,82 @@ const LOG_LEVEL_OPTIONS: Option[] = [
 
 const FIELDS: Record<SettingsSection, FieldUI[]> = {
   general: [
-    { key: 'updateCheck', label: 'Show when a new release is available', kind: 'switch', field: (s) => s.updateCheck.enabled },
-    { key: 'telemetryLevel', label: 'Telemetry', kind: 'radio', field: (s) => s.telemetry.level, options: TELEMETRY_OPTIONS },
+    {
+      key: 'updateCheck',
+      label: 'Show when a new release is available',
+      kind: 'switch',
+      field: (s) => s.updateCheck.enabled,
+      hint: 'A notice appears at the top of the window.',
+    },
+    { key: 'telemetryLevel', label: 'Telemetry', kind: 'choice', field: (s) => s.telemetry.level, options: TELEMETRY_OPTIONS },
   ],
   install: [
-    { key: 'installMode', label: 'Install resources as', kind: 'radio', field: (s) => s.materialization.mode, options: INSTALL_OPTIONS },
+    {
+      key: 'installMode',
+      label: 'Install resources as',
+      kind: 'choice',
+      field: (s) => s.materialization.mode,
+      hint: 'Applies to skills, commands and subagents.',
+      options: INSTALL_OPTIONS,
+    },
   ],
   backups: [
-    { key: 'backupEnabled', label: 'Keep backups before changing agent files', kind: 'switch', field: (s) => s.backup.enabled },
-    { key: 'backupMaxDays', label: 'Keep backups for', kind: 'number', field: (s) => s.backup.maxDays, unit: 'days' },
-    { key: 'backupMaxPerDay', label: 'Backups per day', kind: 'number', field: (s) => s.backup.maxPerDay },
+    {
+      key: 'backupEnabled',
+      label: 'Keep backups before changing agent files',
+      kind: 'switch',
+      field: (s) => s.backup.enabled,
+      hint: 'Saved in ~/.agent-marketplace/backups.',
+    },
+    {
+      key: 'backupMaxDays',
+      label: 'Keep backups for',
+      kind: 'number',
+      field: (s) => s.backup.maxDays,
+      unit: 'days',
+      hint: 'Backups from earlier days are deleted.',
+      dependsOn: 'backupEnabled',
+    },
+    {
+      key: 'backupMaxPerDay',
+      label: 'Backups per day',
+      kind: 'number',
+      field: (s) => s.backup.maxPerDay,
+      hint: 'When a day has more, the oldest are deleted.',
+      dependsOn: 'backupEnabled',
+    },
   ],
   logging: [
     { key: 'logEnabled', label: 'Write a log file', kind: 'switch', field: (s) => s.logging.enabled },
-    { key: 'logLevel', label: 'Log level', kind: 'select', field: (s) => s.logging.level, options: LOG_LEVEL_OPTIONS, wide: true },
-    { key: 'logFile', label: 'Log file path', kind: 'text', field: (s) => s.logging.file, placeholder: 'Default location', wide: true },
-    { key: 'logMaxSizeMB', label: 'Rotate log at', kind: 'number', field: (s) => s.logging.maxSizeMB, unit: 'MB' },
-    { key: 'logMaxBackups', label: 'Keep old logs', kind: 'number', field: (s) => s.logging.maxBackups, unit: 'logs' },
-    { key: 'logMaxAgeDays', label: 'Delete logs after', kind: 'number', field: (s) => s.logging.maxAgeDays, unit: 'days' },
-    { key: 'logCompress', label: 'Compress old logs', kind: 'switch', field: (s) => s.logging.compress },
+    {
+      key: 'logLevel',
+      label: 'Log level',
+      kind: 'segmented',
+      field: (s) => s.logging.level,
+      hint: 'Debug records the most, Error the least.',
+      options: LOG_LEVEL_OPTIONS,
+      dependsOn: 'logEnabled',
+    },
+    {
+      key: 'logFile',
+      label: 'Log file path',
+      kind: 'text',
+      field: (s) => s.logging.file,
+      placeholder: '~/.agent-marketplace/logs/agent-marketplace.log',
+      dependsOn: 'logEnabled',
+    },
+    {
+      key: 'logMaxSizeMB',
+      label: 'Rotate log at',
+      kind: 'number',
+      field: (s) => s.logging.maxSizeMB,
+      unit: 'MB',
+      hint: 'A new file starts at this size.',
+      dependsOn: 'logEnabled',
+    },
+    { key: 'logMaxBackups', label: 'Keep old logs', kind: 'number', field: (s) => s.logging.maxBackups, unit: 'logs', dependsOn: 'logEnabled' },
+    { key: 'logMaxAgeDays', label: 'Delete logs after', kind: 'number', field: (s) => s.logging.maxAgeDays, unit: 'days', dependsOn: 'logEnabled' },
+    { key: 'logCompress', label: 'Compress old logs', kind: 'switch', field: (s) => s.logging.compress, dependsOn: 'logEnabled' },
   ],
 }
 
@@ -114,8 +185,12 @@ function isLocked(ui: FieldUI): boolean {
   return ui.field(props.settings).locked
 }
 
+function isOff(ui: FieldUI): boolean {
+  return ui.dependsOn != null && draft.value[ui.dependsOn] === false
+}
+
 function isDisabled(ui: FieldUI): boolean {
-  return props.disabled || isLocked(ui)
+  return props.disabled || isLocked(ui) || isOff(ui)
 }
 
 function labelFor(value: string | null, options: Option[] | undefined): string {
@@ -158,18 +233,6 @@ function setDraft<K extends SettingsDraftKey>(key: K, value: SettingsDraft[K]) {
   resets.value = new Set([...resets.value].filter((k) => k !== key))
 }
 
-function setTelemetry(value: string) {
-  setDraft('telemetryLevel', value as TelemetryChoice)
-}
-
-function setInstallMode(value: string) {
-  setDraft('installMode', value as InstallMode)
-}
-
-function setLevel(key: SettingsDraftKey, value: string) {
-  setDraft(key, value as never)
-}
-
 function setTargetMode(id: string, value: string) {
   const next = { ...draft.value.targetModes }
   if (value === 'default') {
@@ -194,32 +257,38 @@ async function save() {
 
 <template>
   <section class="settings-global" :aria-label="TITLES[section]">
-    <h3 v-if="section === 'general'" class="gui-caps settings-global__heading">Updates and telemetry</h3>
-
     <p v-if="saveError" role="alert" class="settings__notice settings__notice--danger">{{ saveError }}</p>
 
     <div class="settings-global__fields">
-      <div v-for="ui in fields" :key="ui.key" class="settings-global__field">
+      <div
+        v-for="ui in fields"
+        :key="ui.key"
+        class="settings-global__field"
+        :class="{ 'settings-global__field--stacked': ui.kind === 'choice', 'settings-global__field--off': isOff(ui) }"
+      >
         <div class="settings-global__label">
           <span class="settings-global__name">{{ ui.label }}</span>
-          <p v-if="helperText(ui)" class="settings-window__row-hint">{{ helperText(ui) }}</p>
+          <p v-if="ui.hint" class="settings-window__row-hint">{{ ui.hint }}</p>
+          <p v-if="helperText(ui) || canReset(ui)" class="settings-global__meta">
+            <span v-if="helperText(ui)">{{ helperText(ui) }}</span>
+            <button
+              v-if="canReset(ui)"
+              type="button"
+              class="settings__link"
+              :aria-label="`Reset ${ui.label}`"
+              @click="reset(ui)"
+            >Reset</button>
+          </p>
           <p v-if="errors[ui.key]" class="settings-global__error" role="alert">{{ errors[ui.key] }}</p>
-          <button
-            v-if="canReset(ui)"
-            type="button"
-            class="settings__link"
-            :aria-label="`Reset ${ui.label}`"
-            @click="reset(ui)"
-          >Reset</button>
         </div>
 
         <div class="settings-global__control">
-          <UCheckbox
+          <GuiSwitch
             v-if="ui.kind === 'switch'"
             :model-value="draft[ui.key] as boolean"
             :aria-label="ui.label"
             :disabled="isDisabled(ui)"
-            @update:model-value="setDraft(ui.key, ($event === true) as never)"
+            @update:model-value="setDraft(ui.key, $event as never)"
           />
           <div v-else-if="ui.kind === 'number'" class="settings-global__number-row">
             <input
@@ -233,65 +302,57 @@ async function save() {
               :disabled="isDisabled(ui)"
               @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
             />
-            <span v-if="ui.unit" class="settings-global__unit">{{ ui.unit }}</span>
+            <span class="settings-global__unit">{{ ui.unit }}</span>
           </div>
           <input
             v-else-if="ui.kind === 'text'"
             type="text"
-            class="gui-input settings-global__wide"
+            class="gui-input settings-global__path"
             :aria-label="ui.label"
             :placeholder="ui.placeholder"
             :value="draft[ui.key] as string"
             :disabled="isDisabled(ui)"
             @input="setDraft(ui.key, ($event.target as HTMLInputElement).value as never)"
           />
-          <select
-            v-else-if="ui.kind === 'select'"
-            class="gui-input settings-global__wide"
+          <SegmentedControl
+            v-else-if="ui.kind === 'segmented'"
+            :name="`settings-${ui.key}`"
             :aria-label="ui.label"
-            :value="draft[ui.key] as string"
+            :options="ui.options ?? []"
+            :model-value="draft[ui.key] as string"
             :disabled="isDisabled(ui)"
-            @change="setLevel(ui.key, ($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="option in ui.options" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-          <div v-else class="settings-global__choices" role="radiogroup" :aria-label="ui.label">
-            <label v-for="option in ui.options" :key="option.value" class="settings-global__choice">
-              <input
-                type="radio"
-                :name="`settings-${ui.key}`"
-                :value="option.value"
-                :aria-label="option.label"
-                :checked="draft[ui.key] === option.value"
-                :disabled="isDisabled(ui)"
-                @change="ui.key === 'telemetryLevel' ? setTelemetry(option.value) : setInstallMode(option.value)"
-              />
-              <span>{{ option.label }}</span>
-            </label>
-          </div>
+            @update:model-value="setDraft(ui.key, $event as never)"
+          />
+          <ChoiceList
+            v-else
+            :name="`settings-${ui.key}`"
+            :aria-label="ui.label"
+            :options="(ui.options ?? []).map((option) => ({ ...option, ariaLabel: option.label }))"
+            :model-value="draft[ui.key] as string"
+            :disabled="isDisabled(ui)"
+            @update:model-value="setDraft(ui.key, $event as never)"
+          />
         </div>
       </div>
     </div>
 
-    <div v-if="section === 'install' && userTargets.length > 0" class="settings-global__fields">
-      <div v-for="id in userTargets" :key="id" class="settings-global__field">
-        <div class="settings-global__label">
-          <span class="settings-global__name mono">{{ id }}</span>
-        </div>
-        <div class="settings-global__control">
-          <select
-            class="gui-input settings-global__wide"
+    <section v-if="section === 'install' && userTargets.length > 0" class="settings-global__group" aria-label="Per-agent install mode">
+      <h3 class="settings-global__name">For one agent</h3>
+      <p class="settings-window__row-hint">Default follows the choice above.</p>
+      <div class="settings-global__fields">
+        <div v-for="id in userTargets" :key="id" class="settings-global__field">
+          <span class="settings-global__agent">{{ harnessDisplayName(id) }}</span>
+          <SegmentedControl
+            :name="`settings-target-mode-${id}`"
             :aria-label="`Install mode for ${id}`"
-            :value="draft.targetModes[id] ?? 'default'"
+            :options="TARGET_MODE_OPTIONS"
+            :model-value="draft.targetModes[id] ?? 'default'"
             :disabled="props.disabled"
-            @change="setTargetMode(id, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="default">Use default</option>
-            <option v-for="option in INSTALL_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
+            @update:model-value="setTargetMode(id, $event)"
+          />
         </div>
       </div>
-    </div>
+    </section>
 
     <div class="settings-window__savebar">
       <span class="settings__status" aria-live="polite">

@@ -96,10 +96,22 @@ async function add(source: SourceInput) {
         :key="formEpoch"
         :disabled="pending"
         :busy="pending"
+        primary
         :server-location-error="serverLocationError"
         @add="add"
         @edit-location="clearLocationError"
-      />
+      >
+        <template #actions>
+          <UButton
+            label="Cancel"
+            class="gui-button--secondary"
+            color="neutral"
+            variant="soft"
+            :disabled="pending"
+            @click="open = false"
+          />
+        </template>
+      </SourceForm>
       <p v-if="serverError" role="alert" class="settings__notice settings__notice--danger">
         <GuiIcon name="error" class="settings__notice-icon" />
         <span>{{ serverError }}</span>

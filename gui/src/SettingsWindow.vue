@@ -290,10 +290,10 @@ async function confirmRemove() {
             id="settings-panel-general"
             role="tabpanel"
             aria-labelledby="settings-tab-general"
-            class="settings-window__panel"
+            class="settings-window__panel settings-window__panel--flush"
           >
             <fieldset class="settings-window__section" aria-label="Appearance">
-              <legend class="gui-caps">Appearance</legend>
+              <legend class="gui-visually-hidden">Appearance</legend>
               <div class="settings-window__row">
                 <div class="settings-window__row-text">
                   <p id="settings-theme-label" class="settings-window__row-title">Theme</p>

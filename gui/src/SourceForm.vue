@@ -3,8 +3,9 @@ import { computed, ref, useId, watch } from 'vue'
 import type { SourceInput } from './api/client'
 import { validateSourceInput, type SourceField } from './source-input'
 import GuiIcon from './GuiIcon.vue'
+import SegmentedControl from './SegmentedControl.vue'
 
-const props = defineProps<{ disabled: boolean; serverLocationError?: string; busy?: boolean }>()
+const props = defineProps<{ disabled: boolean; serverLocationError?: string; busy?: boolean; primary?: boolean }>()
 const emit = defineEmits<{
   add: [source: SourceInput]
   editLocation: []
@@ -25,12 +26,24 @@ const kindOptions: { value: SourceInput['kind']; label: string }[] = [
   { value: 'git', label: 'Git registry' },
   { value: 'marketplace', label: 'Marketplace endpoint' },
 ]
-const locationPlaceholders: Record<SourceInput['kind'], string> = {
-  directory: '~/code/my-registry',
-  git: 'https://github.com/org/repo.git',
-  marketplace: 'https://marketplace.example.com',
+const kindCopy: Record<SourceInput['kind'], { label: string; hint: string; placeholder: string }> = {
+  directory: {
+    label: 'Folder',
+    hint: 'A folder on this computer that holds resources. It is read in place.',
+    placeholder: '~/code/my-registry',
+  },
+  git: {
+    label: 'Repository URL',
+    hint: 'A Git repository, read at the branch, tag or commit you choose.',
+    placeholder: 'https://github.com/org/repo.git',
+  },
+  marketplace: {
+    label: 'Marketplace URL',
+    hint: 'A Marketplace server. Its resources appear here to browse and install.',
+    placeholder: 'https://marketplace.example.com',
+  },
 }
-const locationPlaceholder = computed(() => locationPlaceholders[kind.value])
+const copy = computed(() => kindCopy[kind.value])
 const validationErrors = computed(() =>
   validateSourceInput({ kind: kind.value, location: location.value, ref: refName.value, path: subpath.value }),
 )
@@ -67,6 +80,7 @@ watch(kind, () => {
 })
 
 function add() {
+  if (addDisabled.value) return
   const source: SourceInput =
     kind.value === 'git'
       ? {
@@ -86,32 +100,31 @@ function add() {
   <fieldset class="source-form" :disabled="disabled">
     <fieldset class="source-form__kind settings__group" aria-label="Source kind">
       <legend class="source-form__label">Source kind</legend>
-      <div class="segmented" role="radiogroup">
-        <label
-          v-for="option in kindOptions"
-          :key="option.value"
-          class="segmented__option"
-          :class="{ 'segmented__option--selected': kind === option.value }"
-        >
-          <input v-model="kind" type="radio" name="source-kind" :value="option.value" :disabled="disabled" />
-          <span>{{ option.label }}</span>
-        </label>
-      </div>
+      <SegmentedControl
+        name="source-kind"
+        fill
+        :options="kindOptions"
+        :model-value="kind"
+        :disabled="disabled"
+        @update:model-value="kind = $event as SourceInput['kind']"
+      />
+      <p class="source-form__hint">{{ copy.hint }}</p>
     </fieldset>
     <div class="gui-field">
-      <label class="source-form__label" :for="`${idPrefix}-location`">Location</label>
+      <label class="source-form__label" :for="`${idPrefix}-location`">{{ copy.label }}</label>
       <div class="source-form__location">
         <input
           :id="`${idPrefix}-location`"
           v-model="location"
-          class="gui-input"
+          class="gui-input mono"
           aria-label="Source location"
           type="text"
-          :placeholder="locationPlaceholder"
+          :placeholder="copy.placeholder"
           :disabled="disabled"
           :aria-invalid="locationError != null ? 'true' : undefined"
           :aria-describedby="locationError != null ? `${idPrefix}-location-error` : undefined"
           @input="edit('location')"
+          @keydown.enter.prevent="add"
           @blur="blur('location')"
         />
         <UButton
@@ -127,12 +140,12 @@ function add() {
         <span v-if="locationError" :id="`${idPrefix}-location-error`" class="source-form__error" role="alert">{{ locationError }}</span>
       </div>
     </div>
-    <template v-if="kind === 'git'">
+    <div v-if="kind === 'git'" class="source-form__pair">
       <label class="gui-field">
-        <span class="source-form__label">Ref</span>
+        <span class="source-form__label">Branch, tag or commit</span>
         <input
           v-model="refName"
-          class="gui-input"
+          class="gui-input mono"
           aria-label="Source ref"
           type="text"
           placeholder="main"
@@ -140,32 +153,46 @@ function add() {
           :aria-invalid="refError != null ? 'true' : undefined"
           :aria-describedby="refError != null ? `${idPrefix}-ref-error` : undefined"
           @input="edit('ref')"
+          @keydown.enter.prevent="add"
           @blur="blur('ref')"
         />
         <span v-if="refError" :id="`${idPrefix}-ref-error`" class="source-form__error" role="alert">{{ refError }}</span>
       </label>
       <label class="gui-field">
-        <span class="source-form__label">Subpath</span>
+        <span class="source-form__label">Folder in repository</span>
         <input
           v-model="subpath"
-          class="gui-input"
+          class="gui-input mono"
           aria-label="Source subpath"
           type="text"
           placeholder="optional"
           :disabled="disabled"
+          @keydown.enter.prevent="add"
         />
       </label>
-    </template>
-    <UButton
-      :label="props.busy ? 'Adding…' : 'Add source'"
-      :aria-label="props.busy ? 'Adding source' : 'Add source'"
-      class="gui-button--secondary source-form__submit"
-      color="neutral"
-      variant="soft"
-      :disabled="addDisabled"
-      @click="add"
-    >
-      <template #leading><GuiIcon name="plus" /></template>
-    </UButton>
+    </div>
+    <div class="source-form__actions">
+      <slot name="actions" />
+      <UButton
+        v-if="props.primary"
+        :label="props.busy ? 'Adding…' : 'Add source'"
+        :aria-label="props.busy ? 'Adding source' : 'Add source'"
+        class="source-form__submit"
+        :disabled="addDisabled"
+        @click="add"
+      />
+      <UButton
+        v-else
+        :label="props.busy ? 'Adding…' : 'Add source'"
+        :aria-label="props.busy ? 'Adding source' : 'Add source'"
+        class="gui-button--secondary source-form__submit"
+        color="neutral"
+        variant="soft"
+        :disabled="addDisabled"
+        @click="add"
+      >
+        <template #leading><GuiIcon name="plus" /></template>
+      </UButton>
+    </div>
   </fieldset>
 </template>

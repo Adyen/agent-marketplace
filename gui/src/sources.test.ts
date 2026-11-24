@@ -192,13 +192,13 @@ describe('Source settings', () => {
     await openAddSource(wrapper)
     const form = dialog().querySelector<HTMLElement>('.source-form')!
     const labels = Array.from(form.querySelectorAll<HTMLElement>('.source-form__label'))
-    expect(labels.map((label) => label.textContent?.trim())).toEqual(['Source kind', 'Location'])
+    expect(labels.map((label) => label.textContent?.trim())).toEqual(['Source kind', 'Folder'])
     await chooseSourceKind('git', 'Git registry')
     expect(Array.from(form.querySelectorAll<HTMLElement>('.source-form__label'), (label) => label.textContent?.trim())).toEqual([
       'Source kind',
-      'Location',
-      'Ref',
-      'Subpath',
+      'Repository URL',
+      'Branch, tag or commit',
+      'Folder in repository',
     ])
   })
 

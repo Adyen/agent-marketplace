@@ -47,6 +47,7 @@ describe('add source modal', () => {
     const busy = modal().querySelector<HTMLButtonElement>('button[aria-label="Adding source"]')
     expect(busy?.textContent?.trim()).toBe('Adding…')
     expect(busy?.disabled).toBe(true)
+    expect(Array.from(modal().querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Cancel')?.disabled).toBe(true)
     expect(modal()).not.toBeNull()
   })
 
@@ -69,5 +70,36 @@ describe('add source modal', () => {
 
     expect(modal()).not.toBeNull()
     expect(modal().querySelector('[role="alert"]')).not.toBeNull()
+  })
+
+  // spec: gui-shell/cancel-and-enter-in-add-source
+  it('submits with Enter in the location field and closes without adding on Cancel', async () => {
+    const { client, push } = fakeClient()
+    vi.mocked(client.configure).mockResolvedValueOnce({ id: 9, kind: 'mutation' })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    wrapper.get('button[aria-label="Sources"]').trigger('click')
+    await tick()
+    const cancel = Array.from(modal().querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Cancel')!
+    cancel.click()
+    await tick()
+    expect(document.body.querySelector('.gui-modal__frame[aria-label="Add source"]')).toBeNull()
+    expect(client.configure).not.toHaveBeenCalled()
+
+    wrapper.get('button[aria-label="Sources"]').trigger('click')
+    await tick()
+    const input = modal().querySelector<HTMLInputElement>('input[aria-label="Source location"]')!
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await tick()
+    expect(client.configure).not.toHaveBeenCalled()
+
+    input.value = '/opt/new-regs'
+    input.dispatchEvent(new Event('input'))
+    await tick()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await tick()
+    expect(client.configure).toHaveBeenCalledWith({ action: 'add-source', source: { kind: 'directory', location: '/opt/new-regs' } })
   })
 })

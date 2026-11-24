@@ -75,7 +75,10 @@ describe('settings tabs', () => {
     const install = panel('install')
     expect(labelled(install, 'Symlinks').checked).toBe(true)
 
-    await setValue(labelled<HTMLSelectElement>(install, 'Install mode for codex'), 'file')
+    const copies = labelled<HTMLElement>(install, 'Install mode for codex').querySelector<HTMLInputElement>('input[value="file"]')!
+    copies.checked = true
+    copies.dispatchEvent(new Event('change'))
+    await tick()
     saveButton(install).click()
     await tick()
     expect(client.configure).toHaveBeenCalledWith({
@@ -99,6 +102,38 @@ describe('settings tabs', () => {
     saveButton(backups).click()
     await tick()
     expect(client.configure).toHaveBeenCalledWith({ action: 'save-settings', backup: { maxDays: 7 } })
+  })
+
+  // spec: gui-configuration/logging-can-be-turned-off-without-editing-dependent-fields
+  it('Logging disables its other fields while the log file is off, and still saves the switch', async () => {
+    const { client } = await openSettingsTab('logging')
+    const logging = panel('logging')
+    expect(labelled(logging, 'Rotate log at').disabled).toBe(false)
+
+    labelled(logging, 'Write a log file').click()
+    await tick()
+    for (const label of ['Log file path', 'Rotate log at', 'Keep old logs', 'Delete logs after', 'Compress old logs']) {
+      expect(labelled(logging, label).disabled).toBe(true)
+    }
+    expect(labelled(logging, 'Log level').querySelector<HTMLInputElement>('input')!.disabled).toBe(true)
+
+    saveButton(logging).click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledWith({ action: 'save-settings', logging: { enabled: false } })
+  })
+
+  // spec: gui-configuration/backup-limits-remain-visible-and-disabled-when-backups-are-off
+  it('keeps backup limits visible while backup creation is off', async () => {
+    await openSettingsTab('backups')
+    const backups = panel('backups')
+    const days = labelled(backups, 'Keep backups for')
+    const perDay = labelled(backups, 'Backups per day')
+    const values = [days.value, perDay.value]
+    labelled(backups, 'Keep backups before changing agent files').click()
+    await tick()
+    expect(days.disabled).toBe(true)
+    expect(perDay.disabled).toBe(true)
+    expect([days.value, perDay.value]).toEqual(values)
   })
 
   // spec: gui-configuration/logging-reset-clears-the-user-value

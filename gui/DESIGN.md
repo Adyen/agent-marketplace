@@ -304,7 +304,8 @@ centered in `--gui-ink-3`.
 | Primary button | height 28 (toolbar) or 32 (modal footer), `--gui-solid-bg` / `--gui-solid-ink`; the last button in a modal footer |
 | Tag | height 20, padding 6, radius 4, `--gui-s0200`, mono caps 11 px `--gui-ink-2` |
 | kbd | mono 11 px, padding 2/4, radius 4, `--gui-layer` |
-| Toggle switch | 36×20 pill; on: `--gui-solid-bg` track with a `--gui-solid-ink` knob, as in Codex's "Include unstaged" toggle |
+| Toggle switch | `GuiSwitch`: a 36×20 pill `button` with `role="switch"`; on: `--gui-solid-bg` track with a `--gui-solid-ink` knob, as in Codex's "Include unstaged" toggle. Every on/off setting uses it |
+| Segmented control | `SegmentedControl`: a `--gui-s0200` track with the selected option raised on `--gui-canvas`. Used for two to four short options. The focus ring shows on keyboard focus only |
 | Checkbox | Nuxt UI `UCheckbox` themed so that its checked state uses `--gui-solid-bg` |
 | Text input | height 32 (40 in modals), radius 8 (12 in modals), 1 px `--gui-line`, placeholder `--gui-ink-3` |
 
@@ -649,14 +650,17 @@ conflicts with an earlier section, this section wins.
 - *Rule*: inputs use the shared `.gui-input` class: 40 px high with a 12 px
   radius in modals, a 1 px `--gui-line` border, a `--gui-canvas` background,
   and `--gui-ink-3` placeholders. Each field is a label above a full-width
-  input. Placeholders are `~/code/my-registry`,
-  `https://github.com/org/repo.git`, and `https://marketplace.example.com`
-  for the location, `main` for Ref, and `optional` for Subpath. The source
-  kind is a `.segmented` control, as in Appearance.
-- *Rule — source fields*: the source-kind legend and Location, Ref, and
-  Subpath labels share `.source-form__label`: sans, 13 px, medium weight, and
-  sentence case. The "Add a source" section heading keeps the mono caps
-  section-heading style.
+  input, and locations, refs, and paths are typed in mono. The source kind is
+  a full-width segmented control, followed by one line in `--gui-ink-2` that
+  says what that kind is.
+- *Rule — source fields*: the location field is named for the kind: "Folder"
+  (`~/code/my-registry`), "Repository URL"
+  (`https://github.com/org/repo.git`), or "Marketplace URL"
+  (`https://marketplace.example.com`). A Git source adds "Branch, tag or
+  commit" (`main`) and "Folder in repository" (`optional`) side by side. The
+  accessible names stay "Source location", "Source ref", and "Source subpath".
+  The legend and labels share `.source-form__label`: sans, 13 px, medium
+  weight, and sentence case. Enter in a text field submits a valid form.
 - *Rule — source errors*: field errors sit directly below their input in
   12 px `--am-color-status-danger`, with a matching danger border,
   `aria-invalid`, and an instance-unique `aria-describedby` target. A field
@@ -664,7 +668,9 @@ conflicts with an earlier section, this section wins.
   attempt. Request errors without a field and add-owned mutation diagnostics
   sit once below the form inside the Add source modal.
 - *Rule — source action and validation*: Add source is aligned to the form's
-  right edge at content width, without a fixed width. It stays disabled until
+  right edge at content width, without a fixed width. In the Add source modal
+  it is the solid primary button, 32 px high, after a secondary Cancel; in
+  First run it keeps the secondary style. It stays disabled until
   a directory location is non-blank, a Git location accepted by the existing
   GUI add-source API/config admission rules has a non-blank ref, or a
   Marketplace location is an absolute HTTP(S) URL.
@@ -689,7 +695,8 @@ conflicts with an earlier section, this section wins.
   Sources, so the sidebar "+" opened Settings and the add outcome was not
   visible where the user started it.
 - *Rule*: "Add source" is a modal titled "Add source" with the shared source
-  form (Directory registry, Git registry, Marketplace endpoint). It opens from
+  form (Directory registry, Git registry, Marketplace endpoint) and a footer
+  row of Cancel and the solid Add source. It opens from
   the sidebar "+", the empty-state "Add a source", and the Add source button in
   Settings → Sources. Settings → Sources has no inline form.
 - *Rule — pending*: while the add is pending the primary button reads "Adding…"
@@ -793,25 +800,37 @@ earlier section, this section wins.
   move between tabs. Each tab has `aria-controls`, and the tabs roving-focus.
 - Below 720 px the rail collapses to icons. The labels stay as visually hidden
   text, so the tabs keep their accessible names.
-- The pane shows the tab title as its heading and scrolls. Content is rows: a
-  label, a one-line hint, and a control on the right, separated by hairlines.
-- General has the Theme row with the preview tiles, then "Updates and
-  telemetry": a switch "Show when a new release is available" and a telemetry
-  radio list ("Don't share", "Share basic telemetry", "Share detailed
-  telemetry").
-- Install mode has "Install resources as" with Symlinks (default) and Copies,
-  and a "Per-agent overrides" list with one select per user target (Use
-  default, Symlinks, Copies).
-- Backups has the switch "Keep backups before changing agent files" and
-  number fields "Keep backups for" (unit: days) and "Backups per day".
-- Logging has the switch "Write a log file", a Log level select (Debug, Info,
-  Warning, Error), "Log file path" (placeholder "Default location"), "Rotate log
-  at" (MB), "Keep old logs" (logs), "Delete logs after" (days), and the switch
-  "Compress old logs". Labels sit in a fixed 220 px column; controls share one
-  left edge. Number fields are 96 px with the unit as trailing text; the select
-  and path field are 280 px. The footer pins to the bottom of the pane, with
-  Save changes solid and Discard as a quiet secondary. A "Default: X" hint
-  appears only when the field's value differs from its default.
+- The pane shows the tab title as its heading and scrolls. Content is rows,
+  each at least 52 px: on the left a label (13 px / 500) with an optional
+  one-line hint in `--gui-ink-3`, and the control at the right edge. Rows are
+  separated by `--gui-s0200` hairlines and carry no section headings. Inputs
+  in rows are 32 px high with an 8 px radius.
+- A setting with described options is a stacked row: the label, then a
+  full-width choice list whose rows each carry a one-line description and a
+  trailing ✓ on the selected one.
+- General has the Theme row with the preview tiles, the switch "Show when a
+  new release is available", and the Telemetry choice list ("Don't share",
+  "Share basic telemetry", "Share detailed telemetry"), each saying what is
+  sent.
+- Install mode has the "Install resources as" choice list with Symlinks
+  (default) and Copies, then "For one agent": one row per user target, named
+  by product name, with a segmented control (Default, Symlinks, Copies).
+- Backups has the switch "Keep backups before changing agent files" (hint:
+  where they are saved) and number fields "Keep backups for" (days) and
+  "Backups per day".
+- Logging has the switch "Write a log file", a Log level segmented control
+  (Debug, Info, Warning, Error), "Log file path" (mono, 360 px, with the
+  default path as its placeholder), "Rotate log at" (MB), "Keep old logs"
+  (logs), "Delete logs after" (days), and the switch "Compress old logs".
+- Number fields are 64 px, right-aligned, without spin buttons, followed by a
+  fixed 32 px unit slot so the fields line up.
+- Fields that only matter while a switch is on (the Backups counts, every
+  Logging field below "Write a log file") are disabled and dimmed while the
+  draft has that switch off.
+- The footer pins to the bottom of the pane on every tab, with Save changes
+  solid and Discard as a quiet secondary. A "Default: X" hint and the Reset
+  link share one line under the label; the hint appears only when the field's
+  value differs from its default.
 - Each global settings tab ends with a bar: "Unsaved changes", Discard, and the
   solid Save changes, which stays disabled until a field changes and passes
   its minimum (inline message below the field). A user-set field shows a Reset
