@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,9 @@ import (
 )
 
 const approvalReceiptLimit = 16 << 10
+
+// ErrApprovalRequired reports a missing receipt, not an invalid one.
+var ErrApprovalRequired = errors.New("target.approval.required: no local approval receipt exists")
 
 type approvalReceiptKey struct {
 	OS        string   `json:"os"`
@@ -120,7 +124,7 @@ func RequireApproval(binding ApprovalBinding) error {
 	}
 	defer func() { _ = destination.Close() }()
 	if !destination.Exists() {
-		return fmt.Errorf("target.approval.required: no local approval receipt exists")
+		return ErrApprovalRequired
 	}
 	if err := validateApprovalDestination(destination, expectedPath); err != nil {
 		return err
