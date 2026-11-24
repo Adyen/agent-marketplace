@@ -918,6 +918,177 @@ func TestPlanPlaceDeselection(t *testing.T) {
 	}
 }
 
+func TestCommitPlaceDeselection(t *testing.T) {
+	t.Run("commits only deselected package files", func(t *testing.T) {
+		fixture, _, selected := installPlaceDeselectionPackages(t)
+		editedPath := filepath.Join(fixture.root, "mods", "sample", "edit.md")
+		editedBytes := []byte("edited by user\n")
+		if err := os.WriteFile(editedPath, editedBytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		missingPath := filepath.Join(fixture.root, "mods", "sample", "missing.md")
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatal(err)
+		}
+		userPath := filepath.Join(fixture.root, "mods", "sample", "user.txt")
+		userBytes := []byte("unowned\n")
+		if err := os.WriteFile(userPath, userBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		removePath := filepath.Join(fixture.root, "mods", "sample", "remove.md")
+		_, ceded, err := commitPlaceChanges(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{selected}, true,
+		)
+		if err != nil {
+			t.Fatalf("commit deselection: %v", err)
+		}
+		if !slices.Equal(ceded, []string{"mods/sample/edit.md", "mods/sample/missing.md"}) {
+			t.Fatalf("deselection ceded paths = %v", ceded)
+		}
+		if _, err := os.Stat(removePath); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("unchanged deselected file remains: %v", err)
+		}
+		if got, err := os.ReadFile(editedPath); err != nil || !bytes.Equal(got, editedBytes) {
+			t.Fatalf("edited deselected file changed: %q, %v", got, err)
+		}
+		if got, err := os.ReadFile(userPath); err != nil || !bytes.Equal(got, userBytes) {
+			t.Fatalf("unowned file changed: %q, %v", got, err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		projection, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Name != selected.Pin.Name {
+			t.Fatalf("post-deselection ownership = %#v, %v", projection, err)
+		}
+	})
+
+	t.Run("retiring paths remain reserved against selected upserts", func(t *testing.T) {
+		fixture, _, selected := installPlaceDeselectionPackages(t)
+		ownedPath := filepath.Join(fixture.root, "mods", "sample", "remove.md")
+		before, err := os.ReadFile(ownedPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		statePath := filepath.Join(fixture.state, "ownership", ownership.RootKey(fixture.binding.CanonicalRoot), "state.json")
+		stateBefore, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		collision := resolvedPlacePackageNamedForPublish(t, fixture, selected.Pin.Name, []targetprofile.PackageFile{
+			{SourcePath: "payload/selected.md", DestinationPath: "mods/selected/selected.md", Mode: 0o644, Bytes: []byte("selected\n")},
+			{SourcePath: "payload/collision.md", DestinationPath: "mods/sample/remove.md", Mode: 0o644, Bytes: []byte("collision\n")},
+		})
+		_, _, err = commitPlaceChanges(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{collision}, true,
+		)
+		if err == nil {
+			t.Fatal("selected upsert adopted a retiring package path")
+		}
+		if got, readErr := os.ReadFile(ownedPath); readErr != nil || !bytes.Equal(got, before) {
+			t.Fatalf("reserved file changed on refusal: %q, %v", got, readErr)
+		}
+		if got, readErr := os.ReadFile(statePath); readErr != nil || !bytes.Equal(got, stateBefore) {
+			t.Fatalf("ownership changed on collision refusal: %v", readErr)
+		}
+	})
+
+	t.Run("missing receipt and changed profile never prune", func(t *testing.T) {
+		for _, scenario := range []string{"missing receipt", "changed profile"} {
+			t.Run(scenario, func(t *testing.T) {
+				fixture, _, _ := installPlaceDeselectionPackages(t)
+				path := filepath.Join(fixture.root, "mods", "sample", "remove.md")
+				fileBefore, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				statePath := filepath.Join(fixture.state, "ownership", ownership.RootKey(fixture.binding.CanonicalRoot), "state.json")
+				stateBefore, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding := fixture.binding
+				if scenario == "missing receipt" {
+					receipts, globErr := filepath.Glob(filepath.Join(fixture.state, "target-approval-*.json"))
+					if globErr != nil || len(receipts) == 0 {
+						t.Fatalf("approval receipts = %v, %v", receipts, globErr)
+					}
+					for _, receipt := range receipts {
+						if err := os.Remove(receipt); err != nil {
+							t.Fatal(err)
+						}
+					}
+				} else {
+					binding.Profile.RevisionDigest = "sha256:" + strings.Repeat("9", 64)
+				}
+				_, _, err = commitPlaceChanges(
+					context.Background(), binding, fixture.raw, fixture.env, nil, true,
+				)
+				if err == nil {
+					t.Fatal("invalid retirement authority was accepted")
+				}
+				if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, fileBefore) {
+					t.Fatalf("invalid authority pruned file: %q, %v", got, readErr)
+				}
+				if got, readErr := os.ReadFile(statePath); readErr != nil || !bytes.Equal(got, stateBefore) {
+					t.Fatalf("invalid authority changed ownership: %v", readErr)
+				}
+			})
+		}
+	})
+
+	t.Run("empty selection prunes only in explicit mode", func(t *testing.T) {
+		fixture, _, _ := installPlaceDeselectionPackages(t)
+		removePath := filepath.Join(fixture.root, "mods", "sample", "remove.md")
+		if _, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(removePath); err != nil {
+			t.Fatalf("upsert-only empty input changed installation: %v", err)
+		}
+		if _, ceded, err := commitPlaceChanges(
+			context.Background(), fixture.binding, fixture.raw, fixture.env, nil, true,
+		); err != nil || len(ceded) != 0 {
+			t.Fatalf("explicit empty-selection commit ceded=%v err=%v", ceded, err)
+		}
+		if _, err := os.Stat(removePath); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("explicit empty selection did not retire package: %v", err)
+		}
+		owner, snapshot := openPlacePublishOwnership(t, fixture)
+		projection, err := owner.PlaceFromSnapshot(snapshot)
+		if err != nil || len(projection.Packages) != 0 {
+			t.Fatalf("empty-selection ownership = %#v, %v", projection, err)
+		}
+	})
+}
+
+func installPlaceDeselectionPackages(
+	t *testing.T,
+) (placeAdmissionFixture, marketplace.ResolvedPlacePackage, marketplace.ResolvedPlacePackage) {
+	t.Helper()
+	fixture := newPlaceAdmissionFixture(t)
+	setPlacePublishEnvironment(t, fixture)
+	if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+		t.Fatal(err)
+	}
+	retiring := resolvedPlacePackageForPublishWithFiles(t, fixture, []targetprofile.PackageFile{
+		{SourcePath: "payload/remove.md", DestinationPath: "mods/sample/remove.md", Mode: 0o644, Bytes: []byte("remove\n")},
+		{SourcePath: "payload/edit.md", DestinationPath: "mods/sample/edit.md", Mode: 0o644, Bytes: []byte("owned\n")},
+		{SourcePath: "payload/missing.md", DestinationPath: "mods/sample/missing.md", Mode: 0o644, Bytes: []byte("missing\n")},
+	})
+	selected := resolvedPlacePackageNamedForPublish(t, fixture, "selected", []targetprofile.PackageFile{{
+		SourcePath: "payload/selected.md", DestinationPath: "mods/selected/selected.md",
+		Mode: 0o644, Bytes: []byte("selected\n"),
+	}})
+	if _, err := CommitPlaceUpserts(
+		context.Background(), fixture.binding, fixture.raw, fixture.env,
+		[]marketplace.ResolvedPlacePackage{retiring, selected},
+	); err != nil {
+		t.Fatalf("install deselection packages: %v", err)
+	}
+	return fixture, retiring, selected
+}
+
 func resolvedPlacePackageNamedForPublish(
 	t *testing.T,
 	fixture placeAdmissionFixture,

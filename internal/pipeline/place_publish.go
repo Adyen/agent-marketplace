@@ -36,6 +36,7 @@ type preparedPlaceUpserts struct {
 	profile  targetprofile.Profile
 	stateDir string
 	upserts  map[string]placeUpsert
+	ceded    []string
 	plan     dependencytxn.PlacePlan
 	changed  bool
 }
@@ -49,18 +50,30 @@ func CommitPlaceUpserts(
 	environment targetprofile.ApprovalEnvironment,
 	packages []marketplace.ResolvedPlacePackage,
 ) (result dependencytxn.PlaceResult, retErr error) {
+	result, _, retErr = commitPlaceChanges(ctx, binding, profileBytes, environment, packages, false)
+	return result, retErr
+}
+
+func commitPlaceChanges(
+	ctx context.Context,
+	binding targetprofile.ApprovalBinding,
+	profileBytes []byte,
+	environment targetprofile.ApprovalEnvironment,
+	packages []marketplace.ResolvedPlacePackage,
+	pruneDeselected bool,
+) (result dependencytxn.PlaceResult, ceded []string, retErr error) {
 	slog.Debug("place upsert transaction started", "target_id", binding.Profile.TargetID, "packages", len(packages))
 	defer func() {
 		if retErr != nil {
 			slog.Warn("place upsert transaction failed", "target_id", binding.Profile.TargetID, "error", retErr)
 		}
 	}()
-	prepared, err := preparePlaceUpserts(ctx, binding, profileBytes, environment, packages)
+	prepared, err := preparePlaceChanges(ctx, binding, profileBytes, environment, packages, pruneDeselected)
 	if err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return dependencytxn.PlaceResult{}, nil, err
 	}
 	if !prepared.changed {
-		return dependencytxn.PlaceResult{}, nil
+		return dependencytxn.PlaceResult{}, append([]string(nil), prepared.ceded...), nil
 	}
 	err = packagegen.WithPackagesLock(ctx, func() error {
 		if err := ctx.Err(); err != nil {
@@ -92,10 +105,22 @@ func CommitPlaceUpserts(
 		return err
 	})
 	if err != nil {
-		return dependencytxn.PlaceResult{}, err
+		return dependencytxn.PlaceResult{}, nil, err
 	}
+	cededSet := make(map[string]struct{}, len(prepared.ceded)+len(result.Retained))
+	for _, path := range prepared.ceded {
+		cededSet[path] = struct{}{}
+	}
+	for _, path := range result.Retained {
+		cededSet[path] = struct{}{}
+	}
+	ceded = make([]string, 0, len(cededSet))
+	for path := range cededSet {
+		ceded = append(ceded, path)
+	}
+	sort.Strings(ceded)
 	slog.Info("place upsert transaction committed", "target_id", binding.Profile.TargetID, "packages", len(prepared.upserts), "changed_paths", len(result.Changed))
-	return result, nil
+	return result, ceded, nil
 }
 
 func preparePlaceUpserts(
@@ -104,6 +129,17 @@ func preparePlaceUpserts(
 	profileBytes []byte,
 	environment targetprofile.ApprovalEnvironment,
 	packages []marketplace.ResolvedPlacePackage,
+) (prepared preparedPlaceUpserts, retErr error) {
+	return preparePlaceChanges(ctx, binding, profileBytes, environment, packages, false)
+}
+
+func preparePlaceChanges(
+	ctx context.Context,
+	binding targetprofile.ApprovalBinding,
+	profileBytes []byte,
+	environment targetprofile.ApprovalEnvironment,
+	packages []marketplace.ResolvedPlacePackage,
+	pruneDeselected bool,
 ) (prepared preparedPlaceUpserts, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return prepared, err
@@ -126,7 +162,7 @@ func preparePlaceUpserts(
 	}
 	prepared.profile = profile
 	prepared.stateDir = stateDir
-	if len(packages) == 0 {
+	if len(packages) == 0 && !pruneDeselected {
 		return prepared, nil
 	}
 	if err := dependencytxn.CheckPending(stateDir); err != nil {
@@ -183,9 +219,48 @@ func preparePlaceUpserts(
 		upserts[upsert.owner.ID] = upsert
 	}
 
-	ownerByID := make(map[string]ownership.PlacePackage, len(current.Packages)+len(upserts))
-	placeByID := make(map[string]place.Package, len(current.Packages)+len(upserts))
-	for _, pkg := range current.Packages {
+	selectedIDs := make(map[string]struct{}, len(upserts))
+	for id := range upserts {
+		selectedIDs[id] = struct{}{}
+	}
+	deselection := placeRetirementPlan{}
+	retained := current
+	if pruneDeselected {
+		deselection, err = planPlaceDeselection(ctx, root, current, binding.Profile, selectedIDs)
+		if err != nil {
+			return prepared, err
+		}
+		if len(deselection.Unproven) != 0 {
+			return prepared, fmt.Errorf("target.place.retirement-unproven: cannot deselect files without parent proof: %v", deselection.Unproven)
+		}
+		retained = deselection.Projection
+		currentByID := make(map[string]ownership.PlacePackage, len(current.Packages))
+		for _, pkg := range current.Packages {
+			currentByID[pkg.ID] = pkg
+		}
+		for id, upsert := range upserts {
+			prior, exists := currentByID[id]
+			if !exists {
+				continue
+			}
+			if prior.Binding.ProfileIdentity != binding.Profile {
+				return prepared, fmt.Errorf("place package %s is reserved by a different profile revision", id)
+			}
+			desiredPaths := make(map[string]struct{}, len(upsert.owner.Files))
+			for _, file := range upsert.owner.Files {
+				desiredPaths[file.Path] = struct{}{}
+			}
+			for _, file := range prior.Files {
+				if _, remains := desiredPaths[file.Path]; !remains {
+					return prepared, fmt.Errorf("selected place package path removals are unsupported: %s", file.Path)
+				}
+			}
+		}
+	}
+
+	ownerByID := make(map[string]ownership.PlacePackage, len(retained.Packages)+len(upserts))
+	placeByID := make(map[string]place.Package, len(retained.Packages)+len(upserts))
+	for _, pkg := range retained.Packages {
 		ownerByID[pkg.ID] = pkg
 		placeByID[pkg.ID] = projectionPlacePackage(pkg)
 	}
@@ -206,7 +281,12 @@ func preparePlaceUpserts(
 	}
 	sort.Slice(desiredPackages, func(i, j int) bool { return desiredPackages[i].ID < desiredPackages[j].ID })
 
-	observed, err := observePlaceProjection(root, current, desiredPackages)
+	var observed map[string]place.Observation
+	if pruneDeselected {
+		observed, err = observePlaceChanges(root, current, upserts, selectedIDs, binding.Profile, deselection)
+	} else {
+		observed, err = observePlaceProjection(root, current, desiredPackages)
+	}
 	if err != nil {
 		return prepared, err
 	}
@@ -218,7 +298,37 @@ func preparePlaceUpserts(
 		refusal := plan.Refused[0]
 		return prepared, fmt.Errorf("place upsert refused at %s: %s", refusal.Path, refusal.Reason)
 	}
-	if len(plan.Removes) != 0 || len(plan.Ceded) != 0 {
+	var prunes []dependencytxn.PlacePrune
+	var ceded []string
+	if pruneDeselected {
+		pruneByPath := make(map[string]dependencytxn.PlacePrune, len(deselection.Prunes))
+		for _, prune := range deselection.Prunes {
+			pruneByPath[prune.Path] = prune
+		}
+		cededByPath := make(map[string]struct{}, len(deselection.Ceded))
+		for _, filePath := range deselection.Ceded {
+			cededByPath[filePath] = struct{}{}
+		}
+		for _, removal := range plan.Removes {
+			prune, approved := pruneByPath[removal.File.Path]
+			if !approved {
+				return prepared, fmt.Errorf("selected place update attempted unsupported path removal %s", removal.File.Path)
+			}
+			prunes = append(prunes, prune)
+			delete(pruneByPath, removal.File.Path)
+		}
+		for _, removal := range plan.Ceded {
+			if _, approved := cededByPath[removal.File.Path]; !approved {
+				return prepared, fmt.Errorf("place plan ceded an unapproved path %s", removal.File.Path)
+			}
+			ceded = append(ceded, removal.File.Path)
+			delete(cededByPath, removal.File.Path)
+		}
+		if len(pruneByPath) != 0 || len(cededByPath) != 0 {
+			return prepared, fmt.Errorf("combined place plan differs from proven deselection plan")
+		}
+		sort.Strings(ceded)
+	} else if len(plan.Removes) != 0 || len(plan.Ceded) != 0 {
 		return prepared, fmt.Errorf("place upsert plan contains unsupported removals")
 	}
 	writes, err := dependencyPlaceWrites(plan.Writes, upserts)
@@ -251,9 +361,10 @@ func preparePlaceUpserts(
 	}
 	placePlan := dependencytxn.PlacePlan{
 		Root: binding.CanonicalRoot, RootIdentity: root.Identity(),
-		Directories: placeWriteDirectories(writes), Writes: writes, Ownership: ownershipFile,
+		Directories: placeWriteDirectories(writes), Writes: writes, Prunes: prunes, Ownership: ownershipFile,
 	}
 	prepared.upserts = upserts
+	prepared.ceded = ceded
 	prepared.plan = placePlan
 	prepared.changed = true
 	return prepared, nil
@@ -519,6 +630,57 @@ func observePlaceProjection(root *fsboundary.Dir, installed ownership.PlaceProje
 			paths[file.Path] = struct{}{}
 		}
 	}
+	return observePlacePaths(root, paths)
+}
+
+func observePlaceChanges(
+	root *fsboundary.Dir,
+	installed ownership.PlaceProjection,
+	upserts map[string]placeUpsert,
+	selectedIDs map[string]struct{},
+	profile targetprofile.Identity,
+	deselection placeRetirementPlan,
+) (map[string]place.Observation, error) {
+	paths := make(map[string]struct{})
+	frozen := make(map[string]ownership.PlaceFile)
+	for _, pkg := range installed.Packages {
+		_, selected := selectedIDs[pkg.ID]
+		if selected && pkg.Binding.ProfileIdentity == profile {
+			for _, file := range pkg.Files {
+				paths[file.Path] = struct{}{}
+			}
+			continue
+		}
+		if pkg.Binding.ProfileIdentity == profile {
+			continue
+		}
+		for _, file := range pkg.Files {
+			frozen[file.Path] = file
+		}
+	}
+	for _, upsert := range upserts {
+		for _, file := range upsert.owner.Files {
+			if _, reserved := frozen[file.Path]; !reserved {
+				paths[file.Path] = struct{}{}
+			}
+		}
+	}
+	observed, err := observePlacePaths(root, paths)
+	if err != nil {
+		return nil, err
+	}
+	for filePath, file := range frozen {
+		observed[filePath] = place.Observation{Mode: file.Mode, Digest: file.Digest}
+	}
+	for _, prune := range deselection.Prunes {
+		observed[prune.Path] = place.Observation{
+			Mode: prune.Mode, Digest: "sha256:" + prune.Expected.Digest,
+		}
+	}
+	return observed, nil
+}
+
+func observePlacePaths(root *fsboundary.Dir, paths map[string]struct{}) (map[string]place.Observation, error) {
 	ordered := make([]string, 0, len(paths))
 	for filePath := range paths {
 		ordered = append(ordered, filePath)
