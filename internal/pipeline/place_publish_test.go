@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -694,6 +695,243 @@ func TestPlanPlaceRetirement(t *testing.T) {
 			t.Fatalf("legacy file plan = prunes %v, unproven %v", legacyPlanned.Prunes, legacyPlanned.Unproven)
 		}
 	})
+}
+
+func TestPlanPlaceDeselection(t *testing.T) {
+	fixture := newPlaceAdmissionFixture(t)
+	setPlacePublishEnvironment(t, fixture)
+	if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+		t.Fatal(err)
+	}
+	retiringFiles := []targetprofile.PackageFile{
+		{SourcePath: "payload/remove.md", DestinationPath: "mods/sample/remove.md", Mode: 0o644, Bytes: []byte("remove\n")},
+		{SourcePath: "payload/edit.md", DestinationPath: "mods/sample/edit.md", Mode: 0o644, Bytes: []byte("owned\n")},
+		{SourcePath: "payload/missing.md", DestinationPath: "mods/sample/missing.md", Mode: 0o644, Bytes: []byte("missing\n")},
+	}
+	retiring := resolvedPlacePackageForPublishWithFiles(t, fixture, retiringFiles)
+	selected := resolvedPlacePackageNamedForPublish(t, fixture, "selected", []targetprofile.PackageFile{{
+		SourcePath: "payload/selected.md", DestinationPath: "mods/selected/selected.md",
+		Mode: 0o644, Bytes: []byte("selected\n"),
+	}})
+	if _, err := CommitPlaceUpserts(
+		context.Background(), fixture.binding, fixture.raw, fixture.env,
+		[]marketplace.ResolvedPlacePackage{retiring, selected},
+	); err != nil {
+		t.Fatal(err)
+	}
+	editedPath := filepath.Join(fixture.root, "mods", "sample", "edit.md")
+	editedBytes := []byte("edited by user\n")
+	if err := os.WriteFile(editedPath, editedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missingPath := filepath.Join(fixture.root, "mods", "sample", "missing.md")
+	if err := os.Remove(missingPath); err != nil {
+		t.Fatal(err)
+	}
+	selectedPath := filepath.Join(fixture.root, "mods", "selected", "selected.md")
+	selectedBytes := []byte("selected drift\n")
+	if err := os.WriteFile(selectedPath, selectedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	owner, snapshot := openPlacePublishOwnership(t, fixture)
+	installed, err := owner.PlaceFromSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selectedID string
+	for _, pkg := range installed.Packages {
+		if pkg.Name == "selected" {
+			selectedID = pkg.ID
+		}
+	}
+	if selectedID == "" {
+		t.Fatal("selected package was not installed")
+	}
+	sameTargetOtherRevision := installed.Packages[0]
+	sameTargetOtherRevision.ID = strings.Repeat("f", 64)
+	sameTargetOtherRevision.Name = "other-revision"
+	sameTargetOtherRevision.Binding.ProfileIdentity.RevisionDigest = "sha256:" + strings.Repeat("1", 64)
+	sameTargetOtherRevision.Files = nil
+	sameTargetOtherRevision.Requires = nil
+	sameTargetOtherRevision.Verification = nil
+	otherTarget := sameTargetOtherRevision
+	otherTarget.ID = strings.Repeat("e", 64)
+	otherTarget.Name = "other-target"
+	otherTarget.Kind = "other-app/mod"
+	otherTarget.Binding.ProfileIdentity = targetprofile.Identity{
+		TargetID: "other-app", SourceID: fixture.identity.SourceID,
+		RevisionDigest: "sha256:" + strings.Repeat("2", 64),
+	}
+	installed.Packages = append(installed.Packages, sameTargetOtherRevision, otherTarget)
+
+	root, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planned, planErr := planPlaceDeselection(
+		context.Background(), root, installed, fixture.identity, map[string]struct{}{selectedID: {}},
+	)
+	if closeErr := root.Close(); planErr != nil || closeErr != nil {
+		t.Fatalf("planPlaceDeselection() = %#v, %v (close %v)", planned, planErr, closeErr)
+	}
+	if len(planned.Prunes) != 1 || planned.Prunes[0].Path != "mods/sample/remove.md" ||
+		!slices.Equal(planned.Ceded, []string{"mods/sample/edit.md", "mods/sample/missing.md"}) ||
+		len(planned.Unproven) != 0 {
+		t.Fatalf("deselection plan prunes=%v ceded=%v unproven=%v", planned.Prunes, planned.Ceded, planned.Unproven)
+	}
+	for _, path := range append(append([]string(nil), planned.Ceded...), planned.Unproven...) {
+		if path == "mods/selected/selected.md" {
+			t.Fatalf("selected drift was classified for removal: %#v", planned)
+		}
+	}
+	for _, pkg := range planned.Projection.Packages {
+		if pkg.ID == selectedID || pkg.ID == sameTargetOtherRevision.ID || pkg.ID == otherTarget.ID {
+			continue
+		}
+		t.Fatalf("unexpected package retained after deselection: %#v", pkg)
+	}
+	if len(planned.Projection.Packages) != 3 {
+		t.Fatalf("deselection projection packages = %#v", planned.Projection.Packages)
+	}
+	allSelected := make(map[string]struct{})
+	for _, pkg := range installed.Packages {
+		if pkg.Binding.ProfileIdentity == fixture.identity {
+			allSelected[pkg.ID] = struct{}{}
+		}
+	}
+	noOpRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noOp, noOpErr := planPlaceDeselection(context.Background(), noOpRoot, installed, fixture.identity, allSelected)
+	noOpCloseErr := noOpRoot.Close()
+	if noOpErr != nil || noOpCloseErr != nil || len(noOp.Prunes) != 0 ||
+		len(noOp.Ceded) != 0 || len(noOp.Unproven) != 0 ||
+		len(noOp.Projection.Packages) != len(installed.Packages) {
+		t.Fatalf("all-selected no-op plan = %#v, %v (close %v)", noOp, noOpErr, noOpCloseErr)
+	}
+	detached := false
+	for i := range noOp.Projection.Packages {
+		if len(noOp.Projection.Packages[i].Files) == 0 {
+			continue
+		}
+		before := installed.Packages[i].Files[0].Path
+		noOp.Projection.Packages[i].Files[0].Path = "detached-check.txt"
+		detached = installed.Packages[i].Files[0].Path == before
+		break
+	}
+	if !detached {
+		t.Fatal("empty-removal projection was not detached from installed state")
+	}
+	if got, err := os.ReadFile(editedPath); err != nil || !bytes.Equal(got, editedBytes) {
+		t.Fatalf("deselection planning changed edited file: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(selectedPath); err != nil || !bytes.Equal(got, selectedBytes) {
+		t.Fatalf("deselection planning changed selected drift: %q, %v", got, err)
+	}
+
+	emptyRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allRemoved, allErr := planPlaceDeselection(context.Background(), emptyRoot, installed, fixture.identity, nil)
+	closeErr := emptyRoot.Close()
+	if allErr != nil || closeErr != nil {
+		t.Fatalf("empty-selection plan = %#v, %v (close %v)", allRemoved, allErr, closeErr)
+	}
+	if len(allRemoved.Prunes) != 1 || len(allRemoved.Projection.Packages) != 2 {
+		t.Fatalf("explicit empty selection did not remove only exact profile: %#v", allRemoved)
+	}
+	remaining := make(map[string]struct{})
+	for _, pkg := range allRemoved.Projection.Packages {
+		if pkg.Binding.ProfileIdentity == fixture.identity {
+			t.Fatalf("empty selection retained a package for its explicit profile: %#v", pkg)
+		}
+		remaining[pkg.ID] = struct{}{}
+	}
+	if _, ok := remaining[sameTargetOtherRevision.ID]; !ok {
+		t.Fatal("empty selection removed a different profile revision")
+	}
+	if _, ok := remaining[otherTarget.ID]; !ok {
+		t.Fatal("empty selection removed another target's package")
+	}
+	emptyMapRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptySelection, emptySelectionErr := planPlaceDeselection(
+		context.Background(), emptyMapRoot, installed, fixture.identity, map[string]struct{}{},
+	)
+	emptyCloseErr := emptyMapRoot.Close()
+	if emptySelectionErr != nil || emptyCloseErr != nil ||
+		len(emptySelection.Prunes) != len(allRemoved.Prunes) ||
+		len(emptySelection.Projection.Packages) != len(allRemoved.Projection.Packages) {
+		t.Fatalf("empty-map selection = %#v, %v (close %v)", emptySelection, emptySelectionErr, emptyCloseErr)
+	}
+	invalidRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidProfile := targetprofile.Identity{}
+	if _, err := planPlaceDeselection(context.Background(), invalidRoot, installed, invalidProfile, nil); err == nil {
+		_ = invalidRoot.Close()
+		t.Fatal("empty profile identity was accepted")
+	}
+	if err := invalidRoot.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dependent := sameTargetOtherRevision
+	dependent.Requires = []string{installed.Packages[0].ID}
+	withDependent := installed
+	withDependent.Packages = append(append([]ownership.PlacePackage(nil), installed.Packages...), dependent)
+	dependentRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, dependencyErr := planPlaceDeselection(
+		context.Background(), dependentRoot, withDependent, fixture.identity, map[string]struct{}{selectedID: {}},
+	)
+	_ = dependentRoot.Close()
+	if dependencyErr == nil || !strings.Contains(dependencyErr.Error(), "target.place.retirement-dependency") {
+		t.Fatalf("surviving dependant error = %v", dependencyErr)
+	}
+
+	unproven := installed
+	unproven.Directories = nil
+	unproven.Packages = append([]ownership.PlacePackage(nil), installed.Packages...)
+	for i := range unproven.Packages {
+		for j := range unproven.Packages[i].Files {
+			unproven.Packages[i].Files[j].Parent = nil
+		}
+	}
+	unprovenRoot, err := fsboundary.OpenDir(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unprovenPlan, unprovenErr := planPlaceDeselection(
+		context.Background(), unprovenRoot, unproven, fixture.identity, map[string]struct{}{selectedID: {}},
+	)
+	_ = unprovenRoot.Close()
+	if unprovenErr != nil || len(unprovenPlan.Prunes) != 0 || len(unprovenPlan.Unproven) != len(retiringFiles) {
+		t.Fatalf("unproven deselection plan = %#v, %v", unprovenPlan, unprovenErr)
+	}
+}
+
+func resolvedPlacePackageNamedForPublish(
+	t *testing.T,
+	fixture placeAdmissionFixture,
+	name string,
+	files []targetprofile.PackageFile,
+) marketplace.ResolvedPlacePackage {
+	t.Helper()
+	copyFixture := fixture
+	cfg := *fixture.config
+	cfg.Marketplaces = append([]config.MarketplaceEntry(nil), fixture.config.Marketplaces...)
+	cfg.Marketplaces[0].Resources = append([]config.MarketplaceResourcePin(nil), fixture.config.Marketplaces[0].Resources...)
+	cfg.Marketplaces[0].Resources[1].Name = name
+	copyFixture.config = &cfg
+	return resolvedPlacePackageForPublishWithFiles(t, copyFixture, files)
 }
 
 func resolvedPlacePackageForPublish(t *testing.T, fixture placeAdmissionFixture) marketplace.ResolvedPlacePackage {

@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/place"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
 
 type placeRetirementPlan struct {
@@ -39,7 +40,58 @@ func planPlaceRetirement(
 	if err := ctx.Err(); err != nil {
 		return placeRetirementPlan{}, err
 	}
+	found := false
+	for _, pkg := range installed.Packages {
+		if pkg.Binding.ProfileIdentity.TargetID == targetID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return placeRetirementPlan{}, fmt.Errorf("target.place.not-installed: target %s has no installed packages", targetID)
+	}
+	return planPlacePackageRemoval(ctx, root, installed, func(pkg ownership.PlacePackage) bool {
+		return pkg.Binding.ProfileIdentity.TargetID == targetID
+	})
+}
 
+// planPlaceDeselection plans removal only for one exact profile revision. The
+// caller must prove selectedPackageIDs is the complete policy-admitted selection
+// and that local approval is valid; it must not pass failed or filtered acquisition.
+func planPlaceDeselection(
+	ctx context.Context,
+	root *fsboundary.Dir,
+	installed ownership.PlaceProjection,
+	profile targetprofile.Identity,
+	selectedPackageIDs map[string]struct{},
+) (placeRetirementPlan, error) {
+	if err := profile.Validate(); err != nil {
+		return placeRetirementPlan{}, fmt.Errorf("target.place.profile-invalid: %w", err)
+	}
+	return planPlacePackageRemoval(ctx, root, installed, func(pkg ownership.PlacePackage) bool {
+		if pkg.Binding.ProfileIdentity != profile {
+			return false
+		}
+		_, selected := selectedPackageIDs[pkg.ID]
+		return !selected
+	})
+}
+
+func planPlacePackageRemoval(
+	ctx context.Context,
+	root *fsboundary.Dir,
+	installed ownership.PlaceProjection,
+	removePackage func(ownership.PlacePackage) bool,
+) (placeRetirementPlan, error) {
+	if root == nil {
+		return placeRetirementPlan{}, fmt.Errorf("target.place.retirement-root-invalid: target root is required")
+	}
+	if removePackage == nil {
+		return placeRetirementPlan{}, fmt.Errorf("target.place.removal-invalid: package selector is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return placeRetirementPlan{}, err
+	}
 	retiring := make([]ownership.PlacePackage, 0)
 	next := ownership.PlaceProjection{
 		Packages:    make([]ownership.PlacePackage, 0, len(installed.Packages)),
@@ -47,21 +99,19 @@ func planPlaceRetirement(
 	}
 	retiredIDs := make(map[string]struct{})
 	for _, pkg := range installed.Packages {
-		if pkg.Binding.ProfileIdentity.TargetID == targetID {
+		if removePackage(pkg) {
 			retiring = append(retiring, pkg)
 			retiredIDs[pkg.ID] = struct{}{}
 			continue
 		}
-		pkg.Files = append([]ownership.PlaceFile(nil), pkg.Files...)
-		pkg.Requires = append([]string(nil), pkg.Requires...)
-		if pkg.Verification != nil {
-			verification := *pkg.Verification
-			pkg.Verification = &verification
-		}
-		next.Packages = append(next.Packages, pkg)
+		next.Packages = append(next.Packages, clonePlaceRetirementPackage(pkg))
 	}
 	if len(retiring) == 0 {
-		return placeRetirementPlan{}, fmt.Errorf("target.place.not-installed: target %s has no installed packages", targetID)
+		result := placeRetirementPlan{Projection: next}
+		if err := revalidatePlacePackageRemovalRoot(ctx, root); err != nil {
+			return placeRetirementPlan{}, err
+		}
+		return result, nil
 	}
 	sort.Slice(retiring, func(i, j int) bool { return retiring[i].ID < retiring[j].ID })
 	for _, pkg := range next.Packages {
@@ -163,21 +213,47 @@ func planPlaceRetirement(
 	if err := ctx.Err(); err != nil {
 		return placeRetirementPlan{}, err
 	}
-	currentRoot, err := openCanonicalPlaceSyncRoot(root.Path())
-	if err != nil {
-		return placeRetirementPlan{}, fmt.Errorf("reopen place root after retirement planning: %w", err)
-	}
-	sameRoot := root.Identity().SameObject(currentRoot.Identity())
-	closeErr := currentRoot.Close()
-	if closeErr != nil {
-		return placeRetirementPlan{}, fmt.Errorf("close revalidated place root: %w", closeErr)
-	}
-	if !sameRoot {
-		return placeRetirementPlan{}, fmt.Errorf("target.place.retirement-root-changed: place root changed during retirement planning")
+	if err := revalidatePlacePackageRemovalRoot(ctx, root); err != nil {
+		return placeRetirementPlan{}, err
 	}
 	sort.Strings(result.Ceded)
 	sort.Strings(result.Unproven)
 	return result, nil
+}
+
+func clonePlaceRetirementPackage(pkg ownership.PlacePackage) ownership.PlacePackage {
+	pkg.Files = append([]ownership.PlaceFile(nil), pkg.Files...)
+	for i := range pkg.Files {
+		if pkg.Files[i].Parent != nil {
+			parent := *pkg.Files[i].Parent
+			pkg.Files[i].Parent = &parent
+		}
+	}
+	pkg.Requires = append([]string(nil), pkg.Requires...)
+	if pkg.Verification != nil {
+		verification := *pkg.Verification
+		pkg.Verification = &verification
+	}
+	return pkg
+}
+
+func revalidatePlacePackageRemovalRoot(ctx context.Context, root *fsboundary.Dir) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	currentRoot, err := openCanonicalPlaceSyncRoot(root.Path())
+	if err != nil {
+		return fmt.Errorf("reopen place root after retirement planning: %w", err)
+	}
+	sameRoot := root.Identity().SameObject(currentRoot.Identity())
+	closeErr := currentRoot.Close()
+	if closeErr != nil {
+		return fmt.Errorf("close revalidated place root: %w", closeErr)
+	}
+	if !sameRoot {
+		return fmt.Errorf("target.place.retirement-root-changed: place root changed during removal planning")
+	}
+	return nil
 }
 
 func openPlaceRetirementParent(
