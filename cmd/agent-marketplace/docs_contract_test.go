@@ -189,6 +189,8 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"status":                TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions,
 		"target":                TestTargetApproveRecordsOnlyConfirmedBinding,
 		"target approve":        TestTargetApproveRecordsOnlyConfirmedBinding,
+		"target enable":         TestTargetEnableRequiresSelectedAdmittedProfile,
+		"target disable":        TestTargetDisablePreservesSelectionAndOwnedFiles,
 		"doctor":                TestDoctorCommandReportsDetectedHarnessAndInstallRoots,
 		"backup":                TestBackupListCommand,
 		"backup create":         TestBackupCreateOnDemand,

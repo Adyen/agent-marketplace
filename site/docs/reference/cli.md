@@ -623,6 +623,22 @@ agent-marketplace target approve <target-id> [--json]
 
 Reads the selected profile and its already-deployed Git lock from the local cache, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
 
+### `target enable`
+
+```text
+agent-marketplace target enable <target-id>
+```
+
+Adds a selected, admitted target profile to the existing v4 user config. This is a config-only change; it does not approve the profile, install packages, or run sync. It uses deployed lock evidence and cached profile bytes only. An existing user config is required.
+
+### `target disable`
+
+```text
+agent-marketplace target disable <target-id>
+```
+
+Removes a place target from the user target list without changing its Marketplace selection, approval receipt, or installed files. Removing the last target from a `harnesses:` list, or from an inherited list without an authored `targets:` key, is refused with guidance to upgrade readers and rename the key. To represent no targets explicitly, use a `targets:` list; `targets: []` disables inheritance. The command requires an existing v4 user config and does not sync or remove packages.
+
 ## `telemetry`
 
 Reads and changes your telemetry preference and local telemetry state. When an organization config sets a telemetry level, that level applies instead of your preference, and the organization can also lock the endpoint. See the [telemetry reference](telemetry.md).

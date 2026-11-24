@@ -21,8 +21,8 @@ func PrepareDeployedPlaceApproval(ctx context.Context, ws Workspace, targetID st
 	if err := ws.validate(); err != nil {
 		return targetprofile.ApprovalBinding{}, err
 	}
-	if !nameutil.IsTargetIdentifier(targetID) || target.IsValid(targetID) {
-		return targetprofile.ApprovalBinding{}, fmt.Errorf("target.approval.target-invalid: %q is not a place target identifier", targetID)
+	if err := validatePlaceTargetID(targetID); err != nil {
+		return targetprofile.ApprovalBinding{}, err
 	}
 	environment, err := currentPlaceApprovalEnvironment()
 	if err != nil {
@@ -45,23 +45,42 @@ func PrepareDeployedPlaceApproval(ctx context.Context, ws Workspace, targetID st
 	if len(effective.Errors) > 0 {
 		return targetprofile.ApprovalBinding{}, errors.Join(effective.Errors...)
 	}
-	selected, err := effective.Merged.SelectedMarketplaceProfiles()
-	if err != nil {
-		return targetprofile.ApprovalBinding{}, err
-	}
-	identity, ok := selected[targetID]
-	if !ok {
-		return targetprofile.ApprovalBinding{}, fmt.Errorf("marketplace.profile.selection-invalid: target %q has no selected Marketplace profile", targetID)
-	}
-	raw, err := DeployedGitPlaceProfileReader(intent, evidence)(
-		ctx, identity, resolver.MarketplaceResolveModeCachedNoFetch,
-	)
-	if err != nil {
-		return targetprofile.ApprovalBinding{}, err
-	}
-	profile, err := targetprofile.Parse(raw, identity)
+	profile, identity, err := readSelectedDeployedPlaceProfile(ctx, intent, evidence, effective.Merged, targetID)
 	if err != nil {
 		return targetprofile.ApprovalBinding{}, err
 	}
 	return resolvePlaceApprovalBinding(profile, identity, environment)
+}
+
+func validatePlaceTargetID(targetID string) error {
+	if !nameutil.IsTargetIdentifier(targetID) || target.IsValid(targetID) {
+		return fmt.Errorf("target.approval.target-invalid: %q is not a place target identifier", targetID)
+	}
+	return nil
+}
+
+func readSelectedDeployedPlaceProfile(
+	ctx context.Context,
+	intent config.Intent,
+	evidence config.Evidence,
+	merged *config.Config,
+	targetID string,
+) (targetprofile.Profile, targetprofile.Identity, error) {
+	selected, err := merged.SelectedMarketplaceProfiles()
+	if err != nil {
+		return targetprofile.Profile{}, targetprofile.Identity{}, err
+	}
+	identity, ok := selected[targetID]
+	if !ok {
+		return targetprofile.Profile{}, targetprofile.Identity{}, fmt.Errorf("marketplace.profile.selection-invalid: target %q has no selected Marketplace profile", targetID)
+	}
+	raw, err := DeployedGitPlaceProfileReader(intent, evidence)(ctx, identity, resolver.MarketplaceResolveModeCachedNoFetch)
+	if err != nil {
+		return targetprofile.Profile{}, targetprofile.Identity{}, err
+	}
+	profile, err := targetprofile.Parse(raw, identity)
+	if err != nil {
+		return targetprofile.Profile{}, targetprofile.Identity{}, err
+	}
+	return profile, identity, nil
 }

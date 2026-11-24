@@ -33,9 +33,37 @@ type targetApprovalResult struct {
 }
 
 func newTargetCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "target", Short: "Manage local target-profile approval"}
-	cmd.AddCommand(newTargetApproveCmd())
+	cmd := &cobra.Command{Use: "target", Short: "Manage target-profile selection and approval"}
+	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"))
 	return cmd
+}
+
+func newTargetToggleCmd(action string) *cobra.Command {
+	enable := action == "enable"
+	return &cobra.Command{
+		Use:  action + " <target-id>",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := discoverSyncWorkspace()
+			if err != nil {
+				return err
+			}
+			changed, err := pipeline.SetDeployedPlaceTargetEnabled(cmd.Context(), ws, args[0], enable)
+			if err != nil {
+				return err
+			}
+			state := "disabled"
+			if enable {
+				state = "enabled"
+			}
+			if !changed {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target %s already %s.\n", args[0], state)
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Target %s %s in user config.\n", args[0], state)
+			return err
+		},
+	}
 }
 
 func newTargetApproveCmd() *cobra.Command {
