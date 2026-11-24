@@ -24,6 +24,7 @@ type PlaceAdmission struct {
 	Approvals map[targetprofile.Identity]targetprofile.ApprovalBinding
 	Pending   []targetprofile.Identity
 	Packages  []marketplace.ResolvedPlacePackage
+	profiles  map[targetprofile.Identity][]byte
 }
 
 // PreparePlaceAdmission validates approved place profiles before resolving
@@ -108,6 +109,7 @@ func PreparePlaceAdmission(
 		admission.Approvals[identity] = binding
 		approvedProfiles[identity] = append([]byte(nil), raw...)
 	}
+	admission.profiles = approvedProfiles
 	if len(approvedProfiles) == 0 {
 		return admission, nil
 	}
