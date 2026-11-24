@@ -98,6 +98,51 @@ func newPlaceFixture(t *testing.T, oldState bool) (string, string, PlacePlan) {
 	return root, stateDir, plan
 }
 
+func TestPlaceCommitRefusesChangedSelectionBeforeJournal(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, true)
+	inputPath := filepath.Join(filepath.Dir(root), "deployed-config.yaml")
+	beforeInput := []byte("selection: original\n")
+	if err := os.WriteFile(inputPath, beforeInput, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selection := ReadAssertion{
+		Path: inputPath, RequestedPath: inputPath, Expected: generation(t, inputPath),
+	}
+	ownershipBefore, err := os.ReadFile(plan.Ownership.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CommitPlace(
+		context.Background(), stateDir, plan,
+		WithReadAssertions([]ReadAssertion{selection}),
+		WithFaultHook(func(point FaultPoint) error {
+			if point.Stage == FaultAfterLocks {
+				return os.WriteFile(inputPath, []byte("selection: changed\n"), 0o600)
+			}
+			return nil
+		}),
+	)
+	if !errors.Is(err, ErrGenerationConflict) {
+		t.Fatalf("CommitPlace with changed selection error = %v, want generation conflict", err)
+	}
+	if got, err := os.ReadFile(inputPath); err != nil || string(got) != "selection: changed\n" {
+		t.Fatalf("fault did not change selection input: %q, %v", got, err)
+	}
+	targetPath := filepath.Join(root, "mods", "new.txt")
+	if _, err := os.Lstat(targetPath); !os.IsNotExist(err) {
+		t.Fatalf("place target changed before journal: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(targetPath)); !os.IsNotExist(err) {
+		t.Fatalf("place directory changed before journal: %v", err)
+	}
+	if got, err := os.ReadFile(plan.Ownership.Path); err != nil || !reflect.DeepEqual(got, ownershipBefore) {
+		t.Fatalf("ownership changed before journal: %v", err)
+	}
+	if err := CheckPending(stateDir); err != nil {
+		t.Fatalf("changed selection left a transaction journal: %v", err)
+	}
+}
+
 // spec: target-profile-place/staging-happens-outside-the-target-root
 func TestPlaceRejectsTargetRootsOverlappingState(t *testing.T) {
 	for _, test := range []struct {

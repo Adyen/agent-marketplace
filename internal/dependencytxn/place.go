@@ -178,7 +178,21 @@ func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...O
 	if err := checkPlaceJournalSize(&journal{Version: journalVersion, ID: id, Place: sizingIntent}); err != nil {
 		return PlaceResult{}, err
 	}
-	paths := placeLockPaths(plan)
+	pathSet := make(map[string]struct{}, len(plan.Writes)+len(plan.Prunes)+1+len(cfg.reads))
+	for _, path := range placeLockPaths(plan) {
+		pathSet[path] = struct{}{}
+	}
+	for _, read := range cfg.reads {
+		if err := validateReadAssertion(read); err != nil {
+			return PlaceResult{}, err
+		}
+		pathSet[read.Path] = struct{}{}
+	}
+	paths := make([]string, 0, len(pathSet))
+	for path := range pathSet {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
 	locks, err := acquireLocks(ctx, paths)
 	if err != nil {
 		return PlaceResult{}, err
@@ -228,6 +242,9 @@ func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...O
 	}
 	j := journal{Version: journalVersion, ID: id, Place: intent}
 	if err := checkPlaceJournalSize(&j); err != nil {
+		return PlaceResult{}, err
+	}
+	if err := ValidateReadAssertions(cfg.reads); err != nil {
 		return PlaceResult{}, err
 	}
 	journalPath, err := persistJournal(stateDir, &j, cfg.syncDir)

@@ -319,12 +319,25 @@ resources:
 		if len(result.MachineTargetHarnesses) != 0 {
 			t.Fatalf("compiled machine targets = %v, want none for place-only user targets", result.MachineTargetHarnesses)
 		}
+		assertedPaths := make(map[string]bool, len(result.placeSelectionReads))
+		for _, read := range result.placeSelectionReads {
+			assertedPaths[read.Path] = true
+		}
+		if len(assertedPaths) == 0 || !assertedPaths[userConfigPath] || !assertedPaths[paths.CanonicalLock] {
+			t.Fatalf("place selection read assertions = %#v, want authored config and deployed lock", result.placeSelectionReads)
+		}
 		if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
 			t.Fatalf("pending Sync wrote place target: entries=%v err=%v", entries, err)
 		}
 	}
 	pending := Sync(ctx, opts)
 	assertPending(pending)
+	filteredOpts := opts
+	filteredOpts.MarketplaceSourceFilter = func(config.Source) bool { return true }
+	filteredResult := Resolve(ctx, filteredOpts)
+	if len(filteredResult.placeSelectionReads) != 0 {
+		t.Fatalf("filtered resolution captured place selection reads: %#v", filteredResult.placeSelectionReads)
+	}
 	checkResolved, releaseCheck := ResolveWithExactLockLease(ctx, opts)
 	defer releaseCheck()
 	if len(checkResolved.Errors) != 0 {

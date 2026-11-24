@@ -21,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -159,6 +160,7 @@ type ResolveResult struct {
 	placeTargets        []string
 	placeProfileReader  PlaceProfileReader
 	placeConfig         *config.Config
+	placeSelectionReads []dependencytxn.ReadAssertion
 }
 
 // DisplayArtifacts returns the materializable artifacts followed by the
@@ -599,6 +601,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		}
 		result.placeTargets = append([]string(nil), ec.PlaceTargets...)
 		result.placeProfileReader = DeployedGitPlaceProfileReader(deployedIntent, deployedEvidence)
+		if opts.MarketplaceSourceFilter == nil &&
+			effectiveOpts.FileOverlays == nil &&
+			transientOrganizationMarketplaceLock == transientOrganizationMarketplaceLockUnused {
+			reads, err := deployedPolicyReadAssertions(deployedIntent, deployedEvidence)
+			if err != nil {
+				slog.Debug("could not capture deployed place selection reads", "error", err)
+			} else {
+				result.placeSelectionReads = reads
+			}
+		}
 	}
 	if opts.Gitignore {
 		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
