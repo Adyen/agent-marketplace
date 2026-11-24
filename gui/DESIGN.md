@@ -96,7 +96,9 @@ platform font, use these stacks:
   The inspector overlay slides in 200 ms. Modals fade and rise 4 px in 200 ms.
   When `prefers-reduced-motion` is set, all of these are disabled.
 - Focus: a 2 px `--gui-signal` outline at a 2 px offset, shown only with
-  `:focus-visible`.
+  `:focus-visible`. Text inputs (`.gui-input`) instead take a `--gui-ink`
+  border with a 1 px inset `--gui-ink` ring, so the ring cannot be clipped by
+  a scrolling modal body.
 
 ### Theme
 
@@ -657,7 +659,8 @@ conflicts with an earlier section, this section wins.
   (`~/code/my-registry`), "Repository URL"
   (`https://github.com/org/repo.git`), or "Marketplace URL"
   (`https://marketplace.example.com`). A Git source adds "Branch, tag or
-  commit" (`main`) and "Folder in repository" (`optional`) side by side. The
+  commit" (placeholder `default branch`; optional) and "Folder in repository"
+  (`optional`) side by side. The
   accessible names stay "Source location", "Source ref", and "Source subpath".
   The legend and labels share `.source-form__label`: sans, 13 px, medium
   weight, and sentence case. Enter in a text field submits a valid form.
@@ -665,14 +668,15 @@ conflicts with an earlier section, this section wins.
   12 px `--am-color-status-danger`, with a matching danger border,
   `aria-invalid`, and an instance-unique `aria-describedby` target. A field
   error clears on edit; hints for invalid values appear after blur or a submit
-  attempt. Request errors without a field and add-owned mutation diagnostics
+  attempt. A blank field never shows a hint: the submit button is disabled
+  instead. Request errors without a field and add-owned mutation diagnostics
   sit once below the form inside the Add source modal.
 - *Rule — source action and validation*: Add source is aligned to the form's
   right edge at content width, without a fixed width. In the Add source modal
   it is the solid primary button, 32 px high, after a secondary Cancel; in
   First run it keeps the secondary style. It stays disabled until
-  a directory location is non-blank, a Git location accepted by the existing
-  GUI add-source API/config admission rules has a non-blank ref, or a
+  a directory location is non-blank, a Git location is accepted by the existing
+  GUI add-source API/config admission rules, or a
   Marketplace location is an absolute HTTP(S) URL.
   Directory existence remains a server check.
 - *Rule — native directory picker*: place Browse… beside the Location input,
@@ -699,6 +703,25 @@ conflicts with an earlier section, this section wins.
   row of Cancel and the solid Add source. It opens from
   the sidebar "+", the empty-state "Add a source", and the Add source button in
   Settings → Sources. Settings → Sources has no inline form.
+- *Rule — preview*: for a directory or Git source the form's primary button
+  reads "Preview source" ("Loading preview…" while it loads). The preview
+  replaces the form and widens the modal to 720 px: a count line ("3 resources at `0123456789ab` on `main`",
+  or "3 resources in this folder"), the kinds counted in `--gui-ink-3`
+  ("2 skills, 1 command"), the location in mono, and a bordered list that
+  scrolls past 380 px with one row per resource: kind, mono name over a
+  description of up to two lines, and a switch at the right edge. Switches
+  start off; "Install all" above the list sets every one. The confirm button
+  reads "Add source", or "Add source and install N" once N are on.
+  A resource that cannot be read is listed in the danger colour with its
+  problem, has no switch, and is left out of the count. An empty source says where resources
+  are expected. The footer is Back, which returns to the form with its values
+  kept, and the solid Add source, which takes focus. A Git source is added at
+  the previewed ref. A Marketplace endpoint has no preview; its button reads
+  "Add source".
+- *Rule — failure copy*: a source that cannot be loaded or added shows one
+  plain sentence ("Couldn't reach the repository. Check the URL and your
+  network connection.") with the original error text under a "Details"
+  disclosure, in mono.
 - *Rule — pending*: while the add is pending the primary button reads "Adding…"
   and is disabled, and the modal is not dismissible.
 - *Rule — settle*: the modal closes when the add settles without an add-source

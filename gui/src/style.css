@@ -639,6 +639,12 @@ textarea:focus-visible,
   width: 100%;
 }
 
+.gui-input:focus-visible {
+  border-color: var(--gui-ink);
+  box-shadow: inset 0 0 0 1px var(--gui-ink);
+  outline: none;
+}
+
 .gui-input.mono {
   font-family: var(--gui-mono);
   font-size: 12px;
@@ -717,6 +723,162 @@ textarea:focus-visible,
   gap: 8px;
   justify-content: flex-end;
   margin-top: 8px;
+}
+
+.add-source-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.add-source-modal__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.add-source-modal__summary {
+  color: var(--gui-ink-2);
+  font-size: 13px;
+  margin: 0;
+}
+
+.add-source-modal__summary strong {
+  color: var(--gui-ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.add-source-modal__summary code {
+  color: var(--gui-ink);
+  font-size: 12px;
+}
+
+.add-source-modal__counts {
+  color: var(--gui-ink-3);
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.add-source-modal__location {
+  color: var(--gui-ink-3);
+  font-size: 11.5px;
+  margin: -6px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-source-modal__pick-all {
+  align-items: center;
+  color: var(--gui-ink-3);
+  display: flex;
+  font-size: 12px;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.add-source-modal__pick-all-control {
+  align-items: center;
+  color: var(--gui-ink-2);
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.add-source-modal__resources {
+  border: 1px solid var(--gui-line);
+  border-radius: 10px;
+  list-style: none;
+  margin: 0;
+  max-height: min(380px, 48vh);
+  overflow-y: auto;
+  padding: 0;
+}
+
+.add-source-modal__resource {
+  align-items: center;
+  column-gap: 12px;
+  display: grid;
+  font-size: 13px;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 8px 14px;
+}
+
+.add-source-modal__resource + .add-source-modal__resource {
+  border-top: 1px solid var(--gui-s0200);
+}
+
+.add-source-modal__kind {
+  color: var(--gui-ink-3);
+  font-size: 12px;
+}
+
+.add-source-modal__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.add-source-modal__name {
+  color: var(--gui-ink);
+  overflow-wrap: anywhere;
+}
+
+.add-source-modal__description {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--gui-ink-3);
+  display: -webkit-box;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+.add-source-modal__description:empty {
+  display: none;
+}
+
+.add-source-modal__resource--problem .add-source-modal__description {
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+
+.add-source-modal__resource--problem .add-source-modal__name,
+.add-source-modal__resource--problem .add-source-modal__description {
+  color: var(--am-color-status-danger);
+}
+
+.add-source-modal__warning {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.add-source-modal__failure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.add-source-modal__failure summary {
+  color: var(--gui-ink-2);
+  cursor: pointer;
+  font-size: 12px;
+  width: fit-content;
+}
+
+.add-source-modal__detail {
+  color: var(--gui-ink-2);
+  font-size: 11.5px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .add-source-modal .source-form__actions > button {

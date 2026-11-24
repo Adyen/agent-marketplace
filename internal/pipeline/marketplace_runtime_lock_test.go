@@ -103,3 +103,44 @@ func TestLoadEffectiveOnlineReadsIntentOnce(t *testing.T) {
 		t.Fatalf("organization lock was created: %v", err)
 	}
 }
+
+// spec: deployed-acquisition-locks/staged-user-configuration-does-not-conflict-with-transient-acquisition
+func TestLoadEffectiveOnlineAcceptsStagedUserConfigDuringTransientAcquisition(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	fixture := newMarketplaceUpdateFixture(t, false)
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+fixture.server.URL+"}\nresources:\n  hosted: {include: [renamed-source/skill/review]}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canonicalUser, err := filepath.EvalSymlinks(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+
+	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, claude]\n")
+	ec := LoadEffective(context.Background(), ConfigLoadOnline, config.LoadEffectiveOptions{
+		RepoRoot:         root,
+		LocalConfigDir:   root,
+		OrganizationPath: orgPath,
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(root, ".agents", "config.yaml"),
+		LocalPath:        filepath.Join(root, ".agents", "config.local.yaml"),
+		FileOverlays:     map[string][]byte{userPath: staged, canonicalUser: staged},
+	}, nil)
+	if len(ec.Errors) > 0 {
+		t.Fatalf("online load with a staged user config reported %v", ec.Errors)
+	}
+}

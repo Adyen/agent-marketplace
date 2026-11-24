@@ -325,6 +325,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/source-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview the resources in a Git or directory source that is not configured yet
+         * @description Available only in user-scope mode. The server validates the source
+         *     like add-source, loads it, and reports the resources it holds. A Git
+         *     source without a ref is read at the repository's default branch, which
+         *     is returned as ref. The request may fetch the repository into the
+         *     cache; it writes no configuration, lock, or materialized file and
+         *     publishes no operation or snapshot generation. A source that cannot be
+         *     loaded is reported in failure with status 200. Marketplace sources are
+         *     not previewed.
+         *
+         */
+        post: operations["previewUserSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/telemetry": {
         parameters: {
             query?: never;
@@ -393,6 +421,13 @@ export interface components {
              * @enum {string}
              */
             action: "add-source";
+            /** @description The full commit the preview showed for a Git source. When given with install, the add is refused if the ref has moved. */
+            commit?: string;
+            /** @description Resources to install from a Git or directory source as it is added. Omitted or empty adds the source only. Not allowed for a Marketplace source. */
+            install?: {
+                kind: string;
+                name: string;
+            }[];
             source: components["schemas"]["SourceInput"];
         };
         BackupSettings: {
@@ -536,8 +571,8 @@ export interface components {
             location: string;
             /** @description Optional sub-path within the Git source. */
             path?: string;
-            /** @description Explicit git ref. */
-            ref: string;
+            /** @description Git ref. When omitted or blank, the repository's default branch is resolved and saved. */
+            ref?: string;
         };
         /** @description Effective user-personal global settings. Each field reports its value, the built-in default, the layer that sets it (user, organization, or default), and whether the organization locks it. Only an explicit organization telemetry level locks a field. */
         GlobalSettings: {
@@ -943,6 +978,31 @@ export interface components {
         };
         /** @description Closed typed source form union; unknown, duplicate, or mistyped keys are rejected. */
         SourceInput: components["schemas"]["DirectorySourceInput"] | components["schemas"]["GitSourceInput"] | components["schemas"]["MarketplaceSourceInput"];
+        SourcePreview: {
+            /** @description Sub-paths that each hold their own set of resources, when the source holds more than one. */
+            bundles: string[];
+            /** @description The commit the ref resolved to. Empty for a directory. */
+            commit: string;
+            /** @description Why the source could not be loaded. Absent on success. */
+            failure?: string;
+            /** @description The source location that was read. */
+            location: string;
+            path: string;
+            /** @description The Git ref that was read; the default branch when none was requested. Empty for a directory. */
+            ref: string;
+            resources: components["schemas"]["SourcePreviewResource"][];
+            warnings: string[];
+        };
+        SourcePreviewRequest: {
+            source: components["schemas"]["SourceInput"];
+        };
+        SourcePreviewResource: {
+            description: string;
+            kind: string;
+            name: string;
+            /** @description Why this resource could not be read. Absent for a valid resource. */
+            problem?: string;
+        };
         StatusGroup: {
             id: components["schemas"]["StatusGroupID"];
             title: string;
@@ -1467,6 +1527,52 @@ export interface operations {
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    previewUserSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourcePreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description What the source holds, or why it could not be loaded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePreview"];
+                };
+            };
+            /** @description Malformed or disallowed source, unavailable directory, Marketplace source, or unsupported session mode; code localapi.invalid_request, localapi.directory_unavailable, localapi.not_ready, or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description Another guarded operation is active; code localapi.busy */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Closed"];
         };
     };
     recordTelemetryEvent: {

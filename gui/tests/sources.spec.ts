@@ -61,6 +61,13 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
 
 // spec: gui-configuration/nonexistent-directory-source-is-refused-in-the-form
 // spec: gui-configuration/add-source-error-clears-after-a-successful-add
+// previewAndAdd previews the drafted source and adds it once the preview shows.
+async function previewAndAdd(modal: Locator) {
+  await modal.getByRole('button', { name: 'Preview source' }).click()
+  await expect(modal.getByLabel('Source preview')).toBeVisible({ timeout: 60_000 })
+  await modal.getByRole('button', { name: 'Add source', exact: true }).click()
+}
+
 async function openAddSourceModal(page: Page, settings: Locator): Promise<Locator> {
   await settings.getByRole('tab', { name: 'Sources' }).click()
   await settings.getByRole('button', { name: 'Add source', exact: true }).click()
@@ -100,7 +107,7 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
     await expect(addSection).toBeVisible()
     const location = addSection.getByLabel('Source location')
     await location.fill(sourcePath)
-    await addSection.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
+    await addSection.getByRole('button', { name: 'Preview source' }).press('Enter')
 
     const locationError = addSection.getByRole('alert')
     await expect(locationError).toContainText(/directory/i)
@@ -124,7 +131,7 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
     await location.fill(bootstrap.addSourceDir!)
     await expect(addSection.getByRole('alert')).toHaveCount(0)
     await expect(location).not.toHaveAttribute('aria-invalid', 'true')
-    await addSection.getByRole('button', { name: 'Add source' }).click()
+    await previewAndAdd(addSection)
     await expect(addSection.getByRole('alert')).toHaveCount(0)
     await expect(dialog.getByLabel('User sources')).toContainText(bootstrap.addSourceDir!, { timeout: 60_000 })
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).not.toBe(originalConfig)
@@ -166,7 +173,7 @@ test('built GUI clears a directory source error when Location is edited', async 
     const addSection = await openAddSourceModal(page, dialog)
     const location = addSection.getByLabel('Source location')
     await location.fill(sourcePath)
-    await addSection.getByRole('button', { name: 'Add source' }).click()
+    await addSection.getByRole('button', { name: 'Preview source' }).click()
     await expect(addSection.getByRole('alert')).toContainText(/directory/i)
 
     await location.fill(`${sourcePath}-changed`)
@@ -216,7 +223,7 @@ test('built GUI fills and validates Location from the native folder picker befor
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     const addSection = await openAddSourceModal(page, dialog)
     const location = addSection.getByLabel('Source location')
-    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    const addButton = addSection.getByRole('button', { name: 'Preview source' })
     await location.fill(invalidPath)
     await addButton.click()
     await expect(addSection.getByRole('alert')).toContainText(/directory/i)
@@ -231,7 +238,7 @@ test('built GUI fills and validates Location from the native folder picker befor
     expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
     await expect(dialog.getByLabel('User sources')).not.toContainText(sourceDir)
 
-    await addButton.click()
+    await previewAndAdd(addSection)
     await expect(dialog.getByLabel('User sources')).toContainText(sourceDir, { timeout: 60_000 })
     await expect
       .poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 })
@@ -256,7 +263,7 @@ test('Settings source labels share sans typography and Add source stays content-
     await addSection.getByRole('radio', { name: 'Git registry' }).check()
     await addSection.getByLabel('Source location').fill('https://example.com/repo.git')
     await addSection.getByLabel('Source ref').fill('main')
-    await expect(addSection.getByRole('button', { name: 'Add source' })).toBeEnabled()
+    await expect(addSection.getByRole('button', { name: 'Preview source' })).toBeEnabled()
     const form = addSection.locator('.source-form')
     const checkLayout = async (width: number) => {
       await page.setViewportSize({ width, height: 800 })
@@ -268,7 +275,7 @@ test('Settings source labels share sans typography and Add source stays content-
           return { family: style.fontFamily, size: style.fontSize, case: style.textTransform }
         })
         const heading = getComputedStyle(formElement.closest('.gui-modal__frame')!.querySelector('.gui-modal__title')!)
-        const button = formElement.querySelector<HTMLButtonElement>('button[aria-label="Add source"]')!
+        const button = formElement.querySelector<HTMLButtonElement>('button[aria-label="Preview source"]')!
         const formBox = formElement.getBoundingClientRect()
         const buttonBox = button.getBoundingClientRect()
         const originalStyle = button.getAttribute('style')
@@ -411,9 +418,11 @@ test('built GUI adds and removes a user directory source against the real user-s
     await expect(location).toBeEnabled({ timeout: 60_000 })
     await expect(location).toHaveValue('')
     await location.pressSequentially(sourceDir)
-    const addButton = addSection2.getByRole('button', { name: 'Add source' })
+    const addButton = addSection2.getByRole('button', { name: 'Preview source' })
     await expect(addButton).toBeEnabled({ timeout: 60_000 })
     await addButton.press('Enter')
+    await expect(addSection2.getByLabel('Resources found')).toContainText('solo', { timeout: 60_000 })
+    await addSection2.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
 
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
@@ -778,7 +787,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     await location.pressSequentially(gitURL)
     await ref.pressSequentially('main')
     await subpath.pressSequentially('solo')
-    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    const addButton = addSection.getByRole('button', { name: 'Preview source' })
     await expect(addButton).toBeEnabled()
     const gitControls = [
       await actionVisibility(page, addSection, ref, 'Source ref'),
@@ -794,6 +803,8 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     }
     await addSection.screenshot({ path: artifactPath('git-source-form-action.png') })
     await addButton.press('Enter')
+    await expect(addSection.getByLabel('Source preview')).toContainText('on main', { timeout: 60_000 })
+    await addSection.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
     await expect(addSection).toHaveCount(0)
 
     const userSources = dialog.getByLabel('User sources')
@@ -874,12 +885,13 @@ test('built GUI keeps a failed Git source mutation in the Add source section', a
     await addSection.getByRole('radio', { name: 'Git registry' }).check()
     await addSection.getByLabel('Source location').fill('https://127.0.0.1:1/unavailable.git')
     await addSection.getByLabel('Source ref').fill('main')
-    await addSection.getByRole('button', { name: 'Add source' }).click()
+    await addSection.getByRole('button', { name: 'Preview source' }).click()
 
     const sourceAlert = addSection.getByRole('alert')
     await expect(sourceAlert).toBeVisible({ timeout: 60_000 })
     await expect(sourceAlert).not.toHaveText('')
-    await expect(addSection.locator('.source-form + p[role="alert"]')).toHaveCount(1)
+    await expect(addSection.locator('.source-form ~ [role="alert"]')).toHaveCount(1)
+    await expect(addSection.getByLabel('Source preview')).toHaveCount(0)
     await expect(dialog.locator('.settings-window__content > p[role="alert"]')).toHaveCount(0)
   } finally {
     await harness.stop()

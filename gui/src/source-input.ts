@@ -222,7 +222,6 @@ export function validateSourceInput(source: SourceDraft): SourceFieldErrors {
   }
   if (source.kind === 'git') {
     if (!validateGitLocation(source.location)) errors.location = 'Enter a valid Git location.'
-    if (source.ref.trim() === '') errors.ref = 'Enter a Git ref.'
     return errors
   }
   if (!isMarketplaceURL(source.location)) errors.location = 'Enter an absolute HTTP(S) URL.'

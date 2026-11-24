@@ -266,6 +266,54 @@ paths:
                 $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/Closed'
+  /api/source-preview:
+    post:
+      operationId: previewUserSource
+      summary: Preview the resources in a Git or directory source that is not configured yet
+      description: |
+        Available only in user-scope mode. The server validates the source
+        like add-source, loads it, and reports the resources it holds. A Git
+        source without a ref is read at the repository's default branch, which
+        is returned as ref. The request may fetch the repository into the
+        cache; it writes no configuration, lock, or materialized file and
+        publishes no operation or snapshot generation. A source that cannot be
+        loaded is reported in failure with status 200. Marketplace sources are
+        not previewed.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourcePreviewRequest'
+      responses:
+        '200':
+          description: What the source holds, or why it could not be loaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourcePreview'
+        '400':
+          description: Malformed or disallowed source, unavailable directory, Marketplace source, or unsupported session mode; code localapi.invalid_request, localapi.directory_unavailable, localapi.not_ready, or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another guarded operation is active; code localapi.busy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Closed'
   /api/resource-actions:
     post:
       operationId: confirmUserMarketplaceResourceAction
@@ -814,6 +862,57 @@ components:
           type: string
           minLength: 1
           description: Opaque identity of one currently visible, eligible Marketplace Resource row.
+    SourcePreviewRequest:
+      type: object
+      required: [source]
+      additionalProperties: false
+      properties:
+        source:
+          $ref: '#/components/schemas/SourceInput'
+    SourcePreview:
+      type: object
+      required: [location, ref, path, commit, resources, bundles, warnings]
+      properties:
+        location:
+          type: string
+          description: The source location that was read.
+        ref:
+          type: string
+          description: The Git ref that was read; the default branch when none was requested. Empty for a directory.
+        path:
+          type: string
+        commit:
+          type: string
+          description: The commit the ref resolved to. Empty for a directory.
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourcePreviewResource'
+        bundles:
+          type: array
+          description: Sub-paths that each hold their own set of resources, when the source holds more than one.
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        failure:
+          type: string
+          description: Why the source could not be loaded. Absent on success.
+    SourcePreviewResource:
+      type: object
+      required: [kind, name, description]
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        problem:
+          type: string
+          description: Why this resource could not be read. Absent for a valid resource.
     ResourceActionRequest:
       type: object
       required: [rowId, planId, acceptRisk]
@@ -1379,7 +1478,7 @@ components:
           description: Absolute filesystem path, ~ or ~/ home-relative path, or an absolute file:// URL.
     GitSourceInput:
       type: object
-      required: [kind, location, ref]
+      required: [kind, location]
       additionalProperties: false
       properties:
         kind:
@@ -1390,7 +1489,7 @@ components:
           description: An https, file, or ssh URL or an SCP-like [user@]host:path origin. Usernames are allowed only for ssh/SCP forms; passwords, userinfo on non-ssh schemes, query, and fragment are rejected.
         ref:
           type: string
-          description: Explicit git ref.
+          description: Git ref. When omitted or blank, the repository's default branch is resolved and saved.
         path:
           type: string
           description: Optional sub-path within the Git source.
@@ -1415,6 +1514,21 @@ components:
           enum: [add-source]
         source:
           $ref: '#/components/schemas/SourceInput'
+        install:
+          type: array
+          description: Resources to install from a Git or directory source as it is added. Omitted or empty adds the source only. Not allowed for a Marketplace source.
+          items:
+            type: object
+            required: [kind, name]
+            additionalProperties: false
+            properties:
+              kind:
+                type: string
+              name:
+                type: string
+        commit:
+          type: string
+          description: The full commit the preview showed for a Git source. When given with install, the add is refused if the ref has moved.
     RemoveSourceActionRequest:
       type: object
       required: [action, id]

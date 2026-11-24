@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/giturl"
@@ -23,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -272,6 +274,33 @@ type configurationAction struct {
 	sourcesSeen bool
 	id          string
 	idSeen      bool
+	install     []config.ResourceLocator
+	installSeen bool
+	commit      string
+}
+
+// decodeInstallSelection reads the resources to install with an added source.
+func decodeInstallSelection(decoder *json.Decoder) ([]config.ResourceLocator, bool) {
+	var raw []struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, false
+	}
+	seen := map[config.ResourceLocator]bool{}
+	locators := make([]config.ResourceLocator, 0, len(raw))
+	for _, item := range raw {
+		kind, ok := skill.ParseKind(item.Kind)
+		name := strings.TrimSpace(item.Name)
+		locator := config.ResourceLocator{Kind: kind, Name: name}
+		if !ok || strings.TrimSpace(item.Kind) == "" || strings.EqualFold(item.Kind, "all") || name == "" || seen[locator] {
+			return nil, false
+		}
+		seen[locator] = true
+		locators = append(locators, locator)
+	}
+	return locators, true
 }
 
 func decodeStrictString(decoder *json.Decoder, dst *string) bool {
@@ -397,10 +426,23 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 			}
 			req.idSeen = true
 			return decodeStrictString(decoder, &req.id)
+		case "install":
+			if req.installSeen {
+				return false
+			}
+			req.installSeen = true
+			var ok bool
+			req.install, ok = decodeInstallSelection(decoder)
+			return ok
+		case "commit":
+			return req.commit == "" && decodeStrictString(decoder, &req.commit) && (req.commit == "" || giturl.IsFullObjectID(req.commit))
 		default:
 			return false
 		}
 	}) {
+		return configurationAction{}, false
+	}
+	if (req.installSeen || req.commit != "") && req.action != "add-source" {
 		return configurationAction{}, false
 	}
 	switch req.action {
@@ -414,6 +456,9 @@ func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
 		}
 	case "add-source":
 		if req.source == nil || req.idSeen || seenTargets || req.consentSeen || req.sourcesSeen {
+			return configurationAction{}, false
+		}
+		if len(req.install) > 0 && req.source.Kind == string(config.V4SourceMarketplace) {
 			return configurationAction{}, false
 		}
 	case "remove-source":
@@ -538,11 +583,13 @@ func validateAddSource(source *configurationActionSource, allowed []string) (con
 			return config.RegistryEntry{}, false
 		}
 	case config.V4SourceGit:
-		if entry.URL == "" || entry.Ref == "" {
+		if entry.URL == "" {
 			return config.RegistryEntry{}, false
 		}
-		if err := giturl.ValidateRef(entry.Ref); err != nil {
-			return config.RegistryEntry{}, false
+		if entry.Ref != "" {
+			if err := giturl.ValidateRef(entry.Ref); err != nil {
+				return config.RegistryEntry{}, false
+			}
 		}
 		if !validGitLocation(entry.URL) {
 			return config.RegistryEntry{}, false
@@ -654,6 +701,12 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 	})
 }
 
+// installFromSource is a seam so tests can observe the install request.
+var installFromSource = pipeline.Install
+
+// gitDefaultBranch is a seam so tests can resolve a default branch offline.
+var gitDefaultBranch = cache.DefaultBranch
+
 func directorySourceAvailable(entry config.RegistryEntry, homeDir string) bool {
 	if strings.TrimSpace(entry.URL) == "~" {
 		info, err := os.Stat(homeDir)
@@ -693,6 +746,28 @@ func (a *API) executeSourceMutation(ctx context.Context, req configurationAction
 		})
 		return err
 	}
+	if req.action == "add-source" && len(req.install) > 0 {
+		intent := a.configurationIntent(ctx, nil)
+		entry, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind))
+		if !valid {
+			return fmt.Errorf("%w: source request is no longer valid", dependencytxn.ErrGenerationConflict)
+		}
+		// Like the terminal UI: adding a source with picked resources is an
+		// install from that source at the previewed commit.
+		_, err := installFromSource(ctx, pipeline.InstallOptions{
+			RepoRoot:            a.homeDir,
+			FromURL:             entry.URL,
+			FromRef:             entry.Ref,
+			FromPath:            entry.Path,
+			Locators:            req.install,
+			ExpectedCommit:      req.commit,
+			Scope:               pipeline.ScopeUser,
+			ScopeSpecified:      true,
+			DependencyReconcile: a.lifecycle.InstallReconcile,
+			PrepareDependencies: a.lifecycle.InstallPrepare,
+		})
+		return err
+	}
 	return a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
 		staged, err := mapper(a.userConfigPath())
 		if err != nil {
@@ -715,6 +790,13 @@ func (a *API) executeSourceMutation(ctx context.Context, req configurationAction
 			entry, valid = validateAddSource(req.source, stagedIntent.AllowedRegistries())
 			if !valid {
 				return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
+			}
+			if entry.V4Kind == config.V4SourceGit && entry.Ref == "" {
+				branch, err := gitDefaultBranch(entry.URL)
+				if err != nil {
+					return err
+				}
+				entry.Ref = branch
 			}
 		case "remove-source":
 			var matches []config.SourceDescription

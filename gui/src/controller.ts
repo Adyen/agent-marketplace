@@ -17,6 +17,7 @@ import {
   type SessionEvent,
   type Snapshot,
   type SourceInput,
+  type SourcePreview,
   type UpdateAction,
   type UpdateStatus,
 } from './api/client'
@@ -631,12 +632,17 @@ export class WorkspaceController {
     return this.requestOperation(() => this.client.configure({ action: 'save-targets', targets }))
   }
 
-  async addSource(source: SourceInput): Promise<boolean> {
+  async addSource(source: SourceInput, install: { kind: string; name: string }[] = [], commit = ''): Promise<boolean> {
     this.state.sourceError = null
     this.state.sourceErrorField = null
     this.state.addSourceBaseline = this.state.diagnostics.filter((d) => d.severity === 'error' && d.category === 'mutation')
     const accepted = await this.requestOperation(
-      () => this.client.configure({ action: 'add-source', source }),
+      () =>
+        this.client.configure({
+          action: 'add-source',
+          source,
+          ...(install.length > 0 ? { install, ...(commit === '' ? {} : { commit }) } : {}),
+        }),
       false,
       (error) => {
         if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
@@ -652,6 +658,10 @@ export class WorkspaceController {
       this.state.sourceError = 'The action could not be started'
     }
     return accepted
+  }
+
+  async previewSource(source: SourceInput, signal?: AbortSignal): Promise<SourcePreview> {
+    return this.client.sourcePreview(source, signal)
   }
 
   async saveSettings(request: SettingsRequest): Promise<boolean> {

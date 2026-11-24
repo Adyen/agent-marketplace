@@ -42,6 +42,21 @@ const KIND_NAMES = new Map([
 ])
 export const kindFacetOptions = [...KIND_NAMES].map(([id, { plural }]) => ({ id, label: plural }))
 
+// kindCounts summarises kinds in display order, e.g. "2 skills, 1 command".
+export function kindCounts(kinds: string[]): string {
+  const counts = new Map<string, number>()
+  for (const kind of kinds) counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  const order = [...KIND_ORDER, ...[...counts.keys()].filter((kind) => !KIND_ORDER.includes(kind))]
+  return order
+    .filter((kind) => counts.has(kind))
+    .map((kind) => {
+      const count = counts.get(kind)!
+      const names = KIND_NAMES.get(kind)
+      return `${count} ${(count === 1 ? names?.singular : names?.plural)?.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase()) ?? kind}`
+    })
+    .join(', ')
+}
+
 export function kindName(id: string): string {
   return KIND_NAMES.get(id)?.singular ?? id
 }

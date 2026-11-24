@@ -95,6 +95,23 @@ function field(label: string): HTMLInputElement {
   return el
 }
 
+function formSubmit(): HTMLButtonElement {
+  const el = dialog().querySelector<HTMLButtonElement>('.source-form > .source-form__actions .source-form__submit')
+  if (el == null) throw new Error('source form submit button not found')
+  return el
+}
+
+// submitSource submits the form and, for a previewed kind, confirms the preview.
+async function submitSource() {
+  const confirm = dialog().querySelector<HTMLButtonElement>('.add-source-modal__confirm')
+  if (confirm != null) return confirm.click()
+  const submit = formSubmit()
+  submit.click()
+  if (submit.getAttribute('aria-label') === 'Add source') return
+  await tick()
+  dialog().querySelector<HTMLButtonElement>('.add-source-modal__confirm')?.click()
+}
+
 function button(name: string): HTMLElement {
   const el = Array.from(dialog().querySelectorAll<HTMLElement>('button')).find(
     (b) => b.getAttribute('aria-label') === name || b.textContent === name,
@@ -267,7 +284,7 @@ describe('Source settings', () => {
       await openAddSource(wrapper)
       await setInput('Source location', ' \t ')
       await field('Source location').dispatchEvent(new Event('blur'))
-      expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('directory')
+      expect(dialog().querySelector('[role="alert"]')).toBeNull()
 
       const browse = button('Browse for folder') as HTMLButtonElement
       browse.click()
@@ -276,7 +293,7 @@ describe('Source settings', () => {
       expect(chooseDirectory).toHaveBeenCalledWith(' \t ')
       expect(field('Source location').value).toBe('/var/selected-registry')
       expect(dialog().querySelector('[role="alert"]')).toBeNull()
-      expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+      expect(formSubmit().disabled).toBe(false)
       expect(client.configure).not.toHaveBeenCalled()
       expect(browse.closest('label')).toBeNull()
     } finally {
@@ -289,7 +306,7 @@ describe('Source settings', () => {
   it('validates each source kind after blur and disables invalid submissions', async () => {
     const { client, wrapper } = await mountSources({ userSources: [] })
     await openAddSource(wrapper)
-    const add = button('Add source') as HTMLButtonElement
+    const add = formSubmit()
     const location = field('Source location')
     expect(add.disabled).toBe(true)
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
@@ -299,8 +316,9 @@ describe('Source settings', () => {
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
     await location.dispatchEvent(new Event('blur'))
     expect(client.configure).not.toHaveBeenCalled()
-    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('directory')
-    expect(location.getAttribute('aria-invalid')).toBe('true')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(location.hasAttribute('aria-invalid')).toBe(false)
+    expect(add.disabled).toBe(true)
 
     await setInput('Source location', '/var/registries')
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
@@ -308,7 +326,6 @@ describe('Source settings', () => {
     expect(add.disabled).toBe(false)
 
     await chooseSourceKind('git', 'Git registry')
-    expect(add.disabled).toBe(true)
     await setInput('Source location', '-oProxyCommand=unsafe')
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
     expect(add.disabled).toBe(true)
@@ -316,10 +333,11 @@ describe('Source settings', () => {
     expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('Git')
     await setInput('Source location', 'example.com:org/repo.git')
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(false)
     await setInput('Source ref', ' \t ')
-    expect(add.disabled).toBe(true)
     await field('Source ref').dispatchEvent(new Event('blur'))
-    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('ref')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(false)
     await setInput('Source ref', 'main')
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
     expect(add.disabled).toBe(false)
@@ -606,7 +624,7 @@ describe('Source settings', () => {
 
     await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledWith({
@@ -621,7 +639,7 @@ describe('Source settings', () => {
     expect(sourceForm.compareDocumentPosition(sourceError) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
 
-    button('Add source').click()
+    await submitSource()
     await tick()
     expect(client.configure).toHaveBeenCalledTimes(2)
     expect(addSection.querySelector('[role="alert"]')).toBeNull()
@@ -641,7 +659,7 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     const addSection = dialog()!
@@ -649,7 +667,7 @@ describe('Source settings', () => {
     expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Directory source path does not exist')
     expect(location.getAttribute('aria-invalid')).toBe('true')
 
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledTimes(2)
@@ -680,7 +698,7 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
     push(event({ sequence: 2, generation: 2, operation: { id: 9, kind: 'mutation' } }))
     push(
@@ -709,7 +727,7 @@ describe('Source settings', () => {
 
     await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     const addSection = dialog()!
@@ -727,7 +745,7 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
     failAdd(push, operation, 2, [mutationError('config.edit.include-owned', 'Source is declared in an included fragment')])
     await tick()
@@ -752,12 +770,12 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
     failAdd(push, first, 2, [diagnostic])
     await tick()
 
-    button('Add source').click()
+    await submitSource()
     await tick()
     const addSection = dialog()!
     expect(addSection.textContent).toContain(diagnostic.message)
@@ -782,7 +800,7 @@ describe('Source settings', () => {
     await setInput('Source location', location)
     await setInput('Source ref', 'main')
     await setInput('Source subpath', 'sub/dir')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledWith({
@@ -798,14 +816,17 @@ describe('Source settings', () => {
     await tick()
 
     await openAddSource(wrapper)
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
+    expect(formSubmit().disabled).toBe(true)
     await setInput('Source location', '/x')
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+    expect(formSubmit().disabled).toBe(false)
 
     await chooseSourceKind('git', 'Git registry')
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(true)
+    await setInput('Source location', '')
+    expect(formSubmit().disabled).toBe(true)
+    await setInput('Source location', 'https://example.com/repo.git')
+    expect(formSubmit().disabled).toBe(false)
     await setInput('Source ref', 'main')
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+    expect(formSubmit().disabled).toBe(false)
     expect(client.configure).not.toHaveBeenCalled()
   })
 
@@ -867,7 +888,7 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
     expect(controller.state.operation).toEqual({ id: 9, kind: 'mutation' })
 
@@ -901,8 +922,9 @@ describe('Source settings', () => {
     await tick()
 
     expect(controller.state.operation).toBeNull()
-    const alerts = Array.from(dialog().querySelectorAll('[role="alert"]')).map((el) => el.textContent)
-    expect(alerts).toContain('config.edit.include-owned: source "x" is declared in an included fragment')
+    const details = Array.from(dialog().querySelectorAll('[role="alert"] .add-source-modal__detail')).map((el) => el.textContent)
+    expect(details).toEqual(['config.edit.include-owned: source "x" is declared in an included fragment'])
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain("The source couldn't be added.")
     expect(field('Source location').value).toBe('/opt/new-regs')
     expect(dialog().textContent).not.toContain('complete')
   })
@@ -919,7 +941,7 @@ describe('Source settings', () => {
 
     await openAddSourceFromSettings(wrapper)
     await setInput('Source location', dirSource.location)
-    button('Add source').click()
+    await submitSource()
     await tick()
     await settleOperation(controller, push, { id: 9, kind: 'mutation' }, 2, 'Source added')
     await tick()
@@ -955,7 +977,7 @@ describe('Source settings', () => {
 
     await openAddSource(wrapper)
     await setInput('Source location', '/opt/new-regs')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledTimes(1)
@@ -974,12 +996,12 @@ describe('Source settings', () => {
 
     await openAddSource(wrapper)
     await setInput('Source location', '/x')
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(dialog().textContent).toContain('The action could not be started')
     expect(field('Source location').value).toBe('/x')
-    button('Add source').click()
+    await submitSource()
     await tick()
     expect(client.configure).toHaveBeenCalledTimes(2)
   })
@@ -994,7 +1016,7 @@ describe('Source settings', () => {
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledWith({
@@ -1018,7 +1040,7 @@ describe('Source settings', () => {
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
-    button('Add source').click()
+    await submitSource()
     await tick()
 
     expect(client.configure).toHaveBeenCalledWith({
@@ -1044,7 +1066,7 @@ describe('Source settings', () => {
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     const endpoint = 'https://marketplace.example/services/catalog'
     await setInput('Source location', endpoint)
-    button('Add source').click()
+    await submitSource()
     await tick()
     expect(client.configure).toHaveBeenCalledWith({
       action: 'add-source',
@@ -1084,7 +1106,7 @@ describe('Source settings', () => {
     expect(dialog().textContent).toContain('Marketplace registration failed')
     expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
     expect(field('Source location').value).toBe(endpoint)
-    expect((button('Add source') as HTMLButtonElement).disabled).toBe(false)
+    expect(formSubmit().disabled).toBe(false)
   })
 
   it('updates the user source list in place after Marketplace registration settles', async () => {
@@ -1101,7 +1123,7 @@ describe('Source settings', () => {
     await openAddSourceFromSettings(wrapper)
     await chooseSourceKind('marketplace', 'Marketplace endpoint')
     await setInput('Source location', marketplaceSource.location)
-    const addButton = button('Add source')
+    const addButton = formSubmit()
     addButton.click()
     await tick()
     await settleOperation(controller, push, operation, 2, 'Source added')

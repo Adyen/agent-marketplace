@@ -5,9 +5,19 @@ import { validateSourceInput, type SourceField } from './source-input'
 import GuiIcon from './GuiIcon.vue'
 import SegmentedControl from './SegmentedControl.vue'
 
-const props = defineProps<{ disabled: boolean; serverLocationError?: string; busy?: boolean; primary?: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    disabled: boolean
+    serverLocationError?: string
+    busy?: boolean
+    primary?: boolean
+    preview?: boolean
+  }>(),
+  { preview: false },
+)
 const emit = defineEmits<{
   add: [source: SourceInput]
+  kind: [kind: SourceInput['kind']]
   editLocation: []
 }>()
 
@@ -34,7 +44,7 @@ const kindCopy: Record<SourceInput['kind'], { label: string; hint: string; place
   },
   git: {
     label: 'Repository URL',
-    hint: 'A Git repository, read at the branch, tag or commit you choose.',
+    hint: 'A Git repository. Leave the branch empty to use its default branch.',
     placeholder: 'https://github.com/org/repo.git',
   },
   marketplace: {
@@ -50,7 +60,8 @@ const validationErrors = computed(() =>
 const addDisabled = computed(() => props.disabled || Object.keys(validationErrors.value).length > 0)
 
 function clientFieldError(field: SourceField): string | undefined {
-  return touched.value.has(field) ? validationErrors.value[field] : undefined
+  const value = field === 'location' ? location.value : refName.value
+  return touched.value.has(field) && value.trim() !== '' ? validationErrors.value[field] : undefined
 }
 
 const locationError = computed(() => props.serverLocationError ?? clientFieldError('location'))
@@ -74,7 +85,16 @@ async function browse() {
   edit('location')
 }
 
+const previews = computed(() => props.preview && kind.value !== 'marketplace')
+const submitLabel = computed(() =>
+  previews.value ? (props.busy ? 'Loading preview…' : 'Preview source') : props.busy ? 'Adding…' : 'Add source',
+)
+const submitName = computed(() =>
+  previews.value ? (props.busy ? 'Loading preview' : 'Preview source') : props.busy ? 'Adding source' : 'Add source',
+)
+
 watch(kind, () => {
+  emit('kind', kind.value)
   touched.value.clear()
   if (props.serverLocationError != null) emit('editLocation')
 })
@@ -86,7 +106,7 @@ function add() {
       ? {
           kind: 'git',
           location: location.value,
-          ref: refName.value,
+          ...(refName.value.trim() === '' ? {} : { ref: refName.value }),
           ...(subpath.value === '' ? {} : { path: subpath.value }),
         }
       : kind.value === 'marketplace'
@@ -148,7 +168,7 @@ function add() {
           class="gui-input mono"
           aria-label="Source ref"
           type="text"
-          placeholder="main"
+          placeholder="default branch"
           :disabled="disabled"
           :aria-invalid="refError != null ? 'true' : undefined"
           :aria-describedby="refError != null ? `${idPrefix}-ref-error` : undefined"
@@ -175,16 +195,16 @@ function add() {
       <slot name="actions" />
       <UButton
         v-if="props.primary"
-        :label="props.busy ? 'Adding…' : 'Add source'"
-        :aria-label="props.busy ? 'Adding source' : 'Add source'"
+        :label="submitLabel"
+        :aria-label="submitName"
         class="source-form__submit"
         :disabled="addDisabled"
         @click="add"
       />
       <UButton
         v-else
-        :label="props.busy ? 'Adding…' : 'Add source'"
-        :aria-label="props.busy ? 'Adding source' : 'Add source'"
+        :label="submitLabel"
+        :aria-label="submitName"
         class="gui-button--secondary source-form__submit"
         color="neutral"
         variant="soft"

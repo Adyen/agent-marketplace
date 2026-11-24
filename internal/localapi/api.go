@@ -442,6 +442,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleInstalledSkillFiles(w, r)
 	case "/api/resource-plan":
 		a.handleResourcePlan(w, r)
+	case "/api/source-preview":
+		a.handleSourcePreview(w, r)
 	case "/api/resource-actions":
 		a.handleResourceAction(w, r)
 	case "/api/actions":

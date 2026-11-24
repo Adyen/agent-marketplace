@@ -28,6 +28,7 @@ export type ResourceAction = components['schemas']['ResourceAction']
 export type ResourcePlanRequest = components['schemas']['ResourcePlanRequest']
 export type ResourceActionRequest = components['schemas']['ResourceActionRequest']
 export type ResourceActionPlan = components['schemas']['ResourceActionPlan']
+export type SourcePreview = components['schemas']['SourcePreview']
 export type InspectionFile = components['schemas']['InspectionFile']
 
 export class RequestError extends Error {
@@ -279,6 +280,7 @@ export interface Client {
   installedSkillFiles(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InstalledSkillFilesPayload>
   resourcePlan(rowId: string, signal?: AbortSignal): Promise<ResourceActionPlan>
   resourceAction(rowId: string, planId: string, acceptRisk: boolean, signal?: AbortSignal): Promise<OperationRef>
+  sourcePreview(source: SourceInput, signal?: AbortSignal): Promise<SourcePreview>
   action(action: Action): Promise<OperationRef>
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
@@ -356,6 +358,12 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
       const request = { rowId } satisfies ResourcePlanRequest
       const response = await post('/api/resource-plan', request, signal)
       return (await response.json()) as ResourceActionPlan
+    },
+
+    async sourcePreview(source: SourceInput, signal?: AbortSignal) {
+      const request = { source } satisfies components['schemas']['SourcePreviewRequest']
+      const response = await post('/api/source-preview', request, signal)
+      return (await response.json()) as SourcePreview
     },
 
     async resourceAction(rowId: string, planId: string, acceptRisk: boolean, signal?: AbortSignal) {

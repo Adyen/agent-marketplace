@@ -1123,8 +1123,6 @@ func TestUserSourceActionsRejectInvalidRequests(t *testing.T) {
 		`{"action":"add-source","source":{"kind":null,"location":"` + dupDir + `"}}`,
 		`{"action":"add-source","source":{"kind":42,"location":"` + dupDir + `"}}`,
 		`{"action":"add-source","source":{"kind":"git","location":null,"ref":"main"}}`,
-		`{"action":"add-source","source":{"kind":"git","location":"file:///tmp/r.git"}}`,
-		`{"action":"add-source","source":{"kind":"git","location":"file:///tmp/r.git","ref":""}}`,
 		`{"action":"add-source","source":{"kind":"git","location":"file:///tmp/r.git","ref":null}}`,
 		`{"action":"add-source","source":{"kind":"git","location":"file:///tmp/r.git","ref":42}}`,
 		`{"action":"add-source","source":{"kind":"git","location":"file:///tmp/r.git","ref":"bad ref!"}}`,
@@ -1587,6 +1585,124 @@ func TestMarketplaceSourceAdmissionMatchesSharedCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: gui-configuration/source-preview-lists-resources-without-writing
+func TestUserSourcePreviewListsResourcesWithoutWriting(t *testing.T) {
+	home, _ := newUserAPIFixture(t, true)
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	before, _ := os.ReadFile(userConfig)
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+	events := streamEvents(t, api)
+	for nextEvent(t, events).snapshotStage() != "final" {
+	}
+
+	gitLocation := "file://" + filepath.ToSlash(newBareGitSource(t))
+	status, decoded := postRaw(t, api, "/api/source-preview", `{"source":{"kind":"git","location":`+jsonString(gitLocation)+`}}`)
+	if status != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %v", status, decoded)
+	}
+	if decoded["failure"] != nil || decoded["ref"] != "main" || len(decoded["commit"].(string)) != 40 {
+		t.Fatalf("preview = %v, want the default branch main at a full commit", decoded)
+	}
+	resources := decoded["resources"].([]any)
+	if len(resources) != 1 {
+		t.Fatalf("resources = %v, want the one skill", resources)
+	}
+	if first := resources[0].(map[string]any); first["kind"] != "skill" || first["name"] != "solo" {
+		t.Fatalf("resource = %v, want skill solo", first)
+	}
+
+	status, decoded = postRaw(t, api, "/api/source-preview", `{"source":{"kind":"git","location":`+jsonString(gitLocation)+`,"ref":"missing-branch"}}`)
+	if status != http.StatusOK || decoded["failure"] == nil || decoded["failure"] == "" {
+		t.Fatalf("preview of a missing ref = %d %v, want a reported failure", status, decoded)
+	}
+
+	if status, _ := postRaw(t, api, "/api/source-preview", `{"source":{"kind":"marketplace","location":"https://market.example"}}`); status != http.StatusBadRequest {
+		t.Fatalf("marketplace preview status = %d, want 400", status)
+	}
+	if after, _ := os.ReadFile(userConfig); !bytes.Equal(after, before) {
+		t.Fatal("preview changed the user configuration")
+	}
+}
+
+// spec: gui-configuration/adding-a-source-installs-the-picked-resources
+func TestUserSourceAddInstallsPickedResources(t *testing.T) {
+	home, _ := newUserAPIFixture(t, true)
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	api, err := NewUser(context.Background(), home, session.RuntimeLifecycle(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+	events := streamEvents(t, api)
+	for nextEvent(t, events).snapshotStage() != "final" {
+	}
+
+	gitLocation := "file://" + filepath.ToSlash(newBareGitSource(t))
+	for _, body := range []string{
+		`{"action":"add-source","source":{"kind":"git","location":` + jsonString(gitLocation) + `,"ref":"main"},"install":[{"kind":"skill","name":""}]}`,
+		`{"action":"add-source","source":{"kind":"git","location":` + jsonString(gitLocation) + `,"ref":"main"},"install":[{"kind":"nonsense","name":"solo"}]}`,
+		`{"action":"add-source","source":{"kind":"git","location":` + jsonString(gitLocation) + `,"ref":"main"},"commit":"abc"}`,
+		`{"action":"add-source","source":{"kind":"marketplace","location":"https://market.example"},"install":[{"kind":"skill","name":"solo"}]}`,
+		`{"action":"remove-source","id":"x","install":[]}`,
+	} {
+		if status, _ := sourceAction(t, api, body); status != http.StatusBadRequest {
+			t.Fatalf("status = %d for %s, want 400", status, body)
+		}
+	}
+
+	status, decoded := sourceAction(t, api,
+		`{"action":"add-source","source":{"kind":"git","location":`+jsonString(gitLocation)+`,"ref":"main"},"install":[{"kind":"skill","name":"solo"}]}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("add with install status = %d, body = %v", status, decoded)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+		t.Fatalf("add with install severity = %q", got)
+	}
+	current, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), gitLocation) || !strings.Contains(string(current), "solo") {
+		t.Fatalf("user config does not select solo from the added source:\n%s", current)
+	}
+}
+
+// spec: gui-configuration/git-source-without-a-ref-uses-the-default-branch
+func TestUserSourceAddResolvesDefaultBranchWhenRefIsOmitted(t *testing.T) {
+	home, _ := newUserAPIFixture(t, true)
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+
+	events := streamEvents(t, api)
+	for nextEvent(t, events).snapshotStage() != "final" {
+	}
+
+	gitLocation := "file://" + filepath.ToSlash(newBareGitSource(t))
+	status, decoded := sourceAction(t, api,
+		`{"action":"add-source","source":{"kind":"git","location":`+jsonString(gitLocation)+`}}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("add git without ref status = %d, body = %v", status, decoded)
+	}
+	if got := notificationSeverity(t, awaitNotification(t, events)); got != "info" {
+		t.Fatalf("git add without ref severity = %q", got)
+	}
+	current, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), "ref: main") {
+		t.Fatalf("user config does not record the default branch:\n%s", current)
 	}
 }
 

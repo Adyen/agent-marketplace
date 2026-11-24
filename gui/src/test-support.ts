@@ -13,6 +13,8 @@ import {
   type OperationRef,
   type ReleaseNotice,
   type SessionEvent,
+  type SourceInput,
+  type SourcePreview,
   type UpdateStatus,
 } from './api/client'
 import { configuration, snapshot } from './fixtures'
@@ -74,6 +76,15 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     resourcePlan: vi.fn(async () => {
       throw new Error('resource action plan fixture response not configured')
     }),
+    sourcePreview: vi.fn(async (source: SourceInput): Promise<SourcePreview> => ({
+      location: source.location,
+      ref: source.kind === 'git' ? (source.ref ?? 'main') : '',
+      path: '',
+      commit: source.kind === 'git' ? '0123456789abcdef0123456789abcdef01234567' : '',
+      resources: [{ kind: 'skill', name: 'solo', description: 'Solo skill' }],
+      bundles: [],
+      warnings: [],
+    })),
     resourceAction: vi.fn(async () => {
       throw new Error('resource action fixture response not configured')
     }),

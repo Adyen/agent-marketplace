@@ -59,9 +59,7 @@ describe('source input validation', () => {
     expect(validateSourceInput({ kind: 'directory', location: ' \t ', ref: '', path: '' })).toEqual({
       location: expect.any(String),
     })
-    expect(validateSourceInput({ kind: 'git', location: 'https://example.com/repo.git', ref: ' \n', path: '' })).toEqual({
-      ref: expect.any(String),
-    })
+    expect(validateSourceInput({ kind: 'git', location: 'https://example.com/repo.git', ref: ' \n', path: '' })).toEqual({})
     expect(validateSourceInput({ kind: 'marketplace', location: '/api', ref: '', path: '' })).toEqual({
       location: expect.any(String),
     })
