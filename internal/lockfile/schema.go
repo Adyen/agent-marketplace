@@ -66,6 +66,7 @@ type MarketplaceResourceLock struct {
 	AssessmentDigest         Digest                     `yaml:"assessment_digest,omitempty"`
 	ArchiveDigest            Digest                     `yaml:"archive_digest,omitempty"`
 	CollectionManifestDigest Digest                     `yaml:"collection_manifest_digest,omitempty"`
+	ProfileIdentity          *targetprofile.Identity    `yaml:"profile_identity,omitempty"`
 	HostPackageIdentity      *targetprofile.Binding     `yaml:"host_package_identity,omitempty"`
 	Acquisition              string                     `yaml:"acquisition"`
 	RegistryCommit           string                     `yaml:"registry_commit,omitempty"`

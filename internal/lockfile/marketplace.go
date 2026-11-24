@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -72,6 +73,16 @@ func normalizeMarketplace(mp *MarketplaceLock, index int, scope Scope) error {
 		resource := &mp.Resources[j]
 		if err := normalizeMarketplaceResource(resource, index, j, scope); err != nil {
 			return err
+		}
+		if identity := resource.ProfileIdentity; identity != nil {
+			profileSource, err := targetprofile.ParseSourceID(identity.SourceID)
+			if err != nil {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].profile_identity.source_id: %w", index, j, err)
+			}
+			if profileSource.Kind == "marketplace" &&
+				(profileSource.Origin != mp.URL || profileSource.InstanceID != mp.InstanceID || profileSource.RegistryID != resource.RegistryID) {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].profile_identity.source_id Marketplace endpoint, instance, or registry does not match the lock", index, j)
+			}
 		}
 		if boundID, exists := bindings[resource.RegistryName]; !exists {
 			return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].registry_name %q has no registry binding", index, j, resource.RegistryName)
@@ -151,13 +162,16 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 		return err
 	}
 	_, _, scoped := nameutil.SplitPlaceKind(resource.Kind)
-	if !api.IsMarketplaceKind(resource.Kind) && !scoped {
+	virtualProfile := resource.Kind == nameutil.TargetProfileKind
+	if !api.IsMarketplaceKind(resource.Kind) && !scoped && !virtualProfile {
 		return coded(CodeInvalidDocument, "%s %q is not a selectable Marketplace kind", field("kind"), resource.Kind)
 	}
-	if scoped {
+	if scoped || virtualProfile {
 		if scope != ScopeUser && scope != ScopeOrganization {
-			return coded(CodeInvalidScope, "%s scoped place resources require user or organization scope", field("kind"))
+			return coded(CodeInvalidScope, "%s scoped and virtual profile resources require user or organization scope", field("kind"))
 		}
+	}
+	if scoped {
 		if !nameutil.IsPlacePackageName(resource.Name) {
 			return coded(CodeInvalidDocument, "%s %q is not a valid scoped place package name", field("name"), resource.Name)
 		}
@@ -189,6 +203,35 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 		if err := resource.HostPackageIdentity.ValidateFor(resource.Kind, string(resource.ContentDigest)); err != nil {
 			return coded(CodeInvalidDocument, "%s: %w", field("host_package_identity"), err)
 		}
+	}
+	if virtualProfile {
+		if resource.ProfileIdentity == nil {
+			return coded(CodeInvalidDocument, "%s is required for target-profile resources", field("profile_identity"))
+		}
+		if err := resource.ProfileIdentity.Validate(); err != nil {
+			return coded(CodeInvalidDocument, "%s: %w", field("profile_identity"), err)
+		}
+		if resource.ProfileIdentity.TargetID != resource.Name {
+			return coded(CodeInvalidDocument, "%s target_id must equal %s", field("profile_identity"), field("name"))
+		}
+		if resource.ProfileIdentity.RevisionDigest != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s revision_digest must equal %s", field("profile_identity"), field("content_digest"))
+		}
+		if resource.Revision != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s must equal %s for target-profile resources", field("revision"), field("content_digest"))
+		}
+		if resource.Acquisition != MarketplaceAcquisitionMirror {
+			return coded(CodeInvalidDocument, "%s target-profile resources require mirror acquisition", field("acquisition"))
+		}
+		if resource.ArchiveDigest != "" || resource.CollectionManifestDigest != "" ||
+			resource.RegistryCommit != "" || resource.RegistryManifestDigest != "" || resource.SourcePath != "" ||
+			len(resource.SelectedBy) != 0 {
+			return coded(CodeInvalidDocument, "%s target-profile resources forbid archive, collection, occurrence, and selection fields", field("kind"))
+		}
+		return nil
+	}
+	if resource.ProfileIdentity != nil {
+		return coded(CodeInvalidDocument, "%s is only valid for target-profile resources", field("profile_identity"))
 	}
 	collection := resource.Kind == api.KindCollection
 	switch resource.Acquisition {
