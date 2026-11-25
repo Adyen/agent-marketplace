@@ -96,7 +96,7 @@ resources:
 	commitAndPushAll(t, repoRoot, "commit Factory hook selection and healthy lock")
 
 	nativeRoot := filepath.Join(repoRoot, ".factory")
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
 	supportPath := filepath.Join(nativeRoot, "hook-support", sourceKey, "PreToolUse-command", "hooks", "scripts", "run.sh")
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
@@ -105,7 +105,7 @@ resources:
 	nativeCommand := `\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + `/PreToolUse-command/hooks/scripts/run.sh`
 	nativeGroup := `{"hooks":[{"type":"command","command":"` + nativeCommand + `"}],"matcher":"Execute","commandRegex":"^make.*$"}`
 	handwrittenGroup := `{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}`
-	nativeBytes := []byte(`{"PostToolUse":[` + handwrittenGroup + `],"PreToolUse":[` + nativeGroup + `]}` + "\n")
+	nativeBytes := []byte(`{"hooks":{"PostToolUse":[` + handwrittenGroup + `],"PreToolUse":[` + nativeGroup + `]}}` + "\n")
 	expectedNativeEntries := []ownership.EntryValue{
 		syncIndependentNativeHookEntryValue(t, "PreToolUse", nativeGroup),
 		syncIndependentNativeHookEntryValue(t, "PostToolUse", handwrittenGroup),
@@ -402,7 +402,7 @@ func assertSyncIndependentNativeHookProof(t *testing.T, stage string, actor sync
 	if err != nil {
 		t.Fatalf("%s open ownership proof for %s: %v", stage, actor.home, err)
 	}
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil && !errors.Is(err, ownership.ErrStateMissing) {
 		t.Fatalf("%s read ownership proof for %s: %v", stage, actor.home, err)
 	}

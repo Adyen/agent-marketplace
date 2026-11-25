@@ -71,13 +71,12 @@ Factory plugins and explicit `delivery: native` is refused.
 
 ## Hooks
 
-At repository scope, `.factory/hooks.json` holds the event map at top level,
-with matcher groups and nested handler arrays (and read-only forward
-satisfaction recognizes `.factory/settings.local.json#hooks`). At machine scope,
-hooks merge into `~/.factory/settings.local.json` under `hooks` so managed
-entries concatenate with `~/.factory/settings.json` without shadowing it, and
-earlier owned entries in `~/.factory/hooks.json` migrate automatically while
-preserving handwritten entries. Support files install under
+In both repository and machine scopes, Factory Droid hooks merge into
+`settings.local.json` under `hooks` (`.factory/settings.local.json` and
+`~/.factory/settings.local.json`) so managed entries concatenate with
+`settings.json` and `hooks.json` without shadowing `settings.json`. Earlier
+owned entries in `hooks.json` migrate automatically while preserving
+handwritten entries. Support files install under
 `.factory/hook-support/<source>/<hook>/`. A marked entry in legacy
 `.factory/hooks/hooks.json` may migrate into the native file; handwritten
 entries stay in place. The configuration checks do not invoke `/hooks` or a

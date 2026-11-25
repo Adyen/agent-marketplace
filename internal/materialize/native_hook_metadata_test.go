@@ -678,9 +678,9 @@ func TestNativeHookMetadataProducedProofSatisfiesReader(t *testing.T) {
 		return "{\n      /* handwritten twin */\n      \"matcher\" : " + nativeHookJSONJSONString(tc.matcher) +
 			",\n      \"hooks\" : [ { \"type\" : \"command\", \"command\" : " + nativeHookJSONJSONString(command) + " } ]\n    }"
 	}
-	seed := []byte("{\n  " + nativeHookJSONJSONString(tc.event) + " : [\n    " + handwritten(nativeHookJSONSelectedCommand) +
-		"\n  ],\n  " + nativeHookJSONJSONString(tc.otherEvent) + " : [\n    " + handwritten(secondCommand) +
-		"\n  ],\n  \"SessionStart\" : [\n    " + handwritten(thirdCommand) + "\n  ]\n}\n")
+	seed := []byte("{\n  \"hooks\" : {\n    " + nativeHookJSONJSONString(tc.event) + " : [\n      " + handwritten(nativeHookJSONSelectedCommand) +
+		"\n    ],\n    " + nativeHookJSONJSONString(tc.otherEvent) + " : [\n      " + handwritten(secondCommand) +
+		"\n    ],\n    \"SessionStart\" : [\n      " + handwritten(thirdCommand) + "\n    ]\n  }\n}\n")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -731,8 +731,8 @@ func TestNativeHookMetadataProducedProofSatisfiesReader(t *testing.T) {
 		t.Fatal("reader matched a satisfaction under the wrong fingerprint")
 	}
 
-	withoutSecond := []byte("{\n  " + nativeHookJSONJSONString(tc.event) + " : [\n    " + handwritten(nativeHookJSONSelectedCommand) +
-		"\n  ],\n  \"SessionStart\" : [\n    " + handwritten(thirdCommand) + "\n  ]\n}\n")
+	withoutSecond := []byte("{\n  \"hooks\" : {\n    " + nativeHookJSONJSONString(tc.event) + " : [\n      " + handwritten(nativeHookJSONSelectedCommand) +
+		"\n    ],\n    \"SessionStart\" : [\n      " + handwritten(thirdCommand) + "\n    ]\n  }\n}\n")
 	if err := os.WriteFile(path, withoutSecond, 0o640); err != nil {
 		t.Fatal(err)
 	}
@@ -930,8 +930,8 @@ func TestNativeHookMetadataFirstUsePendingJournalRecovers(t *testing.T) {
 
 	proof, _ := store.Proof(spec.rel)
 	entry := nativeHookMetadataOwnedEntry(t, tc, tc.event, nativeHookJSONSelectedCommand, "alpha", nativeHookMetadataFPAlpha)
-	next := []byte("{\n  " + nativeHookJSONJSONString(tc.event) + " : [\n    " +
-		nativeHookJSONGroup(nativeHookJSONSelectedCommand, tc.matcher, "") + "\n  ]\n}\n")
+	next := []byte("{\n  \"hooks\" : {\n    " + nativeHookJSONJSONString(tc.event) + " : [\n      " +
+		nativeHookJSONGroup(nativeHookJSONSelectedCommand, tc.matcher, "") + "\n    ]\n  }\n}\n")
 	desired, err := nativeOwnedJSONTxnPlan(store, spec.rel, path, nil, os.ErrNotExist, next, true,
 		ownedJSONPatch{owned: []ownership.Entry{entry.ownershipEntry()}}, proof)
 	if err != nil {

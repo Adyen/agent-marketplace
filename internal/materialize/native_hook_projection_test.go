@@ -314,8 +314,8 @@ func TestPrepareIndependentNativeHookProjection(t *testing.T) {
 		t.Fatalf("artifacts = %d, want 1", len(projection.artifacts))
 	}
 	art := projection.artifacts[0]
-	if art.Path != "hooks.json" {
-		t.Fatalf("artifact path = %q, want hooks.json", art.Path)
+	if art.Path != "settings.local.json" {
+		t.Fatalf("artifact path = %q, want settings.local.json", art.Path)
 	}
 	if art.Mode.Perm() != 0o600 {
 		t.Fatalf("artifact mode = %04o, want 0600", art.Mode.Perm())
@@ -325,11 +325,15 @@ func TestPrepareIndependentNativeHookProjection(t *testing.T) {
 	}
 	document := decodeProjectionDocument(t, art.Bytes)
 	if len(document) != 1 {
-		t.Fatalf("document keys = %v, want only the native event", document)
+		t.Fatalf("document keys = %v, want only hooks", document)
 	}
-	groups, ok := document["PreToolUse"].([]any)
+	hooksObj, ok := document["hooks"].(map[string]any)
+	if !ok || len(hooksObj) != 1 {
+		t.Fatalf("hooks = %v, want only the native event", document["hooks"])
+	}
+	groups, ok := hooksObj["PreToolUse"].([]any)
 	if !ok || len(groups) != 1 {
-		t.Fatalf("PreToolUse = %v, want one rule group", document)
+		t.Fatalf("PreToolUse = %v, want one rule group", hooksObj)
 	}
 	group := groups[0].(map[string]any)
 	if group["matcher"] != "Execute" {
@@ -374,8 +378,8 @@ func TestPrepareIndependentNativeHookProjection(t *testing.T) {
 	if projection.outputRoot != filepath.Join(repoRoot, ".factory") {
 		t.Fatalf("outputRoot = %q, want %q", projection.outputRoot, filepath.Join(repoRoot, ".factory"))
 	}
-	if projection.layout.rel != "hooks.json" || projection.layout.container != "" {
-		t.Fatalf("layout = %+v, want factory hooks.json top-level map", projection.layout)
+	if projection.layout.rel != "settings.local.json" || projection.layout.container != "hooks" {
+		t.Fatalf("layout = %+v, want factory settings.local.json hooks member", projection.layout)
 	}
 
 	if len(projection.support) != 1 {
@@ -420,7 +424,7 @@ func TestPrepareIndependentNativeHookProjectionLayouts(t *testing.T) {
 		version   int
 	}{
 		{hcc.TargetClaude, "settings.json", ".claude", "hooks", "matcher-groups", 0},
-		{hcc.TargetFactory, "hooks.json", ".factory", "", "matcher-groups", 0},
+		{hcc.TargetFactory, "settings.local.json", ".factory", "hooks", "matcher-groups", 0},
 		{hcc.TargetCursor, "hooks.json", ".cursor", "hooks", "event-handlers", 1},
 		{hcc.TargetWindsurf, ".devin/hooks.json", "", "hooks", "event-handlers", 0},
 		{hcc.TargetGemini, "settings.json", ".gemini", "hooks", "matcher-groups", 0},
@@ -524,14 +528,14 @@ func TestPrepareIndependentNativeHookProjectionFactoryNativeSourceProjects(t *te
 	if err != nil {
 		t.Fatalf("native Factory snapshot projection: %v", err)
 	}
-	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "hooks.json" {
-		t.Fatalf("artifacts = %#v, want hooks.json", projection.artifacts)
+	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "settings.local.json" {
+		t.Fatalf("artifacts = %#v, want settings.local.json", projection.artifacts)
 	}
 	wantSupportRelBase := "hook-support/" + oracleSourceKey(t, fixture.root) + "/" + fixture.resolved.Name
 	if projection.supportRelBase != wantSupportRelBase {
 		t.Fatalf("supportRelBase = %q, want %q", projection.supportRelBase, wantSupportRelBase)
 	}
-	document := decodeProjectionDocument(t, projection.artifacts[0].Bytes)
+	document := decodeProjectionDocument(t, projection.artifacts[0].Bytes)["hooks"].(map[string]any)
 	groups, ok := document["PreToolUse"].([]any)
 	if !ok || len(groups) != 1 {
 		t.Fatalf("PreToolUse = %v, want one native group", document["PreToolUse"])
@@ -1066,10 +1070,10 @@ func TestPrepareIndependentNativeHookProjectionMirror(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mirror prepare: %v", err)
 		}
-		if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "hooks.json" {
+		if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "settings.local.json" {
 			t.Fatalf("artifacts = %#v", projection.artifacts)
 		}
-		document := decodeProjectionDocument(t, projection.artifacts[0].Bytes)
+		document := decodeProjectionDocument(t, projection.artifacts[0].Bytes)["hooks"].(map[string]any)
 		group := document["PreToolUse"].([]any)[0].(map[string]any)
 		if group["matcher"] != "Execute" {
 			t.Fatalf("matcher = %v, want Execute", group["matcher"])
@@ -1161,8 +1165,8 @@ func TestPrepareIndependentNativeHookProjectionMirrorFromResolver(t *testing.T) 
 	if err != nil {
 		t.Fatalf("prepareNativeHookProjection: %v", err)
 	}
-	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "hooks.json" {
-		t.Fatalf("artifacts = %#v, want hooks.json", projection.artifacts)
+	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "settings.local.json" {
+		t.Fatalf("artifacts = %#v, want settings.local.json", projection.artifacts)
 	}
 	if len(projection.support) != 2 || projection.support[0].Path != "data.bin" || projection.support[1].Path != "run.sh" {
 		t.Fatalf("support = %#v, want sorted data.bin and run.sh", projection.support)
@@ -1286,10 +1290,10 @@ func TestPrepareIndependentNativeHookProjectionStagedIndexOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("staged index-only prepare: %v", err)
 	}
-	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "hooks.json" {
+	if len(projection.artifacts) != 1 || projection.artifacts[0].Path != "settings.local.json" {
 		t.Fatalf("artifacts = %#v", projection.artifacts)
 	}
-	handler := decodeProjectionDocument(t, projection.artifacts[0].Bytes)["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	handler := decodeProjectionDocument(t, projection.artifacts[0].Bytes)["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
 	if handler["command"] != "echo witness" {
 		t.Fatalf("handler = %v, want echo witness", handler)
 	}

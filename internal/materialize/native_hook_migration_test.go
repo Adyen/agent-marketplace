@@ -245,7 +245,7 @@ func TestNativeHookLegacySupportManifestAndOwnershipRecoverInOneTransaction(t *t
 	}
 	nativePath := filepath.Join(destination.Root, file.rel)
 	legacyPath := legacyHookFileFor(hcc.TargetFactory, false, repo, "")
-	legacyBefore, handwritten := nativeHookLegacyDocument(hcc.TargetFactory, layout.container, layout.event, layout.matcher, "echo legacy", true, true)
+	legacyBefore, handwritten := nativeHookLegacyDocument(hcc.TargetFactory, layout.effectiveLegacyContainer(), layout.event, layout.matcher, "echo legacy", true, true)
 	additiveSafetyWrite(t, legacyPath, string(legacyBefore))
 	if err := os.Chmod(legacyPath, 0o640); err != nil {
 		t.Fatal(err)
@@ -402,11 +402,13 @@ func TestNativeHookLegacyCleanupRefusesChangedNativeAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var nativeGroups map[string][]json.RawMessage
-	if err := json.Unmarshal(nativeBefore, &nativeGroups); err != nil {
+	var envelope struct {
+		Hooks map[string][]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(nativeBefore, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := ownedJSONHookEntries(file.rel, nativeGroups, hook.Name)
+	entries, err := ownedJSONHookEntries(file.rel, envelope.Hooks, hook.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -926,8 +928,8 @@ func TestNativeHookLegacyMalformedBlocksTargetAndPreservesSibling(t *testing.T) 
 	assertFileUnchanged(t, cursorLegacy, legacyBefore, legacyMode, legacyMtime)
 	assertFileUnchanged(t, cursorNative, nativeBefore, nativeMode, nativeMtime)
 	assertPathAbsent(t, cursorStore.StateFile())
-	factoryNative := filepath.Join(repo, ".factory", "hooks.json")
-	if got := additiveSafetyCommands(t, factoryNative, "", "PreToolUse"); !equalStrings(got, []string{"echo sibling"}) {
+	factoryNative := filepath.Join(repo, ".factory", "settings.local.json")
+	if got := additiveSafetyCommands(t, factoryNative, "hooks", "PreToolUse"); !equalStrings(got, []string{"echo sibling"}) {
 		t.Fatalf("independent Factory native commands = %v", got)
 	}
 	assertPathAbsent(t, legacyHookFileFor(hcc.TargetFactory, false, repo, home))
@@ -939,7 +941,7 @@ func TestNativeHookLegacyMigrationDryRunReportsPendingWithoutWrites(t *testing.T
 	layout := nativeHookJSONCaseByName(t, "factory_repo")
 	_, _, _, nativePath := nativeHookMetadataTarget(t, layout, repo, home, codexHome)
 	legacyPath := legacyHookFileFor(hcc.TargetFactory, false, repo, home)
-	legacy, _ := nativeHookLegacyDocument(hcc.TargetFactory, layout.container, layout.event, layout.matcher, "echo pending", true, true)
+	legacy, _ := nativeHookLegacyDocument(hcc.TargetFactory, layout.effectiveLegacyContainer(), layout.event, layout.matcher, "echo pending", true, true)
 	additiveSafetyWrite(t, legacyPath, string(legacy))
 	legacyBefore, legacyMode, legacyMtime := fileSnapshot(t, legacyPath)
 	repoBefore := satisfactionPathTree(t, repo)
@@ -1065,7 +1067,7 @@ func TestNativeHookLegacySupportCleanupUsesOwnershipEvidence(t *testing.T) {
 			if err != nil || hasErrorDiagnostics(report.Diags) {
 				t.Fatalf("Run: %v / %v", err, report)
 			}
-			if got := additiveSafetyCommands(t, filepath.Join(nativeRoot, "hooks.json"), "", "PreToolUse"); !equalStrings(got, []string{"echo migrate"}) {
+			if got := additiveSafetyCommands(t, filepath.Join(nativeRoot, "settings.local.json"), "hooks", "PreToolUse"); !equalStrings(got, []string{"echo migrate"}) {
 				t.Fatalf("native commands = %v", got)
 			}
 			if tc.wantRemoved {

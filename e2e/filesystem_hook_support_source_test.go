@@ -39,21 +39,24 @@ func TestFilesystemHookSupportSourceAdmission(t *testing.T) {
 			requireDestUntouched(t, sourceHelperInitial, captureDest(t, helperSource))
 			requireDestUntouched(t, sourceAliasInitial, captureDest(t, aliasSource))
 
-			nativePath := filepath.Join(env.workspace, ".factory", "hooks.json")
+			nativePath := filepath.Join(env.workspace, ".factory", "settings.local.json")
 			nativeBytes, err := os.ReadFile(nativePath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var native map[string][]struct {
-				Matcher string `json:"matcher"`
-				Hooks   []struct {
-					Type    string `json:"type"`
-					Command string `json:"command"`
+			var envelope struct {
+				Hooks map[string][]struct {
+					Matcher string `json:"matcher"`
+					Hooks   []struct {
+						Type    string `json:"type"`
+						Command string `json:"command"`
+					} `json:"hooks"`
 				} `json:"hooks"`
 			}
-			if err := json.Unmarshal(nativeBytes, &native); err != nil {
-				t.Fatalf("Factory native hook output is not a direct event map: %v", err)
+			if err := json.Unmarshal(nativeBytes, &envelope); err != nil {
+				t.Fatalf("Factory native hook output is not a valid settings.local.json hooks object: %v", err)
 			}
+			native := envelope.Hooks
 			groups, ok := native["PostToolUse"]
 			if len(native) != 1 || !ok || len(groups) != 1 || groups[0].Matcher != "^(Create|Edit|ApplyPatch)$" ||
 				len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != "inert original hook" {

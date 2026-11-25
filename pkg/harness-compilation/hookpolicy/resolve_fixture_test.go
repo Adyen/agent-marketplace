@@ -546,7 +546,7 @@ func TestCompileRefusesSingleQuotedPluginRoot(t *testing.T) {
 				wantDouble, wantBare = machineDouble, machineBare
 			}
 			member := tc.member
-			if tc.target == hcc.TargetFactory && scopeCase.scope == hcc.ScopeUser {
+			if tc.target == hcc.TargetFactory {
 				member = "hooks"
 			}
 			t.Run(tc.name+"/"+scopeCase.name+"/single-quoted", func(t *testing.T) {

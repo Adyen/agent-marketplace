@@ -107,7 +107,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repository support script is outside the repository: %v", err)
 		}
-		repoCommand := hookCommand(repo, "repository", false)
+		repoCommand := hookCommand(repo, "repository", true)
 		if want := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(repoRel); repoCommand != want {
 			t.Fatalf("repository hook command = %q, want %q", repoCommand, want)
 		}

@@ -202,7 +202,7 @@ func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 		version                              int
 		legacyRepo, legacyUser               string
 	}{
-		{target: hcc.TargetFactory, repoPath: ".factory/hooks.json", userPath: ".factory/settings.local.json", event: "PreToolUse", matcher: "Execute", grouped: true, legacyRepo: ".factory/hooks/hooks.json", legacyUser: ".factory/hooks/hooks.json"},
+		{target: hcc.TargetFactory, repoPath: ".factory/settings.local.json", userPath: ".factory/settings.local.json", container: "hooks", event: "PreToolUse", matcher: "Execute", grouped: true, legacyRepo: ".factory/hooks/hooks.json", legacyUser: ".factory/hooks/hooks.json"},
 		{target: hcc.TargetClaude, repoPath: ".claude/settings.json", userPath: ".claude/settings.json", container: "hooks", event: "PreToolUse", matcher: "Bash", grouped: true, legacyRepo: ".claude/hooks/hooks.json", legacyUser: ".claude/hooks/hooks.json"},
 		{target: hcc.TargetCursor, repoPath: ".cursor/hooks.json", userPath: ".cursor/hooks.json", container: "hooks", event: "preToolUse", matcher: "^Shell$", version: 1, legacyRepo: ".cursor/hooks/hooks.json", legacyUser: ".cursor/hooks/hooks.json"},
 		{target: hcc.TargetGemini, repoPath: ".gemini/settings.json", userPath: ".gemini/settings.json", container: "hooks", event: "BeforeTool", matcher: "^run_shell_command$", grouped: true},
@@ -235,7 +235,7 @@ func TestAdditiveHooksAllTargetsScopesAndModes(t *testing.T) {
 						file = filepath.Join(home, target.userPath)
 						legacyRoot, legacy = home, target.legacyUser
 					}
-					if machine && (target.target == hcc.TargetDevin || target.target == hcc.TargetFactory) {
+					if machine && target.target == hcc.TargetDevin {
 						container = "hooks"
 					}
 					seed, manual := additiveSafetyNativeSeed(target.target, container, target.event, target.grouped, target.matcher, target.version)
@@ -302,10 +302,9 @@ func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 					// Both hooks share one configured source identity and
 					// installed name, so their differing shared.sh bytes
 					// claim the same namespaced support path.
-					root, native := filepath.Join(repo, ".factory"), "hooks.json"
+					root, native := filepath.Join(repo, ".factory"), "settings.local.json"
 					if machine {
 						root = filepath.Join(home, ".factory")
-						native = "settings.local.json"
 					}
 					supportRoot := filepath.Join(root, "hook-support")
 					native = filepath.Join(root, native)
@@ -361,10 +360,7 @@ func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 							t.Fatalf("conflict changed installed %s: %v\nbefore %s\nafter %s", file, err, before, after)
 						}
 					}
-					container, event := "", "PreToolUse"
-					if machine && target == hcc.TargetFactory {
-						container = "hooks"
-					}
+					container, event := "hooks", "PreToolUse"
 					if target == hcc.TargetWindsurf {
 						container, event = "hooks", "pre_run_command"
 					}

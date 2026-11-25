@@ -225,31 +225,21 @@ func TestMirrorHookSupportFilesInstall(t *testing.T) {
 			if data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "helper.py")); err != nil || string(data) != "print('support')\n" {
 				t.Fatalf("helper: %q, %v", data, err)
 			}
-			rel := "hooks.json"
-			if machine {
-				rel = "settings.local.json"
-			}
-			aggregate, err := os.ReadFile(filepath.Join(root, ".factory", rel))
+			aggregate, err := os.ReadFile(filepath.Join(root, ".factory", "settings.local.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			type hookGroup struct {
-				Hooks []struct {
-					Command string `json:"command"`
+			var envelope struct {
+				Hooks map[string][]struct {
+					Hooks []struct {
+						Command string `json:"command"`
+					} `json:"hooks"`
 				} `json:"hooks"`
 			}
-			var hooks map[string][]hookGroup
-			if machine {
-				var envelope struct {
-					Hooks map[string][]hookGroup `json:"hooks"`
-				}
-				if err := json.Unmarshal(aggregate, &envelope); err != nil {
-					t.Fatal(err)
-				}
-				hooks = envelope.Hooks
-			} else if err := json.Unmarshal(aggregate, &hooks); err != nil {
+			if err := json.Unmarshal(aggregate, &envelope); err != nil {
 				t.Fatal(err)
 			}
+			hooks := envelope.Hooks
 			installedCommand := hooks["PreToolUse"][0].Hooks[0].Command
 			command := exec.Command("/bin/sh", "-c", installedCommand)
 			command.Env = append(os.Environ(), "FACTORY_PROJECT_DIR="+repo)

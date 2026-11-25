@@ -87,7 +87,7 @@ func TestRunIndependentNativeHookSatisfaction(t *testing.T) {
 			t.Fatalf("reconstruction changed native ownership status: %#v", entry)
 		}
 	}
-	proof, _ := store.Proof("hooks.json")
+	proof, _ := store.Proof("settings.local.json")
 	if proof.OwnedCount() != 0 || len(proof.OwnedIDs()) != 0 || len(proof.HookSatisfactions()) != 0 {
 		t.Fatalf("independent reconstruction published private proof: %+v", proof)
 	}
@@ -314,7 +314,7 @@ func newIndependentFactoryFixture(t *testing.T) independentFactoryFixture {
 		sourceKey:        sourceKey,
 		name:             name,
 		nativeRoot:       nativeRoot,
-		nativePath:       filepath.Join(nativeRoot, "hooks.json"),
+		nativePath:       filepath.Join(nativeRoot, "settings.local.json"),
 		legacyPath:       filepath.Join(nativeRoot, "hooks", "hooks.json"),
 		supportPath:      filepath.Join(nativeRoot, "hook-support", sourceKey, name, "hooks", "scripts", "run.sh"),
 		nativeBody:       independentFactoryNativeBody(sourceKey, name),
@@ -325,7 +325,7 @@ func newIndependentFactoryFixture(t *testing.T) independentFactoryFixture {
 func independentFactoryNativeBody(sourceKey, name string) []byte {
 	handler := `{"type":"command","command":"\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + "/" + name + `/hooks/scripts/run.sh"}`
 	group := `{"hooks":[` + handler + `],"matcher":"Execute","commandRegex":"^make.*$"}`
-	return []byte(`{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}],"PreToolUse":[` + group + `]}` + "\n")
+	return []byte(`{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}],"PreToolUse":[` + group + `]}}` + "\n")
 }
 
 func (f independentFactoryFixture) selectedHandler() string {
@@ -1633,7 +1633,7 @@ func TestNativeHookProjectionPruneFenceIsRepositoryOnlyAndNarrow(t *testing.T) {
 		pruneRel string
 		file     string
 	}{
-		{target: hcc.TargetFactory, pruneRel: ".factory", file: "hooks.json"},
+		{target: hcc.TargetFactory, pruneRel: ".factory", file: "settings.local.json"},
 		{target: hcc.TargetClaude, pruneRel: ".claude", file: "settings.json"},
 		{target: hcc.TargetCursor, pruneRel: ".cursor", file: "hooks.json"},
 		{target: hcc.TargetWindsurf, pruneRel: ".windsurf"},

@@ -311,6 +311,75 @@ func seedForwardFactoryRepoHook(t *testing.T, repoRoot string, provider resolver
 	return settingsLocalPath
 }
 
+// spec: hook-resources/factory-droid-repository-scope-hooks-materialize-into-settings-local-json
+func TestFactoryRepoHooksWriteSettingsLocalAndPreservePluginRegistrations(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	factoryRoot := filepath.Join(repo, ".factory")
+	settingsPath := filepath.Join(factoryRoot, "settings.json")
+	settingsBody := "{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Execute\",\n        \"hooks\": [\n          {\"type\": \"command\", \"command\": \"echo repo-settings-hook\"}\n        ]\n      }\n    ]\n  }\n}\n"
+	additiveSafetyWrite(t, settingsPath, settingsBody)
+	settingsBefore, settingsMode, settingsMtime := fileSnapshot(t, settingsPath)
+
+	settingsLocalPath := filepath.Join(factoryRoot, "settings.local.json")
+	existingLocal := "{\n  \"enabledPlugins\": {\n    \"demo@local\": true\n  },\n  \"extraKnownMarketplaces\": {\n    \"local\": {\"source\": {\"source\": \"directory\", \"path\": \"/tmp/local\"}}\n  }\n}\n"
+	additiveSafetyWrite(t, settingsLocalPath, existingLocal)
+
+	provider := additiveSafetyProvider(t, hcc.TargetFactory, false, "echo managed-repo-hook", "")
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider})
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("Run: %v / %v", err, report)
+	}
+
+	data, err := os.ReadFile(settingsLocalPath)
+	if err != nil {
+		t.Fatalf("read .factory/settings.local.json: %v", err)
+	}
+	if bytes.Contains(data, []byte("_managed_by")) {
+		t.Fatalf(".factory/settings.local.json carries _managed_by marker:\n%s", data)
+	}
+	if !bytes.Contains(data, []byte(`"demo@local"`)) || !bytes.Contains(data, []byte(`"extraKnownMarketplaces"`)) {
+		t.Fatalf(".factory/settings.local.json lost plugin registrations:\n%s", data)
+	}
+	if got := additiveSafetyCommands(t, settingsLocalPath, "hooks", "PreToolUse"); !equalStrings(got, []string{"echo managed-repo-hook"}) {
+		t.Fatalf(".factory/settings.local.json PreToolUse commands = %v, want [echo managed-repo-hook]", got)
+	}
+	if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf(".factory/hooks.json should not be created: %v", err)
+	}
+	assertFileUnchanged(t, settingsPath, settingsBefore, settingsMode, settingsMtime)
+}
+
+// spec: hook-resources/owned-repository-scope-factory-hooks-migrate-out-of-hooks-json
+func TestFactoryRepoOwnedRetiredHooksJSONMigratesAndDeletesWhenEmpty(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	factoryRoot := filepath.Join(repo, ".factory")
+	ownedRule := `{"hooks":[{"command":"echo old-repo-owned","type":"command"}],"matcher":"Execute"}`
+	retiredDoc := "{\n  \"PreToolUse\": [" + ownedRule + "]\n}\n"
+	retiredPath := seedOwnedFactoryRetiredHooksJSON(t, factoryRoot, "PreToolUse-command", "sha256:"+strings.Repeat("d", 64), retiredDoc, map[string][]string{
+		"PreToolUse": {ownedRule},
+	})
+	retiredBefore, _, _ := fileSnapshot(t, retiredPath)
+
+	provider := additiveSafetyProvider(t, hcc.TargetFactory, false, "echo migrated-repo-hook", "")
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider})
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("Run: %v / %v", err, report)
+	}
+
+	settingsLocalPath := filepath.Join(factoryRoot, "settings.local.json")
+	if got := additiveSafetyCommands(t, settingsLocalPath, "hooks", "PreToolUse"); !equalStrings(got, []string{"echo migrated-repo-hook"}) {
+		t.Fatalf(".factory/settings.local.json PreToolUse commands = %v, want [echo migrated-repo-hook]", got)
+	}
+	if _, err := os.Lstat(retiredPath); !os.IsNotExist(err) {
+		t.Fatalf("empty retired .factory/hooks.json was not deleted: %v", err)
+	}
+	canonicalFactoryRoot, err := ownership.CanonicalRoot(factoryRoot)
+	if err != nil {
+		t.Fatalf("canonical factory root: %v", err)
+	}
+	assertNativeHookMigrationBackup(t, canonicalFactoryRoot, retiredPath, retiredBefore)
+}
+
 // spec: hook-resources/complete-factory-settings-local-json-hooks-satisfy-repository-sync-without-writing-hooks-json
 func TestFactoryRepoForwardSettingsLocalSatisfiesWithoutWritingHooksJSON(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
@@ -343,27 +412,15 @@ func TestFactoryRepoForwardSettingsLocalSatisfiesWithoutWritingHooksJSON(t *test
 	expectedCommand := `"$FACTORY_PROJECT_DIR"/` + commandBase + "/hooks/scripts/check.sh"
 	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, resolved[0], expectedCommand, "", nil, 0)
 	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
-	stateRoot := os.Getenv("XDG_STATE_HOME")
 
-	// Dry run (--check) and real sync must both succeed without creating hooks.json,
-	// touching settings.local.json, or creating ownership state.
-	for _, dryRun := range []bool{true, false} {
-		var opts []RunOption
-		if dryRun {
-			opts = append(opts, WithDryRun())
-		}
-		report, runErr := Run(context.Background(), repo, resolved, opts...)
-		if runErr != nil || hasErrorDiagnostics(report.Diags) {
-			t.Fatalf("Run(dryRun=%t): %v / %v", dryRun, runErr, report)
-		}
-		if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
-			t.Fatalf("Run(dryRun=%t) created .factory/hooks.json despite forward satisfaction: %v", dryRun, err)
-		}
-		assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
-		if _, err := os.Lstat(filepath.Join(stateRoot, "agent-marketplace", "ownership")); !os.IsNotExist(err) {
-			t.Fatalf("Run(dryRun=%t) created ownership state under independent forward satisfaction: %v", dryRun, err)
-		}
+	report, runErr := Run(context.Background(), repo, resolved, WithDryRun())
+	if runErr != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("Run(dryRun=true): %v / %v", runErr, report)
 	}
+	if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("created .factory/hooks.json: %v", err)
+	}
+	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
 }
 
 func TestFactoryRepoForwardSettingsLocalPreservesManifestTrackedSupportFiles(t *testing.T) {
@@ -488,7 +545,6 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 	}
 	expectedCommandA := `"$FACTORY_PROJECT_DIR"/` + commandBaseA + "/hooks/scripts/check-a.sh"
 	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, resolved[0], expectedCommandA, "", nil, 0)
-	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
 
 	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{
 		Project: config.MaterializationModeFile,
@@ -498,10 +554,12 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 		t.Fatalf("mixed forward + published hook Run failed: %v / %+v", err, report)
 	}
 
-	hooksPath := filepath.Join(factoryRoot, "hooks.json")
-	commands := additiveSafetyCommands(t, hooksPath, "", "PreToolUse")
-	if len(commands) != 1 || !strings.HasSuffix(commands[0], "/hooks/scripts/check-b.sh") {
-		t.Fatalf(".factory/hooks.json commands = %v, want only hook B", commands)
+	commands := additiveSafetyCommands(t, settingsLocalPath, "hooks", "PreToolUse")
+	if len(commands) != 2 || !strings.HasSuffix(commands[0], "/hooks/scripts/check-a.sh") || !strings.HasSuffix(commands[1], "/hooks/scripts/check-b.sh") {
+		t.Fatalf(".factory/settings.local.json commands = %v, want hook A + hook B", commands)
+	}
+	if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf(".factory/hooks.json should not be created: %v", err)
 	}
 	planB, supportPathB := nativeHookActivationSupportPath(t, resolved[1], hcc.TargetFactory, false, factoryRoot)
 	if len(planB.artifacts) == 0 {
@@ -510,7 +568,6 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 	if _, err := os.Stat(supportPathB); err != nil {
 		t.Fatalf("published hook B support script missing at %s: %v", supportPathB, err)
 	}
-	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
 	assertFileUnchanged(t, supportPathA, supportABefore, supportAMode, supportAMtime)
 }
 
@@ -519,17 +576,17 @@ func TestFactoryRepoForwardSettingsLocalMismatchFallsBackToHooksJSON(t *testing.
 	repo, _ := additiveSafetyEnv(t)
 	provider := additiveSafetyProvider(t, hcc.TargetFactory, false, "echo expected-repo-hook", "")
 	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, provider, "echo different-command", "", nil, 0)
-	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
 
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{provider})
 	if err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("Run: %v / %v", err, report)
 	}
-	hooksPath := filepath.Join(repo, ".factory", "hooks.json")
-	if got := additiveSafetyCommands(t, hooksPath, "", "PreToolUse"); !equalStrings(got, []string{"echo expected-repo-hook"}) {
-		t.Fatalf(".factory/hooks.json commands = %v, want [echo expected-repo-hook]", got)
+	if got := additiveSafetyCommands(t, settingsLocalPath, "hooks", "PreToolUse"); !equalStrings(got, []string{"echo different-command", "echo expected-repo-hook"}) {
+		t.Fatalf(".factory/settings.local.json commands = %v, want handwritten + managed", got)
 	}
-	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
+	if _, err := os.Lstat(filepath.Join(repo, ".factory", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf(".factory/hooks.json should not be created: %v", err)
+	}
 }
 
 // spec: hook-resources/malformed-factory-settings-local-json-fails-closed-during-repository-forward-check
@@ -539,7 +596,7 @@ func TestFactoryRepoForwardMalformedSettingsLocalFailsClosed(t *testing.T) {
 		body     string
 		wantCode string
 	}{
-		{name: "malformed json", body: `{"hooks": {"PreToolUse": [broken}`, wantCode: diag.CodeHookNativeToleranceRefused},
+		{name: "malformed json", body: `{"hooks": {"PreToolUse": [broken}`, wantCode: diag.CodeJSONMalformed},
 		{name: "duplicate key", body: `{"hooks": {"PreToolUse": []}, "hooks": {"PreToolUse": []}}`, wantCode: diag.CodeJSONDuplicateKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -112,20 +112,23 @@ resources:
 	}
 	assertMaterializedHook := func(step, wantCommand string) {
 		t.Helper()
-		data, readErr := os.ReadFile(filepath.Join(repoRoot, ".factory", "hooks.json"))
+		data, readErr := os.ReadFile(filepath.Join(repoRoot, ".factory", "settings.local.json"))
 		if readErr != nil {
 			t.Fatalf("%s: read materialized hooks: %v", step, readErr)
 		}
-		var document map[string][]struct {
-			Matcher string `json:"matcher"`
-			Hooks   []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
+		var envelope struct {
+			Hooks map[string][]struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+				} `json:"hooks"`
 			} `json:"hooks"`
 		}
-		if err := json.Unmarshal(data, &document); err != nil {
+		if err := json.Unmarshal(data, &envelope); err != nil {
 			t.Fatalf("%s: decode materialized hooks: %v\n%s", step, err, data)
 		}
+		document := envelope.Hooks
 		groups := document["PreToolUse"]
 		if len(document) != 1 || len(groups) != 1 || len(groups[0].Hooks) != 1 {
 			t.Fatalf("%s: materialized hooks = %#v, want exactly one PreToolUse group with one handler", step, document)

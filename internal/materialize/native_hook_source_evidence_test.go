@@ -173,12 +173,8 @@ func sharedNativeSeed(t *testing.T, target hcc.Target, machine bool) nativeSeed 
 			doc: `{"version":1,"hooks":{"preToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetFactory:
 		rule := `{"hooks":[{"command":"` + sharedSourceCommand + `","type":"command"}],"matcher":"Execute"}`
-		if machine {
-			return nativeSeed{event: "PreToolUse", rule: rule,
-				doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
-		}
 		return nativeSeed{event: "PreToolUse", rule: rule,
-			doc: `{"PreToolUse":[` + rule + `]}` + "\n"}
+			doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetWindsurf:
 		rule := `{"command":"` + sharedSourceCommand + `"}`
 		if machine {
@@ -368,7 +364,7 @@ func TestNativeSharedSourceEvidenceUnprovenContributor(t *testing.T) {
 			entry := nativeHookProofEntry(t, seed.event, seed.rule, "alpha", fpA)
 			mutate(&entry)
 			seedNativeProof(t, nr, layout, []byte(seed.doc), entry)
-			nativePath := filepath.Join(nr, "hooks.json")
+			nativePath := filepath.Join(nr, "settings.local.json")
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			store, err := ownership.Open(nr)
 			if err != nil {
@@ -432,7 +428,7 @@ func TestNativeSharedSourceEvidencePartialProof(t *testing.T) {
 		// The second recorded beta rule exists but drifted.
 		"drifted_matching_entry": func(t *testing.T, nr string, layout nativeHookLayout, seed nativeSeed, fpB string) {
 			drifted := `{"hooks":[{"command":"echo second-proof","type":"command"}],"matcher":"Write","extra":true}`
-			body := `{"PostToolUse":[` + drifted + `],"PreToolUse":[` + seed.rule + `]}` + "\n"
+			body := `{"hooks":{"PostToolUse":[` + drifted + `],"PreToolUse":[` + seed.rule + `]}}` + "\n"
 			clean := nativeHookProofEntry(t, seed.event, seed.rule, "alpha", fpA)
 			clean.SourceEvidence = []ownership.HookSourceEvidence{{Resource: "beta", SourceDigest: fpB}}
 			seedNativeProof(t, nr, layout, []byte(body), clean,
@@ -448,7 +444,7 @@ func TestNativeSharedSourceEvidencePartialProof(t *testing.T) {
 			seed := sharedNativeSeed(t, hcc.TargetFactory, false)
 			fpB := namedFingerprint(t, betaSrc, "beta", "factory", HookScopeRepository)
 			seedFn(t, nativeRoot, layout, seed, fpB)
-			nativePath := filepath.Join(nativeRoot, "hooks.json")
+			nativePath := filepath.Join(nativeRoot, "settings.local.json")
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			store, err := ownership.Open(nativeRoot)
 			if err != nil {
@@ -511,7 +507,7 @@ func TestNativeSharedSourceEvidenceInvalidState(t *testing.T) {
 	if err := os.WriteFile(store.StateFile(), []byte(corrupt), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
@@ -749,7 +745,7 @@ func TestNativeHookContributorEvidenceMalformedTupleUsesOwnershipValidation(t *t
 	tc := nativeHookJSONCaseByName(t, "factory_repo")
 	_, _, root, spec := nativeHookContributorFactory(t)
 	work := nativeHookJSONWork(t, tc, "alpha", nativeHookJSONSelectedCommand)
-	body := []byte(`{"PreToolUse":[` + string(work.entries[0].raw) + `]}` + "\n")
+	body := []byte(`{"hooks":{"PreToolUse":[` + string(work.entries[0].raw) + `]}}` + "\n")
 	path := filepath.Join(root, filepath.FromSlash(spec.rel))
 	entry := nativeHookProofEntry(t, tc.event, string(work.entries[0].raw), "alpha", nativeHookContributorAlphaFP)
 	layout := nativeHookLayout{rel: spec.rel}
@@ -774,7 +770,7 @@ func TestNativeHookContributorEvidenceMalformedTupleUsesOwnershipValidation(t *t
 		t.Fatalf("invalid tuple was dropped before state validation: %+v", invalidEntry.SourceEvidence)
 	}
 	_, err = store.Apply(ownership.Mutation{
-		Rel: spec.rel, AbsFile: path, NextBytes: []byte(`{"PreToolUse":[]}` + "\n"),
+		Rel: spec.rel, AbsFile: path, NextBytes: []byte(`{"hooks":{"PreToolUse":[]}}` + "\n"),
 		Entries: []ownership.Entry{invalidEntry}, Reason: ownership.ReasonSync,
 		ExpectPriorGeneration: proof.Generation(), ExpectPriorDigest: ownership.Digest(body),
 	})

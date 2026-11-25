@@ -2520,7 +2520,7 @@ func TestRunHookArtifactsAreNotPrunedOnSecondSync(t *testing.T) {
 		t.Fatal("first run: expected hook artifacts to be written")
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	if _, err := os.Stat(hooksFile); err != nil {
 		t.Fatalf("first run: expected hooks.json to exist at %s: %v", hooksFile, err)
 	}
@@ -2588,7 +2588,7 @@ func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 	if _, err := Run(context.Background(), repo, repoResolved); err != nil {
 		t.Fatalf("materialize repository hook: %v", err)
 	}
-	repoFile := filepath.Join(repo, ".factory", "hooks.json")
+	repoFile := filepath.Join(repo, ".factory", "settings.local.json")
 	commands := nativeSupportCommands(t, loc, repoFile, 1)
 	installed, ref := loc.installedRef(t, commands[0], repo, home, false)
 	wantCommand := loc.repoBase + filepath.ToSlash(ref)
@@ -2622,16 +2622,19 @@ func TestRunMultipleHooksSameEventBothSurvive(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	content1, err := os.ReadFile(hooksFile)
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(content1, &data); err != nil {
+	var envelope1 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content1, &envelope1); err != nil {
 		t.Fatalf("parse hooks.json: %v", err)
 	}
+	data := envelope1.Hooks
 	rules, ok := data["PostToolUse"].([]any)
 	if !ok {
 		t.Fatalf("PostToolUse not found or not an array: %v", data)
@@ -2658,10 +2661,13 @@ func TestRunMultipleHooksSameEventBothSurvive(t *testing.T) {
 		t.Fatalf("second read hooks.json: %v", err)
 	}
 
-	data2 := map[string]any{}
-	if err := json.Unmarshal(content2, &data2); err != nil {
+	var envelope2 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content2, &envelope2); err != nil {
 		t.Fatalf("parse second hooks.json: %v", err)
 	}
+	data2 := envelope2.Hooks
 	rules2, ok := data2["PostToolUse"].([]any)
 	if !ok {
 		t.Fatalf("second: PostToolUse not found: %v", data2)
@@ -2698,16 +2704,19 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	content1, err := os.ReadFile(hooksFile)
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(content1, &data); err != nil {
+	var envelope1 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content1, &envelope1); err != nil {
 		t.Fatalf("parse hooks.json: %v", err)
 	}
+	data := envelope1.Hooks
 	rules, ok := data["PostToolUse"].([]any)
 	if !ok {
 		t.Fatalf("PostToolUse not found or not an array: %v", data)
@@ -2734,10 +2743,13 @@ func TestRunMultipleHooksSameEventSameMatcherBothSurvive(t *testing.T) {
 		t.Fatalf("second read hooks.json: %v", err)
 	}
 
-	data2 := map[string]any{}
-	if err := json.Unmarshal(content2, &data2); err != nil {
+	var envelope2 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content2, &envelope2); err != nil {
 		t.Fatalf("parse second hooks.json: %v", err)
 	}
+	data2 := envelope2.Hooks
 	rules2, ok := data2["PostToolUse"].([]any)
 	if !ok {
 		t.Fatalf("second: PostToolUse not found: %v", data2)
@@ -2778,14 +2790,17 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 		t.Fatalf("first run: %v", err)
 	}
 
-	hooksFile := filepath.Join(repoRoot, ".factory", "hooks.json")
+	hooksFile := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	content1, _ := os.ReadFile(hooksFile)
 
 	// Verify both events are present.
-	var data map[string]any
-	if err := json.Unmarshal(content1, &data); err != nil {
+	var envelope1 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content1, &envelope1); err != nil {
 		t.Fatalf("parse hooks.json after first sync: %v", err)
 	}
+	data := envelope1.Hooks
 	if _, ok := data["PostToolUse"]; !ok {
 		t.Fatalf("PostToolUse missing after first sync: %s", content1)
 	}
@@ -2802,10 +2817,13 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	content2, _ := os.ReadFile(hooksFile)
 
 	// PostToolUse should be gone (the only hook for that event was excluded).
-	var data2 map[string]any
-	if err := json.Unmarshal(content2, &data2); err != nil {
+	var envelope2 struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(content2, &envelope2); err != nil {
 		t.Fatalf("parse hooks.json after second sync: %v", err)
 	}
+	data2 := envelope2.Hooks
 	if _, ok := data2["PostToolUse"]; ok {
 		t.Errorf("PostToolUse should have been removed from hooks.json after excluding the only hook for that event: %s", content2)
 	}
@@ -2859,7 +2877,7 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 
 	// hooks.json should be a real file (merge artifact) at the target's
 	// declared aggregate path.
-	hooksJSON := filepath.Join(repoRoot, ".factory", "hooks.json")
+	hooksJSON := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	info, err := os.Lstat(hooksJSON)
 	if err != nil {
 		t.Fatalf("hooks.json not materialized: %v", err)

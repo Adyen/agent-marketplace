@@ -102,12 +102,12 @@ func TestNativeHookActivationIdenticalContributorsUseSelectedAliases(t *testing.
 	if err != nil || diag.HasErrors(report.Diags) {
 		t.Fatalf("Run: %v / %v", err, report)
 	}
-	nativePath := filepath.Join(repo, ".factory", "hooks.json")
-	if got := additiveSafetyCommands(t, nativePath, "", "PreToolUse"); !reflect.DeepEqual(got, []string{sharedSourceCommand}) {
+	nativePath := filepath.Join(repo, ".factory", "settings.local.json")
+	if got := additiveSafetyCommands(t, nativePath, "hooks", "PreToolUse"); !reflect.DeepEqual(got, []string{sharedSourceCommand}) {
 		t.Fatalf("identical contributors emitted %v, want one native rule", got)
 	}
 	store := nativeHookMetadataStore(t, filepath.Join(repo, ".factory"))
-	proof := nativeHookMetadataProof(t, store, "hooks.json")
+	proof := nativeHookMetadataProof(t, store, "settings.local.json")
 	if proof.OwnedCount() != 1 {
 		t.Fatalf("owned entries = %d, want one collapsed native rule", proof.OwnedCount())
 	}
@@ -166,12 +166,12 @@ func TestNativeHookActivationInstalledAliasIsReaderProofIdentity(t *testing.T) {
 	if resolved.Resource.Name() != canonicalName {
 		t.Fatalf("Run mutated canonical resource name: %q, want %q", resolved.Resource.Name(), canonicalName)
 	}
-	nativePath := filepath.Join(repo, ".factory", "hooks.json")
-	if got := additiveSafetyCommands(t, nativePath, "", "PreToolUse"); !reflect.DeepEqual(got, []string{"./run.sh"}) {
+	nativePath := filepath.Join(repo, ".factory", "settings.local.json")
+	if got := additiveSafetyCommands(t, nativePath, "hooks", "PreToolUse"); !reflect.DeepEqual(got, []string{"./run.sh"}) {
 		t.Fatalf("native commands = %v", got)
 	}
 	store := nativeHookMetadataStore(t, filepath.Join(repo, ".factory"))
-	proof := nativeHookMetadataProof(t, store, "hooks.json")
+	proof := nativeHookMetadataProof(t, store, "settings.local.json")
 	if proof.OwnedCount() != 1 || len(proof.OwnedIDs()) != 1 || len(proof.HookSatisfactions()) != 0 {
 		t.Fatalf("native alias proof = owned %v, satisfactions %+v", proof.OwnedIDs(), proof.HookSatisfactions())
 	}
@@ -196,10 +196,12 @@ func TestNativeHookActivationInstalledAliasIsReaderProofIdentity(t *testing.T) {
 // spec: hook-resources/factory-hooks-use-the-standalone-native-file
 func TestFactoryNativeHookPreservesStandaloneRootFormatting(t *testing.T) {
 	repo, _, _ := nativeHookJSONTestEnvironment(t)
-	nativeFile := filepath.Join(repo, ".factory", "hooks.json")
+	nativeFile := filepath.Join(repo, ".factory", "settings.local.json")
 	seed := []byte(`{
   // keep Factory root formatting
-  "PostToolUse" : [ { "matcher" : "Manual", "hooks" : [ { "type" : "command", "command" : "echo manual" } ] } ]
+  "hooks" : {
+    "PostToolUse" : [ { "matcher" : "Manual", "hooks" : [ { "type" : "command", "command" : "echo manual" } ] } ]
+  }
 }
 `)
 	if err := os.MkdirAll(filepath.Dir(nativeFile), 0o755); err != nil {
@@ -222,17 +224,18 @@ func TestFactoryNativeHookPreservesStandaloneRootFormatting(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte("// keep Factory root formatting")) || !bytes.Contains(data, []byte(`"PostToolUse" : [ { "matcher" : "Manual"`)) ||
 		!bytes.Contains(data, []byte("echo manual")) || !bytes.Contains(data, []byte("echo factory-native")) || bytes.Contains(data, []byte("_managed_by")) {
-		t.Fatalf("Factory native output did not preserve its standalone root data: %s", data)
+		t.Fatalf("Factory native output did not preserve its root data: %s", data)
 	}
 	doc, err := jsonc.Parse(nativeFile, data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, wrapped := doc.Root().Member("hooks"); wrapped {
-		t.Fatalf("Factory native output was wrapped in a hooks member: %s", data)
+	hooksNode, wrapped := doc.Root().Member("hooks")
+	if !wrapped || hooksNode.Kind() != jsonc.KindObject {
+		t.Fatalf("Factory native output was not wrapped in a hooks member: %s", data)
 	}
-	if got := doc.Root().Keys(); !reflect.DeepEqual(got, []string{"PostToolUse", "PreToolUse"}) {
-		t.Fatalf("Factory root event order = %v", got)
+	if got := hooksNode.Keys(); !reflect.DeepEqual(got, []string{"PostToolUse", "PreToolUse"}) {
+		t.Fatalf("Factory hooks event order = %v", got)
 	}
 	info, err := os.Stat(nativeFile)
 	if err != nil || info.Mode().Perm() != 0o640 {
@@ -244,9 +247,9 @@ func TestFactoryNativeHookPreservesStandaloneRootFormatting(t *testing.T) {
 func TestFactoryOwnedNativeHookReformatIsRepairedWithoutDuplicate(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
 	nativeRoot := filepath.Join(repo, ".factory")
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	manualRule := []byte(`{ "matcher" : "Manual", "hooks" : [ { "type" : "command", "command" : "echo handwritten" } ] }`)
-	seed := []byte("{\n  // keep Factory root formatting\n  \"PreToolUse\" : [\n    " + string(manualRule) + "\n  ]\n}\n")
+	seed := []byte("{\n  // keep Factory root formatting\n  \"hooks\" : {\n    \"PreToolUse\" : [\n      " + string(manualRule) + "\n    ]\n  }\n}\n")
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +279,7 @@ func TestFactoryOwnedNativeHookReformatIsRepairedWithoutDuplicate(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 || len(proof.OwnedIDs()) != 1 {
 		t.Fatalf("initial Factory ownership proof = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -315,7 +318,7 @@ func TestFactoryOwnedNativeHookReformatIsRepairedWithoutDuplicate(t *testing.T) 
 	if err != nil || info.Mode().Perm() != 0o640 {
 		t.Fatalf("reformatted Factory mode changed: %v / %v", info, err)
 	}
-	proof, err = store.Proof("hooks.json")
+	proof, err = store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 {
 		t.Fatalf("proof after formatting = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -335,7 +338,7 @@ func TestFactoryOwnedNativeHookReformatIsRepairedWithoutDuplicate(t *testing.T) 
 	if err != nil || info.Mode().Perm() != 0o640 {
 		t.Fatalf("repeated Factory hook sync changed mode: %v / %v", info, err)
 	}
-	proof, err = store.Proof("hooks.json")
+	proof, err = store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 {
 		t.Fatalf("proof after repeated sync = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -684,7 +687,7 @@ func TestNativeHookActivationSupportOnlyRefreshKeepsAggregateSnapshot(t *testing
 			if err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("initial Run: %v / %v", err, report)
 			}
-			nativePath := filepath.Join(repo, ".factory", "hooks.json")
+			nativePath := filepath.Join(repo, ".factory", "settings.local.json")
 			nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 			installedBefore, err := os.ReadFile(supportPath)
 			if err != nil {
@@ -723,7 +726,7 @@ func TestNativeHookActivationSupportOnlyRefreshKeepsAggregateSnapshot(t *testing
 				t.Fatalf("support target permissions changed: before=%v after=%v err=%v", installedTargetInfo.Mode().Perm(), installedTargetInfoAfter, err)
 			}
 			store := nativeHookMetadataStore(t, filepath.Join(repo, ".factory"))
-			proof := nativeHookMetadataProof(t, store, "hooks.json")
+			proof := nativeHookMetadataProof(t, store, "settings.local.json")
 			if proof.OwnedCount() != 1 || len(proof.HookSatisfactions()) != 0 {
 				t.Fatalf("owned hook proof after source refresh = %v / %+v", proof.OwnedIDs(), proof.HookSatisfactions())
 			}

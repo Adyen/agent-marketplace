@@ -125,7 +125,7 @@ func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 			if diags := nonReviewDiags(report); len(diags) != 0 {
 				t.Fatalf("first Run diagnostics = %v, want none", diags)
 			}
-			hooksPath := filepath.Join(repoRoot, ".factory", "hooks.json")
+			hooksPath := filepath.Join(repoRoot, ".factory", "settings.local.json")
 			firstBytes, err := os.ReadFile(hooksPath)
 			if err != nil {
 				t.Fatalf("read materialized hooks: %v", err)
@@ -162,11 +162,13 @@ func TestAdditiveHooksIngestResolveMaterialize(t *testing.T) {
 
 func assertFactoryHooks(t *testing.T, data []byte, want map[string][]additiveFactoryGroup) {
 	t.Helper()
-	var got map[string][]additiveFactoryGroup
-	if err := json.Unmarshal(data, &got); err != nil {
+	var doc struct {
+		Hooks map[string][]additiveFactoryGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("decode materialized hooks: %v\n%s", err, data)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("materialized hooks = %#v, want %#v", got, want)
+	if !reflect.DeepEqual(doc.Hooks, want) {
+		t.Fatalf("materialized hooks = %#v, want %#v", doc.Hooks, want)
 	}
 }

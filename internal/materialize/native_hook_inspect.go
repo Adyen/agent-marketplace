@@ -42,12 +42,8 @@ func nativeHookLayoutFor(target hcc.Target, machineScope bool) (nativeHookLayout
 		// documented `version: 1` envelope.
 		return nativeHookLayout{rel: "hooks.json", container: "hooks", requireVersion: true}, true
 	case hcc.TargetFactory:
-		if machineScope {
-			// ~/.factory/settings.local.json, member "hooks".
-			return nativeHookLayout{rel: "settings.local.json", container: "hooks"}, true
-		}
-		// .factory/hooks.json, top-level event map.
-		return nativeHookLayout{rel: "hooks.json"}, true
+		// .factory/settings.local.json / ~/.factory/settings.local.json, member "hooks".
+		return nativeHookLayout{rel: "settings.local.json", container: "hooks"}, true
 	case hcc.TargetWindsurf:
 		if machineScope {
 			// ~/.codeium/windsurf/hooks.json — the same file the legacy

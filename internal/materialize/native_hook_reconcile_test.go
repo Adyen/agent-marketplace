@@ -52,7 +52,7 @@ func nativeHookJSONLayoutCases() []nativeHookJSONLayoutCase {
 	return []nativeHookJSONLayoutCase{
 		{name: "claude_repo", target: hcc.TargetClaude, root: func(repo, _, _ string) string { return filepath.Join(repo, ".claude") }, rel: "settings.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Bash"},
 		{name: "claude_machine", target: hcc.TargetClaude, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".claude") }, rel: "settings.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Bash"},
-		{name: "factory_repo", target: hcc.TargetFactory, root: func(repo, _, _ string) string { return filepath.Join(repo, ".factory") }, rel: "hooks.json", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
+		{name: "factory_repo", target: hcc.TargetFactory, root: func(repo, _, _ string) string { return filepath.Join(repo, ".factory") }, rel: "settings.local.json", container: "hooks", legacyContainer: "", legacySet: true, shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
 		{name: "factory_machine", target: hcc.TargetFactory, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".factory") }, rel: "settings.local.json", container: "hooks", legacyContainer: "", legacySet: true, shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
 		{name: "cursor_repo", target: hcc.TargetCursor, root: func(repo, _, _ string) string { return filepath.Join(repo, ".cursor") }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeEventHandlers, event: "preToolUse", otherEvent: "postToolUse", matcher: "^Shell$", envelope: map[string]any{"version": 1}},
 		{name: "cursor_machine", target: hcc.TargetCursor, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".cursor") }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeEventHandlers, event: "preToolUse", otherEvent: "postToolUse", matcher: "^Shell$", envelope: map[string]any{"version": 1}},
@@ -995,8 +995,8 @@ func TestNativeHookPostponedOwnershipRetainsProof(t *testing.T) {
 		entry.SourceEvidence = []ownership.HookSourceEvidence{{Resource: "beta", SourceDigest: fpBeta}}
 
 		handwritten := nativeHookJSONGroup(nativeHookJSONManualCommand, tc.matcher, "")
-		doc := []byte(`{` + nativeHookJSONJSONString(tc.otherEvent) + `:[` + handwritten + `],` +
-			nativeHookJSONJSONString(tc.event) + `:[` + rule + `]}` + "\n")
+		doc := []byte(`{"hooks":{` + nativeHookJSONJSONString(tc.otherEvent) + `:[` + handwritten + `],` +
+			nativeHookJSONJSONString(tc.event) + `:[` + rule + `]}}` + "\n")
 		path := filepath.Join(root, filepath.FromSlash(spec.rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal("create aggregate parent")

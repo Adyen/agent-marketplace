@@ -88,8 +88,8 @@ func TestNativeAggregatePathRefusesScopeVariant(t *testing.T) {
 	if got, ok := NativeAggregatePath(TargetDevin, ir.KindMcpServer); !ok || got != "mcp_config.json" {
 		t.Errorf("NativeAggregatePath(devin, mcpserver) = %q, %v; want mcp_config.json, true", got, ok)
 	}
-	if got, ok := NativeAggregatePath(TargetFactory, ir.KindHook); ok || got != "" {
-		t.Errorf("NativeAggregatePath(factory, hook) = %q, %v; want refusal for a scope-variant aggregate", got, ok)
+	if got, ok := NativeAggregatePath(TargetFactory, ir.KindHook); !ok || got != "settings.local.json" {
+		t.Errorf("NativeAggregatePath(factory, hook) = %q, %v; want settings.local.json, true", got, ok)
 	}
 	if got, ok := NativeAggregatePath(TargetFactory, ir.KindMcpServer); !ok || got != "mcp.json" {
 		t.Errorf("NativeAggregatePath(factory, mcpserver) = %q, %v; want mcp.json, true", got, ok)
@@ -961,9 +961,12 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 			target: TargetFactory,
 			shape:  HookShapeMatcherGroups,
 			projectFile: NativeAggregateFile{
-				Path:          "hooks.json",
-				Legacy:        []string{"hooks/hooks.json"},
-				ForwardNative: []NativeAggregateLocation{{Path: "settings.local.json", Member: "hooks"}},
+				Path:            "settings.local.json",
+				Member:          "hooks",
+				Legacy:          []string{"hooks/hooks.json"},
+				LegacyMember:    "",
+				LegacyMemberSet: true,
+				RetiredNative:   []NativeAggregateLocation{{Path: "hooks.json"}},
 			},
 			userFile: NativeAggregateFile{
 				Path:            "settings.local.json",
@@ -1072,7 +1075,7 @@ func TestHookProjectionDeclarations(t *testing.T) {
 		shape                 HookShape
 	}{
 		{TargetClaude, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
-		{TargetFactory, "hooks.json", "settings.local.json", "", "hooks", HookShapeMatcherGroups},
+		{TargetFactory, "settings.local.json", "settings.local.json", "hooks", "hooks", HookShapeMatcherGroups},
 		{TargetCursor, "hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
 		{TargetWindsurf, ".devin/hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
 		{TargetGemini, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
