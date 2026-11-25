@@ -221,6 +221,9 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 		}
 	case "factory":
 		paths["hook"] = []string{root + "/hooks.json"}
+		if scope == "user" {
+			paths["hook"] = []string{root + "/settings.local.json"}
+		}
 		paths["subagent"] = []string{root + "/droids/" + f.name("subagent") + ".md"}
 	case "cursor":
 		paths["hook"] = []string{root + "/hooks.json"}
