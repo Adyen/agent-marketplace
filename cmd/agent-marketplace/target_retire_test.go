@@ -15,12 +15,15 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
 
+// spec: target-profile-place/non-interactive-retirement-refuses
 func TestTargetRetireRequiresTerminal(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	fixture := newTargetApprovalFixture(t)
-	id := strings.Repeat("a", 64)
+	fixture, binding, marker, _, _, _ := newInstalledTargetVerificationFixture(t)
+	id := pipeline.PlaceInstallationID(binding)
+	targetTree := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateTree := snapshotTargetStateTree(t, fixture.stateRoot)
 	for _, test := range []struct {
 		name string
 		run  func() (string, error)
@@ -42,9 +45,16 @@ func TestTargetRetireRequiresTerminal(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "target.confirmation-required") {
 				t.Fatalf("retire error = %v, want target.confirmation-required\n%s", err, output)
 			}
-			assertTargetApprovalFixtureUnchanged(t, fixture)
-			if _, err := os.Stat(filepath.Join(fixture.targetRoot, "mods")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("terminal refusal changed target files: %v", err)
+			assertTargetStateTreeUnchanged(t, targetTree, fixture.targetRoot)
+			assertTargetStateTreeUnchanged(t, stateTree, fixture.stateRoot)
+			if data, err := os.ReadFile(fixture.userConfig); err != nil || !bytes.Equal(data, fixture.userConfigBytes) {
+				t.Fatalf("terminal refusal changed user config: %v", err)
+			}
+			if data, err := os.ReadFile(fixture.userLock); err != nil || !bytes.Equal(data, fixture.userLockBytes) {
+				t.Fatalf("terminal refusal changed deployed lock: %v", err)
+			}
+			if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("terminal refusal ran host verification: %v", err)
 			}
 		})
 	}

@@ -722,6 +722,34 @@ func TestTargetVerifyRefusesDrift(t *testing.T) {
 	})
 }
 
+// spec: target-profile-place/a-changed-executable-invalidates-its-approval
+func TestTargetVerifyRefusesChangedApprovedExecutable(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture, binding, marker, _, _, _ := newInstalledTargetVerificationFixture(t)
+	targetTree := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateTree := snapshotTargetStateTree(t, fixture.stateRoot)
+	executable := filepath.Join(fixture.home, "bin", "target-verify-fixture")
+	changedScript := "#!/bin/sh\nprintf invoked > " + targetVerifyShellQuote(marker) + "\n"
+	if err := os.WriteFile(executable, []byte(changedScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand(
+		"target", "verify", "invented-app%2Fmod/sample",
+		"--installation", expectedTargetInstallationID(binding),
+	)
+	if err == nil || !strings.Contains(err.Error(), "target.approval.executable-mismatch") ||
+		strings.Contains(output, "Verified") {
+		t.Fatalf("verify with changed approved executable = %v, %q", err, output)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("changed-executable refusal ran the replacement: %v", err)
+	}
+	assertTargetStateTreeUnchanged(t, targetTree, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, stateTree, fixture.stateRoot)
+}
+
 func TestStatusReportsPlaceVerificationAndFileDrift(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
