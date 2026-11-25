@@ -27,6 +27,7 @@ import (
 )
 
 // spec: target-profile-place/assessment-binds-the-exact-profile-online-and-offline
+// spec: target-profile-place/changed-xdg-state-root-reports-ownership-unavailable
 func TestHostedTargetProfileBootstrapApprovalAndOfflineSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -264,6 +265,72 @@ resources:
 	if offlineRequests := requests.snapshot(); offlineRequests != onlineRequests {
 		t.Fatalf("offline sync changed Marketplace counters: before=%+v after=%+v", onlineRequests, offlineRequests)
 	}
+	assertHostedInstallationUnavailableAtChangedStateRoot(
+		t, fixture, pipeline.PlaceInstallationID(approvalBinding),
+	)
+}
+
+func assertHostedInstallationUnavailableAtChangedStateRoot(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	installationID string,
+) {
+	t.Helper()
+	targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+	configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+	lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+
+	newStateHome := filepath.Join(fixture.home, "alternate-state")
+	newStateRoot := filepath.Join(newStateHome, "agent-marketplace")
+	if err := os.MkdirAll(newStateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", newStateHome)
+	newStateBefore := snapshotTargetStateTree(t, newStateRoot)
+	assertUnchanged := func() {
+		t.Helper()
+		assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+		assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+		assertTargetStateTreeUnchanged(t, newStateBefore, newStateRoot)
+	}
+
+	statusOutput, err := executeCommand("status")
+	if err != nil || !strings.Contains(statusOutput, "target.place.ownership-unavailable") {
+		t.Fatalf("status with changed state root = %v\n%s; want target.place.ownership-unavailable", err, statusOutput)
+	}
+	if rows := statusSection(statusOutput, "PLACE PACKAGES"); strings.Contains(rows, "invented-app/mod/sample") {
+		t.Fatalf("status claimed the old package at the changed state root:\n%s", rows)
+	}
+	assertUnchanged()
+
+	syncOutput, err := executeCommand("sync", "--offline")
+	syncDiagnostics := syncOutput
+	if err != nil {
+		syncDiagnostics += "\n" + err.Error()
+	}
+	if !strings.Contains(syncDiagnostics, "target.approval.required") &&
+		!strings.Contains(syncDiagnostics, "target.place.ownership-unavailable") {
+		t.Fatalf("offline sync with changed state root = %v\n%s; want approval or ownership-unavailable diagnostic", err, syncOutput)
+	}
+	assertUnchanged()
+
+	stdout, stderr, err := executeTargetApprovalAtTerminal(
+		t, "yes\n", nil, "target", "retire", installationID,
+	)
+	retireDiagnostics := stdout + stderr
+	if err != nil {
+		retireDiagnostics += "\n" + err.Error()
+	}
+	if err == nil || !strings.Contains(err.Error(), "ownership.place-installation-not-found") {
+		t.Fatalf("retire with changed state root = %v\n%s; want ownership.place-installation-not-found", err, retireDiagnostics)
+	}
+	if strings.Contains(retireDiagnostics, "Type yes to retire:") {
+		t.Fatalf("retire prompted before rejecting unavailable installation:\n%s", retireDiagnostics)
+	}
+	assertUnchanged()
 }
 
 func assertHostedSyncRefusesProfileMismatch(
