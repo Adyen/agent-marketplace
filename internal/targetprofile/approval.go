@@ -16,6 +16,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/rootkey"
 )
 
+// ErrPlaceTargetUnavailable identifies a selected target that cannot be used
+// in the current environment without invalidating collection-only selections.
+var ErrPlaceTargetUnavailable = errors.New("place target unavailable")
+
 type ApprovalEnvironment struct {
 	Platform, Home, XDGConfig, CanonicalStateRoot string
 	Override                                      *string
@@ -64,7 +68,7 @@ func ResolvePlaceRoot(profile Profile, identity Identity, env ApprovalEnvironmen
 		return "", false, err
 	}
 	if (env.Platform != "macos" && env.Platform != "linux") || !slices.Contains(profile.Platforms, env.Platform) {
-		return "", false, fmt.Errorf("target.approval.unsupported-platform: %q", env.Platform)
+		return "", false, fmt.Errorf("target.approval.unsupported-platform: %q: %w", env.Platform, ErrPlaceTargetUnavailable)
 	}
 	if !filepath.IsAbs(env.CanonicalStateRoot) || filepath.Clean(env.CanonicalStateRoot) != env.CanonicalStateRoot {
 		return "", false, fmt.Errorf("target.approval.state-root-invalid: state root must be absolute and clean")
@@ -174,7 +178,7 @@ func approvalRoot(profileRoot UserRoot, env ApprovalEnvironment, bases map[strin
 	}
 	captured, err := fsboundary.OpenDir(root)
 	if err != nil {
-		return "", false, fmt.Errorf("target.approval.root-unavailable: %w", err)
+		return "", false, fmt.Errorf("target.approval.root-unavailable: %w: %w", err, ErrPlaceTargetUnavailable)
 	}
 	defer func() { _ = captured.Close() }()
 	if captured.Path() != root {
@@ -199,11 +203,11 @@ func approvalCommandRoles(profile Profile) []string {
 func approvalExecutable(command string) (ExecutableBinding, error) {
 	located, err := exec.LookPath(command)
 	if err != nil || !filepath.IsAbs(located) {
-		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-unavailable: declared executable must resolve to an absolute path")
+		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-unavailable: declared executable must resolve to an absolute path: %w", ErrPlaceTargetUnavailable)
 	}
 	canonical, err := filepath.EvalSymlinks(located)
 	if err != nil || !filepath.IsAbs(canonical) || filepath.Clean(canonical) != canonical {
-		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-unavailable: declared executable has no canonical absolute path")
+		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-unavailable: declared executable has no canonical absolute path: %w", ErrPlaceTargetUnavailable)
 	}
 	digest, err := captureExecutableDigest(canonical)
 	if err != nil {

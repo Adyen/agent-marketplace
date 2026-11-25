@@ -21,6 +21,13 @@ import (
 )
 
 func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool, repoRoot string) (PlaceSyncResult, error) {
+	cfg := resolved.placeConfig
+	if cfg == nil {
+		cfg = resolved.MergedCfg
+	}
+	if len(resolved.placeTargets) == 0 {
+		return PlaceSyncResult{Skipped: placeCollectionSkipWarnings(cfg, nil, nil)}, nil
+	}
 	if resolved.placeProfileReader == nil {
 		return PlaceSyncResult{}, fmt.Errorf("deployed place profile reader is unavailable")
 	}
@@ -31,10 +38,6 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 	mode := resolver.MarketplaceResolveModeRefresh
 	if offline {
 		mode = resolver.MarketplaceResolveModeCachedNoFetch
-	}
-	cfg := resolved.placeConfig
-	if cfg == nil {
-		cfg = resolved.MergedCfg
 	}
 	reads := deployedPlacePruneReads(resolved, cfg)
 	preapproval := deployedPlacePreapproval(resolved.placePreapprovals, resolved.placeSelectionReads)
@@ -97,6 +100,7 @@ func currentPlaceApprovalEnvironment() (targetprofile.ApprovalEnvironment, error
 // ceded files, and warnings from post-commit checks.
 type PlaceSyncResult struct {
 	Pending              []targetprofile.Identity
+	Skipped              []error
 	Committed            map[string]dependencytxn.PlaceResult
 	Ceded                map[string][]string
 	VerificationWarnings []error
@@ -106,6 +110,7 @@ type PlaceSyncResult struct {
 // would change their installed projection.
 type PlaceCheckResult struct {
 	Pending []targetprofile.Identity
+	Skipped []error
 	Drift   []string
 }
 
@@ -156,6 +161,7 @@ func syncPlaceUpserts(
 	}
 	result = PlaceSyncResult{
 		Pending:   append([]targetprofile.Identity(nil), admission.Pending...),
+		Skipped:   append([]error(nil), admission.Skipped...),
 		Committed: make(map[string]dependencytxn.PlaceResult),
 	}
 
@@ -362,6 +368,11 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 		)
 	}()
 	if len(resolved.placeTargets) == 0 {
+		cfg := resolved.placeConfig
+		if cfg == nil {
+			cfg = resolved.MergedCfg
+		}
+		result.Skipped = placeCollectionSkipWarnings(cfg, resolved.placeTargets, nil)
 		return result, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -399,6 +410,7 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 		return result, fmt.Errorf("prepare deployed place check: %w", err)
 	}
 	result.Pending = append([]targetprofile.Identity(nil), admission.Pending...)
+	result.Skipped = append([]error(nil), admission.Skipped...)
 	sort.Slice(result.Pending, func(i, j int) bool {
 		return result.Pending[i].TargetID < result.Pending[j].TargetID
 	})

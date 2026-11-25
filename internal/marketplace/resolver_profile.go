@@ -77,20 +77,35 @@ func (r *Resolver) PreparePlacePackageLock(
 	if err != nil {
 		return fail(fmt.Errorf("acquire place package metadata %s/%s: %w", locator.Registry, locator.Name, err))
 	}
+	locked := placePackageLockRecord(config.MarketplaceResourcePin{
+		RegistryID: string(coordinate.Registry), RegistrySlug: locator.Registry,
+		Kind: locator.Kind, Name: locator.Name, Revision: locator.Revision,
+	}, revision)
+	return enriched, locked, nil
+}
+
+func placePackageLockRecord(pin config.MarketplaceResourcePin, revision store.AssessedResourceRevision) lockfile.MarketplaceResourceLock {
 	binding := *revision.Assessment.HostPackageIdentity
-	locked := lockfile.MarketplaceResourceLock{
-		RegistryName:        locator.Registry,
-		RegistryID:          string(coordinate.Registry),
-		Kind:                locator.Kind,
-		Name:                locator.Name,
-		Revision:            locator.Revision,
+	selectedBy := pin.SelectedBy.List()
+	lockedSelections := make([]lockfile.MarketplaceSelectionLock, 0, len(selectedBy))
+	for _, selection := range selectedBy {
+		lockedSelections = append(lockedSelections, lockfile.MarketplaceSelectionLock{
+			RegistryID: selection.RegistryID, Name: selection.Name, Revision: lockfile.Digest(selection.Revision),
+		})
+	}
+	return lockfile.MarketplaceResourceLock{
+		RegistryName:        pin.RegistrySlug,
+		RegistryID:          pin.RegistryID,
+		Kind:                pin.Kind,
+		Name:                pin.Name,
+		Revision:            pin.Revision,
 		ContentDigest:       lockfile.Digest(revision.ContentDigest),
 		ArchiveDigest:       lockfile.Digest(revision.ArchiveDigest),
 		AssessmentDigest:    lockfile.Digest(revision.Assessment.AssessmentDigest),
 		HostPackageIdentity: &binding,
 		Acquisition:         lockfile.MarketplaceAcquisitionMirror,
+		SelectedBy:          lockedSelections,
 	}
-	return enriched, locked, nil
 }
 
 func (r *Resolver) preparePinnedPlaceLock(

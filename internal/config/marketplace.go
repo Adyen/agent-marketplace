@@ -209,6 +209,9 @@ type MarketplaceResourcePin struct {
 	LockAssessmentDigest         string                 `yaml:"-"`
 	LockHostPackageIdentity      targetprofile.Binding  `yaml:"-"`
 	LockProfileIdentity          targetprofile.Identity `yaml:"-"`
+	// PlaceCollectionExpanded marks a collection whose scoped leaves are
+	// handled by deployed place sync rather than compiled artifact resolution.
+	PlaceCollectionExpanded bool `yaml:"-"`
 	// RequiresEdges carries the requires edges this pin's lock record holds.
 	// It is runtime-only and always empty for configuration-authored pins:
 	// selected_by in configuration stays collection-only.

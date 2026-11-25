@@ -23,6 +23,7 @@ type PlaceProfileReader func(ctx context.Context, selected targetprofile.Identit
 type PlaceAdmission struct {
 	Approvals map[targetprofile.Identity]targetprofile.ApprovalBinding
 	Pending   []targetprofile.Identity
+	Skipped   []error
 	Packages  []marketplace.ResolvedPlacePackage
 	profiles  map[targetprofile.Identity][]byte
 }
@@ -84,6 +85,8 @@ func preparePlaceAdmission(
 	}
 	approvedProfiles := make(map[targetprofile.Identity][]byte)
 	seen := make(map[targetprofile.Identity]struct{})
+	directTargets := directlySelectedPlaceTargets(cfg)
+	skipReasons := make(map[string]error)
 	for _, targetID := range enabled {
 		if err := ctx.Err(); err != nil {
 			return PlaceAdmission{}, err
@@ -114,6 +117,10 @@ func preparePlaceAdmission(
 		}
 		binding, err := resolvePlaceApprovalBinding(profile, identity, environment)
 		if err != nil {
+			if errors.Is(err, targetprofile.ErrPlaceTargetUnavailable) && !directTargets[targetID] {
+				skipReasons[targetID] = err
+				continue
+			}
 			return PlaceAdmission{}, fmt.Errorf("target %s approval binding: %w", targetID, err)
 		}
 		approvalErr := targetprofile.RequireApproval(binding)
@@ -122,6 +129,7 @@ func preparePlaceAdmission(
 		}
 		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) {
 			admission.Pending = append(admission.Pending, identity)
+			skipReasons[targetID] = fmt.Errorf("target.approval.required: target %s is pending local approval", targetID)
 			continue
 		} else if approvalErr != nil {
 			return PlaceAdmission{}, fmt.Errorf("target %s approval: %w", targetID, approvalErr)
@@ -130,6 +138,7 @@ func preparePlaceAdmission(
 		approvedProfiles[identity] = append([]byte(nil), raw...)
 	}
 	admission.profiles = approvedProfiles
+	admission.Skipped = placeCollectionSkipWarnings(cfg, enabled, skipReasons)
 	if len(approvedProfiles) == 0 {
 		return admission, nil
 	}
@@ -142,6 +151,61 @@ func preparePlaceAdmission(
 	}
 	admission.Packages = resolved
 	return admission, nil
+}
+
+func directlySelectedPlaceTargets(cfg *config.Config) map[string]bool {
+	targets := make(map[string]bool)
+	if cfg == nil {
+		return targets
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if scoped && (pin.Direct || len(pin.SelectedBy.List()) == 0) {
+				targets[targetID] = true
+			}
+		}
+	}
+	return targets
+}
+
+func placeCollectionSkipWarnings(cfg *config.Config, enabled []string, reasons map[string]error) []error {
+	if cfg == nil {
+		return nil
+	}
+	enabledTargets := make(map[string]struct{}, len(enabled))
+	for _, targetID := range enabled {
+		enabledTargets[targetID] = struct{}{}
+	}
+	var warnings []error
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if !scoped {
+				continue
+			}
+			for _, selector := range pin.SelectedBy.List() {
+				reason, hasReason := reasons[targetID]
+				if !hasReason {
+					if _, isEnabled := enabledTargets[targetID]; isEnabled {
+						continue
+					}
+					reason = fmt.Errorf("target.place.disabled: target %s is not enabled", targetID)
+				}
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.collection-member-skipped: collection %s/%s skipped member %s/%s: %w",
+					selector.RegistryID, selector.Name, pin.Kind, pin.Name, reason,
+				))
+			}
+		}
+	}
+	return warnings
 }
 
 func resolvePlaceApprovalBinding(profile targetprofile.Profile, identity targetprofile.Identity, environment targetprofile.ApprovalEnvironment) (targetprofile.ApprovalBinding, error) {

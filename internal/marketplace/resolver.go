@@ -280,6 +280,9 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 }
 
 func hasExpandedCollectionLeaves(entry config.MarketplaceEntry, collectionPin config.MarketplaceResourcePin) bool {
+	if collectionPin.PlaceCollectionExpanded {
+		return true
+	}
 	for _, pin := range entry.Resources {
 		for _, selected := range pin.SelectedBy.List() {
 			if selected.RegistryID == collectionPin.RegistryID && selected.Name == collectionPin.Name && selected.Revision == collectionPin.Revision {

@@ -256,11 +256,29 @@ func marketplaceConfigViews(cfg *config.Config, enablePlaceSync bool, sourceFilt
 			compiled.Marketplaces = append(compiled.Marketplaces, entry)
 			continue
 		}
+		scopedSelections := make(map[config.MarketplaceSelection]struct{})
+		for _, pin := range entry.Resources {
+			_, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if !scoped {
+				continue
+			}
+			for _, selection := range pin.SelectedBy.List() {
+				scopedSelections[selection] = struct{}{}
+			}
+		}
 		hadResources := len(entry.Resources) > 0
 		entry.Resources = slices.DeleteFunc(slices.Clone(entry.Resources), func(pin config.MarketplaceResourcePin) bool {
 			_, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
 			return pin.Kind == nameutil.TargetProfileKind || scoped
 		})
+		for i := range entry.Resources {
+			pin := &entry.Resources[i]
+			if pin.Kind != "collection" {
+				continue
+			}
+			selection := config.MarketplaceSelection{RegistryID: pin.RegistryID, Name: pin.Name, Revision: pin.Revision}
+			_, pin.PlaceCollectionExpanded = scopedSelections[selection]
+		}
 		if hadResources && len(entry.Resources) == 0 {
 			continue
 		}
@@ -1178,7 +1196,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			return result
 		}
 	}
-	if opts.EnablePlaceSync && len(resolved.placeTargets) > 0 {
+	if opts.EnablePlaceSync {
 		placeResult, err := syncDeployedPlace(ctx, resolved, opts.Offline, opts.Workspace.RepoRoot())
 		result.PlaceSync = placeResult
 		for _, identity := range placeResult.Pending {
@@ -1186,6 +1204,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 				"target.approval.required: target %s is pending local approval", identity.TargetID,
 			))
 		}
+		result.Warnings = append(result.Warnings, placeResult.Skipped...)
 		result.Warnings = append(result.Warnings, placeResult.VerificationWarnings...)
 		cededTargets := make([]string, 0, len(placeResult.Ceded))
 		for targetID := range placeResult.Ceded {

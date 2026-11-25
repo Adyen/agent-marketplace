@@ -577,6 +577,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 			"target.approval.required: target %s is pending local approval", identity.TargetID,
 		))
 	}
+	allWarnings = append(allWarnings, placeCheck.Skipped...)
 	for _, warning := range dedupIssues(allWarnings) {
 		if _, err := fmt.Fprintf(out, "warning: %v\n", warning); err != nil {
 			return err

@@ -61,6 +61,10 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 				acquired, record, err := marketplaceResolver.PreparePlacePackageLock(ctx, entry, locator, budget)
 				return requestResult{entry: acquired, record: &record, err: err}
 			}
+			if locator.Kind == "collection" {
+				plan, err := marketplaceResolver.PrepareLocatorForLock(ctx, entry, locator, targets, budget, policy)
+				return requestResult{plan: plan, err: err}
+			}
 			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, locator, targets, budget, policy)
 			return requestResult{plan: plan, err: err}
 		})
@@ -74,11 +78,11 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, result.err)
 			}
 			acquired, work, count := result.entry, 1, 1
-			var pins []config.MarketplaceResourcePin
+			var plans []*marketplace.PreparedInstall
 			if result.plan != nil {
 				acquired, work = result.plan.Entry, result.plan.PreparationWork
-				pins = lockPins(result.plan)
-				count = len(pins)
+				plans = lockPlans(result.plan)
+				count = len(plans)
 			}
 			if i > 0 && acquired.InstanceID != entry.InstanceID {
 				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, acquired.InstanceID, entry.InstanceID)
@@ -96,8 +100,10 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 				var record lockfile.MarketplaceResourceLock
 				if result.record != nil {
 					record = *result.record
+				} else if plans[j].PlaceLock != nil {
+					record = *plans[j].PlaceLock
 				} else {
-					pin := pins[j]
+					pin := plans[j].Pin
 					verified, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)
 					if err != nil {
 						return lockfile.Document{}, fmt.Errorf("verify %s/%s/%s lock evidence: %w", pin.RegistryID, pin.Kind, pin.Name, err)
@@ -161,13 +167,10 @@ func lockTargets(names []string) []hcc.Target {
 	return targets
 }
 
-func lockPins(plan *marketplace.PreparedInstall) []config.MarketplaceResourcePin {
-	pins := make([]config.MarketplaceResourcePin, 1, len(plan.CollectionMembers)+1)
-	pins[0] = plan.Pin
-	for _, member := range plan.CollectionMembers {
-		pins = append(pins, member.Pin)
-	}
-	return pins
+func lockPlans(plan *marketplace.PreparedInstall) []*marketplace.PreparedInstall {
+	plans := make([]*marketplace.PreparedInstall, 1, len(plan.CollectionMembers)+1)
+	plans[0] = plan
+	return append(plans, plan.CollectionMembers...)
 }
 
 func mergeLockResource(resources map[string]lockfile.MarketplaceResourceLock, record lockfile.MarketplaceResourceLock) error {

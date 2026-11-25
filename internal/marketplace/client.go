@@ -563,7 +563,7 @@ func (c *Client) GetCollectionManifest(ctx context.Context, manifestDigest strin
 	if err := validateSHA256Digest(manifestDigest); err != nil {
 		return manifest, nil, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
 	}
-	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
+	raw, _, err := c.getRawResponseMode(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil), maxArtifactBytes, mpapi.TargetProfilePlaceFeature)
 	if err != nil {
 		return manifest, nil, err
 	}
