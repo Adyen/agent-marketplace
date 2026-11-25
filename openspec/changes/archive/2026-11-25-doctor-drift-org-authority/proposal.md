@@ -22,3 +22,7 @@ None.
 ## Impact
 
 Doctor's CLI drift step and its internal sync invocation; no new CLI flags, organization file writes, or changes to TUI behavior.
+
+## Release note
+
+`doctor --repair` can fix harness drift and continue to shared-entry adoption when no organization Marketplace lock is deployed, using evidence it verified during that run. It leaves acquisition locks unchanged, and standalone `sync --locked` still refuses missing required organization evidence.
