@@ -768,11 +768,13 @@ func writeHostedLifecycleRevision(w http.ResponseWriter, revision store.Assessed
 		CurrentAvailability struct {
 			Availability string `json:"availability"`
 		} `json:"current_availability"`
+		Requires json.RawMessage `json:"requires,omitempty"`
 	}{
 		AssessedResourceRevision: revision,
 		CurrentAvailability: struct {
 			Availability string `json:"availability"`
 		}{Availability: "available"},
+		Requires: json.RawMessage(revision.Requires),
 	})
 }
 
