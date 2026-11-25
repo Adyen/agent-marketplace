@@ -390,6 +390,7 @@ func TestPlaceOversizedJournalRefusesBeforeStage(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/a-replaced-root-refuses-publish-and-prune
 func TestPlaceRejectsReplacedRootBeforePublish(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	_, err := CommitPlace(context.Background(), stateDir, plan, WithFaultHook(func(point FaultPoint) error {
@@ -410,6 +411,44 @@ func TestPlaceRejectsReplacedRootBeforePublish(t *testing.T) {
 	}
 	if got := journals(t, stateDir); len(got) != 1 {
 		t.Fatalf("root replacement lost journal: %v", got)
+	}
+}
+
+// spec: target-profile-place/a-replaced-root-refuses-publish-and-prune
+func TestPlaceRejectsReplacedRootBeforePrune(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	staleBytes := []byte("stale package bytes\n")
+	stalePath := filepath.Join(root, "stale.txt")
+	if err := os.WriteFile(stalePath, staleBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan.Prunes = []PlacePrune{{
+		Path: "stale.txt", Parent: plan.RootIdentity,
+		Expected: Generation{Exists: true, Digest: Digest(staleBytes)}, Mode: 0o644,
+	}}
+	replacement := root + ".old"
+	_, err := CommitPlace(context.Background(), stateDir, plan, WithFaultHook(func(point FaultPoint) error {
+		if point.Stage != FaultPlaceAfterOwnership {
+			return nil
+		}
+		if err := os.Rename(root, replacement); err != nil {
+			return err
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(root, "stale.txt"), staleBytes, 0o644)
+	}))
+	if err == nil || !errors.Is(err, ErrGenerationConflict) || !strings.Contains(err.Error(), "stale.txt") {
+		t.Fatalf("CommitPlace after root replacement before prune = %v", err)
+	}
+	assertFile(t, filepath.Join(replacement, "stale.txt"), string(staleBytes), 0o644)
+	assertFile(t, filepath.Join(root, "stale.txt"), string(staleBytes), 0o644)
+	if _, err := os.Lstat(filepath.Join(root, "mods", "new.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement root received a published write: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 1 {
+		t.Fatalf("root replacement before prune lost journal: %v", got)
 	}
 }
 

@@ -3,10 +3,12 @@
 package dependencytxn
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,7 @@ const (
 	placeCrashPlanEnv  = "AGENT_MARKETPLACE_PLACE_CRASH_PLAN"
 )
 
+// spec: target-profile-place/edited-stale-file-survives-prune-recovery
 func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
 	for _, stage := range []FaultStage{
 		FaultPlaceAfterStage,
@@ -109,7 +112,18 @@ func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := Recover(context.Background(), stateDir); err != nil {
+			var recoveryLog bytes.Buffer
+			if stage == FaultPlaceAfterOwnership {
+				err := func() error {
+					previous := slog.Default()
+					slog.SetDefault(slog.New(slog.NewTextHandler(&recoveryLog, nil)))
+					defer slog.SetDefault(previous)
+					return Recover(context.Background(), stateDir)
+				}()
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := Recover(context.Background(), stateDir); err != nil {
 				t.Fatal(err)
 			}
 			if stage == FaultPlaceAfterStage {
@@ -130,6 +144,10 @@ func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
 				}
 			} else if stage == FaultPlaceAfterOwnership {
 				assertFile(t, stalePath, "user edit\n", 0o644)
+				if !strings.Contains(recoveryLog.String(), "place transaction retained edited paths") ||
+					!strings.Contains(recoveryLog.String(), "layouts/stale.txt") {
+					t.Fatalf("recovery retention log = %q, want edited layouts/stale.txt", recoveryLog.String())
+				}
 			}
 			if err := CheckPending(stateDir); err != nil {
 				t.Fatalf("journal remains after recovery: %v", err)
