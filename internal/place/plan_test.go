@@ -59,6 +59,8 @@ func assertPairs(t *testing.T, kind string, got, want [][2]string) {
 	}
 }
 
+// spec: target-profile-place/new-new-conflicts-refuse-independent-of-order
+// spec: target-profile-place/a-deselected-owner-blocks-a-new-claimant-until-pruned
 func TestPlacePlan(t *testing.T) {
 	t.Run("identical unowned file refuses the whole package", func(t *testing.T) {
 		newPackage := planPackage("alpha", "r2",

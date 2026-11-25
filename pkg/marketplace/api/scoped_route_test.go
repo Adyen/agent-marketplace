@@ -41,6 +41,7 @@ func (m *scopedRouteMetadata) GetResourceRevision(_ context.Context, coord store
 	return store.AssessedResourceRevision{}, store.ErrNotFound
 }
 
+// spec: marketplace-api/scoped-package-routes-use-a-single-kind-escape
 func TestScopedPackageRoute(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("1", 64)
 	tests := []struct {

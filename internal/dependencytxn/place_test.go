@@ -619,6 +619,7 @@ func TestPlaceDirectoryPruneRequiresRecordedIdentityAndEmptiness(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/exdev-after-earlier-writes-stays-pending-without-fallback
 func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	second := plan.Writes[0]
@@ -638,11 +639,22 @@ func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "mods", "second.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("EXDEV fell back to copying: %v", err)
 	}
-	if got := journals(t, stateDir); len(got) != 1 {
-		t.Fatalf("EXDEV discarded transaction evidence: %v", got)
+	pending := journals(t, stateDir)
+	if len(pending) != 1 {
+		t.Fatalf("EXDEV discarded transaction evidence: %v", pending)
 	}
+	journal, err := readJournal(pending[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageFile := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(journal.Place.Stage), journal.Place.Writes[1].StageName)
+	assertFile(t, stageFile, "new package bytes\n", 0o644)
 	if err := Recover(context.Background(), stateDir, failRename); !errors.Is(err, syscall.EXDEV) {
 		t.Fatalf("recovery did not refuse the same EXDEV rename: %v", err)
+	}
+	assertFile(t, stageFile, "new package bytes\n", 0o644)
+	if got := journals(t, stateDir); !reflect.DeepEqual(got, pending) {
+		t.Fatalf("recovery refusal changed pending journals: before=%v after=%v", pending, got)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "mods", "second.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("recovery used a copy fallback: %v", err)
