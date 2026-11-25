@@ -37,7 +37,7 @@ var hookToolSources = []source{
 }
 
 var pluginSources = []source{
-	{Name: "plugin-claude-manifest", Harness: "claude", Domain: "pluginpolicy", URL: "https://code.claude.com/docs/en/plugins/manifest-reference", Kind: "document", Sections: []string{"Fields"}},
+	{Name: "plugin-claude-manifest", Harness: "claude", Domain: "pluginpolicy", Format: "claude-plugin", URL: "https://code.claude.com/docs/en/plugins/manifest-reference", Kind: "document", Sections: []string{"Fields"}},
 	{Name: "plugin-claude-marketplace", Harness: "claude", Domain: "pluginpolicy", URL: "https://code.claude.com/docs/en/plugin-marketplaces", Kind: "document", Sections: []string{"Marketplace schema"}},
 	{Name: "plugin-codex-build", Harness: "codex", Domain: "pluginpolicy", URL: "https://developers.openai.com/plugins/build/plugins", Kind: "document", Sections: []string{"Package your plugin"}},
 	{Name: "plugin-codex", Harness: "codex", Domain: "pluginpolicy", URL: "https://developers.openai.com/codex/plugins", Kind: "document", Sections: []string{"Plugins"}},
@@ -45,7 +45,7 @@ var pluginSources = []source{
 	{Name: "plugin-cursor-reference", Harness: "cursor", Domain: "pluginpolicy", URL: "https://cursor.com/docs/reference/plugins", Kind: "document", Sections: []string{"Plugins reference"}},
 	{Name: "plugin-devin", Harness: "devin", Domain: "pluginpolicy", URL: "https://docs.devin.ai/cli/extensibility/plugins", Kind: "document", Sections: []string{"Devin CLI plugins"}},
 	{Name: "plugin-factory", Harness: "factory", Domain: "pluginpolicy", URL: "https://docs.factory.ai/harness/plugins", Kind: "document", Sections: []string{"Plugins"}},
-	{Name: "plugin-factory-internal", Harness: "factory", Domain: "pluginpolicy", URL: "https://docs.factory.ai/enterprise/internal-plugin-marketplaces", Kind: "document", Sections: []string{"Internal Plugin Marketplaces"}},
+	{Name: "plugin-factory-internal", Harness: "factory", Domain: "pluginpolicy", Format: "factory-marketplace", URL: "https://docs.factory.ai/enterprise/internal-plugin-marketplaces", Kind: "document", Sections: []string{"Internal Plugin Marketplaces"}},
 	{Name: "plugin-gemini-extensions", Harness: "gemini", Domain: "pluginpolicy", URL: "https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md", Kind: "document", Sections: []string{"Extension format"}},
 	{Name: "plugin-agent-spec", Domain: "pluginpolicy", Format: "agent-plugin", URL: "https://agent-plugins.org/specification", Kind: "document", Sections: []string{"Agent Plugins Specification"}},
 	{Name: "plugin-agent-manifest", Domain: "pluginpolicy", Format: "agent-plugin", URL: "https://agent-plugins.org/plugin-authors/manifest", Kind: "document", Sections: []string{"Plugin manifest"}},
