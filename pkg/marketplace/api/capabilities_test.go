@@ -124,7 +124,7 @@ func TestKindIRConversion(t *testing.T) {
 			t.Errorf("FromIR(%v) = %q, want %q", p.ir, got, p.kind)
 		}
 	}
-	for _, kind := range []string{"collection", "rule", "", "Skill"} {
+	for _, kind := range []string{"collection", "target-profile", "invented-app/mod", "rule", "", "Skill"} {
 		if got, ok := ToIR(kind); ok {
 			t.Errorf("ToIR(%q) = %v, true; want false", kind, got)
 		}

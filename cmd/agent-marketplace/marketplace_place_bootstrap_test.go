@@ -231,29 +231,33 @@ func TestSyncRefusesAmbiguousOrUnsupportedPlaceProfiles(t *testing.T) {
 			lockBefore := snapshotTargetStateTree(t, fixture.userLock)
 			targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
 			stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
-			output, err := executeCommand("sync")
-			diagnostic := output
-			if err != nil {
-				diagnostic += "\n" + err.Error()
+			for _, args := range [][]string{{"sync"}, {"sync", "--offline"}} {
+				t.Run(strings.Join(args, " "), func(t *testing.T) {
+					output, err := executeCommand(args...)
+					diagnostic := output
+					if err != nil {
+						diagnostic += "\n" + err.Error()
+					}
+					if err == nil {
+						t.Fatalf("%s accepted %s profile selection:\n%s", strings.Join(args, " "), test.name, output)
+					}
+					for _, want := range test.want {
+						if !strings.Contains(diagnostic, want) {
+							t.Fatalf("%s %s diagnostic = %q, want %q", strings.Join(args, " "), test.name, diagnostic, want)
+						}
+					}
+					if test.name == "ambiguous" && !strings.Contains(diagnostic, fixture.identity.SourceID) {
+						t.Fatalf("ambiguous profile diagnostic omitted external source %q: %s", fixture.identity.SourceID, diagnostic)
+					}
+					if got := requests.Load(); got != 0 {
+						t.Fatalf("%s %s made %d hosted requests before refusal", strings.Join(args, " "), test.name, got)
+					}
+					assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+					assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+					assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+					assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+				})
 			}
-			if err == nil {
-				t.Fatalf("sync accepted %s profile selection:\n%s", test.name, output)
-			}
-			for _, want := range test.want {
-				if !strings.Contains(diagnostic, want) {
-					t.Fatalf("sync %s diagnostic = %q, want %q", test.name, diagnostic, want)
-				}
-			}
-			if test.name == "ambiguous" && !strings.Contains(diagnostic, fixture.identity.SourceID) {
-				t.Fatalf("ambiguous profile diagnostic omitted external source %q: %s", fixture.identity.SourceID, diagnostic)
-			}
-			if got := requests.Load(); got != 0 {
-				t.Fatalf("sync %s made %d hosted requests before refusal", test.name, got)
-			}
-			assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
-			assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
-			assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
-			assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
 		})
 	}
 }

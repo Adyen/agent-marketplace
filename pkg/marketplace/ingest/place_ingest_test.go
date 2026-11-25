@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -59,6 +60,7 @@ func TestIndexedPlaceRequires(t *testing.T) {
 	}
 }
 
+// spec: marketplace-publication/unbound-or-inconsistent-place-publication-preserves-the-prior-publication
 func TestBuildRegistryRevisionPublishesExactPlaceAssessment(t *testing.T) {
 	ctx := context.Background()
 	profileBytes := []byte(checkoutProfileYAML)
@@ -251,6 +253,41 @@ files:
 	}
 	if profileCount != 1 {
 		t.Fatalf("BuildRegistryRevision target-profile resources = %d, want one for the shared profile pin", profileCount)
+	}
+
+	missingConfig := cfg
+	missingConfig.HostPackageAssessmentProfiles = append(
+		[]config.HostPackageAssessmentProfile(nil),
+		cfg.HostPackageAssessmentProfiles...,
+	)
+	missingConfig.HostPackageAssessmentProfiles[0].ProfileIdentity.SourceID = strings.Replace(
+		profileIdentity.SourceID,
+		"profiles%2Finvented-app.yaml",
+		"profiles%2Fmissing.yaml",
+		1,
+	)
+	missingRevision, err := BuildRegistryRevision(
+		ctx, missingConfig, marketplaceID, registry, root, strings.Repeat("f", 40),
+	)
+	if err == nil || !strings.Contains(err.Error(), "marketplace.profile.unavailable") {
+		t.Fatalf("BuildRegistryRevision with unavailable exact profile error = %v, want marketplace.profile.unavailable", err)
+	}
+	if !reflect.DeepEqual(missingRevision, Revision{}) {
+		t.Fatalf("BuildRegistryRevision with unavailable exact profile returned a revision to publish: %#v", missingRevision)
+	}
+	afterUnavailable, err := meta.GetLatestResourceRevision(ctx, coord)
+	if err != nil {
+		t.Fatalf("get package revision after unavailable profile: %v", err)
+	}
+	if !reflect.DeepEqual(afterUnavailable, persisted) {
+		t.Fatalf("unavailable profile changed visible package revision:\nbefore: %#v\nafter:  %#v", persisted, afterUnavailable)
+	}
+	afterUnavailableProfile, err := meta.GetLatestResourceRevision(ctx, profileCoord)
+	if err != nil {
+		t.Fatalf("get profile revision after unavailable profile: %v", err)
+	}
+	if !reflect.DeepEqual(afterUnavailableProfile, profileRevision) {
+		t.Fatalf("unavailable profile changed visible profile revision:\nbefore: %#v\nafter:  %#v", profileRevision, afterUnavailableProfile)
 	}
 
 	alternateProfilePath := filepath.Join(root, "profiles", "invented-app-copy.yaml")

@@ -163,17 +163,12 @@ func TestUpgradeNoticeExcludedCommandsAreSilent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetCmd, _, err := root.Find([]string{"target"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	completion := &cobra.Command{Use: "completion"}
 	bash := &cobra.Command{Use: "bash"}
 	completion.AddCommand(bash)
 	for name, run := range map[string]func() string{
 		"serve":            func() string { return runUpgradeNotice(serve, false, false) },
 		"tui":              func() string { return runUpgradeNotice(tuiCmd, false, false) },
-		"target":           func() string { return runUpgradeNotice(targetCmd, false, false) },
 		"__completeNoDesc": func() string { return runUpgradeNotice(&cobra.Command{Use: "__completeNoDesc"}, false, false) },
 		"completion bash":  func() string { return runUpgradeNotice(bash, false, false) },
 		"--version":        func() string { return runUpgradeNotice(root, false, true) },

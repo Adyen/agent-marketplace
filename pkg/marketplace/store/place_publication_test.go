@@ -143,16 +143,27 @@ func TestPlacePublicationPreservesPriorBinding(t *testing.T) {
 	missing := firstAssessment
 	missing.HostPackageIdentity = nil
 	for _, test := range []struct {
-		name        string
-		assessments []store.ResourceAssessment
-		want        string
+		name           string
+		assessments    []store.ResourceAssessment
+		revisionDigest store.RevisionDigest
+		want           string
 	}{
 		{name: "missing profile identity", assessments: []store.ResourceAssessment{missing}, want: "host package identity"},
 		{name: "assessment disagrees with verified archive", assessments: second.Assessments, want: "assessment binding does not match archive"},
+		{
+			name:           "revision disagrees with assessment and archive",
+			assessments:    []store.ResourceAssessment{firstAssessment},
+			revisionDigest: store.RevisionDigest(sha256Text("f")),
+			want:           "place archive does not match resource revision",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			attempt := second
 			attempt.Assessments = append([]store.ResourceAssessment(nil), test.assessments...)
+			if test.revisionDigest != "" {
+				attempt.Resources = append([]store.ResourceRevision(nil), attempt.Resources...)
+				attempt.Resources[0].ContentDigest = test.revisionDigest
+			}
 			if err := store.PublishRegistryRevision(ctx, meta, blobs, attempt); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("rejected publication error = %v, want %q", err, test.want)
 			}

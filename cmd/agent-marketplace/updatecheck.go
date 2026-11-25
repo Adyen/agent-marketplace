@@ -77,7 +77,7 @@ func finishUpgradeNotice(w io.Writer) {
 func upgradeNoticeCommandExcluded(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
 		name := c.Name()
-		if name == "serve" || name == "tui" || name == "target" || name == "completion" || strings.HasPrefix(name, "__complete") {
+		if name == "serve" || name == "tui" || name == "completion" || strings.HasPrefix(name, "__complete") {
 			return true
 		}
 	}
