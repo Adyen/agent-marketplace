@@ -726,7 +726,11 @@ func (c *Cache) writeResourceRevision(baseURL, registryID, kind, name, revision 
 }
 
 func (c *Cache) writeResourceRevisionAt(p string, rev store.AssessedResourceRevision) (string, error) {
-	raw, err := json.Marshal(rev)
+	return c.writeMetadataAt(p, rev)
+}
+
+func (c *Cache) writeMetadataAt(p string, value any) (string, error) {
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return "", fmt.Errorf("marshal resource revision: %w", err)
 	}

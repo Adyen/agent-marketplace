@@ -71,6 +71,9 @@ func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
 	if !bytes.Equal(gotJSON, wantJSON) {
 		t.Fatalf("read revision = %s, want %s", gotJSON, wantJSON)
 	}
+	if got.Requires != "" {
+		t.Fatalf("historical scoped cache prerequisites = %q, want empty when the field is absent", got.Requires)
+	}
 	if len(gotFiles) != 1 || gotFiles[0].SourcePath != files[0].SourcePath ||
 		gotFiles[0].DestinationPath != files[0].DestinationPath || gotFiles[0].Mode != files[0].Mode ||
 		!bytes.Equal(gotFiles[0].Bytes, files[0].Bytes) {
@@ -250,6 +253,7 @@ func TestCacheGarbageCollectRefusesMalformedScopedArchiveDigest(t *testing.T) {
 }
 
 func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
+	const indexedRequires = `[{"kind":"invented-app/mod","name":"base"}]`
 	profileBytes := []byte(placeAcquireProfileYAML)
 	selected := placeAcquireProfileIdentity(profileBytes)
 	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
@@ -263,6 +267,7 @@ func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	rev1 := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	rev1.Requires = indexedRequires
 	rev2 := rev1
 	assessment := rev2.Assessment
 	assessment.AnalyzerVersion = "test/v2"
@@ -285,14 +290,16 @@ func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
 				t.Errorf("feature header = %q", values)
 			}
 			w.Header().Set("Content-Type", "application/json")
+			responseRevision := response.Load()
 			_ = json.NewEncoder(w).Encode(struct {
 				store.AssessedResourceRevision
 				Availability struct {
 					Availability string `json:"availability"`
 				} `json:"current_availability"`
-			}{AssessedResourceRevision: *response.Load(), Availability: struct {
+				Requires json.RawMessage `json:"requires,omitempty"`
+			}{AssessedResourceRevision: *responseRevision, Availability: struct {
 				Availability string `json:"availability"`
-			}{Availability: "available"}})
+			}{Availability: "available"}, Requires: json.RawMessage(responseRevision.Requires)})
 		case archivePath:
 			archiveRequests.Add(1)
 			_, _ = w.Write(placeholder)
@@ -326,6 +333,9 @@ func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
 		got2.Assessment.AssessmentDigest != rev2.Assessment.AssessmentDigest ||
 		rev1.ContentDigest != rev2.ContentDigest || rev1.ArchiveDigest != rev2.ArchiveDigest {
 		t.Fatalf("online evidence not isolated: first=%+v second=%+v", got1.Assessment, got2.Assessment)
+	}
+	if got1.Requires != indexedRequires || got2.Requires != indexedRequires {
+		t.Fatalf("online indexed prerequisites: first=%q second=%q, want %q", got1.Requires, got2.Requires, indexedRequires)
 	}
 	before := snapshotPlaceCache(t, cache.root)
 	assertFailure := func(read func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error), want string) {
@@ -382,8 +392,10 @@ func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
 		t.Fatalf("read second evidence offline: %v", err)
 	}
 	if offline1.Assessment.AssessmentDigest != rev1.Assessment.AssessmentDigest ||
-		offline2.Assessment.AssessmentDigest != rev2.Assessment.AssessmentDigest {
-		t.Fatalf("offline records did not coexist: first=%+v second=%+v", offline1.Assessment, offline2.Assessment)
+		offline2.Assessment.AssessmentDigest != rev2.Assessment.AssessmentDigest ||
+		offline1.Requires != indexedRequires || offline2.Requires != indexedRequires {
+		t.Fatalf("offline records did not coexist with prerequisites %q: first=%+v requires=%q second=%+v requires=%q",
+			indexedRequires, offline1.Assessment, offline1.Requires, offline2.Assessment, offline2.Requires)
 	}
 }
 

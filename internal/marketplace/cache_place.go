@@ -20,6 +20,11 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
 )
 
+type cachedPlaceRevision struct {
+	store.AssessedResourceRevision
+	IndexedRequires json.RawMessage `json:"requires,omitempty"`
+}
+
 // ReadLockedPlacePackage verifies a lock-bound place package using cache data only.
 func (c *Cache) ReadLockedPlacePackage(endpoint string, instanceID store.MarketplaceID, locked lockfile.MarketplaceResourceLock, selected targetprofile.Identity, profileBytes []byte) (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
 	fail := func(err error) (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
@@ -50,10 +55,12 @@ func (c *Cache) ReadLockedPlacePackage(endpoint string, instanceID store.Marketp
 		}
 		return fail(fmt.Errorf("read cached place metadata: %w", err))
 	}
-	var rev store.AssessedResourceRevision
-	if err := json.Unmarshal(metadata, &rev); err != nil {
+	var cached cachedPlaceRevision
+	if err := json.Unmarshal(metadata, &cached); err != nil {
 		return fail(fmt.Errorf("decode cached place metadata: %w", err))
 	}
+	rev := cached.AssessedResourceRevision
+	rev.Requires = string(cached.IndexedRequires)
 	if rev.Assessment.HostPackageIdentity == nil {
 		return fail(fmt.Errorf("marketplace.cache.profile-binding-missing: cached package %s has no host_package_identity", locked.Name))
 	}
@@ -186,7 +193,13 @@ func (c *Cache) FetchLockedPlacePackage(ctx context.Context, client *Client, end
 		if _, err := c.writeArchiveLocked(placeholderForm, string(locked.ArchiveDigest), raw); err != nil {
 			return struct{}{}, err
 		}
-		_, err := c.writeResourceRevisionAt(c.placeMetadataPath(normalized, instanceID, locked), rev)
+		_, err := c.writeMetadataAt(
+			c.placeMetadataPath(normalized, instanceID, locked),
+			cachedPlaceRevision{
+				AssessedResourceRevision: rev,
+				IndexedRequires:          json.RawMessage(rev.Requires),
+			},
+		)
 		return struct{}{}, err
 	})
 	if err != nil {
