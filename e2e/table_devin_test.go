@@ -78,9 +78,9 @@ func init() {
 		},
 	})
 
+	// spec: hook-resources/factory-droid-machine-scope-hooks-materialize-into-settings-local-json
 	testTable = append(testTable, TestCase{
 		Name: "codex/machine_lifecycle_multi_harness",
-		Desc: "Given machine-scoped Codex resources selected with Factory, When sync, check, prune, restore, and deinit run, Then both Codex root partitions and Factory follow the same lifecycle without check-mode mutation",
 		Registries: []RegistryDef{
 			{Name: "codex-machine", Skills: []Skill{
 				{Name: "machine-skill", Description: "Codex machine skill"},
@@ -101,12 +101,12 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").
-				exists("~/.agents/skills/machine-skill/SKILL.md", "~/.codex/agents/machine-agent.toml", "~/.codex/hooks.json", "~/.codex/config.toml", "~/.factory/skills/machine-skill/SKILL.md", "~/.factory/droids/machine-agent.md", "~/.factory/hooks.json", "~/.factory/mcp.json").
+				exists("~/.agents/skills/machine-skill/SKILL.md", "~/.codex/agents/machine-agent.toml", "~/.codex/hooks.json", "~/.codex/config.toml", "~/.factory/skills/machine-skill/SKILL.md", "~/.factory/droids/machine-agent.md", "~/.factory/settings.local.json", "~/.factory/mcp.json").
 				has("~/.codex/agents/machine-agent.toml", "name = 'machine-agent'").
 				has("~/.codex/hooks.json", "echo machine-hook").
 				has("~/.codex/config.toml", "machine-mcp-bin").
 				has("~/.factory/droids/machine-agent.md", "name: machine-agent").
-				has("~/.factory/hooks.json", "echo machine-hook").
+				has("~/.factory/settings.local.json", "echo machine-hook").
 				has("~/.factory/mcp.json", "machine-mcp-bin"),
 			exits(0, "sync", "--check").
 				unchanged("~/.agents", "~/.agents/skills/machine-skill/SKILL.md", "~/.codex", "~/.factory", "~/.factory/skills/machine-skill/SKILL.md", "~/.local/state/agent-marketplace"),
@@ -124,7 +124,7 @@ func init() {
 				absent("~/.agents/skills/machine-skill", "~/.codex/agents/machine-agent.toml", "~/.factory/skills/machine-skill", "~/.factory/droids/machine-agent.md").
 				lacks("~/.codex/hooks.json", "echo machine-hook").
 				lacks("~/.codex/config.toml", "machine-mcp-bin").
-				lacks("~/.factory/hooks.json", "echo machine-hook").
+				lacks("~/.factory/settings.local.json", "echo machine-hook").
 				lacks("~/.factory/mcp.json", "machine-mcp-bin"),
 			writeGlobalCfg(v4(
 				"harnesses:",
@@ -134,16 +134,16 @@ func init() {
 				"resources: {team: {harnesses: [codex, factory], include: [skill/machine-skill, subagent/machine-agent, hook/PreToolUse-command, mcp/machine-mcp]}}",
 			)),
 			ok("sync").
-				exists("~/.agents/skills/machine-skill/SKILL.md", "~/.codex/agents/machine-agent.toml", "~/.codex/hooks.json", "~/.codex/config.toml", "~/.factory/skills/machine-skill/SKILL.md", "~/.factory/droids/machine-agent.md", "~/.factory/hooks.json", "~/.factory/mcp.json").
+				exists("~/.agents/skills/machine-skill/SKILL.md", "~/.codex/agents/machine-agent.toml", "~/.codex/hooks.json", "~/.codex/config.toml", "~/.factory/skills/machine-skill/SKILL.md", "~/.factory/droids/machine-agent.md", "~/.factory/settings.local.json", "~/.factory/mcp.json").
 				has("~/.codex/hooks.json", "echo machine-hook").
 				has("~/.codex/config.toml", "machine-mcp-bin").
-				has("~/.factory/hooks.json", "echo machine-hook").
+				has("~/.factory/settings.local.json", "echo machine-hook").
 				has("~/.factory/mcp.json", "machine-mcp-bin"),
 			ok("deinit").
 				absent("~/.agents/skills/machine-skill", "~/.codex/agents/machine-agent.toml", "~/.factory/skills/machine-skill", "~/.factory/droids/machine-agent.md").
 				lacks("~/.codex/hooks.json", "echo machine-hook").
 				lacks("~/.codex/config.toml", "machine-mcp-bin").
-				lacks("~/.factory/hooks.json", "echo machine-hook").
+				lacks("~/.factory/settings.local.json", "echo machine-hook").
 				lacks("~/.factory/mcp.json", "machine-mcp-bin"),
 		},
 	})

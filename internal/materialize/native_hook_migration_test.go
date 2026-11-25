@@ -141,7 +141,7 @@ func TestNativeHookLegacyMigrationMovesOwnedRules(t *testing.T) {
 					t.Fatal(readErr)
 				}
 			}
-			legacy, handwritten := nativeHookLegacyDocument(tc.target, layout.container, layout.event, layout.matcher, "echo migrate", true, true)
+			legacy, handwritten := nativeHookLegacyDocument(tc.target, layout.effectiveLegacyContainer(), layout.event, layout.matcher, "echo migrate", true, true)
 			additiveSafetyWrite(t, legacyPath, string(legacy))
 			if err := os.Chmod(legacyPath, 0o640); err != nil {
 				t.Fatal(err)

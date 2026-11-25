@@ -545,13 +545,17 @@ func TestCompileRefusesSingleQuotedPluginRoot(t *testing.T) {
 				base = machineBase
 				wantDouble, wantBare = machineDouble, machineBare
 			}
+			member := tc.member
+			if tc.target == hcc.TargetFactory && scopeCase.scope == hcc.ScopeUser {
+				member = "hooks"
+			}
 			t.Run(tc.name+"/"+scopeCase.name+"/single-quoted", func(t *testing.T) {
 				result, pure, err := compile(t, `echo '${CLAUDE_PLUGIN_ROOT}/scripts/run.sh'`, tc.target, scopeCase.scope, base)
 				if err != nil {
 					t.Fatalf("public Compile: %v", err)
 				}
 				compareProjectionResults(t, result, pure)
-				checkError(t, result, tc.member, tc.event, tc.grouped)
+				checkError(t, result, member, tc.event, tc.grouped)
 			})
 			t.Run(tc.name+"/"+scopeCase.name+"/double-quoted", func(t *testing.T) {
 				result, pure, err := compile(t, `echo "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh"`, tc.target, scopeCase.scope, base)
@@ -562,7 +566,7 @@ func TestCompileRefusesSingleQuotedPluginRoot(t *testing.T) {
 				if result == nil || result.HasErrors() {
 					t.Fatalf("double-quoted plugin root diagnostics = %+v", result)
 				}
-				got := commandFromResult(t, result, tc.member, tc.event, tc.grouped)
+				got := commandFromResult(t, result, member, tc.event, tc.grouped)
 				if got != wantDouble {
 					t.Errorf("projected command = %q, want %q", got, wantDouble)
 				}
@@ -577,7 +581,7 @@ func TestCompileRefusesSingleQuotedPluginRoot(t *testing.T) {
 				if result == nil || result.HasErrors() {
 					t.Fatalf("unquoted plugin root diagnostics = %+v", result)
 				}
-				got := commandFromResult(t, result, tc.member, tc.event, tc.grouped)
+				got := commandFromResult(t, result, member, tc.event, tc.grouped)
 				if got != wantBare {
 					t.Errorf("projected command = %q, want %q", got, wantBare)
 				}

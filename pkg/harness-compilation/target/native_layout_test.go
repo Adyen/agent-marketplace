@@ -88,8 +88,11 @@ func TestNativeAggregatePathRefusesScopeVariant(t *testing.T) {
 	if got, ok := NativeAggregatePath(TargetDevin, ir.KindMcpServer); !ok || got != "mcp_config.json" {
 		t.Errorf("NativeAggregatePath(devin, mcpserver) = %q, %v; want mcp_config.json, true", got, ok)
 	}
-	if got, ok := NativeAggregatePath(TargetFactory, ir.KindHook); !ok || got != "hooks.json" {
-		t.Errorf("NativeAggregatePath(factory, hook) = %q, %v; want hooks.json, true", got, ok)
+	if got, ok := NativeAggregatePath(TargetFactory, ir.KindHook); ok || got != "" {
+		t.Errorf("NativeAggregatePath(factory, hook) = %q, %v; want refusal for a scope-variant aggregate", got, ok)
+	}
+	if got, ok := NativeAggregatePath(TargetFactory, ir.KindMcpServer); !ok || got != "mcp.json" {
+		t.Errorf("NativeAggregatePath(factory, mcpserver) = %q, %v; want mcp.json, true", got, ok)
 	}
 }
 
@@ -955,10 +958,21 @@ func TestHookAggregateTopologyIsDeclaredForEveryTarget(t *testing.T) {
 			userFile:    NativeAggregateFile{Path: "settings.json", Member: "hooks", Legacy: []string{"hooks/hooks.json"}},
 		},
 		{
-			target:      TargetFactory,
-			shape:       HookShapeMatcherGroups,
-			projectFile: NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
-			userFile:    NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+			target: TargetFactory,
+			shape:  HookShapeMatcherGroups,
+			projectFile: NativeAggregateFile{
+				Path:          "hooks.json",
+				Legacy:        []string{"hooks/hooks.json"},
+				ForwardNative: []NativeAggregateLocation{{Path: "settings.local.json", Member: "hooks"}},
+			},
+			userFile: NativeAggregateFile{
+				Path:            "settings.local.json",
+				Member:          "hooks",
+				Legacy:          []string{"hooks/hooks.json"},
+				LegacyMember:    "",
+				LegacyMemberSet: true,
+				RetiredNative:   []NativeAggregateLocation{{Path: "hooks.json"}},
+			},
 		},
 		{
 			target:      TargetCursor,
@@ -1058,7 +1072,7 @@ func TestHookProjectionDeclarations(t *testing.T) {
 		shape                 HookShape
 	}{
 		{TargetClaude, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
-		{TargetFactory, "hooks.json", "hooks.json", "", "", HookShapeMatcherGroups},
+		{TargetFactory, "hooks.json", "settings.local.json", "", "hooks", HookShapeMatcherGroups},
 		{TargetCursor, "hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
 		{TargetWindsurf, ".devin/hooks.json", "hooks.json", "hooks", "hooks", HookShapeEventHandlers},
 		{TargetGemini, "settings.json", "settings.json", "hooks", "hooks", HookShapeMatcherGroups},
@@ -1375,6 +1389,79 @@ func TestHookSupportDirRequiresResourceFileHooks(t *testing.T) {
 			partition := valid()
 			tt.mutate(&partition)
 			err := ValidateNativeLayout(TargetOpenCode, NativeLayout{Partitions: []NativePartition{partition}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ValidateNativeLayout error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuxiliaryNativeHookLocationsValidated(t *testing.T) {
+	valid := func() NativePartition {
+		return NativePartition{
+			ID: "default", Prefix: ".", Components: []string{"hooks", "hook-support"},
+			Aggregates: []NativeAggregate{{
+				Kind: ir.KindHook, Shape: HookShapeMatcherGroups, SupportDir: "hook-support",
+				Project: NativeAggregateFile{
+					Path:          "hooks.json",
+					Legacy:        []string{"hooks/hooks.json"},
+					ForwardNative: []NativeAggregateLocation{{Path: "settings.local.json", Member: "hooks"}},
+				},
+				User: NativeAggregateFile{
+					Path:            "settings.local.json",
+					Member:          "hooks",
+					Legacy:          []string{"hooks/hooks.json"},
+					LegacyMember:    "",
+					LegacyMemberSet: true,
+					RetiredNative:   []NativeAggregateLocation{{Path: "hooks.json"}},
+				},
+			}},
+		}
+	}
+	if err := ValidateNativeLayout(TargetFactory, NativeLayout{Partitions: []NativePartition{valid()}}); err != nil {
+		t.Fatalf("valid auxiliary hook layout rejected: %v", err)
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*NativePartition)
+		want   string
+	}{
+		{"legacy member without legacy", func(p *NativePartition) {
+			p.Aggregates[0].User.Legacy = nil
+		}, "without legacy locations"},
+		{"invalid legacy member", func(p *NativePartition) {
+			p.Aggregates[0].User.LegacyMember = "a/b"
+		}, "invalid legacy member"},
+		{"retired same as active", func(p *NativePartition) {
+			p.Aggregates[0].User.RetiredNative = []NativeAggregateLocation{{Path: "settings.local.json"}}
+		}, "identical to its native file"},
+		{"retired collides with legacy", func(p *NativePartition) {
+			p.Aggregates[0].User.RetiredNative = []NativeAggregateLocation{{Path: "hooks/hooks.json"}}
+		}, "colliding with a legacy location"},
+		{"duplicate auxiliary across retired and forward", func(p *NativePartition) {
+			p.Aggregates[0].User.ForwardNative = []NativeAggregateLocation{{Path: "hooks.json"}}
+		}, "duplicate auxiliary native location"},
+		{"invalid forward path", func(p *NativePartition) {
+			p.Aggregates[0].Project.ForwardNative = []NativeAggregateLocation{{Path: "../escape.json"}}
+		}, "invalid forward native location"},
+		{"invalid retired member", func(p *NativePartition) {
+			p.Aggregates[0].User.RetiredNative = []NativeAggregateLocation{{Path: "hooks.json", Member: ".."}}
+		}, "invalid retired native member"},
+		{"retired envelope collides with member", func(p *NativePartition) {
+			p.Aggregates[0].User.RetiredNative = []NativeAggregateLocation{{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"hooks": 1}}}
+		}, "colliding with its entry member"},
+		{"non-hook aggregate retired", func(p *NativePartition) {
+			p.Aggregates = append(p.Aggregates, NativeAggregate{
+				Kind:    ir.KindMcpServer,
+				Project: NativeAggregateFile{Path: "mcp.json", Member: "mcpServers", RetiredNative: []NativeAggregateLocation{{Path: "old-mcp.json"}}},
+				User:    NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
+			})
+		}, "apply to hooks only"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			partition := valid()
+			tt.mutate(&partition)
+			err := ValidateNativeLayout(TargetFactory, NativeLayout{Partitions: []NativePartition{partition}})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("ValidateNativeLayout error = %v, want %q", err, tt.want)
 			}

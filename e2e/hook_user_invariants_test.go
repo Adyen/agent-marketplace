@@ -32,7 +32,7 @@ func hookInvariantHookFiles(target string, machine bool) []string {
 	case "claude":
 		return []string{".claude/hooks/hooks.json", ".claude/settings.json"}
 	case "factory":
-		return []string{".factory/hooks/hooks.json", ".factory/hooks.json"}
+		return []string{".factory/hooks/hooks.json", ".factory/hooks.json", ".factory/settings.local.json"}
 	case "cursor":
 		return []string{".cursor/hooks/hooks.json", ".cursor/hooks.json"}
 	case "gemini":
@@ -173,6 +173,7 @@ func hookInvariantLoadedHandlers(t *testing.T, target, root string, machine bool
 	case "claude":
 		grouped(".claude/settings.json", "hooks")
 	case "factory":
+		grouped(".factory/settings.local.json", "hooks")
 		grouped(".factory/hooks.json", "")
 	case "cursor":
 		flat(".cursor/hooks.json")

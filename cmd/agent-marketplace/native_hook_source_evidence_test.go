@@ -51,8 +51,8 @@ func cliNativeDocs() []cliNativeDoc {
 			doc: `{"version":1,"hooks":{"preToolUse":[` + cursorRule + `]}}` + "\n"},
 		{target: "factory", machineScope: false, rootDir: ".factory", rel: "hooks.json", event: "PreToolUse", rule: factoryRule,
 			doc: `{"PreToolUse":[` + factoryRule + `]}` + "\n"},
-		{target: "factory", machineScope: true, rootDir: ".factory", rel: "hooks.json", event: "PreToolUse", rule: factoryRule,
-			doc: `{"PreToolUse":[` + factoryRule + `]}` + "\n"},
+		{target: "factory", machineScope: true, rootDir: ".factory", rel: "settings.local.json", event: "PreToolUse", rule: factoryRule,
+			doc: `{"hooks":{"PreToolUse":[` + factoryRule + `]}}` + "\n"},
 		{target: "windsurf", machineScope: false, rootDir: ".", rel: ".devin/hooks.json", event: "pre_run_command", rule: windsurfRule,
 			doc: `{"hooks":{"pre_run_command":[` + windsurfRule + `]}}` + "\n"},
 		// Windsurf machine scope is the shared file itself; keep a handwritten

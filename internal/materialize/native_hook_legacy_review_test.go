@@ -35,7 +35,7 @@ func TestNativeHookLegacyRemovalReportsReview(t *testing.T) {
 			}
 
 			oldCommand := "echo zqx-legacy-old-" + name
-			legacyDoc, _ := nativeHookLegacyDocument(layout.target, layout.container, layout.event, layout.matcher, oldCommand, false, true)
+			legacyDoc, _ := nativeHookLegacyDocument(layout.target, layout.effectiveLegacyContainer(), layout.event, layout.matcher, oldCommand, false, true)
 			additiveSafetyWrite(t, legacyPath, string(legacyDoc))
 			if err := os.Chmod(legacyPath, 0o640); err != nil {
 				t.Fatal(err)

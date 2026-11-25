@@ -225,16 +225,29 @@ func TestMirrorHookSupportFilesInstall(t *testing.T) {
 			if data, err := os.ReadFile(filepath.Join(filepath.Dir(script), "helper.py")); err != nil || string(data) != "print('support')\n" {
 				t.Fatalf("helper: %q, %v", data, err)
 			}
-			aggregate, err := os.ReadFile(filepath.Join(root, ".factory", "hooks.json"))
+			rel := "hooks.json"
+			if machine {
+				rel = "settings.local.json"
+			}
+			aggregate, err := os.ReadFile(filepath.Join(root, ".factory", rel))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var hooks map[string][]struct {
+			type hookGroup struct {
 				Hooks []struct {
 					Command string `json:"command"`
 				} `json:"hooks"`
 			}
-			if err := json.Unmarshal(aggregate, &hooks); err != nil {
+			var hooks map[string][]hookGroup
+			if machine {
+				var envelope struct {
+					Hooks map[string][]hookGroup `json:"hooks"`
+				}
+				if err := json.Unmarshal(aggregate, &envelope); err != nil {
+					t.Fatal(err)
+				}
+				hooks = envelope.Hooks
+			} else if err := json.Unmarshal(aggregate, &hooks); err != nil {
 				t.Fatal(err)
 			}
 			installedCommand := hooks["PreToolUse"][0].Hooks[0].Command

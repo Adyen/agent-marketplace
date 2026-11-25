@@ -572,7 +572,8 @@ resources:
 		return fmt.Sprintf("  %s (machine) %s ~/%s: PreToolUse matcher %q", target, action, rel, matcher)
 	}
 	const (
-		factoryFile  = ".factory/hooks.json"
+		factoryRepo  = ".factory/hooks.json"
+		factoryHome  = ".factory/settings.local.json"
 		opencodeRepo = ".opencode/hooks/agent-marketplace/PreToolUse-command.json"
 		opencodeHome = ".config/opencode/hooks/agent-marketplace/PreToolUse-command.json"
 	)
@@ -582,9 +583,9 @@ resources:
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
 	assertHookReviewListing(t, "initial sync", output, "Hook changes:", []string{
-		repoRow("factory", "add", factoryFile, "Execute"),
+		repoRow("factory", "add", factoryRepo, "Execute"),
 		`    + command: "echo repo-review-9c3e"`,
-		machineRow("factory", "add", factoryFile, "Execute"),
+		machineRow("factory", "add", factoryHome, "Execute"),
 		`    + command: "echo machine-review-4a1f"`,
 		repoRow("opencode", "add", opencodeRepo, "Bash"),
 		`    + command: "echo repo-review-9c3e"`,
@@ -592,9 +593,9 @@ resources:
 		`    + command: "echo machine-review-4a1f"`,
 	})
 	for _, file := range []struct{ path, want, other string }{
-		{filepath.Join(homeDir, factoryFile), "echo machine-review-4a1f", "echo repo-review-9c3e"},
+		{filepath.Join(homeDir, factoryHome), "echo machine-review-4a1f", "echo repo-review-9c3e"},
 		{filepath.Join(homeDir, opencodeHome), "echo machine-review-4a1f", "echo repo-review-9c3e"},
-		{filepath.Join(repoRoot, factoryFile), "echo repo-review-9c3e", "echo machine-review-4a1f"},
+		{filepath.Join(repoRoot, factoryRepo), "echo repo-review-9c3e", "echo machine-review-4a1f"},
 		{filepath.Join(repoRoot, opencodeRepo), "echo repo-review-9c3e", "echo machine-review-4a1f"},
 	} {
 		data, err := os.ReadFile(file.path)
@@ -614,7 +615,7 @@ resources:
 		snapshots[i] = cliFilesystemSnapshot(t, root)
 	}
 	machineReplacement := []string{
-		machineRow("factory", "replace", factoryFile, "Execute"),
+		machineRow("factory", "replace", factoryHome, "Execute"),
 		`    - command: "echo machine-review-4a1f"`,
 		`    + command: "echo machine-review-v2-5d0b"`,
 		machineRow("opencode", "replace", opencodeHome, "Bash"),
@@ -638,7 +639,7 @@ resources:
 	for i, root := range outputRoots[2:4] {
 		assertCliFilesystemSnapshot(t, "machine replacement sync", root, snapshots[i+2])
 	}
-	for _, path := range []string{filepath.Join(homeDir, factoryFile), filepath.Join(homeDir, opencodeHome)} {
+	for _, path := range []string{filepath.Join(homeDir, factoryHome), filepath.Join(homeDir, opencodeHome)} {
 		data, err := os.ReadFile(path)
 		if err != nil || !strings.Contains(string(data), "echo machine-review-v2-5d0b") || strings.Contains(string(data), "echo machine-review-4a1f") {
 			t.Fatalf("%s = %q, err %v; want only the replacement command", path, data, err)
