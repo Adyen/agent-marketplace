@@ -115,7 +115,7 @@ Like Codex, Devin receives commands as skills marked with `x-agent-marketplace-k
 | skill | `.factory/skills/<name>/SKILL.md` | `~/.factory/skills/<name>/SKILL.md` |
 | command | `.factory/commands/<name>.md` (copied as a regular file) | `~/.factory/commands/<name>.md` |
 | subagent | `.factory/droids/<name>.md` | `~/.factory/droids/<name>.md` |
-| hook | `.factory/hooks.json` | `~/.factory/hooks.json` |
+| hook | `.factory/hooks.json` | `~/.factory/settings.local.json` under `hooks` |
 | mcp | `.factory/mcp.json` | `~/.factory/mcp.json` |
 
 Factory commands are always regular files, even in symlink mode, because the Droid CLI does not follow symlinked command files.

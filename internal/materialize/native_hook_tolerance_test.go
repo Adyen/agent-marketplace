@@ -615,6 +615,10 @@ func nativeSeedFor(t *testing.T, target hcc.Target, machine bool) nativeSeed {
 			doc: `{"version":1,"hooks":{"preToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetFactory:
 		rule := `{"hooks":[{"command":".factory/am-hooks/deploy/run.sh","type":"command"}],"matcher":"Bash"}`
+		if machine {
+			return nativeSeed{event: "PreToolUse", rule: rule,
+				doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
+		}
 		return nativeSeed{event: "PreToolUse", rule: rule,
 			doc: `{"PreToolUse":[` + rule + `]}` + "\n"}
 	case hcc.TargetWindsurf:

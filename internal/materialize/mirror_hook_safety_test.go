@@ -125,7 +125,11 @@ func TestMirrorHookSupportMissingOwnershipRefusesAggregate(t *testing.T) {
 			if err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("valid control: %v, %v", report, err)
 			}
-			native := filepath.Join(root, ".factory", "hooks.json")
+			nativeRel := "hooks.json"
+			if machine {
+				nativeRel = "settings.local.json"
+			}
+			native := filepath.Join(root, ".factory", nativeRel)
 			before, err := os.ReadFile(native)
 			if err != nil {
 				t.Fatal(err)

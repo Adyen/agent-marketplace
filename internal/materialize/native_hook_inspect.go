@@ -42,7 +42,11 @@ func nativeHookLayoutFor(target hcc.Target, machineScope bool) (nativeHookLayout
 		// documented `version: 1` envelope.
 		return nativeHookLayout{rel: "hooks.json", container: "hooks", requireVersion: true}, true
 	case hcc.TargetFactory:
-		// .factory/hooks.json / ~/.factory/hooks.json, top-level event map.
+		if machineScope {
+			// ~/.factory/settings.local.json, member "hooks".
+			return nativeHookLayout{rel: "settings.local.json", container: "hooks"}, true
+		}
+		// .factory/hooks.json, top-level event map.
 		return nativeHookLayout{rel: "hooks.json"}, true
 	case hcc.TargetWindsurf:
 		if machineScope {
@@ -117,6 +121,10 @@ func inspectNativeHookFile(store *ownership.Store, outDir string, target hcc.Tar
 	if !ok {
 		return nil, nativeHookRefused(outDir, "", fmt.Errorf("target %s has no documented native hook file", target))
 	}
+	return inspectNativeHookLayout(store, outDir, layout)
+}
+
+func inspectNativeHookLayout(store *ownership.Store, outDir string, layout nativeHookLayout) (*nativeHookInspection, error) {
 	if err := harness.ValidateRelPath(layout.rel); err != nil {
 		return nil, nativeHookRefused(outDir, layout.rel, err)
 	}
@@ -144,6 +152,11 @@ func inspectNativeHookFile(store *ownership.Store, outDir string, target hcc.Tar
 	}
 	if layout.requireVersion {
 		if err := nativeHookCheckVersion(root); err != nil {
+			return nil, nativeHookRefused(outDir, layout.rel, err)
+		}
+	}
+	if len(layout.envelope) > 0 {
+		if err := validateOwnedJSONEnvelope(doc, ownedJSONFileSpec{rel: layout.rel, container: layout.container, envelope: layout.envelope}, false); err != nil {
 			return nil, nativeHookRefused(outDir, layout.rel, err)
 		}
 	}

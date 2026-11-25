@@ -44,20 +44,33 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(home, ".config", "devin", "skills", "shared")); err != nil {
 			t.Fatalf("user Devin skill was pruned: %v", err)
 		}
-		hookCommand := func(base, file string) string {
+		hookCommand := func(base, file string, wrapped bool) string {
 			t.Helper()
-			data, err := os.ReadFile(filepath.Join(base, ".factory", "hooks.json"))
+			rel := "hooks.json"
+			if wrapped {
+				rel = "settings.local.json"
+			}
+			data, err := os.ReadFile(filepath.Join(base, ".factory", rel))
 			if err != nil {
 				t.Fatalf("read %s hook file: %v", file, err)
 			}
-			var document map[string][]struct {
+			type hookGroup struct {
 				Matcher string `json:"matcher"`
 				Hooks   []struct {
 					Type    string `json:"type"`
 					Command string `json:"command"`
 				} `json:"hooks"`
 			}
-			if err := json.Unmarshal(data, &document); err != nil {
+			var document map[string][]hookGroup
+			if wrapped {
+				var envelope struct {
+					Hooks map[string][]hookGroup `json:"hooks"`
+				}
+				if err := json.Unmarshal(data, &envelope); err != nil {
+					t.Fatalf("decode %s hook file: %v\n%s", file, err, data)
+				}
+				document = envelope.Hooks
+			} else if err := json.Unmarshal(data, &document); err != nil {
 				t.Fatalf("decode %s hook file: %v\n%s", file, err, data)
 			}
 			groups, ok := document["PreToolUse"]
@@ -85,7 +98,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 			return matches[0]
 		}
 		machineScript := installedScript(home, "user-check.sh", "#!/bin/sh\necho user-scope-check\n")
-		machineCommand := hookCommand(home, "machine")
+		machineCommand := hookCommand(home, "machine", true)
 		if want := filepath.ToSlash(machineScript); machineCommand != want {
 			t.Fatalf("machine hook command = %q, want installed support path %q", machineCommand, want)
 		}
@@ -94,7 +107,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repository support script is outside the repository: %v", err)
 		}
-		repoCommand := hookCommand(repo, "repository")
+		repoCommand := hookCommand(repo, "repository", false)
 		if want := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(repoRel); repoCommand != want {
 			t.Fatalf("repository hook command = %q, want %q", repoCommand, want)
 		}

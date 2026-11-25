@@ -173,6 +173,10 @@ func sharedNativeSeed(t *testing.T, target hcc.Target, machine bool) nativeSeed 
 			doc: `{"version":1,"hooks":{"preToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetFactory:
 		rule := `{"hooks":[{"command":"` + sharedSourceCommand + `","type":"command"}],"matcher":"Execute"}`
+		if machine {
+			return nativeSeed{event: "PreToolUse", rule: rule,
+				doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
+		}
 		return nativeSeed{event: "PreToolUse", rule: rule,
 			doc: `{"PreToolUse":[` + rule + `]}` + "\n"}
 	case hcc.TargetWindsurf:

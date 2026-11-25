@@ -138,15 +138,31 @@ func nativeHookOutputPresent(key outputKey, repoRoot string) bool {
 	if err != nil {
 		return false
 	}
-	proof, err := store.Proof(file.rel)
-	if err != nil {
+	hasOwnedHooks := func(rel string, includeSharedMCP bool) bool {
+		proof, proofErr := store.Proof(rel)
+		if proofErr != nil {
+			return false
+		}
+		if len(proof.HookSatisfactions()) > 0 {
+			return true
+		}
+		for _, id := range proof.OwnedIDs() {
+			if id.Kind == ownership.KindHook || (includeSharedMCP && id.Kind == ownership.KindMcpServer && id.Container == "mcpServers" && nativeHookSharesMCPRoute(key, repoRoot)) {
+				return true
+			}
+		}
 		return false
 	}
-	if len(proof.HookSatisfactions()) > 0 {
+	if hasOwnedHooks(file.rel, true) {
 		return true
 	}
-	for _, id := range proof.OwnedIDs() {
-		if id.Kind == ownership.KindHook || (id.Kind == ownership.KindMcpServer && id.Container == "mcpServers" && nativeHookSharesMCPRoute(key, repoRoot)) {
+	declaration, declErr := nativeHookAggregateForScope(targetmeta.Target(key.target), key.machineScope)
+	if declErr != nil {
+		return false
+	}
+	for _, retired := range declaration.file.RetiredNative {
+		retiredRel := path.Join(declaration.partition.Prefix, retired.Path)
+		if hasOwnedHooks(retiredRel, false) {
 			return true
 		}
 	}

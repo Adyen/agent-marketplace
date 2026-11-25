@@ -111,7 +111,7 @@ type nativeSupportLocation struct {
 func nativeSupportLocations() []nativeSupportLocation {
 	return []nativeSupportLocation{
 		{target: hcc.TargetClaude, repoFile: ".claude/settings.json", userFile: ".claude/settings.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$CLAUDE_PROJECT_DIR"/`, repoSupportRoot: ".claude/hook-support", userSupportRoot: ".claude/hook-support", matcher: "Bash", handlerType: "command", grouped: true, hasMatcher: true},
-		{target: hcc.TargetFactory, repoFile: ".factory/hooks.json", userFile: ".factory/hooks.json", event: "PreToolUse", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
+		{target: hcc.TargetFactory, repoFile: ".factory/hooks.json", userFile: ".factory/settings.local.json", event: "PreToolUse", userContainer: "hooks", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.TargetCursor, repoFile: ".cursor/hooks.json", userFile: ".cursor/hooks.json", container: "hooks", event: "preToolUse", userContainer: "hooks", repoBase: `"$CURSOR_PROJECT_DIR"/`, repoSupportRoot: ".cursor/hook-support", userSupportRoot: ".cursor/hook-support", matcher: "^Shell$", handlerType: "command", hasMatcher: true},
 		{target: hcc.TargetGemini, repoFile: ".gemini/settings.json", userFile: ".gemini/settings.json", container: "hooks", event: "BeforeTool", userContainer: "hooks", repoBase: `"$GEMINI_PROJECT_DIR"/`, repoSupportRoot: ".gemini/hook-support", userSupportRoot: ".gemini/hook-support", matcher: "^run_shell_command$", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.TargetDevin, repoFile: ".devin/hooks.v1.json", userFile: ".config/devin/config.json", event: "PreToolUse", userContainer: "hooks", repoBase: `"$DEVIN_PROJECT_DIR"/`, repoSupportRoot: ".devin/hook-support", userSupportRoot: ".config/devin/hook-support", matcher: "^exec$", handlerType: "command", grouped: true, hasMatcher: true},
@@ -726,6 +726,7 @@ func TestNativeRepositoryHookSupportUsesPortableCopies(t *testing.T) {
 			t.Fatalf("machine hook support diagnostics: %v", report.Diags)
 		}
 		loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+		loc.container = loc.userContainer
 		hookFile := filepath.Join(home, filepath.FromSlash(loc.userFile))
 		commands := nativeSupportCommands(t, loc, hookFile, 1)
 		installed, _ := loc.installedRef(t, commands[0], repo, home, true)
@@ -845,7 +846,11 @@ func TestNativeHookSupportNamespacesDeselectAndIdempotent(t *testing.T) {
 					t.Fatalf("per-source install dirs not distinct: %q %q", installedA, installedB)
 				}
 
-				commands := nativeSupportCommands(t, loc, filepath.Join(supportBase, filepath.FromSlash(hookFile)), 2)
+				shape := loc
+				if machine {
+					shape.container = loc.userContainer
+				}
+				commands := nativeSupportCommands(t, shape, filepath.Join(supportBase, filepath.FromSlash(hookFile)), 2)
 				referenced := make(map[string]bool, len(commands))
 				for _, command := range commands {
 					var path string
@@ -895,7 +900,7 @@ func TestNativeHookSupportNamespacesDeselectAndIdempotent(t *testing.T) {
 				if _, err := Run(context.Background(), repo, resolvedOnlyA, opts...); err != nil {
 					t.Fatal(err)
 				}
-				remaining := nativeSupportCommands(t, loc, filepath.Join(supportBase, filepath.FromSlash(hookFile)), 1)
+				remaining := nativeSupportCommands(t, shape, filepath.Join(supportBase, filepath.FromSlash(hookFile)), 1)
 				wantCommand := loc.repoBase
 				if machine {
 					wantCommand = filepath.ToSlash(installedA)
@@ -4098,8 +4103,10 @@ func TestNativeHookRepoRootAliasPreservesMachineFactorySupport(t *testing.T) {
 		t.Fatalf("first machine sync: %v / %v", err, report)
 	}
 	factoryRoot := filepath.Join(home, ".factory")
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
-	commands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), nativePath, 1)
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+	loc.container = loc.userContainer
+	commands := nativeSupportCommands(t, loc, nativePath, 1)
 	if len(commands) != 1 || !strings.Contains(commands[0], "check.sh") {
 		t.Fatalf("machine Native hook commands = %v, want the source-backed support script", commands)
 	}

@@ -1350,6 +1350,8 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		return plan
 	}
 	nativeHooks := make(map[outputKey]*ownedJSONAggregateWork)
+	forwardHookCache := newForwardNativeHookCache()
+	forwardSatisfiedCounts := make(map[outputKey]int)
 	nativeMCPEntries := make(map[outputKey][]ownedJSONEntry)
 	nativeMCPConflicts := make(map[outputKey]map[string]bool)
 	nativeMCPIncomplete := make(map[outputKey]bool)
@@ -1814,6 +1816,34 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				})
 				continue
 			}
+			if !w.machineScope && w.skill.PluginPackage == nil {
+				forwardSatisfied, forwardErr := forwardNativeHookSatisfied(key, repoRoot, resourceName, plan, entries, forwardHookCache)
+				if forwardErr != nil {
+					unknownHookSelection[key] = true
+					blockResource(key, w)
+					markResourceIncomplete(key, w, aggregateHandler)
+					if coded, ok := diag.AsCodedError(forwardErr); ok {
+						d := coded.Diagnostic(resourceName)
+						d.Target = string(w.target)
+						allDiags = append(allDiags, d)
+					} else {
+						allDiags = append(allDiags, diag.Diagnostic{
+							Code:     diag.CodeHookNativeToleranceRefused,
+							Severity: diag.SeverityError,
+							Target:   string(w.target),
+							Resource: resourceName,
+							Message:  fmt.Sprintf("forward native hook check for target %s failed safely", w.target),
+							Source:   compilepkg.SourceOf(w.skill.Resource),
+						})
+					}
+					continue
+				}
+				if forwardSatisfied {
+					forwardSatisfiedCounts[key]++
+					allDiags = append(allDiags, result.Diagnostics...)
+					continue
+				}
+			}
 			for _, entry := range entries {
 				if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
 					if pluginPlan.hooks == nil {
@@ -2040,6 +2070,19 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		}
 		tw.artifacts = append(tw.artifacts, result.Artifacts...)
 		tw.diags = append(tw.diags, result.Diagnostics...)
+	}
+	for key, count := range forwardSatisfiedCounts {
+		if count == 0 {
+			continue
+		}
+		work := nativeHooks[key]
+		if work == nil || len(work.entries) > 0 || len(work.incomplete) > 0 || len(nativeMCPEntries[key]) > 0 {
+			continue
+		}
+		if nativeHookOutputPresent(key, repoRoot) || nativeHookFilesExistOnDisk(key, repoRoot) {
+			continue
+		}
+		delete(nativeHooks, key)
 	}
 
 	return compilePhaseResult{

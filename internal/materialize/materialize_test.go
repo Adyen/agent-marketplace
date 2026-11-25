@@ -2556,8 +2556,10 @@ func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 	machineSource.Source = config.UserPersonal
 	machineSource.Harnesses = []hcc.Target{hcc.TargetFactory}
 	machineResolved := nativeSupportResolve(t, hcc.TargetFactory, true, []resolver.ResolvedArtifact{machineSource})
-	machineFile := filepath.Join(home, ".factory", "hooks.json")
+	machineFile := filepath.Join(home, ".factory", "settings.local.json")
 	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+	machineLoc := loc
+	machineLoc.container = loc.userContainer
 	var first []byte
 	for _, root := range []string{home, repo} {
 		report, err := Run(context.Background(), root, machineResolved)
@@ -2568,7 +2570,7 @@ func TestFactoryHookCommandRootIsStableAcrossWorkingDirectories(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		commands := nativeSupportCommands(t, loc, machineFile, 1)
+		commands := nativeSupportCommands(t, machineLoc, machineFile, 1)
 		installed, _ := loc.installedRef(t, commands[0], repo, home, true)
 		if commands[0] != filepath.ToSlash(installed) {
 			t.Fatalf("machine hook command = %q, want absolute support path %q", commands[0], installed)

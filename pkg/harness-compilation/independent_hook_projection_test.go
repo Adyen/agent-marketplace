@@ -552,7 +552,7 @@ func TestNativeHookProjectionPreservesSurroundingShellQuotes(t *testing.T) {
 			}
 			document := decodeObject(t, res.Artifacts[0].Bytes)
 			var handler map[string]any
-			if tc.target == TargetCodex {
+			if tc.target == TargetCodex || (tc.target == TargetFactory && tc.machineScope) {
 				hooks, ok := document["hooks"].(map[string]any)
 				if !ok {
 					t.Fatalf("hooks = %T, want object", document["hooks"])

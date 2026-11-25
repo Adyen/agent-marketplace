@@ -254,7 +254,7 @@ func TestHookInvariantCheckPredictsNoRemovalForAnUnloadableRegistry(t *testing.T
 				}
 
 				paths := []string{
-					filepath.Join(root, filepath.FromSlash(hookInvariantLoadedFile(t, target))),
+					filepath.Join(root, filepath.FromSlash(hookInvariantLoadedFileForScope(t, target, machine))),
 					filepath.Join(e.workspace, ".agents"),
 					filepath.Join(e.home, ".agents"),
 				}

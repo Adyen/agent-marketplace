@@ -62,6 +62,8 @@ type nativeHookTransactionExtras struct {
 	planSet               bool
 	participants          []dependencytxn.DesiredFile
 	assertions            []dependencytxn.DesiredFile
+	retiredMutations      []ownership.Mutation
+	retiredSatisfactions  map[string][]ownership.HookSatisfaction
 	manifestCommits       []nativeHookManifestCommit
 	backups               []nativeHookBackup
 	commitOptions         []dependencytxn.Option
@@ -362,7 +364,7 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 				extras.diagnostics = append(extras.diagnostics, nativeHookLegacyRefusal(key))
 				return extras, nil
 			}
-			next, changed, deleteFile, removals, patchErr := nativeHookLegacyPatch(legacyDoc, declaration.file.Member, expectedEvents)
+			next, changed, deleteFile, removals, patchErr := nativeHookLegacyPatch(legacyDoc, declaration.file.EffectiveLegacyMember(), expectedEvents)
 			if patchErr != nil {
 				extras.refused = true
 				extras.diagnostics = append(extras.diagnostics, nativeHookLegacyRefusal(key))
@@ -400,6 +402,19 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 					Path: legacyAbs, Expected: snapshot.generation, ExpectedMode: snapshot.mode,
 					Bytes: append([]byte(nil), snapshot.raw...), Mode: snapshot.mode,
 				})
+			}
+		}
+		for _, retired := range declaration.file.RetiredNative {
+			retiredSnapshot, retiredErr := reconcileRetiredNativeHookFile(store, key, outDir, declaration, retired, incomplete, dryRun, &extras)
+			if retiredErr != nil {
+				extras.refused = true
+				return extras, retiredErr
+			}
+			if extras.refused {
+				return extras, nil
+			}
+			if retiredSnapshot != nil {
+				legacySnapshots = append(legacySnapshots, retiredSnapshot)
 			}
 		}
 		var manifestState *portableState
@@ -519,6 +534,304 @@ func nativeHookLegacyRefusal(key outputKey) diag.Diagnostic {
 		Target:   string(key.target),
 		Message:  "a declared legacy hook aggregate could not be reconciled safely; native and legacy files were left unchanged",
 	}
+}
+
+func nativeHookRetiredRefusal(key outputKey, rel string) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeHookNativeToleranceRefused,
+		Severity: diag.SeverityError,
+		Target:   string(key.target),
+		Resource: rel,
+		Message:  "a retired native hook aggregate could not be reconciled safely; active and retired files were left unchanged",
+		Source:   diag.SourceRef{File: rel},
+	}
+}
+
+func reconcileRetiredNativeHookFile(store *ownership.Store, key outputKey, outDir string, declaration nativeHookAggregateDeclaration, retired targetmeta.NativeAggregateLocation, incomplete, dryRun bool, extras *nativeHookTransactionExtras) (*nativeHookAggregateSnapshot, error) {
+	retiredRel := path.Join(declaration.partition.Prefix, retired.Path)
+	retiredAbs := filepath.Join(outDir, filepath.FromSlash(retiredRel))
+	retiredParent := path.Dir(retiredRel)
+	if retiredParent != "." {
+		if _, err := validatePortableOutputDir(outDir, retiredParent); err != nil {
+			extras.refused = true
+			extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+			return nil, nil
+		}
+	}
+	retiredProof, retiredProofErr := store.Proof(retiredRel)
+	if retiredProofErr != nil && !errors.Is(retiredProofErr, ownership.ErrStateMissing) {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, ownedAggregateProofDiags(key, outDir, retiredRel, retiredProofErr)...)
+		extras.diagnostics = append(extras.diagnostics, nativeHookProofUnavailableDiagnostic(key, retiredRel))
+		return nil, nil
+	}
+	retiredRaw, readErr := ownership.ReadAggregateFileAt(outDir, retiredRel)
+	if errors.Is(readErr, os.ErrNotExist) {
+		snapshot, snapshotErr := nativeHookAggregateSnapshotAtPlan(retiredAbs, retiredRel, nil, readErr)
+		if snapshotErr != nil {
+			return nil, diag.NewCodedError(diag.CodeOwnershipGenerationConflict, diag.SourceRef{File: retiredRel}, snapshotErr)
+		}
+		extras.assertions = append(extras.assertions, dependencytxn.DesiredFile{Path: retiredAbs, Expected: snapshot.generation, Delete: true})
+		if !incomplete && (retiredProof.OwnedCount() > 0 || len(retiredProof.HookSatisfactions()) > 0) {
+			extras.retiredMutations = append(extras.retiredMutations, ownership.Mutation{
+				Rel:                   retiredRel,
+				AbsFile:               retiredAbs,
+				Entries:               retiredNonHookOwnedEntries(retiredProof),
+				Reason:                ownership.ReasonSync,
+				ExpectPriorGeneration: retiredProof.Generation(),
+			})
+			if extras.retiredSatisfactions == nil {
+				extras.retiredSatisfactions = make(map[string][]ownership.HookSatisfaction)
+			}
+			extras.retiredSatisfactions[retiredRel] = []ownership.HookSatisfaction{}
+			extras.pending = true
+		}
+		return snapshot, nil
+	}
+	if readErr != nil {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		return nil, nil
+	}
+	retiredDoc, parseErr := jsonc.Parse(retiredRel, retiredRaw)
+	if parseErr != nil {
+		if !dryRun {
+			_, _ = store.BackupOnly(retiredRel, retiredAbs, ownership.ReasonSync)
+		}
+		extras.refused = true
+		if coded, ok := diag.AsCodedError(parseErr); ok && coded.Code == diag.CodeJSONDuplicateKey {
+			d := coded.Diagnostic(retiredRel)
+			d.Target = string(key.target)
+			extras.diagnostics = append(extras.diagnostics, d)
+		} else {
+			extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		}
+		return nil, nil
+	}
+	retiredSpec := ownedJSONFileSpec{
+		rel:       retiredRel,
+		container: retired.Member,
+		envelope:  retired.Envelope,
+		hookShape: declaration.aggregate.Shape,
+	}
+	if envErr := validateOwnedJSONEnvelope(retiredDoc, retiredSpec, false); envErr != nil {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		return nil, nil
+	}
+	container, _, containerErr := ownedJSONContainerNode(retiredDoc, retiredSpec)
+	if containerErr != nil {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		return nil, nil
+	}
+	snapshot, snapshotErr := nativeHookAggregateSnapshotAtPlan(retiredAbs, retiredRel, retiredRaw, nil)
+	if snapshotErr != nil {
+		return nil, diag.NewCodedError(diag.CodeOwnershipGenerationConflict, diag.SourceRef{File: retiredRel}, snapshotErr)
+	}
+	if container == nil {
+		extras.assertions = append(extras.assertions, dependencytxn.DesiredFile{
+			Path: retiredAbs, Expected: snapshot.generation, ExpectedMode: snapshot.mode,
+			Bytes: append([]byte(nil), snapshot.raw...), Mode: snapshot.mode,
+		})
+		if !incomplete && (retiredProof.OwnedCount() > 0 || len(retiredProof.HookSatisfactions()) > 0) {
+			extras.retiredMutations = append(extras.retiredMutations, ownership.Mutation{
+				Rel:                   retiredRel,
+				AbsFile:               retiredAbs,
+				NextBytes:             retiredRaw,
+				Entries:               retiredNonHookOwnedEntries(retiredProof),
+				Reason:                ownership.ReasonSync,
+				ExpectPriorGeneration: retiredProof.Generation(),
+			})
+			if extras.retiredSatisfactions == nil {
+				extras.retiredSatisfactions = make(map[string][]ownership.HookSatisfaction)
+			}
+			extras.retiredSatisfactions[retiredRel] = []ownership.HookSatisfaction{}
+			extras.pending = true
+		}
+		return snapshot, nil
+	}
+	existing, shapeErr := ownedJSONExistingEntries(retiredSpec, container)
+	if shapeErr != nil {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		return nil, nil
+	}
+	if incomplete {
+		extras.assertions = append(extras.assertions, dependencytxn.DesiredFile{
+			Path: retiredAbs, Expected: snapshot.generation, ExpectedMode: snapshot.mode,
+			Bytes: append([]byte(nil), snapshot.raw...), Mode: snapshot.mode,
+		})
+		return snapshot, nil
+	}
+	existingValues := make([]ownership.EntryValue, 0, len(existing))
+	for _, entry := range existing {
+		existingValues = append(existingValues, entry.value)
+	}
+	drift := ownership.Classify(retiredProof, existingValues, nil)
+	next, changed, deleteFile, removals, err := pruneRetiredNativeHookDocument(retiredDoc, container, retiredSpec, drift.Stale)
+	if err != nil {
+		extras.refused = true
+		extras.diagnostics = append(extras.diagnostics, nativeHookRetiredRefusal(key, retiredRel))
+		return nil, nil
+	}
+	remainingOwned := retiredRemainingOwnedEntries(retiredProof, drift.Stale)
+	if changed {
+		participant := dependencytxn.DesiredFile{Path: retiredAbs, Expected: snapshot.generation, ExpectedMode: snapshot.mode}
+		var nextBytes []byte
+		if deleteFile {
+			participant.Delete = true
+		} else {
+			participant.Bytes = next
+			participant.Mode = snapshot.mode
+			nextBytes = next
+		}
+		extras.participants = append(extras.participants, participant)
+		extras.backups = append(extras.backups, nativeHookBackup{rel: retiredRel, abs: retiredAbs})
+		for _, removal := range removals {
+			extras.hookChanges = append(extras.hookChanges, HookChange{
+				Target:       key.target,
+				MachineScope: key.machineScope,
+				File:         retiredAbs,
+				Event:        removal.event,
+				Matcher:      removal.matcher,
+				Before:       removal.before,
+			})
+		}
+		extras.retiredMutations = append(extras.retiredMutations, ownership.Mutation{
+			Rel:                   retiredRel,
+			AbsFile:               retiredAbs,
+			NextBytes:             nextBytes,
+			Entries:               remainingOwned,
+			Reason:                ownership.ReasonSync,
+			ExpectPriorGeneration: retiredProof.Generation(),
+		})
+		if extras.retiredSatisfactions == nil {
+			extras.retiredSatisfactions = make(map[string][]ownership.HookSatisfaction)
+		}
+		extras.retiredSatisfactions[retiredRel] = []ownership.HookSatisfaction{}
+		extras.pending = true
+	} else {
+		extras.assertions = append(extras.assertions, dependencytxn.DesiredFile{
+			Path: retiredAbs, Expected: snapshot.generation, ExpectedMode: snapshot.mode,
+			Bytes: append([]byte(nil), snapshot.raw...), Mode: snapshot.mode,
+		})
+		if retiredProof.OwnedCount() > len(remainingOwned) || len(retiredProof.HookSatisfactions()) > 0 {
+			extras.retiredMutations = append(extras.retiredMutations, ownership.Mutation{
+				Rel:                   retiredRel,
+				AbsFile:               retiredAbs,
+				NextBytes:             retiredRaw,
+				Entries:               remainingOwned,
+				Reason:                ownership.ReasonSync,
+				ExpectPriorGeneration: retiredProof.Generation(),
+			})
+			if extras.retiredSatisfactions == nil {
+				extras.retiredSatisfactions = make(map[string][]ownership.HookSatisfaction)
+			}
+			extras.retiredSatisfactions[retiredRel] = []ownership.HookSatisfaction{}
+			extras.pending = true
+		}
+	}
+	return snapshot, nil
+}
+
+func retiredNonHookOwnedEntries(proof ownership.Proof) []ownership.Entry {
+	var retained []ownership.Entry
+	for _, id := range proof.OwnedIDs() {
+		if id.Kind == ownership.KindHook {
+			continue
+		}
+		if entry, ok := proof.Entry(id); ok {
+			retained = append(retained, entry)
+		}
+	}
+	return retained
+}
+
+func retiredRemainingOwnedEntries(proof ownership.Proof, pruned []ownership.EntryID) []ownership.Entry {
+	prunedSet := make(map[ownership.EntryID]bool, len(pruned))
+	for _, id := range pruned {
+		prunedSet[id] = true
+	}
+	var retained []ownership.Entry
+	for _, id := range proof.OwnedIDs() {
+		if prunedSet[id] {
+			continue
+		}
+		if id.Kind == ownership.KindHook {
+			continue
+		}
+		if entry, ok := proof.Entry(id); ok {
+			retained = append(retained, entry)
+		}
+	}
+	return retained
+}
+
+func pruneRetiredNativeHookDocument(doc *jsonc.Document, container *jsonc.Node, file ownedJSONFileSpec, pruneIDs []ownership.EntryID) ([]byte, bool, bool, []nativeHookLegacyRemoval, error) {
+	if len(pruneIDs) == 0 {
+		return doc.Bytes(), false, false, nil, nil
+	}
+	pruneSet := make(map[ownership.EntryID]bool, len(pruneIDs))
+	for _, id := range pruneIDs {
+		if id.Kind == ownership.KindHook {
+			pruneSet[id] = true
+		}
+	}
+	if len(pruneSet) == 0 {
+		return doc.Bytes(), false, false, nil, nil
+	}
+	changed := false
+	var removals []nativeHookLegacyRemoval
+	for _, event := range container.Keys() {
+		eventNode, ok := container.Member(event)
+		if !ok || eventNode.Kind() != jsonc.KindArray {
+			continue
+		}
+		var retained [][]byte
+		eventChanged := false
+		for i := 0; i < eventNode.Len(); i++ {
+			element, _ := eventNode.Element(i)
+			canonical, err := jsonc.Canonicalize(file.rel, element.Raw())
+			if err != nil {
+				return nil, false, false, nil, err
+			}
+			normalized, err := canonicalOwnedJSON(canonical)
+			if err != nil {
+				return nil, false, false, nil, err
+			}
+			identity, err := ownedJSONHookIdentity(event, normalized)
+			if err != nil {
+				return nil, false, false, nil, err
+			}
+			id := ownership.EntryID{Kind: ownership.KindHook, Container: event, IdentityDigest: identity}
+			if pruneSet[id] {
+				removals = append(removals, nativeHookLegacyRemoval{event: event, matcher: hookReviewMatcher(normalized), before: normalized})
+				eventChanged = true
+				changed = true
+				continue
+			}
+			retained = append(retained, element.Raw())
+		}
+		if eventChanged {
+			if len(retained) == 0 {
+				doc.DeleteMember(container, event)
+			} else {
+				doc.SetElements(eventNode, retained)
+			}
+		}
+	}
+	if !changed {
+		return doc.Bytes(), false, false, nil, nil
+	}
+	root := doc.Root()
+	if file.container != "" && len(container.Keys()) == 0 {
+		doc.DeleteMember(root, file.container)
+	}
+	if len(root.Keys()) == 0 {
+		return nil, true, true, removals, nil
+	}
+	return doc.Bytes(), doc.Changed(), false, removals, nil
 }
 
 func nativeHookLegacyBoundaryAffected(key outputKey, repoRoot, failedPath string, work *ownedJSONAggregateWork) bool {
@@ -663,6 +976,12 @@ func nativeHookPortableProtectedPaths(key outputKey, repoRoot, outDir string) ma
 	for _, legacy := range declaration.file.Legacy {
 		add(path.Join(declaration.partition.Prefix, legacy), false)
 	}
+	for _, retired := range declaration.file.RetiredNative {
+		add(path.Join(declaration.partition.Prefix, retired.Path), false)
+	}
+	for _, forward := range declaration.file.ForwardNative {
+		add(path.Join(declaration.partition.Prefix, forward.Path), false)
+	}
 	for _, supportDir := range nativeHookLegacySupportDirs(key, declaration) {
 		add(supportDir, true)
 	}
@@ -683,6 +1002,12 @@ func nativeHookExcludedSupportFiles(key outputKey) map[string]bool {
 				}
 				for _, legacy := range file.Legacy {
 					excluded[path.Join(partition.Prefix, legacy)] = true
+				}
+				for _, retired := range file.RetiredNative {
+					excluded[path.Join(partition.Prefix, retired.Path)] = true
+				}
+				for _, forward := range file.ForwardNative {
+					excluded[path.Join(partition.Prefix, forward.Path)] = true
 				}
 			}
 		}
