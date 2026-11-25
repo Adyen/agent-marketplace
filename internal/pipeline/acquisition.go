@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 
@@ -60,6 +61,25 @@ var deployedLockOrder = []config.Source{config.Organization, config.UserPersonal
 
 func ReadDeployedLocks(ctx context.Context, intent config.Intent) (config.Evidence, error) {
 	return readDeployedLocks(ctx, intent, nil, false)
+}
+
+// ValidateProspectivePlaceLocks binds a staged machine lock against deployed
+// machine intent before that lock can be published.
+func ValidateProspectivePlaceLocks(ctx context.Context, intent config.Intent, lockOverlays map[string][]byte) ([]dependencytxn.ReadAssertion, error) {
+	intent.Layers[config.RepoCommitted] = config.LayerIntent{}
+	intent.Layers[config.RepoPersonal] = config.LayerIntent{}
+	evidence, err := readDeployedLocks(ctx, intent, lockOverlays, false)
+	if err != nil {
+		return nil, err
+	}
+	effective := config.Bind(intent, evidence)
+	if len(effective.Errors) > 0 {
+		return nil, errors.Join(effective.Errors...)
+	}
+	evidence.Reads = slices.DeleteFunc(slices.Clone(evidence.Reads), func(read config.ConfigRead) bool {
+		return read.Overlay
+	})
+	return deployedPolicyReadAssertions(intent, evidence)
 }
 
 func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[string][]byte, relockOrganization bool) (config.Evidence, error) {
