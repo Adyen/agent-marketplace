@@ -22,3 +22,7 @@ None.
 ## Impact
 
 Marketplace lock acquisition (`internal/pipeline`, `internal/marketplace`), named removal (`cmd/agent-marketplace` remove path and `internal/config` v4 editor), and their tests. No configuration, lock, or Marketplace API format change. Read-only modes keep reporting `v4.marketplace-lock-mismatch` for a selection with no lock record. Organization locks are never written implicitly.
+
+## Release note
+
+If an optional Marketplace selection disappears before it is locked, `sync` warns and installs the remaining selections, and `lock` records the remaining selections. You can remove the missing selection by name without editing the configuration by hand.
