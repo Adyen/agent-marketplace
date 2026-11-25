@@ -112,11 +112,6 @@ func (s *Store) verifyStateDirectory(parent *fsboundary.Dir, relative string) er
 	return nil
 }
 
-func (s *Store) writeMetadata(name string, data []byte) error {
-	_, err := s.writeObservedMetadata(name, data, nil)
-	return err
-}
-
 func (s *Store) writeObservedMetadata(name string, data []byte, expected *metadataPin) (pin metadataPin, err error) {
 	validate := func() error {
 		if expected != nil && expected.file.Inode != 0 {

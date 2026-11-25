@@ -360,7 +360,7 @@ func TestSearchFoldRefresh(t *testing.T) {
 	snapshot := func(t *testing.T, m Model, extra row) Model {
 		t.Helper()
 		return asModel(t, mustUpdate(m.Update(snapshotLoadedMsg{
-			generation: m.requests.active(requestSnapshot),
+			generation: m.requests.Active(requestSnapshot),
 			rows:       append(searchFoldRows(), extra),
 		})))
 	}

@@ -1,0 +1,303 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import type { SourceDescription } from './api/client'
+import GuiIcon, { type IconName } from './GuiIcon.vue'
+import { isMacPlatform } from './platform'
+import { sourceDisplayLabel, sourceLabel } from './source-label'
+import { flattenSourceGroups, groupSources } from './source-groups'
+
+export interface SidebarGroup {
+  id: string
+  title: string
+  count: number
+}
+
+export interface SidebarSource {
+  source: SourceDescription
+  organization: boolean
+}
+
+export type StatusFacet = 'attention' | 'required'
+
+const props = defineProps<{
+  groups: SidebarGroup[]
+  kindOptions: { id: string; label: string; count: number }[]
+  statusCounts: { attention: number; required: number }
+  selectedKind: string | null
+  selectedStatus: StatusFacet | null
+  mainView: 'resources' | 'diagnostics'
+  diagnosticsCount: number
+  diagnosticsTone: 'danger' | 'warning' | 'info' | null
+  sources: SidebarSource[]
+  rowSourceLabels: ReadonlyMap<string, string>
+  harnesses: string[]
+  targetsLoading: boolean
+}>()
+
+const emit = defineEmits<{
+  allResources: []
+  toggleKind: [kind: string]
+  toggleStatus: [status: StatusFacet]
+  selectGroup: [id: string]
+  openSources: []
+  selectSource: [id: string]
+  manageSource: [id: string]
+  openSettings: []
+  showDiagnostics: []
+  quit: []
+}>()
+
+const sourcesButton = ref<HTMLButtonElement | null>(null)
+const settingsButton = ref<HTMLButtonElement | null>(null)
+const foldedSourceGroups = ref(new Set<string>())
+const groupsExpanded = ref(window.innerHeight >= 720)
+
+defineExpose({
+  focusSources: () => sourcesButton.value?.focus(),
+  focusSettings: () => settingsButton.value?.focus(),
+})
+
+const visibleKindOptions = computed(() =>
+  props.kindOptions.filter((option) => option.count > 0 || option.id === props.selectedKind),
+)
+
+const harnessSummary = computed(() => {
+  const shown = props.harnesses.slice(0, 2).join(' · ')
+  const hidden = props.harnesses.length - 2
+  return hidden > 0 ? `${shown} +${hidden}` : shown
+})
+
+const sourceIcons: Record<SourceDescription['kind'], IconName> = {
+  directory: 'folder',
+  git: 'branch',
+  marketplace: 'globe',
+}
+
+const sourceEntries = computed(() =>
+  flattenSourceGroups(
+    groupSources(
+      props.sources.map(({ source, organization }) => ({ source, layer: organization ? 'organization' : 'user' })),
+    ),
+    foldedSourceGroups.value,
+  ),
+)
+
+function sourceName(source: SourceDescription): string {
+  return sourceDisplayLabel(source, source.rowSourceId === '' ? '' : props.rowSourceLabels.get(source.rowSourceId))
+}
+
+function toggleSourceGroup(key: string) {
+  foldedSourceGroups.value.has(key) ? foldedSourceGroups.value.delete(key) : foldedSourceGroups.value.add(key)
+}
+
+function groupTone(group: SidebarGroup): 'warning' | 'danger' | null {
+  if (group.count === 0) {
+    return null
+  }
+  switch (group.id) {
+    case 'attention':
+    case 'malformed':
+    case 'stale':
+    case 'pending':
+      return 'warning'
+    case 'broken':
+      return 'danger'
+    default:
+      return null
+  }
+}
+</script>
+
+<template>
+  <aside
+    class="gui-sidebar"
+    aria-label="Navigation"
+    :class="{ 'gui-sidebar--mac': isMacPlatform }"
+  >
+    <div class="gui-sidebar__top" />
+
+    <nav class="gui-sidebar__nav">
+      <button
+        type="button"
+        class="gui-nav-row"
+        aria-label="All resources"
+        :aria-current="mainView === 'resources' && selectedStatus == null && selectedKind == null ? 'page' : undefined"
+        @click="emit('allResources')"
+      >
+        <GuiIcon name="folder" />
+        <span class="gui-nav-row__label">Resources</span>
+      </button>
+      <button
+        type="button"
+        class="gui-nav-row"
+        :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'attention' }"
+        aria-label="Needs attention"
+        :aria-pressed="selectedStatus === 'attention'"
+        @click="emit('toggleStatus', 'attention')"
+      >
+        <GuiIcon name="warning" />
+        <span class="gui-nav-row__label">Needs attention</span>
+        <span class="gui-nav-row__count" :class="statusCounts.attention > 0 ? 'gui-nav-row__count--warning' : ''">{{ statusCounts.attention }}</span>
+      </button>
+      <button
+        type="button"
+        class="gui-nav-row"
+        :class="{ 'gui-sidebar__facet-button--selected': selectedStatus === 'required' }"
+        aria-label="Required by org"
+        :aria-pressed="selectedStatus === 'required'"
+        @click="emit('toggleStatus', 'required')"
+      >
+        <GuiIcon name="lock" />
+        <span class="gui-nav-row__label">Required by org</span>
+        <span class="gui-nav-row__count">{{ statusCounts.required }}</span>
+      </button>
+      <button
+        type="button"
+        class="gui-nav-row"
+        aria-label="Show diagnostics"
+        :aria-current="mainView === 'diagnostics' ? 'page' : undefined"
+        @click="emit('showDiagnostics')"
+      >
+        <GuiIcon :name="diagnosticsCount > 0 ? 'warning' : 'info'" />
+        <span class="gui-nav-row__label">Diagnostics</span>
+        <span class="gui-nav-row__count" :class="diagnosticsTone ? `gui-nav-row__count--${diagnosticsTone}` : ''">{{ diagnosticsCount }}</span>
+      </button>
+    </nav>
+
+    <div class="gui-sidebar__browse" aria-label="Browse kinds and groups">
+      <section v-if="visibleKindOptions.length > 0" class="gui-sidebar__section gui-sidebar__kinds" aria-label="Kind">
+        <h2 class="gui-caps">Kind</h2>
+        <ul class="gui-sidebar__list">
+          <li v-for="option in visibleKindOptions" :key="option.id">
+            <button
+              type="button"
+              class="gui-nav-row gui-nav-row--compact"
+              :class="{ 'gui-sidebar__facet-button--selected': selectedKind === option.id }"
+              :aria-label="`Kind facet ${option.label}`"
+              :aria-pressed="selectedKind === option.id"
+              @click="emit('toggleKind', option.id)"
+            >
+              <span class="gui-nav-row__label">{{ option.label }}</span>
+              <span class="gui-nav-row__count">{{ option.count }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <section v-if="groups.length > 0" class="gui-sidebar__section gui-sidebar__groups" aria-label="Groups">
+        <h2 class="gui-caps">
+          <button
+            type="button"
+            class="gui-sidebar__groups-toggle"
+            :aria-expanded="groupsExpanded"
+            @click="groupsExpanded = !groupsExpanded"
+          >Groups</button>
+        </h2>
+        <ul v-show="groupsExpanded" class="gui-sidebar__list">
+          <li v-for="group in groups" :key="group.id">
+            <button
+              type="button"
+              class="gui-nav-row gui-nav-row--compact"
+              :aria-label="`Show ${group.title} group`"
+              @click="emit('selectGroup', group.id)"
+            >
+              <span v-if="groupTone(group)" :class="`gui-dot gui-dot--${groupTone(group)}`" aria-hidden="true" />
+              <span class="gui-nav-row__label">{{ group.title }}</span>
+              <span class="gui-nav-row__count">{{ group.count }}</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="gui-sidebar__section gui-sidebar__section--scroll" aria-label="Sources list">
+      <div class="gui-sidebar__heading">
+        <h2 class="gui-caps">Sources</h2>
+        <button
+          ref="sourcesButton"
+          type="button"
+          class="gui-icon-button"
+          aria-label="Sources"
+          @click="emit('openSources')"
+        ><GuiIcon name="plus" /></button>
+      </div>
+      <ul class="gui-sidebar__list gui-sidebar__list--scroll">
+        <li v-for="entry in sourceEntries" :key="entry.key" :class="{ 'gui-sidebar__source-child': entry.type === 'source' && entry.groupKey != null }">
+          <button
+            v-if="entry.type === 'group'"
+            type="button"
+            class="gui-nav-row gui-nav-row--compact"
+            :aria-label="`Source group ${sourceLabel(entry.entry.sources[0])}`"
+            :aria-expanded="!foldedSourceGroups.has(entry.key)"
+            @click="toggleSourceGroup(entry.key)"
+            @keydown.enter.prevent="toggleSourceGroup(entry.key)"
+            @keydown.space.prevent="toggleSourceGroup(entry.key)"
+          >
+            <GuiIcon :name="sourceIcons[entry.entry.kind]" />
+            <span class="gui-source-row__location">{{ sourceLabel(entry.entry.sources[0]) }}</span>
+            <span class="gui-nav-row__count">{{ entry.entry.sources.length }}</span>
+            <span v-if="entry.entry.layer === 'organization'" class="gui-tag">Org</span>
+          </button>
+          <div v-else class="gui-sidebar__source-actions">
+            <UTooltip :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
+              <button
+                type="button"
+                class="gui-nav-row gui-nav-row--compact gui-source-row"
+                :data-source-id="entry.source.id"
+                :aria-label="
+                  entry.groupKey == null
+                    ? `Browse source ${entry.source.location}`
+                    : `Browse source ${entry.source.location} ${entry.source.path || '/'}`
+                "
+                @click="emit('selectSource', entry.source.id)"
+              >
+                <GuiIcon :name="sourceIcons[entry.source.kind]" />
+                <span class="gui-source-row__location">
+                  {{ entry.groupKey == null ? sourceName(entry.source) : entry.source.path || '/' }}
+                  <template v-if="entry.groupKey != null && entry.source.ref"> · {{ entry.source.ref }}</template>
+                </span>
+                <span v-if="entry.layer === 'organization'" class="gui-tag">Org</span>
+              </button>
+            </UTooltip>
+            <button
+              type="button"
+              class="gui-icon-button gui-source-row__manage"
+              :data-source-id="entry.source.id"
+              :aria-label="
+                entry.groupKey == null
+                  ? `Manage source ${entry.source.location}`
+                  : `Manage source ${entry.source.location} ${entry.source.path || '/'}`
+              "
+              @click="emit('manageSource', entry.source.id)"
+            ><GuiIcon name="gear" /></button>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <footer class="gui-sidebar__footer">
+      <div class="gui-sidebar__footer-row">
+        <p class="gui-sidebar__harnesses mono">
+          <template v-if="harnessSummary !== ''">
+            <span class="gui-dot" aria-hidden="true" />
+            <span class="gui-sidebar__harnesses-prefix">targets</span> {{ harnessSummary }}
+          </template>
+          <template v-else-if="targetsLoading">Loading targets…</template>
+          <template v-else>No harnesses</template>
+        </p>
+        <div class="gui-sidebar__footer-actions">
+          <button
+            ref="settingsButton"
+            type="button"
+            class="gui-icon-button"
+            aria-label="Settings"
+            @click="emit('openSettings')"
+          ><GuiIcon name="gear" /></button>
+          <button type="button" class="gui-icon-button" aria-label="Quit" @click="emit('quit')">
+            <GuiIcon name="quit" />
+          </button>
+        </div>
+      </div>
+    </footer>
+  </aside>
+</template>

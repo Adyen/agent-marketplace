@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -120,7 +121,7 @@ func newStatusCmd() *cobra.Command {
 var runStatusMaterialize = materialize.Run
 
 func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
-	if err := prepareDependencyTransactions(ctx, true); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, true); err != nil {
 		return err
 	}
 	repoRoot := config.FindRepoRoot()
@@ -143,6 +144,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			// local cache, so the desired set matches sync --check without
 			// downloading artifacts or writing files.
 			MarketplaceArtifactsFromCache: true,
+			ReportDeclaredHarnesses:       true,
 		},
 		DryRun:                         runStatusMaterialize,
 		SkipMaterializeOnResolveErrors: true,
@@ -276,12 +278,33 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
+	reportTargetHarnesses := targetHarnesses
+	reportTargetSource := result.TargetHarnessSource
+	reportMachineTargets := machineTargets
+	reportMachineSource := result.MachineTargetHarnessSource
+	if len(targetHarnesses) == 0 && len(result.DeclaredTargetHarnesses) > 0 {
+		reportTargetHarnesses = sortedTargetNames(result.DeclaredTargetHarnesses)
+		reportTargetSource = result.DeclaredTargetHarnessSource
+		reportMachineTargets = sortedTargetNames(result.DeclaredMachineTargetHarnesses)
+		reportMachineSource = result.DeclaredMachineTargetSource
+	}
 
 	var statusWarnings []error
 	for _, issue := range inspection.Issues {
 		if issue.Severity == pipeline.IssueWarning {
 			statusWarnings = append(statusWarnings, issue.Err)
 		}
+	}
+	for _, pin := range result.MarketplaceStatuses {
+		if !pin.RemovedUpstream {
+			continue
+		}
+		statusWarnings = append(statusWarnings, marketplace.RemovedMarketplacePinWarning(
+			config.MarketplaceEntry{URL: pin.URL, Alias: pin.Alias, Required: pin.Required},
+			config.MarketplaceResourcePin{
+				RegistryID: pin.RegistryID, Kind: pin.Kind, Name: pin.Name, InstalledName: pin.InstalledName,
+			},
+		))
 	}
 
 	if err := writeStatusSections(out, statusView{
@@ -297,10 +320,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		errorRows:           errorRows,
 		dryRunReport:        dryRunReport,
 		cacheUnknown:        pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors),
-		targetHarnesses:     targetHarnesses,
-		targetSource:        result.TargetHarnessSource,
-		machineTargets:      machineTargets,
-		machineTargetSource: result.MachineTargetHarnessSource,
+		targetHarnesses:     reportTargetHarnesses,
+		targetSource:        reportTargetSource,
+		machineTargets:      reportMachineTargets,
+		machineTargetSource: reportMachineSource,
 		harnessTargets:      harnessTargets,
 		lockMetadata:        result.LockMetadata,
 		marketplaceStatuses: result.MarketplaceStatuses,
@@ -363,9 +386,9 @@ const staleCacheThreshold = 24 * time.Hour
 
 func applyExactLockFreshness(rows []statusRow, metadata []pipeline.LockMetadata) {
 	for i := range rows {
-		rowURL, rowErr := canonicalRegistryURL(rows[i].Registry)
+		rowURL, rowErr := lifecycle.CanonicalRegistryURL(rows[i].Registry)
 		for _, locked := range metadata {
-			lockedURL, lockedErr := canonicalRegistryURL(locked.URL)
+			lockedURL, lockedErr := lifecycle.CanonicalRegistryURL(locked.URL)
 			if rows[i].Source == locked.Source && rows[i].Ref == locked.Ref && rowErr == nil && lockedErr == nil && rowURL == lockedURL {
 				rows[i].Cache = "locked: " + locked.Commit
 				break

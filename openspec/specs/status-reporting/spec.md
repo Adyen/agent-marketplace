@@ -91,3 +91,53 @@ The `status` command SHALL include Marketplace selections from every configurati
 - **WHEN** `status` runs for a configuration with Marketplace selections
 - **THEN** it MUST NOT download resource artifacts from the Marketplace endpoint
 - **AND** it MUST leave configuration and lock files byte-identical
+
+### Requirement: Compound status reads in plain words
+
+A resource status that combines a state with a qualifier SHALL read "<State>, <qualifier in plain words>" with lower-case words and no parentheses or semicolons. The qualifier SHALL name the reason in plain words, for example "waiting for sync", "waiting for verification", or "by org".
+
+#### Scenario: Compound status reads in plain words
+
+- **WHEN** a resource is enabled but its sync is pending, is required by an organization, or is awaiting verification
+- **THEN** its status MUST read "enabled, waiting for sync", "required by org", or "<state>, waiting for verification" respectively
+- **AND** no status MUST contain parentheses or a semicolon
+### Requirement: Status keeps the configured harness set when inspection fails
+
+When the configuration loads successfully but acquisition-lock or Marketplace
+inspection fails, `status` SHALL still show the effective harness set and its
+source in TARGET HARNESS SET and SHALL NOT suggest adding harnesses when any
+loaded layer declares them. The inspection error and exit status SHALL be
+unchanged.
+
+#### Scenario: Lock-required error keeps the declared harnesses
+
+- **WHEN** the user configuration declares `harnesses: [factory]`, a repository configuration selects a Marketplace resource, no repository acquisition lock exists, and `status` runs
+- **THEN** `status` MUST still exit nonzero with `v4.marketplace-lock-required`
+- **AND** TARGET HARNESS SET MUST show `factory` with source `USER`
+- **AND** the output MUST NOT contain `add harnesses to ~/.agents/config.yaml`
+
+### Requirement: Status notes Marketplace resources removed upstream
+
+When `status` queries a Marketplace endpoint and a selected pin's exact revision
+lookup succeeds but its latest-revision lookup returns HTTP 404, `status` SHALL
+note the removal on the pin and report a warning with the remedy. The note
+SHALL NOT change the pin's STATE, its update availability, or the exit status of
+`status`. Cached-only inspection, which makes no endpoint request, SHALL NOT add
+the note.
+
+#### Scenario: Removed pin keeps its state and gains a note
+
+- **WHEN** a synced Marketplace pin's resource is removed upstream so that its latest-revision lookup returns 404 while its exact revision is still served, and `status` runs online
+- **THEN** the pin's STATE MUST stay `current` and its DETAIL MUST contain `removed from the Marketplace; pinned revision kept`
+- **AND** `status` MUST report a warning naming the pin's resource coordinate and the `agent-marketplace remove <installed name>` remedy
+- **AND** `status` MUST exit 0 and leave configuration and lock files byte-identical
+
+#### Scenario: Required removed pin names its required entry in status
+
+- **WHEN** the removed pin is required
+- **THEN** the warning MUST name the configuration entry that marks it required and MUST NOT suggest `agent-marketplace remove`
+
+#### Scenario: Cached-only status adds no removal note
+
+- **WHEN** the same pin is inspected in a mode that makes no Marketplace request
+- **THEN** its DETAIL MUST NOT contain the removal note

@@ -26,6 +26,8 @@ const (
 	leafOpenFlags = unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
 )
 
+var openat = unix.Openat
+
 // Dir is a captured directory: an open descriptor plus the identity and
 // canonical path recorded at capture time. Every operation on a Dir is
 // relative to the descriptor, so renaming or replacing the directory's
@@ -120,7 +122,7 @@ func splitRelative(rel string) ([]string, error) {
 // following symlinks.
 func openComponent(parent *os.File, name string) (*os.File, error) {
 	path := filepath.Join(parent.Name(), name)
-	fd, err := unix.Openat(int(parent.Fd()), name, componentOpenFlags, 0)
+	fd, err := openat(int(parent.Fd()), name, componentOpenFlags, 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, unix.ELOOP), errors.Is(err, unix.ENOTDIR):
@@ -150,7 +152,7 @@ func unsafeComponentError(parent *os.File, name, path string) error {
 // regular file.
 func openLeaf(parent *os.File, name string) (*os.File, Identity, error) {
 	path := filepath.Join(parent.Name(), name)
-	fd, err := unix.Openat(int(parent.Fd()), name, leafOpenFlags, 0)
+	fd, err := openat(int(parent.Fd()), name, leafOpenFlags, 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, unix.ELOOP):

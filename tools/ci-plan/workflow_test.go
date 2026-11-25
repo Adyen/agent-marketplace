@@ -558,44 +558,84 @@ func TestMergeQueueTriggers(t *testing.T) {
 	})
 }
 
-func TestBenchmarkCondition(t *testing.T) {
-	doc := loadCIWorkflow(t)
-
-	jobs := getMap(t, doc, "jobs")
-	benchmark := getMap(t, jobs, "benchmark")
-	cond := benchmark["if"].(string)
-
-	if !strings.Contains(cond, "github.event_name == 'pull_request'") {
-		t.Errorf("benchmark condition missing pull_request event guard: %s", cond)
+func findStep(t *testing.T, doc map[string]any, jobName, stepName string) map[string]any {
+	t.Helper()
+	steps := getSlice(t, getMap(t, getMap(t, doc, "jobs"), jobName), "steps")
+	index := slices.IndexFunc(steps, func(step any) bool { return stepMap(t, step)["name"] == stepName })
+	if index < 0 {
+		t.Fatalf("step %q not found in job %q", stepName, jobName)
 	}
-	if !strings.Contains(cond, "needs.changes.outputs.benchmark == 'true'") {
-		t.Errorf("benchmark condition missing path output: %s", cond)
-	}
-	if !strings.Contains(cond, "contains(github.event.pull_request.labels.*.name, 'run-benchmarks')") {
-		t.Errorf("benchmark condition missing run-benchmarks label: %s", cond)
-	}
-	if !strings.Contains(cond, " || ") {
-		t.Errorf("benchmark condition missing OR between path output and label: %s", cond)
-	}
+	return stepMap(t, steps[index])
 }
 
 func findStepRun(t *testing.T, doc map[string]any, jobName, stepName string) string {
 	t.Helper()
-	jobs := getMap(t, doc, "jobs")
-	job := getMap(t, jobs, jobName)
-	steps := getSlice(t, job, "steps")
-	for _, step := range steps {
-		m := stepMap(t, step)
-		if n, ok := m["name"].(string); ok && n == stepName {
-			run, ok := m["run"].(string)
-			if !ok {
-				t.Fatalf("step %q has no run string", stepName)
-			}
-			return run
+	return findStep(t, doc, jobName, stepName)["run"].(string)
+}
+
+// spec: benchmark-reporting/documentation-only-pr-skips-unless-opted-in
+func TestBenchmarkCondition(t *testing.T) {
+	benchmark := getMap(t, getMap(t, loadWorkflow(t, "benchmark.yml"), "jobs"), "benchmark")
+	if got, want := benchmark["if"], "github.event_name == 'pull_request' && (needs.changes.outputs.benchmark == 'true' || contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))"; got != want {
+		t.Errorf("benchmark condition = %v, want %v", got, want)
+	}
+}
+
+// spec: benchmark-reporting/eligible-pr-starts-independent-benchmark-workflow
+// spec: benchmark-reporting/failed-required-ci-can-be-retried-while-benchmark-runs
+func TestBenchmarkWorkflowIndependence(t *testing.T) {
+	ci := loadCIWorkflow(t)
+	ciJobs := getMap(t, ci, "jobs")
+	if _, ok := ciJobs["benchmark"]; ok {
+		t.Fatal("CI still contains the benchmark job, coupling informational benchmarks to required CI")
+	}
+	for id, want := range map[string]string{
+		"build":              "Build",
+		"test":               "Test",
+		"lint":               "Lint",
+		"govulncheck":        "govulncheck",
+		"tui-qa-required":    "TUI QA Driver",
+		"e2e-gates-required": "E2E Gates",
+		"specs":              "Specs",
+	} {
+		if got := getMap(t, ciJobs, id)["name"]; got != want {
+			t.Errorf("required CI job %q reports %v, want %q", id, got, want)
 		}
 	}
-	t.Fatalf("step %q not found in job %q", stepName, jobName)
-	return ""
+
+	benchmark := loadWorkflow(t, "benchmark.yml")
+	if benchmark["name"] != "Benchmark" {
+		t.Fatal("workflow name is not Benchmark")
+	}
+	on := getMap(t, benchmark, "on")
+	if len(on) != 1 {
+		t.Fatalf("Benchmark has non-pull-request triggers: %v", on)
+	}
+	pr := getMap(t, on, "pull_request")
+	if !slices.Equal(toStringSlice(t, getSlice(t, pr, "types")), []string{"opened", "synchronize", "reopened", "labeled"}) {
+		t.Fatalf("Benchmark pull_request types = %v", pr["types"])
+	}
+	concurrency := getMap(t, benchmark, "concurrency")
+	if concurrency["group"] != "${{ github.workflow }}-pr-${{ github.event.pull_request.number }}" || concurrency["cancel-in-progress"] != true {
+		t.Fatalf("Benchmark concurrency = %v", concurrency)
+	}
+	if permissions, ok := benchmark["permissions"].(map[string]any); !ok || len(permissions) != 0 {
+		t.Fatalf("Benchmark workflow permissions must be empty; got %v", benchmark["permissions"])
+	}
+
+	jobs := getMap(t, benchmark, "jobs")
+	if len(jobs) != 2 || jobs["changes"] == nil || jobs["benchmark"] == nil {
+		t.Fatalf("Benchmark jobs = %v, want only changes and benchmark", jobs)
+	}
+	changes := getMap(t, jobs, "changes")
+	outputs := getMap(t, changes, "outputs")
+	if changes["name"] != "Benchmark Changes" || len(outputs) != 1 || outputs["benchmark"] != "${{ steps.changes.outputs.benchmark }}" {
+		t.Fatalf("Benchmark changes job name or outputs are invalid: %v, %v", changes["name"], outputs)
+	}
+	planner := findStep(t, benchmark, "changes", "Detect relevant changes")
+	if env := getMap(t, planner, "env"); env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" || env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" {
+		t.Fatalf("Benchmark planner SHA bindings = %v", env)
+	}
 }
 
 func TestPlannerInvocation(t *testing.T) {
@@ -607,6 +647,7 @@ func TestPlannerInvocation(t *testing.T) {
 	}{
 		{"ci.yml", "changes", "Detect relevant changes"},
 		{"harness-compatibility.yml", "plan", "Detect relevant changes"},
+		{"benchmark.yml", "changes", "Detect relevant changes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -615,12 +656,240 @@ func TestPlannerInvocation(t *testing.T) {
 			if !strings.Contains(run, want) {
 				t.Errorf("planner step in %s does not contain exact invocation %q:\n%s", tc.file, want, run)
 			}
+			if tc.file == "benchmark.yml" && !strings.Contains(run, `>> "$GITHUB_OUTPUT"`) {
+				t.Errorf("benchmark planner does not append the output to GITHUB_OUTPUT:\n%s", run)
+			}
 		})
 	}
 }
 
+// spec: gui-distribution/linux-package-installs-a-launchable-desktop-application
+// spec: gui-distribution/published-app-launches-without-a-signing-identity
+// spec: gui-distribution/ci-re-signs-copies-of-the-app-and-rpms
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+// spec: gui-shell/user-updates-the-app-in-place
+func TestGUIReleaseWorkflowBuildsAndChecksPackages(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	jobs := getMap(t, doc, "jobs")
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		if _, ok := jobs[id]; !ok {
+			t.Errorf("GUI release workflow is missing job %q", id)
+		}
+	}
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		job := getMap(t, jobs, id)
+		if condition, _ := job["if"].(string); !strings.Contains(condition, "needs.changes.outputs.gui_distribution") && !strings.Contains(condition, "github.ref") {
+			t.Errorf("job %s is not selected for GUI changes or release tags: %q", id, condition)
+		}
+	}
+	macos := getMap(t, jobs, "gui-macos-package")
+	if macos["runs-on"] != "macos-latest" {
+		t.Errorf("macOS runner = %v, want macos-latest", macos["runs-on"])
+	}
+	macosRun := findStepRun(t, doc, "gui-macos-package", "Smoke test packaged app")
+	for _, required := range []string{"codesign --verify", "Agent Marketplace.app", "Contents/MacOS/agent-marketplace-gui"} {
+		if !strings.Contains(macosRun, required) {
+			t.Errorf("macOS smoke test lacks %q:\n%s", required, macosRun)
+		}
+	}
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"codesign --force --options runtime", "-s -", "Signature=adhoc", "flags=.*runtime"} {
+		if !strings.Contains(string(makefile), required) {
+			t.Errorf("macOS package target lacks %q", required)
+		}
+	}
+	linux := getMap(t, jobs, "gui-linux-package")
+	matrix := getMap(t, getMap(t, linux, "strategy"), "matrix")
+	var runners []string
+	for _, raw := range getSlice(t, matrix, "include") {
+		runners = append(runners, stepMap(t, raw)["runner"].(string))
+	}
+	if !slices.Equal(runners, []string{"ubuntu-22.04", "ubuntu-22.04-arm"}) {
+		t.Errorf("Linux runners = %v, want ubuntu-22.04 and ubuntu-22.04-arm", runners)
+	}
+	smoke := getMap(t, jobs, "gui-linux-smoke")
+	if smoke["runs-on"] != "ubuntu-latest" {
+		t.Errorf("Linux smoke container host = %v, want ubuntu-latest", smoke["runs-on"])
+	}
+	smokeMatrix := getMap(t, getMap(t, smoke, "strategy"), "matrix")
+	var images []string
+	for _, raw := range getSlice(t, smokeMatrix, "include") {
+		images = append(images, stepMap(t, raw)["image"].(string))
+	}
+	if !slices.Equal(images, []string{"fedora:latest", "ubuntu:22.04", "ubuntu:24.04", "debian:12-slim"}) {
+		t.Errorf("Linux smoke images = %v", images)
+	}
+	linuxRun := findStepRun(t, doc, "gui-linux-smoke", "Install and launch package")
+	linuxStep := stepMap(t, getSlice(t, smoke, "steps")[2])
+	if env := getMap(t, linuxStep, "env"); env["IMAGE"] != "${{ matrix.image }}" {
+		t.Errorf("Linux smoke container does not use the distribution matrix image: %v", env)
+	}
+	if !strings.Contains(linuxRun, "docker run") || !strings.Contains(linuxRun, "scripts/gui-linux-smoke.sh") {
+		t.Fatalf("Linux smoke job does not invoke its tested script:\n%s", linuxRun)
+	}
+	linuxScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-linux-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"dnf", "apt-get", "xvfb-run", "agent-marketplace-gui"} {
+		if !strings.Contains(string(linuxScript), required) {
+			t.Errorf("Linux smoke script lacks %q:\n%s", required, linuxScript)
+		}
+	}
+	signability := findStepRun(t, doc, "gui-signability", "Re-sign artifact copies")
+	if !strings.Contains(signability, "scripts/gui-signability.sh") {
+		t.Fatalf("signability job does not invoke its tested script:\n%s", signability)
+	}
+	signabilityScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-signability.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"cp -R", "codesign --verify --strict --deep", "rpm --define", "--addsign", "-K \"$copy\"", "verify-digests"} {
+		if !strings.Contains(string(signabilityScript), required) {
+			t.Errorf("signability script lacks %q:\n%s", required, signabilityScript)
+		}
+	}
+	updateRun := findStepRun(t, doc, "gui-update-e2e", "Update packaged app through local release")
+	if !strings.Contains(updateRun, "scripts/gui-update-e2e.sh") {
+		t.Fatalf("macOS update job does not run its end-to-end script:\n%s", updateRun)
+	}
+	updateScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-update-e2e.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"GUI_BUILD_TAGS=desktop,production,e2e", "AGENT_MARKETPLACE_E2E_RELEASE_ENDPOINT", `api '{"action":"start"}' update`, "/__e2e/bootstrap", "v0.0.2"} {
+		if !strings.Contains(string(updateScript), required) {
+			t.Errorf("macOS update test script lacks %q", required)
+		}
+	}
+}
+
+// spec: gui-distribution/tagged-release-publishes-the-gui-package-matrix
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+// spec: gui-distribution/adding-gui-packages-does-not-change-cli-artifacts
+func TestGUIReleaseJobWaitsForAndPublishesTheCompleteMatrix(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	jobs := getMap(t, doc, "jobs")
+	release := getMap(t, jobs, "release")
+	needs := toStringSlice(t, getSlice(t, release, "needs"))
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		if !slices.Contains(needs, id) {
+			t.Errorf("release job does not depend on %s: %v", id, needs)
+		}
+	}
+	run := findStepRun(t, doc, "release", "Assemble and verify GUI assets")
+	for _, required := range []string{"SHA256SUMS", "check-matrix", "compare-cli"} {
+		if !strings.Contains(run, required) {
+			t.Errorf("release assembly lacks %q:\n%s", required, run)
+		}
+	}
+	foundDownload := false
+	for _, raw := range getSlice(t, release, "steps") {
+		step := stepMap(t, raw)
+		if step["uses"] == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
+			foundDownload = true
+		}
+	}
+	if !foundDownload {
+		t.Error("release job does not download GUI workflow artifacts")
+	}
+}
+
+// spec: gui-distribution/workflows-contain-no-signing-material
+func TestGUIReleaseWorkflowAuditsSigningMaterial(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	run := findStepRun(t, doc, "gui-matrix-complete", "Audit signing configuration")
+	if !strings.Contains(run, "go run ./tools/gui-release-check audit-signing") {
+		t.Fatalf("workflow does not run the signing-material audit:\n%s", run)
+	}
+}
+
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+func TestGUIReleasePathsSelectPackageJobs(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "gui-macos-package")
+	condition, _ := job["if"].(string)
+	if !strings.Contains(condition, "needs.changes.outputs.gui_distribution == 'true'") ||
+		!strings.Contains(condition, "github.event_name == 'pull_request'") ||
+		!strings.Contains(condition, "startsWith(github.ref, 'refs/tags/')") {
+		t.Fatalf("package job must run for selected PRs and release tags: %q", condition)
+	}
+}
+
+func TestGUINativeEventsJobSelectedByLocalAPI(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	if got := getMap(t, getMap(t, getMap(t, doc, "jobs"), "changes"), "outputs")["gui_native_events"]; got != "${{ steps.changes.outputs.gui_native_events }}" {
+		t.Fatalf("changes job does not export gui_native_events: %v", got)
+	}
+	condition, _ := getMap(t, getMap(t, doc, "jobs"), "gui-linux-native-events")["if"].(string)
+	if !strings.Contains(condition, "needs.changes.outputs.gui_native_events == 'true'") ||
+		!strings.Contains(condition, "startsWith(github.ref, 'refs/tags/')") {
+		t.Fatalf("native event job must run for local API/GUI changes and release tags: %q", condition)
+	}
+}
+
+// spec: benchmark-reporting/exact-base-and-head-are-benchmarked-serially
+func TestBenchmarkSerialComparison(t *testing.T) {
+	doc := loadWorkflow(t, "benchmark.yml")
+	benchmark := getMap(t, getMap(t, doc, "jobs"), "benchmark")
+	steps := getSlice(t, benchmark, "steps")
+	baseCheckout := findStep(t, doc, "benchmark", "Checkout base")
+	headCheckout := findStep(t, doc, "benchmark", "Checkout pull request")
+	if got := getMap(t, baseCheckout, "with")["ref"]; got != "${{ github.event.pull_request.base.sha }}" {
+		t.Fatalf("base checkout ref = %v", got)
+	}
+	if got := getMap(t, headCheckout, "with")["ref"]; got != "${{ github.event.pull_request.head.sha }}" {
+		t.Fatalf("head checkout ref = %v", got)
+	}
+	for _, name := range []string{"Benchmark base", "Benchmark pull request"} {
+		if run := findStepRun(t, doc, "benchmark", name); !strings.Contains(run, "-benchtime=200ms -count=6 -benchmem") {
+			t.Errorf("%s sample flags changed: %s", name, run)
+		}
+	}
+	report := findStep(t, doc, "benchmark", "Build benchmark report")
+	reportEnv := getMap(t, report, "env")
+	if reportEnv["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" || reportEnv["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" {
+		t.Errorf("report SHA bindings = %v", reportEnv)
+	}
+	reportRun := report["run"].(string)
+	if !strings.Contains(reportRun, "benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt") || !strings.Contains(reportRun, "go run ./tools/benchmark-report ../benchmark-base-clean.txt ../benchmark-head-clean.txt") {
+		t.Errorf("report generation changed: %v", report["run"])
+	}
+	artifact := findStep(t, doc, "benchmark", "Upload benchmark evidence")
+	artifactWith := getMap(t, artifact, "with")
+	if artifactWith["name"] != "tui-performance-evidence" || artifactWith["path"] != "benchmark-*.txt\nbenchmark-comment.md\ntui-*.pprof\ntui-*.trace\n" {
+		t.Errorf("artifact changed: %v", artifactWith)
+	}
+	index := func(name string) int {
+		return slices.IndexFunc(steps, func(step any) bool { return stepMap(t, step)["name"] == name })
+	}
+	if index("Benchmark base") >= index("Benchmark pull request") || index("Benchmark pull request") >= index("Build benchmark report") || index("Build benchmark report") >= index("Upload benchmark evidence") {
+		t.Fatal("base/head comparison, report, and artifact are not serial in one job")
+	}
+}
+
+// spec: benchmark-reporting/fork-pr-does-not-attempt-a-privileged-comment
+func TestBenchmarkForkCommentBoundary(t *testing.T) {
+	doc := loadWorkflow(t, "benchmark.yml")
+	jobs := getMap(t, doc, "jobs")
+	changesPermissions := getMap(t, getMap(t, jobs, "changes"), "permissions")
+	if len(changesPermissions) != 1 || changesPermissions["contents"] != "read" {
+		t.Fatalf("planner permissions = %v, want contents: read", changesPermissions)
+	}
+	benchmarkPermissions := getMap(t, getMap(t, jobs, "benchmark"), "permissions")
+	if len(benchmarkPermissions) != 2 || benchmarkPermissions["contents"] != "read" || benchmarkPermissions["pull-requests"] != "write" {
+		t.Fatalf("benchmark permissions = %v, want contents: read and pull-requests: write", benchmarkPermissions)
+	}
+	comment := findStep(t, doc, "benchmark", "Update pull request comment")
+	if comment["if"] != "github.event.pull_request.head.repo.full_name == github.repository" {
+		t.Fatalf("comment guard = %v", comment["if"])
+	}
+}
+
 func TestBenchmarkPackagesParity(t *testing.T) {
-	doc := loadWorkflow(t, "ci.yml")
+	doc := loadWorkflow(t, "benchmark.yml")
 
 	jobs := getMap(t, doc, "jobs")
 	benchmark := getMap(t, jobs, "benchmark")

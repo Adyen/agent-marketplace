@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	cachefs "github.com/Adyen/agent-marketplace/internal/cache"
@@ -100,6 +101,56 @@ type Resolver struct {
 	AllowedRegistries          []string
 	LockEvidenceStrict         bool
 	ReportArchiveEvidenceDrift bool
+	KeepRemovedPinsFromCache   bool
+	Verified                   *VerifiedRevisions
+
+	clientsMu sync.Mutex
+	clients   map[string]*Client
+}
+
+type verifiedRevisionKey struct {
+	url, instanceID, registryID, kind, name, digest string
+}
+
+type verifiedRevision struct {
+	revision       store.AssessedResourceRevision
+	indexOnlyCache bool
+}
+
+type VerifiedRevisions struct {
+	mu   sync.Mutex
+	revs map[verifiedRevisionKey]verifiedRevision
+}
+
+func (v *VerifiedRevisions) record(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision, indexOnlyCache bool) {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.revs == nil {
+		v.revs = make(map[verifiedRevisionKey]verifiedRevision)
+	}
+	v.revs[verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))] = verifiedRevision{revision: rev, indexOnlyCache: indexOnlyCache}
+}
+
+func (v *VerifiedRevisions) lookup(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (verifiedRevision, bool) {
+	if v == nil {
+		return verifiedRevision{}, false
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rev, ok := v.revs[verifiedRevisionKeyFor(entry, pin, pin.Digest)]
+	return rev, ok
+}
+
+// verifiedRevisionKeyFor builds the session key from an already-canonical
+// Marketplace entry; every call site canonicalizes the entry first.
+func verifiedRevisionKeyFor(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, digest string) verifiedRevisionKey {
+	return verifiedRevisionKey{
+		url: entry.URL, instanceID: entry.InstanceID, registryID: pin.RegistryID,
+		kind: pin.Kind, name: pin.Name, digest: digest,
+	}
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.
@@ -173,7 +224,15 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 			if pin.Kind != "collection" || !hasExpandedCollectionLeaves(entry, pin) {
 				continue
 			}
-			rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+			pinMode := mode
+			rev, revErr := r.getResourceRevision(ctx, client, cache, entry, pin, pinMode)
+			if r.canUseRemovedPinCache(ctx, entry, pin, mode, revErr) {
+				pinMode = resolver.MarketplaceResolveModeCachedNoFetch
+				cachedRev, cachedErr := r.getResourceRevision(ctx, nil, cache, entry, pin, pinMode)
+				if !IsCacheEvidenceError(cachedErr) {
+					rev, revErr = cachedRev, cachedErr
+				}
+			}
 			if revErr == nil {
 				revErr = validateResourceRevision(entry, pin, rev)
 			}
@@ -184,11 +243,12 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: revErr})
 				continue
 			}
-			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, mode, policy); graphErr != nil {
+			if graphErr := r.enforceExpandedCollectionRevocations(ctx, client, cache, entry, pin, rev, pinMode, policy); graphErr != nil {
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: graphErr})
 				blockedCollections[collectionSelectionKey(pin.RegistryID, pin.Name, pin.Revision)] = graphErr
 			}
 		}
+		leafPins := make([]config.MarketplaceResourcePin, 0, len(entry.Resources))
 		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
 				continue
@@ -202,7 +262,18 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue
 			}
-			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
+			leafPins = append(leafPins, pin)
+		}
+		type leafResult struct {
+			artifact resolver.ResolvedArtifact
+			err      error
+		}
+		leafResults := ResolveConcurrently(len(leafPins), func(i int) leafResult {
+			artifact, err := r.resolvePinWithPolicy(ctx, client, cache, entry, leafPins[i], targetSet, mode, policy, allowedRegistries)
+			return leafResult{artifact: artifact, err: err}
+		})
+		for i, pin := range leafPins {
+			resolved, err := leafResults[i].artifact, leafResults[i].err
 			if err != nil {
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: err})
 				continue
@@ -463,11 +534,24 @@ func (r *Resolver) cache() *Cache {
 }
 
 func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error) {
+	r.clientsMu.Lock()
+	defer r.clientsMu.Unlock()
+	if client := r.clients[entry.URL]; client != nil {
+		return client, nil
+	}
 	opts := []Option{}
 	if r.HTTPClient != nil {
 		opts = append(opts, WithHTTPClient(r.HTTPClient))
 	}
-	return NewClient(entry.URL, opts...)
+	client, err := NewClient(entry.URL, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if r.clients == nil {
+		r.clients = make(map[string]*Client)
+	}
+	r.clients[entry.URL] = client
+	return client, nil
 }
 
 func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
@@ -527,6 +611,13 @@ func (r *Resolver) resolvePinWithArtifactPolicy(ctx context.Context, client *Cli
 	}
 
 	rev, err := r.getResourceRevision(ctx, client, cache, entry, pin, mode)
+	if r.canUseRemovedPinCache(ctx, entry, pin, mode, err) {
+		cached, cachedCanonical, cachedErr := r.resolvePinWithArtifactPolicy(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCachedNoFetch, policy, allowedRegistries)
+		if cachedErr != nil && IsCacheEvidenceError(cachedErr) {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+		}
+		return cached, cachedCanonical, cachedErr
+	}
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
@@ -773,6 +864,15 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 	if pin.Kind == "collection" {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, fmt.Errorf("index-only collection resolution is not supported yet")
 	}
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		verified, ok := r.Verified.lookup(entry, pin)
+		verifiedCache := ok && verified.indexOnlyCache && !IndexOnlyOccurrenceChanged(pin, verified.revision)
+		if verifiedCache {
+			// Planning already verified this exact occurrence from cache. Use
+			// cached resolution before any online metadata writes or requests.
+			return r.resolveIndexOnlyPin(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCachedNoFetch, policy, allowedRegistries)
+		}
+	}
 	identity := IndexOnlyIdentity{Marketplace: entry.InstanceID, RegistryID: pin.RegistryID, Commit: pin.RegistryCommit, ManifestDigest: pin.RegistryManifestDigest}
 	cacheDigest := pin.Digest
 	if mode != resolver.MarketplaceResolveModeInspect {
@@ -786,6 +886,13 @@ func (r *Resolver) resolveIndexOnlyPin(ctx context.Context, client *Client, cach
 		}()
 	}
 	rev, err := r.getIndexOnlyResourceRevision(ctx, client, cache, entry, pin, identity, mode)
+	if r.canUseRemovedPinCache(ctx, entry, pin, mode, err) {
+		cached, cachedCanonical, cachedErr := r.resolveIndexOnlyPin(ctx, nil, cache, entry, pin, targetSet, resolver.MarketplaceResolveModeCachedNoFetch, policy, allowedRegistries)
+		if cachedErr != nil && IsCacheEvidenceError(cachedErr) {
+			return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
+		}
+		return cached, cachedCanonical, cachedErr
+	}
 	if err != nil {
 		return resolver.ResolvedArtifact{}, hccartifact.CanonicalArtifact{}, err
 	}
@@ -1231,6 +1338,19 @@ func mustIRKind(kind string) ir.ResourceKind {
 	return value
 }
 
+func (r *Resolver) fetchResourceRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		if verified, ok := r.Verified.lookup(entry, pin); ok {
+			rev := verified.revision
+			if validateResourceRevision(entry, pin, rev) == nil &&
+				(pin.RegistryCommit == "" || (rev.Occurrence.Commit == pin.RegistryCommit && rev.Occurrence.ManifestDigest == store.RevisionDigest(pin.RegistryManifestDigest))) {
+				return rev, nil
+			}
+		}
+	}
+	return client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+}
+
 func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, identity IndexOnlyIdentity, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
 		return store.AssessedResourceRevision{}, err
@@ -1253,7 +1373,7 @@ func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Cli
 	if client == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
 	}
-	rev, err := client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	rev, err := r.fetchResourceRevision(ctx, client, entry, pin, mode)
 	if err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
@@ -1291,7 +1411,7 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 	if client == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("cached no-fetch resolver has no Marketplace client")
 	}
-	rev, err := client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	rev, err := r.fetchResourceRevision(ctx, client, entry, pin, mode)
 	if err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
@@ -1302,6 +1422,17 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 		return store.AssessedResourceRevision{}, fmt.Errorf("write revision cache: %w", err)
 	}
 	return rev, nil
+}
+
+func (r *Resolver) canUseRemovedPinCache(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode, exactErr error) bool {
+	var apiErr *APIError
+	if !r.KeepRemovedPinsFromCache || mode != resolver.MarketplaceResolveModeRefresh ||
+		!errors.As(exactErr, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false
+	}
+	_, _, err := r.LatestRevision(ctx, entry, pin)
+	var missing *MissingResourceError
+	return errors.As(err, &missing)
 }
 
 func validatePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {

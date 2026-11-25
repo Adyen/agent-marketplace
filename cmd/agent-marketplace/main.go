@@ -17,8 +17,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -40,7 +42,9 @@ func main() {
 		return
 	}
 	schemas := e2eConfigSchemas()
-	execCmd, execErr := cmd.ExecuteC()
+	ctx, finishInterrupts := commandInterruptContext()
+	execCmd, execErr := cmd.ExecuteContextC(ctx)
+	finishInterrupts()
 	finishUpgradeNotice(os.Stderr)
 	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)
@@ -142,34 +146,56 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newTelemetryCmd(),
 	)
+	wrapCommandRunEWithSourceRevisionSession(rootCmd)
 	guardCommandErrors(rootCmd)
 
 	return rootCmd
 }
 
+func wrapCommandRunEWithSourceRevisionSession(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		if child.RunE != nil && !commandRunsAsOrUnder(child, "tui") && !commandRunsAsOrUnder(child, "serve") {
+			runE := child.RunE
+			child.RunE = func(cmd *cobra.Command, args []string) (runErr error) {
+				previousContext := cmd.Context()
+				ctx, closeSession := sourcerevision.WithFreshSession(previousContext)
+				cmd.SetContext(ctx)
+				defer func() {
+					if closeErr := closeSession(); closeErr != nil {
+						runErr = errors.Join(runErr, closeErr)
+					}
+					cmd.SetContext(previousContext)
+				}()
+				return runE(cmd, args)
+			}
+		}
+		wrapCommandRunEWithSourceRevisionSession(child)
+	}
+}
+
 func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
 	if rootTUI {
-		return prepareDependencyTransactions(cmd.Context(), false)
+		return lifecycle.PrepareDependencyTransactions(cmd.Context(), false)
 	}
 	switch cmd.Name() {
 	case "tui", "gc", "install", "remove", "init":
-		return prepareDependencyTransactions(cmd.Context(), false)
+		return lifecycle.PrepareDependencyTransactions(cmd.Context(), false)
 	case "update":
 		// A dry run previews without replay: it must refuse pending
 		// dependency work, not recover it the way an applying update does.
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		if dryRun {
-			return prepareDependencyTransactions(cmd.Context(), true)
+			return lifecycle.PrepareDependencyTransactions(cmd.Context(), true)
 		}
-		return prepareDependencyTransactions(cmd.Context(), false)
+		return lifecycle.PrepareDependencyTransactions(cmd.Context(), false)
 	case "list", "status":
-		return prepareDependencyTransactions(cmd.Context(), true)
+		return lifecycle.PrepareDependencyTransactions(cmd.Context(), true)
 	case "sync", "lock":
 		check, _ := cmd.Flags().GetBool("check")
 		locked, _ := cmd.Flags().GetBool("locked")
 		offline, _ := cmd.Flags().GetBool("offline")
-		if (lockMode{check: check, locked: locked, offline: offline}).readOnlyDependencies() {
-			return prepareDependencyTransactions(cmd.Context(), true)
+		if (lifecycle.LockMode{Check: check, Locked: locked, Offline: offline}).ReadOnlyDependencies() {
+			return lifecycle.PrepareDependencyTransactions(cmd.Context(), true)
 		}
 	}
 	return nil
@@ -441,8 +467,8 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		FromURL:             fromURL,
 		FromRef:             fromRef,
 		FromPath:            fromPath,
-		DependencyReconcile: reconcileCommandDependencies,
-		CleanupDependencies: reconcileCleanupDependencies,
+		DependencyReconcile: lifecycle.ReconcileCommandDependencies,
+		CleanupDependencies: lifecycle.ReconcileCleanupDependencies,
 	})
 	if err != nil && result == nil {
 		return err

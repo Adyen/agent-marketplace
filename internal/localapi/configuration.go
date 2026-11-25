@@ -1,0 +1,967 @@
+package localapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/giturl"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
+)
+
+type sourceDescriptionDTO struct {
+	Name          string `json:"name"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Location      string `json:"location"`
+	Ref           string `json:"ref"`
+	Path          string `json:"path"`
+	SourceHarness string `json:"sourceHarness"`
+	RowSourceID   string `json:"rowSourceId"`
+}
+
+func (a *API) sourceID(scope string, desc config.SourceDescription) string {
+	mac := hmac.New(sha256.New, []byte(a.token))
+	data, _ := json.Marshal([7]string{scope, string(desc.Kind), desc.Location, desc.Ref, desc.Path, desc.SourceHarness, desc.InstanceID})
+	_, _ = mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *API) marketplaceSourceAssociation(endpoint config.MarketplaceEntry) string {
+	key, ok := discoveryEndpointKey(endpoint)
+	if !ok || strings.TrimSpace(endpoint.InstanceID) != endpoint.InstanceID ||
+		redact.URL(endpoint.URL) != endpoint.URL ||
+		len(config.ValidateMarketplaceEntries([]config.MarketplaceEntry{endpoint})) != 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(a.token))
+	_, _ = mac.Write([]byte("marketplace-source\x00" + key))
+	return "marketplace:" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *API) projectSources(scope string, descs []config.SourceDescription, accepted *config.Config) []sourceDescriptionDTO {
+	out := make([]sourceDescriptionDTO, 0, len(descs))
+	for _, desc := range descs {
+		dto := sourceDescriptionDTO{
+			Name:          desc.Name,
+			ID:            a.sourceID(scope, desc),
+			Kind:          string(desc.Kind),
+			Location:      redact.URL(desc.Location),
+			Ref:           desc.Ref,
+			Path:          desc.Path,
+			SourceHarness: desc.SourceHarness,
+		}
+		// Rows key on the raw registry URL, so a location with redacted parts has no safe key to expose.
+		switch desc.Kind {
+		case config.V4SourceGit, config.V4SourceDirectory:
+			if dto.Location == desc.Location {
+				entry := sourceEntry(desc)
+				dto.RowSourceID = session.RegistryIdentityKey(entry.URL, entry.Ref, entry.Path)
+			}
+		case config.V4SourceMarketplace:
+			instanceID := desc.InstanceID
+			if instanceID == "" {
+				instanceID = marketplaceInstanceIDForSource(accepted, desc.Location)
+			}
+			dto.RowSourceID = a.marketplaceSourceAssociation(config.MarketplaceEntry{
+				URL: desc.Location, InstanceID: instanceID,
+			})
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
+func marketplaceInstanceIDForSource(cfg *config.Config, location string) string {
+	if cfg == nil {
+		return ""
+	}
+	url, err := marketplace.NormalizeMarketplaceURL(location)
+	if err != nil {
+		return ""
+	}
+	instanceID := ""
+	for _, endpoint := range cfg.Marketplaces {
+		key, ok := discoveryEndpointKey(endpoint)
+		if !ok {
+			continue
+		}
+		endpointURL, _, _ := strings.Cut(key, "\x00")
+		if endpointURL != url {
+			continue
+		}
+		if instanceID != "" && instanceID != endpoint.InstanceID {
+			return ""
+		}
+		instanceID = endpoint.InstanceID
+	}
+	return instanceID
+}
+
+type configurationDTO struct {
+	UserTargets          []string               `json:"userTargets"`
+	OrganizationTargets  []string               `json:"organizationTargets"`
+	UserSources          []sourceDescriptionDTO `json:"userSources"`
+	OrganizationSources  []sourceDescriptionDTO `json:"organizationSources"`
+	SupportedTargets     []string               `json:"supportedTargets"`
+	RootPresent          bool                   `json:"rootPresent"`
+	Editable             bool                   `json:"editable"`
+	ManagedOutsideGUI    []string               `json:"managedOutsideGUI"`
+	FirstRun             bool                   `json:"firstRun"`
+	CanInitialize        bool                   `json:"canInitialize"`
+	DetectedTargets      []string               `json:"detectedTargets"`
+	DetectionUnavailable bool                   `json:"detectionUnavailable"`
+	ConsentRequired      bool                   `json:"consentRequired"`
+	TelemetryDestination string                 `json:"telemetryDestination"`
+	RetentionPolicyURL   string                 `json:"retentionPolicyURL"`
+	Settings             settingsDTO            `json:"settings"`
+}
+
+func (a *API) userConfigPath() string {
+	return filepath.Join(a.homeDir, ".agents", "config.yaml")
+}
+
+func (a *API) configurationIntent(ctx context.Context, overlays map[string][]byte) config.Intent {
+	return config.ReadIntent(ctx, config.LoadEffectiveOptions{
+		RepoRoot:       a.homeDir,
+		LocalConfigDir: a.homeDir,
+		GlobalPath:     a.userConfigPath(),
+		RepoPath:       config.ProjectConfigPath(a.homeDir),
+		LocalPath:      config.LocalConfigPath(a.homeDir),
+		FileOverlays:   overlays,
+	})
+}
+
+func (a *API) configurationMetadata(ctx context.Context, accepted *config.Config) configurationDTO {
+	dto := configurationDTO{
+		UserTargets:          []string{},
+		OrganizationTargets:  []string{},
+		SupportedTargets:     config.SupportedHarnessTargets(),
+		ManagedOutsideGUI:    []string{},
+		DetectedTargets:      []string{},
+		TelemetryDestination: "not configured",
+		RetentionPolicyURL:   "not configured",
+	}
+	if _, err := os.Lstat(a.userConfigPath()); err == nil {
+		dto.RootPresent = true
+	} else {
+		dto.FirstRun = os.IsNotExist(err)
+	}
+	intent := a.configurationIntent(ctx, nil)
+	user := intent.Layers[config.UserPersonal]
+	dto.Editable = dto.RootPresent && user.Present() && user.Err() == nil && len(intent.Errors) == 0
+
+	dto.UserTargets = append(dto.UserTargets, user.Settings().Harnesses...)
+	org := intent.Layers[config.Organization]
+	dto.OrganizationTargets = append(dto.OrganizationTargets, org.Settings().Harnesses...)
+	dto.Settings = settingsProjection(user.Settings(), org.Settings())
+	dto.UserSources = a.projectSources("user", user.DescribeSources(), accepted)
+	dto.OrganizationSources = a.projectSources("organization", org.DescribeSources(), accepted)
+
+	if len(user.Reads) > 1 {
+		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "included files")
+	}
+	if len(user.Sources()) > 0 {
+		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "per-source configuration")
+	}
+	settings := user.Settings()
+	if settings.Backup != nil || settings.Logging != nil || settings.Telemetry != nil ||
+		settings.Materialization != nil || settings.AllowedRegistries != nil ||
+		settings.AllowedMarketplaces != nil {
+		dto.ManagedOutsideGUI = append(dto.ManagedOutsideGUI, "other settings")
+	}
+
+	homeReadable := false
+	if info, err := os.Stat(a.homeDir); err == nil && info.IsDir() {
+		if _, err := os.ReadDir(a.homeDir); err == nil {
+			homeReadable = true
+		}
+	}
+	dto.CanInitialize = dto.FirstRun && homeReadable && len(intent.Errors) == 0
+
+	orgSettings := org.Settings()
+	dto.ConsentRequired = orgSettings.Telemetry == nil || orgSettings.Telemetry.Level == ""
+
+	if dto.FirstRun {
+		detected, err := session.DetectHarnessTargets(a.homeDir)
+		if err != nil {
+			dto.DetectionUnavailable = true
+		} else {
+			installed := make(map[string]bool, len(detected))
+			for _, id := range detected {
+				installed[id] = true
+			}
+			for _, id := range dto.SupportedTargets {
+				if installed[id] {
+					dto.DetectedTargets = append(dto.DetectedTargets, id)
+				}
+			}
+		}
+	}
+
+	if dto.ConsentRequired {
+		if state, err := telemetry.ResolveTelemetryConfig(orgSettings, settings,
+			telemetry.DefaultProjectEndpoint, telemetry.DefaultProjectRetentionURL); err == nil {
+			if state.PrimaryEndpointHostname != "" {
+				dto.TelemetryDestination = state.PrimaryEndpointHostname
+			}
+			if state.RetentionPolicyURL != "" {
+				dto.RetentionPolicyURL = state.RetentionPolicyURL
+			}
+		}
+	}
+	return dto
+}
+
+func (a *API) handleConfiguration(w http.ResponseWriter, r *http.Request) {
+	if !a.userOnly {
+		writeError(w, http.StatusBadRequest, codeNotSupported)
+		return
+	}
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+	if data, err := io.ReadAll(r.Body); err != nil || len(data) != 0 {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	a.mu.Lock()
+	accepted := a.acceptedMergedCfg
+	a.mu.Unlock()
+	dto := a.configurationMetadata(r.Context(), accepted)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(dto)
+}
+
+type configurationActionSource struct {
+	Kind     string
+	Location string
+	Ref      string
+	Path     string
+	refSeen  bool
+	pathSeen bool
+}
+
+type configurationAction struct {
+	action      string
+	targets     []string
+	consent     bool
+	consentSeen bool
+	source      *configurationActionSource
+	sources     []*configurationActionSource
+	sourcesSeen bool
+	id          string
+	idSeen      bool
+	install     []config.ResourceLocator
+	installSeen bool
+	commit      string
+}
+
+// decodeInstallSelection reads the resources to install with an added source.
+func decodeInstallSelection(decoder *json.Decoder) ([]config.ResourceLocator, bool) {
+	var raw []struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, false
+	}
+	seen := map[config.ResourceLocator]bool{}
+	locators := make([]config.ResourceLocator, 0, len(raw))
+	for _, item := range raw {
+		kind, ok := skill.ParseKind(item.Kind)
+		name := strings.TrimSpace(item.Name)
+		locator := config.ResourceLocator{Kind: kind, Name: name}
+		if !ok || strings.TrimSpace(item.Kind) == "" || strings.EqualFold(item.Kind, "all") || name == "" || seen[locator] {
+			return nil, false
+		}
+		seen[locator] = true
+		locators = append(locators, locator)
+	}
+	return locators, true
+}
+
+func decodeStrictString(decoder *json.Decoder, dst *string) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	s, ok := token.(string)
+	if !ok {
+		return false
+	}
+	*dst = s
+	return true
+}
+
+func decodeActionSource(decoder *json.Decoder) (*configurationActionSource, bool) {
+	source := &configurationActionSource{}
+	seen := map[string]bool{}
+	ok := decodeObject(decoder, func(decoder *json.Decoder, key string) bool {
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		var dst *string
+		switch key {
+		case "kind":
+			dst = &source.Kind
+		case "location":
+			dst = &source.Location
+		case "ref":
+			source.refSeen = true
+			dst = &source.Ref
+		case "path":
+			source.pathSeen = true
+			dst = &source.Path
+		default:
+			return false
+		}
+		return decodeStrictString(decoder, dst)
+	})
+	if !ok {
+		return nil, false
+	}
+	return source, true
+}
+
+func parseConfigurationAction(r *http.Request) (configurationAction, bool) {
+	var req configurationAction
+	seenAction, seenTargets, seenSource := false, false, false
+	if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
+		switch key {
+		case "action":
+			if seenAction {
+				return false
+			}
+			seenAction = true
+			return decoder.Decode(&req.action) == nil && req.action != ""
+		case "targets":
+			if seenTargets {
+				return false
+			}
+			seenTargets = true
+			return decoder.Decode(&req.targets) == nil
+		case "consent":
+			if req.consentSeen {
+				return false
+			}
+			req.consentSeen = true
+			var raw json.RawMessage
+			if err := decoder.Decode(&raw); err != nil {
+				return false
+			}
+			switch string(bytes.TrimSpace(raw)) {
+			case "true":
+				req.consent = true
+				return true
+			case "false":
+				return true
+			default:
+				return false
+			}
+		case "source":
+			if seenSource {
+				return false
+			}
+			seenSource = true
+			source, ok := decodeActionSource(decoder)
+			if !ok {
+				return false
+			}
+			req.source = source
+			return true
+		case "sources":
+			if req.sourcesSeen {
+				return false
+			}
+			req.sourcesSeen = true
+			token, err := decoder.Token()
+			if err != nil {
+				return false
+			}
+			if delim, ok := token.(json.Delim); !ok || delim != '[' {
+				return false
+			}
+			for decoder.More() {
+				source, ok := decodeActionSource(decoder)
+				if !ok {
+					return false
+				}
+				req.sources = append(req.sources, source)
+			}
+			token, err = decoder.Token()
+			if err != nil {
+				return false
+			}
+			if delim, ok := token.(json.Delim); !ok || delim != ']' {
+				return false
+			}
+			return true
+		case "id":
+			if req.idSeen {
+				return false
+			}
+			req.idSeen = true
+			return decodeStrictString(decoder, &req.id)
+		case "install":
+			if req.installSeen {
+				return false
+			}
+			req.installSeen = true
+			var ok bool
+			req.install, ok = decodeInstallSelection(decoder)
+			return ok
+		case "commit":
+			return req.commit == "" && decodeStrictString(decoder, &req.commit) && (req.commit == "" || giturl.IsFullObjectID(req.commit))
+		default:
+			return false
+		}
+	}) {
+		return configurationAction{}, false
+	}
+	if (req.installSeen || req.commit != "") && req.action != "add-source" {
+		return configurationAction{}, false
+	}
+	switch req.action {
+	case "save-targets":
+		if req.consentSeen || req.source != nil || req.sourcesSeen || req.idSeen {
+			return configurationAction{}, false
+		}
+	case "initialize":
+		if req.source != nil || req.idSeen {
+			return configurationAction{}, false
+		}
+	case "add-source":
+		if req.source == nil || req.idSeen || seenTargets || req.consentSeen || req.sourcesSeen {
+			return configurationAction{}, false
+		}
+		if len(req.install) > 0 && req.source.Kind == string(config.V4SourceMarketplace) {
+			return configurationAction{}, false
+		}
+	case "remove-source":
+		if !req.idSeen || req.id == "" || req.source != nil || seenTargets || req.consentSeen || req.sourcesSeen {
+			return configurationAction{}, false
+		}
+	default:
+		return configurationAction{}, false
+	}
+	switch req.action {
+	case "add-source", "remove-source":
+		return req, true
+	}
+	if len(req.targets) == 0 {
+		return configurationAction{}, false
+	}
+	for i, target := range req.targets {
+		req.targets[i] = strings.TrimSpace(target)
+		if req.targets[i] == "" {
+			return configurationAction{}, false
+		}
+	}
+	return req, true
+}
+
+func (a *API) handleConfigurationAction(w http.ResponseWriter, r *http.Request) {
+	if !a.userOnly {
+		writeError(w, http.StatusBadRequest, codeNotSupported)
+		return
+	}
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	var probe struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal(body, &probe) == nil && probe.Action == "save-settings" {
+		a.handleSaveSettings(w, r, body)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	req, ok := parseConfigurationAction(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	if req.action == "initialize" {
+		a.handleInitialize(w, r, req)
+		return
+	}
+	if req.action == "add-source" || req.action == "remove-source" {
+		a.handleSourceMutation(w, r, req)
+		return
+	}
+	a.handleSaveTargets(w, r, req.targets)
+}
+
+func sourceEntry(desc config.SourceDescription) config.RegistryEntry {
+	return config.RegistryEntry{
+		URL:           desc.Location,
+		Ref:           desc.Ref,
+		Path:          desc.Path,
+		SourceHarness: desc.SourceHarness,
+		V4Kind:        desc.Kind,
+	}
+}
+
+func sourceRemovalSupported(kind config.SourceKind) bool {
+	switch kind {
+	case config.V4SourceGit, config.V4SourceDirectory, config.V4SourceMarketplace:
+		return true
+	default:
+		return false
+	}
+}
+
+func validGitLocation(location string) bool {
+	if err := giturl.ValidateURL(location); err != nil {
+		return false
+	}
+	if strings.Contains(location, "://") {
+		u, err := url.Parse(location)
+		if err != nil || u.RawQuery != "" || u.Fragment != "" {
+			return false
+		}
+		if u.User != nil {
+			if _, hasPassword := u.User.Password(); hasPassword {
+				return false
+			}
+			if u.Scheme != "ssh" {
+				return false
+			}
+		}
+		return true
+	}
+	if at := strings.IndexByte(location, '@'); at >= 0 && strings.Contains(location[:at], ":") {
+		return false
+	}
+	return true
+}
+
+func validateAddSource(source *configurationActionSource, allowed []string) (config.RegistryEntry, bool) {
+	kind := config.V4SourceKind(source.Kind)
+	entry := config.RegistryEntry{
+		V4Kind: kind,
+		URL:    strings.TrimSpace(source.Location),
+		Ref:    strings.TrimSpace(source.Ref),
+		Path:   strings.TrimSpace(source.Path),
+	}
+	switch kind {
+	case config.V4SourceDirectory:
+		if entry.URL == "" || source.refSeen || source.pathSeen {
+			return config.RegistryEntry{}, false
+		}
+		if !validDirectoryLocation(entry.URL) {
+			return config.RegistryEntry{}, false
+		}
+	case config.V4SourceGit:
+		if entry.URL == "" {
+			return config.RegistryEntry{}, false
+		}
+		if entry.Ref != "" {
+			if err := giturl.ValidateRef(entry.Ref); err != nil {
+				return config.RegistryEntry{}, false
+			}
+		}
+		if !validGitLocation(entry.URL) {
+			return config.RegistryEntry{}, false
+		}
+		if err := config.ValidateRegistryPath(entry.Path); err != nil {
+			return config.RegistryEntry{}, false
+		}
+	case config.V4SourceMarketplace:
+		if entry.URL == "" || source.refSeen || source.pathSeen {
+			return config.RegistryEntry{}, false
+		}
+		endpoint, err := config.NormalizeMarketplaceURL(entry.URL)
+		if err != nil {
+			return config.RegistryEntry{}, false
+		}
+		if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{{URL: endpoint}}, allowed); err != nil {
+			return config.RegistryEntry{}, false
+		}
+		entry.URL = endpoint
+		return entry, true
+	default:
+		return config.RegistryEntry{}, false
+	}
+	if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+		return config.RegistryEntry{}, false
+	}
+	if err := config.ValidateRegistryURLs([]config.RegistryEntry{entry}, allowed); err != nil {
+		return config.RegistryEntry{}, false
+	}
+	return entry, true
+}
+
+func validDirectoryLocation(location string) bool {
+	if filepath.IsAbs(location) || location == "~" || strings.HasPrefix(location, "~/") {
+		return true
+	}
+	if !strings.HasPrefix(location, "file://") {
+		return false
+	}
+	u, err := url.Parse(location)
+	return err == nil && u.User == nil && u.Host == "" && filepath.IsAbs(u.Path) && u.RawQuery == "" && u.Fragment == ""
+}
+
+func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req configurationAction) {
+	home, err := os.UserHomeDir()
+	if err != nil || home != a.homeDir {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	intent := a.configurationIntent(r.Context(), nil)
+	user := intent.Layers[config.UserPersonal]
+	if _, statErr := os.Lstat(a.userConfigPath()); statErr != nil ||
+		!user.Present() || user.Err() != nil || len(intent.Errors) != 0 {
+		writeError(w, http.StatusBadRequest, codeNotReady)
+		return
+	}
+
+	switch req.action {
+	case "add-source":
+		entry, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind))
+		if !valid {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		if entry.V4Kind == config.V4SourceDirectory && !directorySourceAvailable(entry, a.homeDir) {
+			writeError(w, http.StatusBadRequest, codeDirectoryUnavailable)
+			return
+		}
+	case "remove-source":
+		matches := 0
+		for _, desc := range user.DescribeSources() {
+			if a.sourceID("user", desc) == req.id {
+				matches++
+				if !sourceRemovalSupported(desc.Kind) {
+					matches++
+				}
+			}
+		}
+		if matches != 1 {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	}
+
+	operation, ok := a.gate.Begin(session.OperationMutation)
+	if !ok {
+		writeError(w, http.StatusConflict, codeBusy)
+		return
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		a.gate.Finish(operation)
+		writeError(w, http.StatusServiceUnavailable, codeClosed)
+		return
+	}
+	a.invalidateUpdateAvailabilityLocked()
+	a.wg.Add(1)
+	a.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
+
+	go a.runOperation(operation, session.OperationMutation, sourceOperationSubject(req.action), func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		failed = a.executeSourceMutation(ctx, req)
+		final = a.readSnapshot(ctx, session.CatalogLoadCached)
+		return nil, final, failed
+	})
+}
+
+// installFromSource is a seam so tests can observe the install request.
+var installFromSource = pipeline.Install
+
+// gitDefaultBranch is a seam so tests can resolve a default branch offline.
+var gitDefaultBranch = cache.DefaultBranch
+
+func directorySourceAvailable(entry config.RegistryEntry, homeDir string) bool {
+	if strings.TrimSpace(entry.URL) == "~" {
+		info, err := os.Stat(homeDir)
+		return err == nil && info.IsDir()
+	}
+	path, err := entry.ResolveLocalPath(homeDir)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func sourceAllowlist(intent config.Intent, kind string) []string {
+	if kind == string(config.V4SourceMarketplace) {
+		return intent.AllowedMarketplaces()
+	}
+	return intent.AllowedRegistries()
+}
+
+func (a *API) executeSourceMutation(ctx context.Context, req configurationAction) error {
+	if req.action == "add-source" && req.source.Kind == string(config.V4SourceMarketplace) {
+		home, err := os.UserHomeDir()
+		if err != nil || home != a.homeDir {
+			return errors.New("the captured user home directory changed during the session")
+		}
+		endpoint, err := config.NormalizeMarketplaceURL(strings.TrimSpace(req.source.Location))
+		if err != nil {
+			return err
+		}
+		_, err = pipeline.Install(ctx, pipeline.InstallOptions{
+			RepoRoot:       a.homeDir,
+			LocalConfigDir: a.homeDir,
+			Args:           []string{endpoint},
+			Scope:          pipeline.ScopeUser,
+			ScopeSpecified: true,
+		})
+		return err
+	}
+	if req.action == "add-source" && len(req.install) > 0 {
+		intent := a.configurationIntent(ctx, nil)
+		entry, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind))
+		if !valid {
+			return fmt.Errorf("%w: source request is no longer valid", dependencytxn.ErrGenerationConflict)
+		}
+		// Like the terminal UI: adding a source with picked resources is an
+		// install from that source at the previewed commit.
+		_, err := installFromSource(ctx, pipeline.InstallOptions{
+			RepoRoot:            a.homeDir,
+			FromURL:             entry.URL,
+			FromRef:             entry.Ref,
+			FromPath:            entry.Path,
+			Locators:            req.install,
+			ExpectedCommit:      req.commit,
+			Scope:               pipeline.ScopeUser,
+			ScopeSpecified:      true,
+			DependencyReconcile: a.lifecycle.InstallReconcile,
+			PrepareDependencies: a.lifecycle.InstallPrepare,
+		})
+		return err
+	}
+	return a.lifecycle.Mutate(ctx, a.workspace, func(mapper pipeline.ConfigPathMapper) error {
+		staged, err := mapper(a.userConfigPath())
+		if err != nil {
+			return err
+		}
+		stagedBytes, err := os.ReadFile(staged)
+		if err != nil {
+			return err
+		}
+		stagedIntent := a.configurationIntent(ctx, map[string][]byte{a.userConfigPath(): stagedBytes})
+		stagedUser := stagedIntent.Layers[config.UserPersonal]
+		if !stagedUser.Present() || stagedUser.Err() != nil || len(stagedIntent.Errors) != 0 {
+			return fmt.Errorf("%w: user configuration changed while staging", dependencytxn.ErrGenerationConflict)
+		}
+		var entry config.RegistryEntry
+		var removal config.SourceDescription
+		switch req.action {
+		case "add-source":
+			var valid bool
+			entry, valid = validateAddSource(req.source, stagedIntent.AllowedRegistries())
+			if !valid {
+				return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
+			}
+			if entry.V4Kind == config.V4SourceGit && entry.Ref == "" {
+				branch, err := gitDefaultBranch(ctx, entry.URL)
+				if err != nil {
+					return err
+				}
+				entry.Ref = branch
+			}
+		case "remove-source":
+			var matches []config.SourceDescription
+			for _, desc := range stagedUser.DescribeSources() {
+				if a.sourceID("user", desc) == req.id {
+					matches = append(matches, desc)
+				}
+			}
+			if len(matches) != 1 || !sourceRemovalSupported(matches[0].Kind) {
+				return fmt.Errorf("%w: source descriptor changed while staging", dependencytxn.ErrGenerationConflict)
+			}
+			removal = matches[0]
+		}
+		return pipeline.EditLayerAtPath(config.LayerTarget{
+			Source:        config.UserPersonal,
+			StagedPath:    staged,
+			DeclaringPath: a.userConfigPath(),
+		}, func(m *pipeline.LayerMutation) error {
+			if req.action == "add-source" {
+				_, err := m.EnsureRegistry(entry)
+				return err
+			}
+			if removal.Kind == config.V4SourceMarketplace {
+				return m.RemoveMarketplaceRegistration(config.MarketplaceEntry{URL: removal.Location, InstanceID: removal.InstanceID})
+			}
+			binding, found, err := m.LookupRegistry(sourceEntry(removal))
+			if err != nil {
+				return err
+			}
+			if !found {
+				return errors.New("source is no longer present in the user configuration")
+			}
+			return m.RemoveSource(binding)
+		})
+	})
+}
+
+func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets []string) {
+	operation, ok := a.gate.Begin(session.OperationTargets)
+	if !ok {
+		writeError(w, http.StatusConflict, codeBusy)
+		return
+	}
+
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		a.gate.Finish(operation)
+		writeError(w, http.StatusServiceUnavailable, codeClosed)
+		return
+	}
+	ready := a.current != nil && a.current.Stage != "provisional" && a.current.Stage != "config"
+	accepted := a.acceptedMergedCfg
+	metadata := a.configurationMetadata(r.Context(), accepted)
+	a.mu.Unlock()
+	if !ready || !metadata.Editable {
+		a.gate.Finish(operation)
+		writeError(w, http.StatusBadRequest, codeNotReady)
+		return
+	}
+	for _, target := range targets {
+		if !config.IsSupportedHarness(target) {
+			a.gate.Finish(operation)
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
+	a.wg.Add(1)
+	a.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationTargets)}})
+
+	go a.runOperation(operation, session.OperationTargets, operationSubject{}, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		err := config.SetHarnessesInConfig(a.userConfigPath(), targets)
+		final = a.readSnapshot(ctx, session.CatalogLoadCached)
+		return nil, final, err
+	})
+}
+
+func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req configurationAction) {
+	operation, ok := a.gate.Begin(session.OperationMutation)
+	if !ok {
+		writeError(w, http.StatusConflict, codeBusy)
+		return
+	}
+	reject := func(status int, code string) {
+		a.gate.Finish(operation)
+		writeError(w, status, code)
+	}
+
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		a.gate.Finish(operation)
+		writeError(w, http.StatusServiceUnavailable, codeClosed)
+		return
+	}
+	accepted := a.acceptedMergedCfg
+	a.mu.Unlock()
+
+	metadata := a.configurationMetadata(r.Context(), accepted)
+	if !metadata.FirstRun || !metadata.CanInitialize {
+		reject(http.StatusBadRequest, codeNotReady)
+		return
+	}
+	if metadata.ConsentRequired {
+		if !req.consentSeen {
+			reject(http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	} else if req.consentSeen {
+		reject(http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	if err := config.ValidateHarnessIDs(req.targets); err != nil {
+		reject(http.StatusBadRequest, codeInvalidRequest)
+		return
+	}
+	if len(req.sources) > 0 {
+		if len(metadata.OrganizationSources) > 0 {
+			reject(http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		home, err := os.UserHomeDir()
+		if err != nil || home != a.homeDir {
+			reject(http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		intent := a.configurationIntent(r.Context(), nil)
+		for _, source := range req.sources {
+			if _, valid := validateAddSource(source, sourceAllowlist(intent, source.Kind)); !valid {
+				reject(http.StatusBadRequest, codeInvalidRequest)
+				return
+			}
+		}
+	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
+	a.wg.Add(1)
+	a.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
+
+	consent := req.consentSeen && req.consent
+	go a.runOperation(operation, session.OperationMutation, operationSubject{success: "Configuration saved", failure: "Couldn't save configuration"}, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+		path, err := config.InitializeUserPersonalAtPath(a.userConfigPath(), req.targets)
+		if err == nil && consent {
+			err = config.SetUserTelemetryLevel(path, tmcfg.LevelBasic)
+		}
+		if err == nil {
+			for _, source := range req.sources {
+				queued := configurationAction{action: "add-source", source: source}
+				if err = a.executeSourceMutation(ctx, queued); err != nil {
+					err = fmt.Errorf("add optional source: %w", err)
+					break
+				}
+			}
+		}
+		final = a.readSnapshot(ctx, session.CatalogLoadCached)
+		return nil, final, err
+	})
+}

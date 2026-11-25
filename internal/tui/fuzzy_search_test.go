@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+)
 
 func artifactNames(items []flatItem) []string {
 	var names []string
@@ -43,6 +47,20 @@ func TestFuzzySearchRanksBestMatchFirstWithinLeaf(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
+func TestKindQueryMatchesConfiguredRowsWithoutKindText(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.rows = []row{
+		mkRow("atlas", withGlobal, withKind(ir.KindSubagent), withRegistry("sec.git", "security")),
+		mkRow("deploy", withGlobal, withKind(ir.KindSkill), withRegistry("sec.git", "security")),
+	}
+	m.filter = "agents"
+	m.recomputeView()
+	if got := artifactNames(m.flatItems); !namesEqual(got, []string{"atlas"}) {
+		t.Fatalf("kind query agents should match the configured subagent without kind text, got %v", got)
+	}
+}
+
 func TestFuzzySearchMatchesNonContiguousQuery(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -56,7 +74,7 @@ func TestFuzzySearchMatchesNonContiguousQuery(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/clear-and-refresh
+// spec: session-navigation/clear-and-refresh
 func TestFuzzySearchClearRestoresAlphabeticalOrderAndFolds(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{

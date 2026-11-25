@@ -51,7 +51,7 @@ All three write a lockfile, and all three can record a content hash. They differ
 
 APM pins every package, including indirect ones, to an exact ref and content hash, and `apm install --frozen` refuses to run when the lock and manifest disagree. The `skills` CLI records each skill's source, ref, and a content hash, in `skills-lock.json` for a project or `~/.agents/.skill-lock.json` for a user.
 
-`agent-marketplace` pins each Git source to one exact commit and each Marketplace resource to one exact revision. A push to the registry changes nothing until someone moves the lock, and the moved lock goes through code review like any other diff. `update` refuses to move a lock past a selection that no longer exists upstream. [How upstream changes reach consumers](./how-upstream-changes-reach-consumers.md) covers each case, including the organization layer without a lock, which deliberately skips review.
+`agent-marketplace` pins each Git source to one exact commit and each Marketplace resource to one exact revision. A push to the registry changes nothing until someone moves the lock, and the moved lock goes through code review like any other diff. `update` refuses to move a lock past a selection that no longer exists upstream, except that a removed Marketplace pin whose pinned revision is still usable is kept with a warning instead. [How upstream changes reach consumers](./how-upstream-changes-reach-consumers.md) covers each case, including the organization layer without a lock, which deliberately skips review.
 
 ## What happens to files the tool did not write?
 

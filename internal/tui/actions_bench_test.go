@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -43,7 +44,7 @@ func BenchmarkBuildRows(b *testing.B) {
 				},
 			},
 		}
-		catalogs := map[string]catalogInfo{
+		catalogs := map[string]session.CatalogInfo{
 			"sec-key": {Entries: []catalog.Entry{
 				{Name: "audit-logging", Path: "/cache/sec/audit-logging"},
 				{Name: "extra-security", Path: "/cache/sec/extra-security"},
@@ -79,7 +80,7 @@ func BenchmarkBuildRows(b *testing.B) {
 				},
 			},
 		}
-		catalogs := map[string]catalogInfo{
+		catalogs := map[string]session.CatalogInfo{
 			"primary-key": {Entries: []catalog.Entry{
 				{Name: "smith", Path: "/cache/primary/smith"},
 			}},
@@ -102,7 +103,7 @@ func BenchmarkBuildRows(b *testing.B) {
 func BenchmarkAppendUnavailableSelectionRows(b *testing.B) {
 	const registryCount = 20
 	cfg := &config.Config{}
-	catalogs := make(map[string]catalogInfo, registryCount/2)
+	catalogs := make(map[string]session.CatalogInfo, registryCount/2)
 	resolveErrs := make([]error, 0, registryCount/2)
 	for i := range registryCount {
 		catalogKey := fmt.Sprintf("catalog-%02d", i)
@@ -113,7 +114,7 @@ func BenchmarkAppendUnavailableSelectionRows(b *testing.B) {
 			Skills: config.KindSelector{Include: []string{name}},
 		})
 		if i%2 == 0 {
-			catalogs[catalogKey] = catalogInfo{}
+			catalogs[catalogKey] = session.CatalogInfo{}
 			resolveErrs = append(resolveErrs, &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: name, URL: url, Ref: "main", Path: "resources"})
 		}
 	}
@@ -149,7 +150,7 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			cfg := &config.Config{}
-			catalogs := make(map[string]catalogInfo)
+			catalogs := make(map[string]session.CatalogInfo)
 			var resolved []resolver.ResolvedArtifact
 			localCfg := &config.LocalConfig{
 				Skills: config.KindSelector{
@@ -204,7 +205,7 @@ func BenchmarkBuildRowsLargeMixed(b *testing.B) {
 						CatalogKey:  key,
 					})
 				}
-				catalogs[key] = catalogInfo{Entries: entries}
+				catalogs[key] = session.CatalogInfo{Entries: entries}
 			}
 
 			b.ReportAllocs()

@@ -3,8 +3,28 @@ package cache
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func exactGitManyFilesFixture(tb testing.TB, count int) string {
+	tb.Helper()
+	tb.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	tb.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	tb.Setenv("HOME", tb.TempDir())
+	root := tb.TempDir()
+	gitTest(tb, "", "init", "--object-format=sha1", root)
+	for i := range count {
+		name := fmt.Sprintf("file-%04d", i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture\n"), 0o644); err != nil {
+			tb.Fatal(err)
+		}
+	}
+	gitTest(tb, root, "add", "-A")
+	gitTest(tb, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "many files")
+	return root
+}
 
 func BenchmarkResolveExactGitRef(b *testing.B) {
 	b.Setenv("HOME", b.TempDir())
@@ -34,6 +54,17 @@ func BenchmarkVerifyExactGitTrackedTreeDiskNoNetwork(b *testing.B) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func BenchmarkVerifyExactGitTrackedTreeManyFiles(b *testing.B) {
+	root := exactGitManyFilesFixture(b, 2000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, "sha1"); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

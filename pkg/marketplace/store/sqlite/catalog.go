@@ -67,7 +67,7 @@ const catalogPageKeys = `WITH ranked AS MATERIALIZED (
 
 const catalogPageSelect = `
 SELECT p.marketplace_id, p.registry_id, p.kind, p.name, p.content_digest, rr.archive_digest, rr.license, rr.description,
-       ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision, ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
+       ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision, ra.findings, ra.advisory_reports, ra.inspection_manifest_digest, ra.assessed_at,
        p.revision_commit, p.manifest_digest, p.source_path, p.registry_slug,
        rv.kind, rv.target_id, rv.reason, rv.applied_at,
        rc.kind, rc.target_id, rc.reason, rc.applied_at,
@@ -87,7 +87,7 @@ LEFT JOIN revocations rg ON rg.kind='registry' AND rg.target_id=p.registry_id
 ORDER BY p.registry_id, p.kind, p.name`
 
 const catalogIntegritySelect = `
-SELECT ra.findings, ra.assessed_at, rv.applied_at, rc.applied_at, rg.applied_at,
+SELECT ra.findings, ra.advisory_reports, ra.assessed_at, rv.applied_at, rc.applied_at, rg.applied_at,
        c.id, c.registry_id, c.manifest_digest, c.members, c.includes,
        p.registry_id, p.content_digest
 FROM page_keys p
@@ -199,13 +199,13 @@ func (s *Store) readCatalogProjectionPageConditional(ctx context.Context, req st
 func scanCatalogResource(sc rowScanner) (store.CatalogProjectionResource, error) {
 	var out store.CatalogProjectionResource
 	var archive, license, sourcePath, sourceOrigin sql.NullString
-	var findings string
+	var findings, advisoryReports string
 	var assessedAt int64
 	var revKind, revTarget, revReason, coordKind, coordTarget, coordReason, registryKind, registryTarget, registryReason sql.NullString
 	var revAt, coordAt, registryAt sql.NullInt64
 	err := sc.Scan(
 		&out.Coordinate.Marketplace, &out.Coordinate.Registry, &out.Coordinate.Kind, &out.Coordinate.Name, &out.ContentDigest, &archive, &license, &out.Description,
-		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest, &out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
+		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest, &out.Assessment.Decision, &findings, &advisoryReports, &out.Assessment.InspectionManifestDigest, &assessedAt,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath, &out.RegistrySlug,
 		&revKind, &revTarget, &revReason, &revAt, &coordKind, &coordTarget, &coordReason, &coordAt, &registryKind, &registryTarget, &registryReason, &registryAt, &sourceOrigin,
 	)
@@ -217,6 +217,9 @@ func scanCatalogResource(sc rowScanner) (store.CatalogProjectionResource, error)
 	out.Occurrence.Coordinate, out.Occurrence.ContentDigest, out.Occurrence.SourcePath = out.Coordinate, out.ContentDigest, sourcePath.String
 	if err := unmarshalJSON([]byte(findings), &out.Assessment.Findings); err != nil {
 		return store.CatalogProjectionResource{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if out.Assessment.AdvisoryReports, err = store.DecodeAdvisoryReports(advisoryReports); err != nil {
+		return store.CatalogProjectionResource{}, err
 	}
 	for _, candidate := range []struct {
 		kind, target, reason sql.NullString

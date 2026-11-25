@@ -30,9 +30,10 @@ jobs:
       go_build: ${{ steps.changes.outputs.go_build }}
       go_test: ${{ steps.changes.outputs.go_test }}
       installation_query: ${{ steps.changes.outputs.installation_query }}
-      benchmark: ${{ steps.changes.outputs.benchmark }}
       marketplace_e2e: ${{ steps.changes.outputs.marketplace_e2e }}
       tui_qa: ${{ steps.changes.outputs.tui_qa }}
+      gui_distribution: ${{ steps.changes.outputs.gui_distribution }}
+      gui_native_events: ${{ steps.changes.outputs.gui_native_events }}
       container_config: ${{ steps.changes.outputs.container_config }}
       container_marketplace: ${{ steps.changes.outputs.container_marketplace }}
       container_web: ${{ steps.changes.outputs.container_web }}
@@ -153,8 +154,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify explicit Helm image selection
-        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
+      - name: Verify Helm image selection and scanner isolation
+        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelm(ImageSelection|SkillspectorDefaultIsolation)$' -count=1
+
+      - name: Verify PrometheusRule alert release identity
+        run: AM_HELM_CHECK=1 CGO_ENABLED=0 go test ./tools/ci-plan -run '^TestAlertReleaseIdentity$'
 
       - name: Validate and package Helm chart
         shell: bash
@@ -273,8 +277,8 @@ jobs:
           helm lint --strict "$CHART_DIR" --values "$values_file"
           helm template marketplace "$CHART_DIR" --namespace marketplace --set image.tag=ci > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
-          if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
-            echo "default chart should render exactly one Deployment" >&2
+          if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 2 ]]; then
+            echo "default chart should render the Marketplace and SkillSpector Deployments" >&2
             exit 1
           fi
 
@@ -320,6 +324,80 @@ jobs:
               exit 1
             fi
           }
+
+          reject "default render omits PrometheusRule" "$(cat "$package_dir/default-rendered.yaml")" "kind: PrometheusRule"
+          helm lint --strict "$CHART_DIR" --set image.tag=ci --set prometheusRule.enabled=true
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set prometheusRule.enabled=true > "$package_dir/alerts-all.yaml"
+          all_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-all.yaml")"
+          require "all-mode selector scopes worker metrics" "$all_rule_doc" 'namespace="marketplace",service=~"agent-marketplace-api|agent-marketplace-worker"'
+          if [[ "$(grep -cE '^[[:space:]]+- alert: AgentMarketplace' <<<"$all_rule_doc")" -ne 10 ]]; then
+            echo "assertion failed: enabled all-mode PrometheusRule must contain ten worker alerts" >&2
+            exit 1
+          fi
+          reject "empty runbook base omits runbook annotations" "$all_rule_doc" "runbook_url:"
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set mode=split \
+            --set prometheusRule.enabled=true > "$package_dir/alerts-split.yaml"
+          split_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-split.yaml")"
+          require "split-mode selector scopes worker metrics" "$split_rule_doc" 'namespace="marketplace",service=~"agent-marketplace-api|agent-marketplace-worker"'
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set prometheusRule.enabled=true \
+            --set prometheusRule.alerts.workerDown.enabled=false \
+            --set prometheusRule.alerts.registryProbeFailing.for=11m \
+            --set prometheusRule.alerts.registryProbeFailing.severity=emergency \
+            --set prometheusRule.alerts.registryProbeFailing.threshold=7 \
+            --set prometheusRule.alerts.registryObservationStale.staleAfterSeconds=7200 \
+            --set prometheusRule.alerts.registryIndexStale.staleAfterSeconds=172800 \
+            --set prometheusRule.alerts.refreshFailures.window=2h \
+            --set prometheusRule.labels.owner=platform \
+            --set prometheusRule.additionalLabels.release=monitored \
+            --set prometheusRule.ruleLabels.team=marketplace-alerts \
+            --set prometheusRule.runbookBaseUrl=https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor \
+            > "$package_dir/alerts-configured.yaml"
+          configured_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-configured.yaml")"
+          reject "disabled worker-down alert is omitted" "$configured_rule_doc" "alert: AgentMarketplaceWorkerDown"
+          require "PrometheusRule custom labels are applied" "$configured_rule_doc" "owner: platform"
+          require "PrometheusRule additional labels are applied" "$configured_rule_doc" "release: monitored"
+          require "ruleLabels are applied" "$configured_rule_doc" "team: marketplace-alerts"
+          require "runbook URL uses lower-case alert name" "$configured_rule_doc" 'runbook_url: "https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor#agentmarketplaceregistryprobefailing"'
+          require "probe threshold is configurable" "$configured_rule_doc" ">= 7"
+          require "registry observation stale threshold is configurable" "$configured_rule_doc" "> 7200"
+          require "registry index stale threshold is configurable" "$configured_rule_doc" "> 172800"
+          require "refresh failure window is configurable" "$configured_rule_doc" 'outcome="failed" }[2h]'
+          require "alert duration is configurable" "$configured_rule_doc" 'for: "11m"'
+          require "alert severity is configurable" "$configured_rule_doc" 'severity: "emergency"'
+          if [[ "$(grep -c 'team: marketplace-alerts' <<<"$configured_rule_doc")" -ne 9 ]]; then
+            echo "assertion failed: ruleLabels must be added to every enabled alert" >&2
+            exit 1
+          fi
+
+          for alert in \
+            AgentMarketplaceWorkerDown \
+            AgentMarketplaceWorkerObservationsStalled \
+            AgentMarketplaceRegistryProbeFailing \
+            AgentMarketplaceRegistryObservationStale \
+            AgentMarketplaceRegistryIndexStale \
+            AgentMarketplaceRegistryNeverIndexed \
+            AgentMarketplaceRefreshFailures \
+            AgentMarketplaceConfigCandidateRejected \
+            AgentMarketplaceConfigRestartRequired \
+            AgentMarketplaceHostBudgetDelaysSustained
+          do
+            anchor="$(printf '%s' "$alert" | tr '[:upper:]' '[:lower:]')"
+            require "runbook heading anchor matches $alert" \
+              "$(cat site/docs/how-to/operator/reindex-and-monitor.md)" \
+              "### $alert {#$anchor}"
+          done
 
           env_value() {
             awk -v target="$1" '
@@ -492,6 +570,17 @@ jobs:
             exit 1
           fi
           helm template marketplace "${package_paths[0]}" --namespace marketplace --values "$values_file" > "$package_dir/package-rendered.yaml"
+
+          prometheus_version=3.15.1
+          prometheus_archive="$package_dir/prometheus-${prometheus_version}.linux-amd64.tar.gz"
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${prometheus_version}/prometheus-${prometheus_version}.linux-amd64.tar.gz" \
+            -o "$prometheus_archive"
+          printf '%s  %s\n' \
+            6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84 \
+            "$prometheus_archive" | sha256sum -c -
+          tar -xzf "$prometheus_archive" -C "$package_dir"
+          PROMTOOL="$package_dir/prometheus-${prometheus_version}.linux-amd64/promtool" \
+            bash "$CHART_DIR/tests/prometheusrule/run.sh"
 
   container-images:
     name: Container images (public defaults)
@@ -935,138 +1024,6 @@ jobs:
             test "$result" = "$want"
           done
 
-  benchmark:
-    name: Benchmark
-    needs: changes
-    if: github.event_name == 'pull_request' && (needs.changes.outputs.benchmark == 'true' || contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      BENCHMARK_PACKAGES: ./internal/resolver ./internal/materialize ./internal/tui ./internal/catalog ./internal/config ./cmd/agent-marketplace ./internal/cache ./pkg/harness-compilation ./internal/dependencytxn ./internal/lockfile ./internal/sourcerevision ./internal/pipeline ./internal/marketplace ./internal/marketplacelock
-      BENCHMARK_PATTERN: ^Benchmark(ResolveDefaultAllLargeCatalog|RunDryRunLargeMixedResources|BuildRowsLargeMixed|LoadFSHCCIngest|MergeLayersLargeConfig|BuildListRows|GarbageCollectDryRun|MaterializeLargeArtifacts|CompileBundleLarge|SyncWarmUnchangedRemoteGitLock|SyncLocalGitDiskIONoNetwork|ResolveExactGitRef|CommitUnchanged|CheckPending|PlanUnchanged|Build|ProjectLockedRoots|LoadStableEffectiveIncludes|ExactGitGCDryRunFilesystem|MutableLocalGitBatchDiskIONoNetwork|VerifyExactGitTrackedTreeDiskNoNetwork|GitAuthEnvironment|ReadOnlyGitDocumentMatches|OrganizationIncludeTreeDiskReads|CaptureSnapshotTraversalDiskIO|CaptureAggregateDetailDiskIO|HookSupportFiles|DiscoverLegacyFallback|WarmConfiguredLegacyInstallDiskIO|ProvisionalManyMarketplaceSources|ApplySnapshotStatusWithoutPendingMutation|ResolveCachedNoFetch|MarketplaceInstallWarmRegistries|AliasedMarketplaceSkillDryRunDiskIONoNetwork|TUIStartupDiskIO|TUIToggleEditorAndReloadDiskIONoReconcile|TUIConfigTransactionDiskIONoNetwork|TUIMarketplaceBrowseWarmCacheDiskIONoNetwork|TUIStartupStages|RecomputeView|RenderBaseScreen)$
-      BENCHSTAT_VERSION: v0.0.0-20260709024250-82a0b07e230d
-      GOMAXPROCS: 2
-    steps:
-      - name: Checkout base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: benchmark-base
-          persist-credentials: false
-
-      - name: Checkout pull request
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: benchmark-head
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: benchmark-head/go.mod
-          cache-dependency-path: |
-            benchmark-base/go.sum
-            benchmark-head/go.sum
-
-      - name: Install benchstat
-        working-directory: benchmark-head
-        run: |
-          mkdir -p "$RUNNER_TEMP/bin"
-          GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/perf/cmd/benchstat@$BENCHSTAT_VERSION"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Select available benchmark packages
-        run: |
-          for checkout in base head; do
-            packages=()
-            for package in $BENCHMARK_PACKAGES; do
-              if [ -d "benchmark-$checkout/$package" ]; then
-                packages+=("$package")
-              fi
-            done
-            echo "BENCHMARK_${checkout^^}_PACKAGES=${packages[*]}" >> "$GITHUB_ENV"
-          done
-
-      - name: Benchmark base
-        working-directory: benchmark-base
-        run: |
-          if ! go test -v -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_BASE_PACKAGES > "$GITHUB_WORKSPACE/benchmark-base.txt"; then
-            cat "$GITHUB_WORKSPACE/benchmark-base.txt"
-            exit 1
-          fi
-
-      - name: Benchmark pull request
-        working-directory: benchmark-head
-        run: |
-          if ! go test -v -p=1 -run '^$' -bench "$BENCHMARK_PATTERN" -benchtime=200ms -count=6 -benchmem $BENCHMARK_HEAD_PACKAGES > "$GITHUB_WORKSPACE/benchmark-head.txt"; then
-            cat "$GITHUB_WORKSPACE/benchmark-head.txt"
-            exit 1
-          fi
-
-      - name: Build benchmark report
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-base.txt > benchmark-base-clean.txt
-          awk '/^(goos|goarch|pkg|cpu):/ || (/^Benchmark/ && $2 ~ /^[0-9]+$/)' benchmark-head.txt > benchmark-head-clean.txt
-          benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt | tee benchmark-stat.txt
-          (cd benchmark-head && go run ./tools/benchmark-report ../benchmark-base-clean.txt ../benchmark-head-clean.txt) > benchmark-summary.txt
-          {
-            echo '<!-- agent-marketplace-benchmark-results -->'
-            echo '## Benchmark comparison'
-            echo
-            echo "Compared \`${BASE_SHA:0:12}\` (base) with \`${HEAD_SHA:0:12}\` (pull request) on the same runner."
-            echo
-            cat benchmark-summary.txt
-            echo
-            echo '<details><summary>Workload notes</summary>'
-            echo
-            echo 'TUI startup measures 200 selected skills across three harnesses, including disk reads, exact-lock verification, drift checks, and rendering; fixtures begin without materialized output. Toggle transaction measures config/lock publication across four Git registries without sync or reload. Editor-and-reload measures 200 directory resources without dependency reconciliation. Marketplace browse measures 50 fresh disk-cached results, not installed-pin resolution or HTTP latency.'
-            echo
-            echo '</details>'
-            echo
-            echo "_Informational only; benchmark changes do not fail CI. Full benchstat output and profiles are in the [\`tui-performance-evidence\` artifact](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})._"
-          } > benchmark-comment.md
-          cat benchmark-comment.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Profile TUI actions
-        working-directory: benchmark-head
-        run: |
-          go test ./internal/tui -run '^$' -bench '^BenchmarkTUIStartupDiskIO$' -benchtime=2s -cpuprofile="$GITHUB_WORKSPACE/tui-startup-cpu.pprof" -memprofile="$GITHUB_WORKSPACE/tui-startup-heap.pprof" -trace="$GITHUB_WORKSPACE/tui-startup.trace" -o "$RUNNER_TEMP/tui-profile.test"
-          go test ./cmd/agent-marketplace -run '^$' -bench '^BenchmarkTUIConfigTransactionDiskIONoNetwork$' -benchtime=2s -cpuprofile="$GITHUB_WORKSPACE/tui-toggle-cpu.pprof" -memprofile="$GITHUB_WORKSPACE/tui-toggle-heap.pprof" -trace="$GITHUB_WORKSPACE/tui-toggle.trace" -o "$RUNNER_TEMP/tui-toggle-profile.test"
-
-      - name: Upload benchmark evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: tui-performance-evidence
-          path: |
-            benchmark-*.txt
-            benchmark-comment.md
-            tui-*.pprof
-            tui-*.trace
-          retention-days: 14
-
-      - name: Update pull request comment
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          marker='<!-- agent-marketplace-benchmark-results -->'
-          comment_id=$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq "map(select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\")))) | first | .id // empty")
-          if [ -n "$comment_id" ]; then
-            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" --input -
-          else
-            jq -n --rawfile body benchmark-comment.md '{body: $body}' | gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --input -
-          fi
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -1160,6 +1117,265 @@ jobs:
           AGENT_BROWSER_EXECUTABLE_PATH: ${{ vars.AGENT_BROWSER_EXECUTABLE_PATH }}
         run: pnpm run test:e2e
 
+  gui-macos-package:
+    name: GUI macOS package
+    needs: changes
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+      - name: Resolve GUI build version
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: echo "VERSION=${VERSION:-$(git describe --tags --always)}" >> "$GITHUB_ENV"
+      - name: Build universal package
+        run: make gui-package-macos VERSION="$VERSION"
+      - name: Smoke test packaged app
+        run: |
+          set -euo pipefail
+          app="dist/gui/macos/Agent Marketplace.app"
+          codesign --verify --strict --deep "$app"
+          "$app/Contents/MacOS/agent-marketplace-gui" > "$RUNNER_TEMP/gui-launch.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          sleep 15
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat "$RUNNER_TEMP/gui-launch.log" >&2
+            exit 1
+          fi
+      - name: Upload macOS GUI assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gui-macos
+          path: dist/gui/agent-marketplace-gui-*-macos-universal.*
+          if-no-files-found: error
+          retention-days: 5
+
+  gui-linux-package:
+    name: GUI Linux package (${{ matrix.arch }})
+    needs: changes
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Resolve GUI build version
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: echo "VERSION=${VERSION:-$(git describe --tags --always)}" >> "$GITHUB_ENV"
+      - name: Build Linux packages
+        run: make gui-package-linux VERSION="$VERSION"
+      - name: Upload Linux GUI packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gui-linux-${{ matrix.arch }}
+          path: |
+            dist/gui/agent-marketplace-gui-*-linux-${{ matrix.arch }}.rpm
+            dist/gui/agent-marketplace-gui-*-linux-${{ matrix.arch }}.deb
+          if-no-files-found: error
+          retention-days: 5
+
+  gui-linux-native-events:
+    name: GUI Linux native event delivery
+    needs: changes
+    if: (needs.changes.outputs.gui_native_events == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+      - name: Install native GUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+      - name: Build GUI frontend
+        run: make gui-build-frontend
+      - name: Test native completion notifications
+        run: AM_GUI_NATIVE_SMOKE=1 CGO_ENABLED=1 xvfb-run -a go test -tags desktop,production,webkit2_41 -count=1 -v -run '^TestNativeCompletionNotificationPrompt$' ./cmd/agent-marketplace-gui
+
+  gui-linux-smoke:
+    name: GUI Linux install and launch (${{ matrix.name }})
+    needs: [changes, gui-linux-package]
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Fedora
+            image: fedora:latest
+          - name: Ubuntu 22.04
+            image: ubuntu:22.04
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+          - name: Debian 12
+            image: debian:12-slim
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download Linux GUI packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gui-linux-*
+          path: ${{ runner.temp }}/gui-artifacts
+          merge-multiple: true
+      - name: Install and launch package
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker run --rm -v "$RUNNER_TEMP/gui-artifacts:/artifacts:ro" -v "$GITHUB_WORKSPACE/scripts/gui-linux-smoke.sh:/gui-linux-smoke.sh:ro" "$IMAGE" bash /gui-linux-smoke.sh /artifacts
+
+  gui-matrix-complete:
+    name: GUI package matrix and signing audit
+    needs: [changes, gui-macos-package, gui-linux-package]
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download GUI packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gui-*
+          path: ${{ runner.temp }}/gui-artifacts
+          merge-multiple: true
+      - name: Resolve GUI build version
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: echo "VERSION=${VERSION:-$(git describe --tags --always)}" >> "$GITHUB_ENV"
+      - name: Check package matrix
+        run: go run ./tools/gui-release-check check-matrix --dir "$RUNNER_TEMP/gui-artifacts" --tag "$VERSION"
+      - name: Audit signing configuration
+        run: go run ./tools/gui-release-check audit-signing --root .
+
+  gui-signability:
+    name: GUI downstream signability (${{ matrix.runner }})
+    needs: [changes, gui-macos-package, gui-linux-package]
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download GUI packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gui-*
+          path: ${{ runner.temp }}/gui-artifacts
+          merge-multiple: true
+      - name: Re-sign artifact copies
+        run: bash scripts/gui-signability.sh "$RUNNER_TEMP/gui-artifacts" "$GITHUB_WORKSPACE"
+
+  gui-update-e2e:
+    name: GUI macOS update end-to-end
+    needs: changes
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+      - name: Update packaged app through local release
+        run: bash scripts/gui-update-e2e.sh
+
   classify-release-tag:
     name: Classify release tag
     if: startsWith(github.ref, 'refs/tags/')
@@ -1183,7 +1399,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, helm, specs, test, lint, govulncheck, marketplace-gate, released-client-gate, tui-qa-required, web, classify-release-tag]
+    needs: [build, helm, specs, test, lint, govulncheck, marketplace-gate, released-client-gate, tui-qa-required, web, classify-release-tag, gui-macos-package, gui-linux-package, gui-linux-smoke, gui-matrix-complete, gui-signability, gui-update-e2e]
     if: needs.classify-release-tag.outputs.stable == 'true'
     timeout-minutes: 15
     permissions:
@@ -1206,6 +1422,29 @@ jobs:
 
       - name: Build release artifacts
         run: make release
+
+      - name: Preserve the CLI release build output
+        run: mkdir -p "$RUNNER_TEMP/cli-release" && cp -f dist/* "$RUNNER_TEMP/cli-release/"
+
+      - name: Download GUI release packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gui-*
+          path: ${{ runner.temp }}/gui-artifacts
+          merge-multiple: true
+
+      - name: Assemble and verify GUI assets
+        run: |
+          set -euo pipefail
+          go run ./tools/gui-release-check check-matrix --dir "$RUNNER_TEMP/gui-artifacts" --tag "$VERSION"
+          cp -f "$RUNNER_TEMP"/gui-artifacts/agent-marketplace-gui-"$VERSION"-* dist/
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum agent-marketplace-gui-"$VERSION"-* >> SHA256SUMS)
+          else
+            (cd dist && shasum -a 256 agent-marketplace-gui-"$VERSION"-* >> SHA256SUMS)
+          fi
+          go run ./tools/gui-release-check check-matrix --dir dist --tag "$VERSION"
+          go run ./tools/gui-release-check compare-cli --actual dist --expected "$RUNNER_TEMP/cli-release" --tag "$VERSION"
 
       - name: Render curated release notes
         id: notes

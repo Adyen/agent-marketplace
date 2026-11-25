@@ -63,7 +63,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
   await step("e again removes the exclude", () => terminal.write("e"), async () => {
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
   });
   assert.doesNotMatch(localConfigText(), /skill\/beta-skill/, "clearing the local exclude left beta-skill in config.local.yaml");
   await step("sync installs it again", () => terminal.write("s"), async () => {

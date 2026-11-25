@@ -70,8 +70,11 @@ services:
         <<: *marketplace-build-args
         VERSION: ${MARKETPLACE_VERSION:-dev}
     command: ["serve", "--config", "/app/marketplace.yaml", "--role", "worker"]
+    environment:
+      MARKETPLACE_SKILLSPECTOR_ENDPOINT: ${MARKETPLACE_SKILLSPECTOR_ENDPOINT-unix:///run/skillspector/scan.sock}
     volumes:
       - ./config.dsn-file.example.yaml:/app/marketplace.yaml:ro
+      - skillspector-socket:/run/skillspector:ro
     secrets:
       - source: marketplace_postgres_dsn
         target: marketplace-postgres-dsn
@@ -86,6 +89,26 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  skillspector:
+    platform: *marketplace-platform
+    image: ${MARKETPLACE_SKILLSPECTOR_IMAGE:-agent-marketplace-skillspector:local}
+    pull_policy: never
+    network_mode: none
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    volumes:
+      - skillspector-socket:/run/skillspector
+    restart: unless-stopped
 
   web:
     platform: *marketplace-platform
@@ -147,6 +170,7 @@ services:
 
 volumes:
   postgres-data:
+  skillspector-socket:
 
 secrets:
   marketplace_postgres_password:

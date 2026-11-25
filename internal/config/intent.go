@@ -30,6 +30,7 @@ type LayerIntent struct {
 	v4       *V4Config
 	rootTree *V4Config
 	errors   []error
+	warnings []error
 	rootRead bool
 }
 
@@ -67,6 +68,16 @@ type SourceDecl struct {
 	// Decisions is the source group's ordered v4 decision stream, used by the
 	// plugin lock manifests to commit the declared selection edges.
 	Decisions []V4SelectionDecision
+}
+
+type SourceDescription struct {
+	Name          string
+	Kind          SourceKind
+	Location      string
+	Ref           string
+	Path          string
+	SourceHarness string
+	InstanceID    string
 }
 
 type MarketplaceSource struct {
@@ -145,6 +156,27 @@ func (s Settings) config() *Config {
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
 	}
+}
+
+func (l LayerIntent) DescribeSources() []SourceDescription {
+	if l.v4 != nil {
+		names := make([]string, 0, len(l.v4.Sources))
+		for name := range l.v4.Sources {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		descs := make([]SourceDescription, 0, len(names))
+		for _, name := range names {
+			src := l.v4.Sources[name]
+			desc := SourceDescription{Name: name, Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
+			if src.Kind == V4SourceMarketplace {
+				desc.Location = src.CanonicalURL
+			}
+			descs = append(descs, desc)
+		}
+		return descs
+	}
+	return nil
 }
 
 func (l LayerIntent) Sources() []SourceDecl {
@@ -313,6 +345,16 @@ func (i Intent) TargetHarnesses() ([]string, Source) {
 		return append([]string(nil), harnesses...), i.Layers[Organization].Source
 	}
 	return nil, SourceUnset
+}
+
+func (i Intent) MachineTargetHarnesses() ([]string, Source) {
+	if harnesses := i.Layers[UserPersonal].Settings().Harnesses; len(harnesses) > 0 {
+		return append([]string(nil), harnesses...), UserPersonal
+	}
+	if harnesses := i.Layers[Organization].Settings().Harnesses; len(harnesses) > 0 {
+		return append([]string(nil), harnesses...), i.Layers[Organization].Source
+	}
+	return i.TargetHarnesses()
 }
 
 func (i Intent) AllowedRegistries() []string {
@@ -584,6 +626,7 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	for _, source := range intentLayerOrder {
 		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
+		intent.Warnings = append(intent.Warnings, intent.Layers[source].warnings...)
 	}
 	return intent
 }
@@ -626,7 +669,16 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	ec.Errors = nil
 	for _, layer := range ec.LayerResults() {
 		ec.Errors = append(ec.Errors, layer.Errors...)
+		for _, err := range layer.Errors {
+			var validation *V4ValidationError
+			if errors.As(err, &validation) &&
+				(validation.authoredConfig ||
+					(validation.Code != v4MarketplaceLockRequiredCode && validation.Code != v4MarketplaceLockMismatchCode)) {
+				ec.ConfigurationValidationFailed = true
+			}
+		}
 	}
+	bindingErrorCount := len(ec.Errors)
 
 	if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
 		var trustErr *OrganizationTrustError
@@ -712,6 +764,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
+	ec.ConfigurationValidationFailed = ec.ConfigurationValidationFailed || len(ec.Errors) > bindingErrorCount
 
 	if len(ec.Errors) > 0 {
 		slog.Error("effective config loaded with errors",

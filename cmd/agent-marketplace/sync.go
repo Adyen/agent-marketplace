@@ -18,12 +18,14 @@ import (
 	pkgcatalog "github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/hookreview"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
-	"github.com/Adyen/agent-marketplace/internal/tui"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -60,16 +62,17 @@ func newSyncCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			noConfigBackup := locked
 			locked = locked || checkOnly || offline
 			if checkOnly {
 				return runSyncCheck(cmd.Context(), cmd.OutOrStdout(), strict, offline, locked)
 			}
-			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: policy})
+			return runSyncWithLocks(cmd.Context(), cmd.OutOrStdout(), noBackup, strict, pruneStale, verbose, offline, lockRunOptions{locked: locked, noConfigBackup: noConfigBackup, marketplacePolicy: policy})
 		},
 	}
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "Check drift without reconciling; exits 1 if out of sync")
-	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backup of machine-scope harness directories")
+	cmd.Flags().BoolVar(&noBackup, "no-backup", false, "Skip pre-sync backups of machine-scope harness directories and the user configuration archive")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Fail on unresolved selections ('selected but not found', 'found but failed to load') and on unmet prerequisites (exit 1)")
 	cmd.Flags().BoolVar(&pruneStale, "prune-stale", false, "Auto-remove stale skill selections from config after successful sync")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print per-file detail for each target and list malformed resources")
@@ -82,8 +85,10 @@ func newSyncCmd() *cobra.Command {
 
 type lockRunOptions struct {
 	locked            bool
+	noConfigBackup    bool
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
 	beforeMaterialize func() error
+	userConfig        *pipeline.UserConfigSnapshot
 }
 
 var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
@@ -99,11 +104,19 @@ var ensureGlobalConfigForSync = config.EnsureGlobalConfig
 
 var runSyncCheckMaterialize = materialize.Run
 
-func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
+func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) (retErr error) {
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	var noConfigBackup bool
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
 	var beforeMaterialize func() error
 	if len(lockOpts) > 0 {
+		noConfigBackup = lockOpts[0].noConfigBackup
 		marketplacePolicy = lockOpts[0].marketplacePolicy
 		beforeMaterialize = lockOpts[0].beforeMaterialize
 	}
@@ -111,7 +124,14 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err != nil {
 		return err
 	}
-	if err := prepareDependencyTransactions(ctx, (lockMode{locked: locked, offline: offline}).readOnlyDependencies()); err != nil {
+	var userConfig *pipeline.UserConfigSnapshot
+	if len(lockOpts) > 0 {
+		userConfig = lockOpts[0].userConfig
+	}
+	if userConfig == nil && !noConfigBackup && !noBackup {
+		userConfig = pipeline.CaptureUserConfig()
+	}
+	if err := lifecycle.PrepareDependencyTransactions(ctx, (lifecycle.LockMode{Locked: locked, Offline: offline}).ReadOnlyDependencies()); err != nil {
 		return err
 	}
 	if err := pipeline.ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
@@ -127,7 +147,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	var lockMetadata []pipeline.LockMetadata
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{locked: locked || offline, offline: offline, warningSink: &lockWarnings, marketplacePolicy: marketplacePolicy, lockMetadataSink: &lockMetadata})
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -145,7 +165,20 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, LockMetadata: lockMetadata, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
+	resolveOpts := pipeline.ResolveOptions{
+		Workspace:                             ws,
+		NoBackup:                              noBackup,
+		NoConfigBackup:                        noConfigBackup,
+		UserConfigSnapshot:                    userConfig,
+		Offline:                               offline,
+		CatalogOption:                         []pkgcatalog.LoadOption{exactOption},
+		ExactLockLease:                        exactLease,
+		LockMetadata:                          lockMetadata,
+		SkipInventory:                         pruneStale,
+		MarketplaceRevocationPolicy:           marketplacePolicy,
+		MarketplaceLockEvidenceStrict:         locked,
+		MarketplaceReportArchiveEvidenceDrift: !locked && !offline,
+	}
 	resolveOpts.BeforeMaterialize = beforeMaterialize
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
@@ -155,15 +188,15 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	resolvedCount := len(syncResult.Resolved)
 	report := syncResult.Report
 
-	var persistedRefreshes map[archiveRefreshKey]bool
+	var persistedRefreshes map[lifecycle.ArchiveRefreshKey]bool
 	if !locked && !offline && len(errs) == 0 {
 		var refreshErr error
-		persistedRefreshes, refreshErr = refreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
+		persistedRefreshes, refreshErr = lifecycle.RefreshDriftedMarketplaceLocks(ctx, repoRoot, localDir, mergedCfg, syncResult.Warnings)
 		if refreshErr != nil {
 			errs = append(errs, fmt.Errorf("refresh Marketplace lock evidence: %w", refreshErr))
 		}
 	}
-	syncResult.Warnings = stripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
+	syncResult.Warnings = lifecycle.StripUnpersistedRefreshWarnings(syncResult.Warnings, persistedRefreshes)
 
 	// Collect stale selections before strict mode reclassifies them.
 	// Only collect direct selections (not collection-sourced) for pruning.
@@ -358,7 +391,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 			// remove (collection-sourced, or a failed config edit) are still
 			// in the config — silently discarding the promotion the user
 			// asked for. Pinned by TestSyncPruneStaleStrictSurvivesTheReSync.
-			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked, marketplacePolicy: marketplacePolicy})
+			return runSyncWithLocks(ctx, out, noBackup, strict, false, verbose, offline, lockRunOptions{locked: locked, noConfigBackup: noConfigBackup, marketplacePolicy: marketplacePolicy, userConfig: userConfig})
 		}
 	}
 
@@ -474,10 +507,10 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	if !isOffline {
 		configLoadMode = pipeline.ConfigLoadCached
 	}
-	exactOption, _, exactLease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{
-		locked: true, offline: isOffline, check: true,
-		allowTransientOrganization: !isOffline,
-		warningSink:                &lockWarnings,
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{
+		Locked: true, Offline: isOffline, Check: true,
+		AllowTransientOrganization: !isOffline,
+		WarningSink:                &lockWarnings,
 	})
 	if err != nil {
 		return err
@@ -496,6 +529,7 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 		Workspace: ws, CatalogMode: pkgcatalog.LoadModeRefresh, Offline: isOffline,
 		CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease,
 		ConfigLoadMode: configLoadMode, MarketplaceLockEvidenceStrict: true,
+		KeepRemovedMarketplacePinsFromCache: true,
 	}
 	resolveOpts.RequireTargetSet = true
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
@@ -766,7 +800,7 @@ func printMalformedDetail(out io.Writer, malformed []skill.MalformedSkill) error
 		return err
 	}
 	for _, m := range malformed {
-		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", tui.TerminalSafeLine(m.DirName), tui.TerminalSafeLine(m.Path), tui.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
+		if _, err := fmt.Fprintf(out, "  - %s (%s): %s\n", session.TerminalSafeLine(m.DirName), session.TerminalSafeLine(m.Path), session.TerminalSafeLine(fmt.Sprint(m.Error))); err != nil {
 			return err
 		}
 	}
@@ -950,7 +984,7 @@ func pruneStaleSelections(ctx context.Context, repoRoot string, stale []*resolve
 		LocalConfigDir: config.FindLocalConfigDir(),
 		ConfigPath:     configPath,
 		Source:         config.RepoCommitted,
-		Reconcile:      reconcileCommandDependencies,
+		Reconcile:      lifecycle.ReconcileCommandDependencies,
 	}, func(m *pipeline.LayerMutation) error {
 		for _, snf := range dedupStaleSelections(stale) {
 			label := skill.KindLabel(snf.Kind)

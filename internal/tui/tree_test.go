@@ -143,6 +143,31 @@ func TestBuildStatusTreeKeepsFixedSectionOrder(t *testing.T) {
 	}
 }
 
+func TestStatusBucketPathsUseSharedIDsAndUnknownFallback(t *testing.T) {
+	cases := []struct {
+		name   string
+		bucket statusBucket
+		want   string
+	}{
+		{"required", statusRequired, "status:required"},
+		{"enabled", statusEnabled, "status:enabled"},
+		{"pending", statusPending, "status:pending"},
+		{"stale", statusStale, "status:stale"},
+		{"broken", statusBroken, "status:broken"},
+		{"available", statusAvailable, "status:available"},
+		{"malformed", statusMalformed, "status:malformed"},
+		{"negative", statusBucket(-1), "status:unknown"},
+		{"large", statusBucket(255), "status:unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.bucket.path(); got != tc.want {
+				t.Fatalf("path() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildStatusTreeFoldStateHidesChildren(t *testing.T) {
 	rows := []row{
 		mkRow("audit", withGlobal, withRegistry("sec.git", "security")),

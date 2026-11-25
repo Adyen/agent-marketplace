@@ -213,7 +213,7 @@ func TestPrepareLocatorBoundsNestedWorkAndCachesNestedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	budget := &collectionPreparationBudget{limit: 3}
+	budget := &collectionPreparationBudget{shared: NewPreparationBudget(3)}
 	if err := resolver.verifyNestedCollectionManifests(context.Background(), client, cache, entry, rootManifest, map[string]bool{rootDigest: true}, map[string]hccartifact.CollectionManifest{}, budget, nil); err != nil {
 		t.Fatalf("verify nested collection: %v", err)
 	}

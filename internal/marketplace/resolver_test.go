@@ -411,7 +411,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	// canonical metadata cache key while still verifying the instance.
 	cfg.Marketplaces[0].URL = server.URL
 	before := requestCount
-	resolved2, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCached)
+	resolved2, errs := (&Resolver{Cache: cache}).Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCached)
 	if len(errs) > 0 {
 		t.Fatalf("Cached Resolve errors: %v", errs)
 	}
@@ -423,7 +423,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	}
 
 	before = requestCount
-	if _, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh); len(errs) > 0 {
+	if _, errs := (&Resolver{Cache: cache}).Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeRefresh); len(errs) > 0 {
 		t.Fatalf("Refresh Resolve errors: %v", errs)
 	}
 	if requestCount <= before {
@@ -431,7 +431,7 @@ func TestResolverMirrorRoundTrip(t *testing.T) {
 	}
 
 	before = requestCount
-	resolved3, errs := r.Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCachedNoFetch)
+	resolved3, errs := (&Resolver{Cache: cache}).Resolve(ctx, cfg, []hcc.Target{hcc.TargetClaude}, resolver.MarketplaceResolveModeCachedNoFetch)
 	if len(errs) > 0 {
 		t.Fatalf("CachedNoFetch Resolve errors: %v", errs)
 	}

@@ -1,0 +1,1079 @@
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { startHarness } from './harness'
+import { distIndexExists, launchBuiltUserApp, serveBuiltApp } from './app'
+
+async function actionVisibility(page: Page, dialog: Locator, action: Locator, name: string) {
+  await action.focus()
+  const [dialogBox, actionBox] = await Promise.all([dialog.boundingBox(), action.boundingBox()])
+  const viewport = page.viewportSize()
+  const hittable = await action.evaluate((element) => {
+    const box = element.getBoundingClientRect()
+    const target = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return target != null && (target === element || element.contains(target))
+  })
+  const subpixel = 1
+  const insideDialog = dialogBox != null && actionBox != null &&
+    actionBox.x >= dialogBox.x - subpixel && actionBox.y >= dialogBox.y - subpixel &&
+    actionBox.x + actionBox.width <= dialogBox.x + dialogBox.width + subpixel &&
+    actionBox.y + actionBox.height <= dialogBox.y + dialogBox.height + subpixel
+  const insideViewport = viewport != null && actionBox != null &&
+    actionBox.x >= -subpixel && actionBox.y >= -subpixel &&
+    actionBox.x + actionBox.width <= viewport.width + subpixel && actionBox.y + actionBox.height <= viewport.height + subpixel
+  return { name, dialogBox, actionBox, viewport, insideDialog, insideViewport, hittable }
+}
+
+async function sourceListVisibility(page: Page, dialog: Locator, sources: Locator, longLocation: string) {
+  const item = sources.locator('li').filter({ hasText: longLocation })
+  const kind = item.getByText('Directory', { exact: true })
+  const head = item.locator('.source-card__head .source-card__location').first()
+  const location = item.locator('.source-card__location, .source-card__meta').filter({ hasText: longLocation }).first()
+  const [dialogBox, kindBox, headBox] = await Promise.all([
+    dialog.boundingBox(), kind.boundingBox(), head.boundingBox(),
+  ])
+  const textRects = await location.evaluate((element) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    return Array.from(range.getClientRects()).map((rect) => ({
+      left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+    }))
+  })
+  const [dialogWidth, sourcesWidth, documentWidth] = await Promise.all([
+    dialog.evaluate((element) => [element.scrollWidth, element.clientWidth]),
+    sources.evaluate((element) => [element.scrollWidth, element.clientWidth]),
+    page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]),
+  ])
+  const viewport = page.viewportSize()
+  return {
+    kindOnHeadRow: kindBox != null && headBox != null && kindBox.y < headBox.y + headBox.height && headBox.y < kindBox.y + kindBox.height,
+    locationLines: new Set(textRects.map((rect) => Math.round(rect.top))).size,
+    locationWithinDialog: dialogBox != null && viewport != null && textRects.length > 0 && textRects.every((rect) =>
+      rect.left >= dialogBox.x && rect.right <= dialogBox.x + dialogBox.width &&
+      rect.left >= 0 && rect.right <= viewport.width && rect.top >= dialogBox.y && rect.bottom <= dialogBox.y + dialogBox.height,
+    ),
+    dialogHasNoHorizontalOverflow: dialogWidth[0] <= dialogWidth[1],
+    sourcesHaveNoHorizontalOverflow: sourcesWidth[0] <= sourcesWidth[1],
+    pageHasNoHorizontalOverflow: documentWidth[0] <= documentWidth[1],
+  }
+}
+
+// spec: gui-configuration/nonexistent-directory-source-is-refused-in-the-form
+// spec: gui-configuration/add-source-error-clears-after-a-successful-add
+// previewAndAdd previews the drafted source and adds it once the preview shows.
+async function previewAndAdd(modal: Locator) {
+  await modal.getByRole('button', { name: 'Preview source' }).click()
+  await expect(modal.getByLabel('Source preview')).toBeVisible({ timeout: 60_000 })
+  await modal.getByRole('button', { name: 'Add source', exact: true }).click()
+}
+
+async function openAddSourceModal(page: Page, settings: Locator): Promise<Locator> {
+  await settings.getByRole('tab', { name: 'Sources' }).click()
+  await settings.getByRole('button', { name: 'Add source', exact: true }).click()
+  const modal = page.getByRole('dialog', { name: 'Add source' })
+  await expect(modal).toBeVisible()
+  return modal
+}
+
+test('built GUI refuses a nonexistent directory source without disabling the workspace', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourcePath = join(bootstrap.addSourceDir!, 'does-not-exist')
+  const userConfigPath = join(bootstrap.home!, '.agents', 'config.yaml')
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    const originalConfig = await readFile(userConfigPath, 'utf8')
+    const settingsButton = page.getByRole('button', { name: 'Settings', exact: true })
+    await settingsButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    await dialog.getByRole('button', { name: 'Add source', exact: true }).click()
+    const addSection = page.getByRole('dialog', { name: 'Add source' })
+    await expect(addSection).toBeVisible()
+    const location = addSection.getByLabel('Source location')
+    await location.fill(sourcePath)
+    await addSection.getByRole('button', { name: 'Preview source' }).press('Enter')
+
+    const locationError = addSection.getByRole('alert')
+    await expect(locationError).toContainText(/directory/i)
+    await expect(location).toHaveAttribute('aria-invalid', 'true')
+    await expect(location.locator('xpath=..').getByRole('alert')).toContainText(/directory/i)
+    const errorId = await location.getAttribute('aria-describedby')
+    expect(errorId).not.toBeNull()
+    await expect(addSection.locator(`#${errorId!}`)).toHaveText(/directory/i)
+    const [borderColor, dangerColor] = await location.evaluate((input) => {
+      const probe = document.createElement('span')
+      probe.style.borderColor = 'var(--am-color-status-danger)'
+      document.body.append(probe)
+      const expected = getComputedStyle(probe).borderColor
+      probe.remove()
+      return [getComputedStyle(input).borderColor, expected]
+    })
+    expect(borderColor).toBe(dangerColor)
+    await expect(dialog.locator('.settings-window__content > [role="alert"]')).toHaveCount(0)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+
+    await location.fill(bootstrap.addSourceDir!)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+    await previewAndAdd(addSection)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(dialog.getByLabel('User sources')).toContainText(bootstrap.addSourceDir!, { timeout: 60_000 })
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).not.toBe(originalConfig)
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await expect(search).toBeVisible()
+    await search.fill('solo')
+    await search.press('Enter')
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await settingsButton.click()
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/editing-a-field-clears-its-error
+test('built GUI clears a directory source error when Location is edited', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourcePath = join(bootstrap.addSourceDir!, 'does-not-exist')
+
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = await openAddSourceModal(page, dialog)
+    const location = addSection.getByLabel('Source location')
+    await location.fill(sourcePath)
+    await addSection.getByRole('button', { name: 'Preview source' }).click()
+    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+
+    await location.fill(`${sourcePath}-changed`)
+    await location.blur()
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/choosing-a-folder-fills-location-without-adding-a-source
+test('built GUI fills and validates Location from the native folder picker before adding', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourceDir = bootstrap.addSourceDir!
+  const userConfigPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  const invalidPath = join(sourceDir, 'does-not-exist')
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential, selectedPath]) => {
+        const w = window as unknown as Record<string, unknown>
+        w.__AM_GUI_BOOTSTRAP__ = { credential }
+        w.go = {
+          main: {
+            App: {
+              ChooseDirectory: (defaultPath: string) => {
+                w.__AM_GUI_PICKER_DEFAULT_PATH__ = defaultPath
+                return Promise.resolve(selectedPath)
+              },
+            },
+          },
+        }
+      },
+      [bootstrap.credential, sourceDir] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    const originalConfig = await readFile(userConfigPath, 'utf8')
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = await openAddSourceModal(page, dialog)
+    const location = addSection.getByLabel('Source location')
+    const addButton = addSection.getByRole('button', { name: 'Preview source' })
+    await location.fill(invalidPath)
+    await addButton.click()
+    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+    await expect(location).toHaveAttribute('aria-invalid', 'true')
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+
+    await addSection.getByRole('button', { name: 'Browse for folder' }).press('Enter')
+    await expect(location).toHaveValue(sourceDir)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__AM_GUI_PICKER_DEFAULT_PATH__)).toBe(invalidPath)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+    await expect(dialog.getByLabel('User sources')).not.toContainText(sourceDir)
+
+    await previewAndAdd(addSection)
+    await expect(dialog.getByLabel('User sources')).toContainText(sourceDir, { timeout: 60_000 })
+    await expect
+      .poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 })
+      .toContain(`directory: ${sourceDir}`)
+  } finally {
+    await harness.stop()
+  }
+})
+
+test('Settings source labels share sans typography and Add source stays content-width', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `./node_modules/.bin/vite build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = await openAddSourceModal(page, dialog)
+    await addSection.getByRole('radio', { name: 'Git registry' }).check()
+    await addSection.getByLabel('Source location').fill('https://example.com/repo.git')
+    await addSection.getByLabel('Source ref').fill('main')
+    await expect(addSection.getByRole('button', { name: 'Preview source' })).toBeEnabled()
+    const form = addSection.locator('.source-form')
+    const checkLayout = async (width: number) => {
+      await page.setViewportSize({ width, height: 800 })
+      await expect(dialog).toBeVisible()
+      const metrics = await form.evaluate((formElement) => {
+        const labels = Array.from(formElement.querySelectorAll<HTMLElement>('.source-form__label'))
+        const typography = labels.map((label) => {
+          const style = getComputedStyle(label)
+          return { family: style.fontFamily, size: style.fontSize, case: style.textTransform }
+        })
+        const heading = getComputedStyle(formElement.closest('.gui-modal__frame')!.querySelector('.gui-modal__title')!)
+        const button = formElement.querySelector<HTMLButtonElement>('button[aria-label="Preview source"]')!
+        const formBox = formElement.getBoundingClientRect()
+        const buttonBox = button.getBoundingClientRect()
+        const originalStyle = button.getAttribute('style')
+        button.style.setProperty('width', 'max-content', 'important')
+        button.style.setProperty('min-width', '0', 'important')
+        button.style.setProperty('max-width', 'none', 'important')
+        const intrinsicWidth = button.getBoundingClientRect().width
+        if (originalStyle == null) {
+          button.removeAttribute('style')
+        } else {
+          button.setAttribute('style', originalStyle)
+        }
+        return {
+          typography,
+          headingFamily: heading.fontFamily,
+          headingCase: heading.textTransform,
+          actionWidth: buttonBox.width,
+          intrinsicWidth,
+          formWidth: formBox.width,
+          actionRight: buttonBox.right,
+          formRight: formBox.right,
+        }
+      })
+      expect(Math.abs(metrics.actionWidth - metrics.intrinsicWidth)).toBeLessThanOrEqual(1)
+      expect(metrics.typography).toHaveLength(4)
+      expect(new Set(metrics.typography.map(({ family }) => family)).size).toBe(1)
+      expect(new Set(metrics.typography.map(({ size }) => size)).size).toBe(1)
+      expect(new Set(metrics.typography.map(({ case: textCase }) => textCase)).size).toBe(1)
+      expect(metrics.typography[0].case).toBe('none')
+      expect(metrics.headingFamily).toBe(metrics.typography[0].family)
+      expect(metrics.headingCase).toBe('none')
+      expect(metrics.actionWidth).toBeLessThan(metrics.formWidth)
+      expect(Math.abs(metrics.actionRight - metrics.formRight)).toBeLessThanOrEqual(1)
+    }
+    await checkLayout(1024)
+    await checkLayout(760)
+    await checkLayout(720)
+  } finally {
+    await harness.stop()
+  }
+})
+
+test('built GUI installs a skill from a Git registry without Marketplace preparation', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'git-resource-actions' })
+  const { bootstrap } = harness
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const installable = page.getByRole('listbox', { name: 'Resources: Available' }).getByRole('option').filter({ hasText: 'solo' })
+    await expect(installable).toBeVisible({ timeout: 60_000 })
+    await installable.click()
+    const install = page.getByRole('button', { name: 'Install resource', exact: true })
+    await expect(install).toBeEnabled()
+    const planResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/resource-plan')
+    await install.click()
+    expect((await planResponse).status()).toBe(200)
+    await expect(page.getByRole('dialog', { name: 'Install resource' })).toHaveCount(0)
+    await expect(page.getByLabel('Notifications').getByText('Installed solo')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('listbox', { name: 'Resources: Pending sync' }).getByRole('option').filter({ hasText: 'solo' })).toBeVisible()
+    await expect(page.getByText('Action could not be prepared; refresh this resource and retry.')).toHaveCount(0)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-and-remove-user-sources
+// spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
+test('built GUI adds and removes a user directory source against the real user-scope core', async ({
+  page,
+}) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const home = bootstrap.home!
+  const sourceDir = bootstrap.addSourceDir!
+  const userConfigPath = join(home, '.agents', 'config.yaml')
+  const fragmentPath = join(home, '.agents', 'fragment.yaml')
+  const orgConfigPath = bootstrap.orgConfig!
+  const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
+  const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
+  const codexHome = join(home, '.codex')
+  const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const original = await readFile(userConfigPath, 'utf8')
+    const fragment = await readFile(fragmentPath, 'utf8')
+    const orgBefore = await readFile(orgConfigPath, 'utf8')
+    const repoBefore = await readFile(repoConfigPath, 'utf8')
+    const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
+    const addedRoot =
+      `apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n` +
+      `sources:\n  keep: {directory: ${join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')}}\n` +
+      `  added-source:\n    directory: ${sourceDir}\nresources:\n  keep: {all: true}\n`
+
+    const sourcesButton = page.getByRole('button', { name: 'Settings', exact: true })
+    await sourcesButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    const notifications = page.getByLabel('Notifications')
+
+    const addSection = await openAddSourceModal(page, dialog)
+    await expect(addSection).toBeVisible()
+    await expect(addSection.getByRole('group', { name: 'Source kind' }).getByRole('radio', { name: 'Directory registry' })).toBeChecked()
+    await expect(addSection.getByLabel('Source location')).toBeEnabled()
+    await addSection.getByLabel('Source location').pressSequentially(sourceDir)
+    await addSection.getByRole('button', { name: 'Close dialog', exact: true }).press('Enter')
+    await expect(addSection).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    expect(await readFile(userConfigPath, 'utf8')).toBe(original)
+
+    const addSection2 = await openAddSourceModal(page, dialog)
+    const location = addSection2.getByLabel('Source location')
+    await expect(location).toBeEnabled({ timeout: 60_000 })
+    await expect(location).toHaveValue('')
+    await location.pressSequentially(sourceDir)
+    const addButton = addSection2.getByRole('button', { name: 'Preview source' })
+    await expect(addButton).toBeEnabled({ timeout: 60_000 })
+    await addButton.press('Enter')
+    await expect(addSection2.getByLabel('Resources found')).toContainText('solo', { timeout: 60_000 })
+    await addSection2.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
+
+    const userSources = dialog.getByLabel('User sources')
+    await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
+    await expect(userSources).toContainText('Directory')
+    await expect(notifications.getByText('Source added')).toBeVisible()
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(addSection2).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect
+      .poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 })
+      .toBe(addedRoot)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+
+    const remove = userSources.getByRole('button', { name: `Remove source ${sourceDir}` })
+    await expect(remove).toBeEnabled()
+    await remove.press('Enter')
+    const cancelRemove = dialog.getByRole('button', { name: 'Cancel remove' })
+    await expect(cancelRemove).toBeEnabled()
+    await cancelRemove.press('Enter')
+    expect(await readFile(userConfigPath, 'utf8')).toBe(addedRoot)
+
+    await expect(remove).toBeEnabled()
+    await remove.press('Enter')
+    const confirmRemove = dialog.getByRole('button', { name: 'Confirm remove' })
+    await expect(confirmRemove).toBeEnabled()
+    await confirmRemove.press('Enter')
+
+    await expect(userSources.getByText(sourceDir)).toHaveCount(0, { timeout: 60_000 })
+    await expect(notifications.getByText('Source removed').last()).toBeVisible()
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect
+      .poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 })
+      .toBe(original)
+
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(bootstrap.xdgConfig!, 'devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
+    ).not.toContain('devin')
+
+    const rejections = await page.evaluate(
+      async ({ url, credential }) => {
+        const post = async (body: string, token = credential) => {
+          const response = await fetch(`${url}/api/configuration/actions`, {
+            method: 'POST',
+            headers: { 'X-Agent-Marketplace-Token': token, 'Content-Type': 'application/json' },
+            body,
+          })
+          const parsed = (await response.json().catch(() => ({}))) as { code?: string }
+          return { status: response.status, code: parsed.code ?? null }
+        }
+        return Promise.all([
+          post('{"action":"add-source"}'),
+          post('{"action":"remove-source"}'),
+          post(`{"action":"remove-source","id":"${'0'.repeat(64)}"}`),
+          post('{"action":"add-source","source":{"kind":"directory","location":"relative/dir"}}'),
+          post('{"action":"add-source","source":{"kind":"directory","location":"/tmp/x","ref":null}}'),
+          post('{"action":"remove-source","id":"x"}', 'wrong'),
+        ])
+      },
+      { url: bootstrap.url, credential: bootstrap.credential },
+    )
+    expect(rejections).toEqual([
+      { status: 400, code: 'localapi.invalid_request' },
+      { status: 400, code: 'localapi.invalid_request' },
+      { status: 400, code: 'localapi.invalid_request' },
+      { status: 400, code: 'localapi.invalid_request' },
+      { status: 400, code: 'localapi.invalid_request' },
+      { status: 401, code: 'localapi.unauthorized' },
+    ])
+    expect(await readFile(userConfigPath, 'utf8')).toBe(original)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-and-remove-user-sources
+// spec: gui-configuration/removing-a-marketplace-endpoint-registration-changes-only-that-entry
+test('built GUI adds and removes a Marketplace endpoint registration in the open Sources dialog', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'marketplace' })
+  const { bootstrap } = harness
+  const endpoint = bootstrap.marketplaceEndpoint
+  const artifactDirectory = process.env.AM_MARKETPLACE_REMOVAL_EVIDENCE_DIR
+  const artifactPath = (name: string) =>
+    artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
+  const formActionScreenshotPath = artifactPath('marketplace-removal-form-action.png')
+  const marketplacePresentScreenshotPath = artifactPath('marketplace-removal-present.png')
+  const marketplaceRemovedScreenshotPath = artifactPath('marketplace-removal-removed.png')
+
+  try {
+    if (endpoint == null) {
+      throw new Error('Marketplace endpoint fixture missing from bootstrap')
+    }
+    const home = bootstrap.home!
+    const userConfigPath = join(home, '.agents', 'config.yaml')
+    const fragmentPath = join(home, '.agents', 'fragment.yaml')
+    const orgConfigPath = bootstrap.orgConfig!
+    const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
+    const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
+    const codexHome = join(home, '.codex')
+    const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const original = await readFile(userConfigPath, 'utf8')
+    const fragment = await readFile(fragmentPath, 'utf8')
+    const orgBefore = await readFile(orgConfigPath, 'utf8')
+    const repoBefore = await readFile(repoConfigPath, 'utf8')
+    const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
+    const sourcesButton = page.getByRole('button', { name: 'Settings', exact: true })
+    await sourcesButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+
+    const addSection = await openAddSourceModal(page, dialog)
+    const userSources = dialog.getByLabel('User sources')
+    const longLocation = join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')
+    await expect(userSources).toContainText(longLocation)
+
+    const listMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+
+    const kindGroup = addSection.getByRole('group', { name: 'Source kind' })
+    await expect(kindGroup).toBeVisible()
+    const marketplaceRadio = kindGroup.getByRole('radio', { name: 'Marketplace endpoint' })
+    await marketplaceRadio.focus()
+    await marketplaceRadio.press('Space')
+    await expect(marketplaceRadio).toBeChecked()
+    await expect(addSection.getByLabel('Source ref')).toHaveCount(0)
+    await expect(addSection.getByLabel('Source subpath')).toHaveCount(0)
+    const location = addSection.getByLabel('Source location')
+    await location.pressSequentially(endpoint)
+    const addButton = addSection.getByRole('button', { name: 'Add source' })
+    const cancelButton = addSection.getByRole('button', { name: 'Close dialog', exact: true })
+    await expect(addButton).toBeEnabled()
+    const cancelMetrics = await actionVisibility(page, addSection, cancelButton, 'Close dialog')
+    const addMetrics = await actionVisibility(page, addSection, addButton, 'Add source')
+    await page.screenshot({ path: formActionScreenshotPath, fullPage: true })
+    const viewport = page.viewportSize()
+    const visibility = {
+      viewport,
+      list: listMetrics,
+      actions: [cancelMetrics, addMetrics],
+    }
+    expect(visibility, `visibility metrics: ${JSON.stringify(visibility)}`).toMatchObject({
+      viewport: { width: 1280, height: 720 },
+      list: {
+        kindOnHeadRow: true,
+        locationWithinDialog: true,
+        dialogHasNoHorizontalOverflow: true,
+        sourcesHaveNoHorizontalOverflow: true,
+        pageHasNoHorizontalOverflow: true,
+      },
+      actions: [
+        { name: 'Close dialog', insideDialog: true, insideViewport: true, hittable: true },
+        { name: 'Add source', insideDialog: true, insideViewport: true, hittable: true },
+      ],
+    })
+    expect(listMetrics.locationLines).toBeGreaterThan(1)
+    await cancelButton.press('Enter')
+    await expect(addSection).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    expect(await readFile(userConfigPath, 'utf8')).toBe(original)
+    await dialog.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
+    await expect(addSection).toBeVisible()
+    await expect(marketplaceRadio).toBeEnabled()
+    await marketplaceRadio.focus()
+    await marketplaceRadio.press('Space')
+    await expect(marketplaceRadio).toBeChecked()
+    await expect(location).toHaveValue('')
+    await location.pressSequentially(endpoint)
+    await expect(addButton).toBeEnabled()
+    const finalAddMetrics = await actionVisibility(page, addSection, addButton, 'Add source')
+    expect(finalAddMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await addButton.press('Enter')
+    await expect(addSection).toHaveCount(0)
+    await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
+    await expect(userSources).toContainText('Marketplace')
+    await expect(page.getByLabel('Notifications').getByText('Source added')).toBeVisible()
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await userSources.scrollIntoViewIfNeeded()
+    await userSources.screenshot({ path: marketplacePresentScreenshotPath })
+    const updatedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+    expect(updatedListMetrics).toMatchObject({
+      kindOnHeadRow: true,
+      locationWithinDialog: true,
+      dialogHasNoHorizontalOverflow: true,
+      sourcesHaveNoHorizontalOverflow: true,
+      pageHasNoHorizontalOverflow: true,
+    })
+    expect(updatedListMetrics.locationLines).toBeGreaterThan(1)
+
+    const expectedRoot = original.replace(
+      'resources:\n',
+      `  marketplace:\n    marketplace: ${endpoint}\nresources:\n`,
+    )
+    expect(expectedRoot).not.toBe(original)
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(expectedRoot)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
+    ).not.toContain('devin')
+
+    const removeButton = userSources.getByRole('button', { name: `Remove source ${endpoint}` })
+    await expect(removeButton).toBeVisible({ timeout: 5_000 })
+    const removeMetrics = await actionVisibility(page, dialog, removeButton, 'Remove source')
+    expect(removeMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    const notifications = page.getByLabel('Notifications')
+    await expect(notifications.getByText('Source added')).toHaveCount(0, { timeout: 10_000 })
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const cancelRemove = dialog.getByRole('button', { name: 'Cancel remove' })
+    const cancelRemoveMetrics = await actionVisibility(page, dialog, cancelRemove, 'Cancel remove')
+    expect(cancelRemoveMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await cancelRemove.press('Enter')
+    await expect(confirmation).toHaveCount(0)
+    await expect(userSources).toContainText(endpoint)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(expectedRoot)
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const confirmRemove = dialog.getByRole('button', { name: 'Confirm remove' })
+    const confirmRemoveMetrics = await actionVisibility(page, dialog, confirmRemove, 'Confirm remove')
+    expect(confirmRemoveMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
+    await confirmRemove.press('Enter')
+    await expect(userSources).not.toContainText(endpoint, { timeout: 60_000 })
+    await expect(notifications.getByText('Source removed').last()).toBeVisible({ timeout: 60_000 })
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(original)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')),
+    ).not.toContain('devin')
+    const removedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
+    expect(removedListMetrics).toMatchObject({
+      kindOnHeadRow: true,
+      locationWithinDialog: true,
+      dialogHasNoHorizontalOverflow: true,
+      sourcesHaveNoHorizontalOverflow: true,
+      pageHasNoHorizontalOverflow: true,
+    })
+    expect(removedListMetrics.locationLines).toBeGreaterThan(1)
+    await userSources.scrollIntoViewIfNeeded()
+    await userSources.screenshot({ path: marketplaceRemovedScreenshotPath })
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-and-remove-user-sources
+// spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
+test('built GUI adds and removes a user Git source with ref and subpath by keyboard', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  await page.setViewportSize({ width: 1280, height: 720 })
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources-git' })
+  const { bootstrap } = harness
+  const artifactDirectory = process.env.AM_GIT_SOURCE_EVIDENCE_DIR
+  const artifactPath = (name: string) =>
+    artifactDirectory == null ? testInfo.outputPath(name) : join(artifactDirectory, name)
+
+  try {
+    if (bootstrap.gitSourceURL == null) {
+      throw new Error('Git source fixture missing from bootstrap')
+    }
+    if (bootstrap.codexHome == null) {
+      throw new Error('CODEX_HOME fixture missing from bootstrap')
+    }
+    const home = bootstrap.home!
+    const gitURL = bootstrap.gitSourceURL
+    const userConfigPath = join(home, '.agents', 'config.yaml')
+    const fragmentPath = join(home, '.agents', 'fragment.yaml')
+    const lockPath = join(home, '.agents', 'lock.yaml')
+    const orgConfigPath = bootstrap.orgConfig!
+    const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
+    const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
+    const codexHome = bootstrap.codexHome
+    const xdgDirs = [bootstrap.xdgConfig!, bootstrap.xdgState!, bootstrap.xdgCache!]
+
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const original = await readFile(userConfigPath, 'utf8')
+    const fragment = await readFile(fragmentPath, 'utf8')
+    const orgBefore = await readFile(orgConfigPath, 'utf8')
+    const repoBefore = await readFile(repoConfigPath, 'utf8')
+    const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
+    const keepDir = join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')
+    const addedRoot =
+      `apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n` +
+      `logging: {level: debug}\nsources:\n  keep: {directory: ${keepDir}}\n` +
+      `  repo:\n    git: ${gitURL}\n    ref: main\n    path: solo\n` +
+      `resources:\n  keep: {all: true, harnesses: [devin]}\n`
+
+    const sourcesButton = page.getByRole('button', { name: 'Settings', exact: true })
+    await sourcesButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    const notifications = page.getByLabel('Notifications')
+
+    const managedSection = dialog.getByLabel('Managed outside the GUI')
+    await expect(managedSection.getByText('Included files, per-source configuration, and other settings are managed outside the GUI.')).toBeVisible()
+    const orgSection = dialog.getByLabel('Organization sources')
+    await expect(orgSection.getByText('Managed by your organization; read-only.')).toBeVisible()
+    await expect(orgSection).toContainText('Directory')
+    await expect(orgSection.locator('button, input, select, a')).toHaveCount(0)
+    await page.screenshot({ path: artifactPath('git-source-before.png'), fullPage: true })
+
+    const addSection = await openAddSourceModal(page, dialog)
+    const kindGroup = addSection.getByRole('group', { name: 'Source kind' })
+    const gitRadio = kindGroup.getByRole('radio', { name: 'Git registry' })
+    await expect(gitRadio).toBeEnabled()
+    await gitRadio.focus()
+    await gitRadio.press('Space')
+    await expect(gitRadio).toBeChecked()
+
+    const location = addSection.getByLabel('Source location')
+    const ref = addSection.getByLabel('Source ref')
+    const subpath = addSection.getByLabel('Source subpath')
+    await expect(location).toBeEnabled()
+    await location.pressSequentially(gitURL)
+    await ref.pressSequentially('main')
+    await subpath.pressSequentially('solo')
+    const addButton = addSection.getByRole('button', { name: 'Preview source' })
+    await expect(addButton).toBeEnabled()
+    const gitControls = [
+      await actionVisibility(page, addSection, ref, 'Source ref'),
+      await actionVisibility(page, addSection, subpath, 'Source subpath'),
+      await actionVisibility(page, addSection, addButton, 'Add source'),
+    ]
+    for (const metrics of gitControls) {
+      expect(metrics, `git control ${metrics.name}: ${JSON.stringify(metrics)}`).toMatchObject({
+        insideDialog: true,
+        insideViewport: true,
+        hittable: true,
+      })
+    }
+    await addSection.screenshot({ path: artifactPath('git-source-form-action.png') })
+    await addButton.press('Enter')
+    await expect(addSection.getByLabel('Source preview')).toContainText('on main', { timeout: 60_000 })
+    await addSection.getByRole('button', { name: 'Add source', exact: true }).press('Enter')
+    await expect(addSection).toHaveCount(0)
+
+    const userSources = dialog.getByLabel('User sources')
+    await expect(userSources).toContainText(gitURL, { timeout: 60_000 })
+    await expect(userSources).toContainText('Git')
+    await expect(userSources).toContainText('main · solo')
+    await expect(notifications.getByText('Source added')).toBeVisible()
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect(managedSection.getByText('Included files, per-source configuration, and other settings are managed outside the GUI.')).toBeVisible()
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(addedRoot)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(existsSync(join(bootstrap.xdgConfig!, 'devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')).join(','),
+    ).not.toContain('devin')
+    await page.screenshot({ path: artifactPath('git-source-added.png'), fullPage: true })
+
+    const removeButton = userSources.getByRole('button', { name: `Remove source ${gitURL}` })
+    await expect(removeButton).toBeEnabled()
+    await removeButton.press('Enter')
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    await expect(confirmation).toBeVisible()
+    const cancelRemove = dialog.getByRole('button', { name: 'Cancel remove' })
+    await cancelRemove.press('Enter')
+    await expect(confirmation).toHaveCount(0)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(addedRoot)
+    await expect(userSources).toContainText(gitURL)
+
+    await removeButton.press('Enter')
+    await expect(confirmation).toBeVisible()
+    const confirmRemove = dialog.getByRole('button', { name: 'Confirm remove' })
+    await expect(confirmRemove).toBeEnabled()
+    await confirmRemove.press('Enter')
+
+    await expect(userSources.getByText(gitURL)).toHaveCount(0, { timeout: 60_000 })
+    await expect(userSources).toContainText(keepDir)
+    await expect(notifications.getByText('Source removed').last()).toBeVisible({ timeout: 60_000 })
+    await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(original)
+    expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
+    expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)
+    expect(await readFile(repoConfigPath, 'utf8')).toBe(repoBefore)
+    expect(await readFile(repoLocalPath, 'utf8')).toBe(repoLocalBefore)
+    expect(existsSync(codexHome)).toBe(false)
+    expect(existsSync(join(home, '.devin'))).toBe(false)
+    expect(existsSync(join(bootstrap.xdgConfig!, 'devin'))).toBe(false)
+    expect(
+      xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')).join(','),
+    ).not.toContain('devin')
+    await page.screenshot({ path: artifactPath('git-source-removed.png'), fullPage: true })
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-source-request-error-renders-in-the-section
+test('built GUI keeps a failed Git source mutation in the Add source section', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources-git' })
+  const { bootstrap } = harness
+  try {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = await openAddSourceModal(page, dialog)
+    await addSection.getByRole('radio', { name: 'Git registry' }).check()
+    await addSection.getByLabel('Source location').fill('https://127.0.0.1:1/unavailable.git')
+    await addSection.getByLabel('Source ref').fill('main')
+    await addSection.getByRole('button', { name: 'Preview source' }).click()
+
+    const sourceAlert = addSection.getByRole('alert')
+    await expect(sourceAlert).toBeVisible({ timeout: 60_000 })
+    await expect(sourceAlert).not.toHaveText('')
+    await expect(addSection.locator('.source-form ~ [role="alert"]')).toHaveCount(1)
+    await expect(addSection.getByLabel('Source preview')).toHaveCount(0)
+    await expect(dialog.locator('.settings-window__content > p[role="alert"]')).toHaveCount(0)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings
+// spec: gui-shell/revealing-a-source-unfolds-its-folded-group
+// spec: gui-shell/sidebar-add-control-focuses-the-add-source-form
+test('built GUI reveals a sidebar source and focuses the add-source location field', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    const settingsGroup = dialog.getByRole('button', { name: `Source group ${sharedDirectory}` })
+    await expect(settingsGroup).toHaveAttribute('aria-expanded', 'true')
+    await settingsGroup.click()
+    await expect(settingsGroup).toHaveAttribute('aria-expanded', 'false')
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+
+    const sidebarBrowse = page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()
+    const sourceID = await sidebarBrowse.getAttribute('data-source-id')
+    expect(sourceID).not.toBeNull()
+    const manageSource = page.locator(`button[data-source-id="${sourceID}"][aria-label^="Manage source"]`)
+    await manageSource.click()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+    await expect(dialog.getByRole('button', { name: `Source group ${sharedDirectory}` })).toHaveAttribute('aria-expanded', 'true')
+    const card = dialog.locator(`.source-card[data-source-id="${sourceID}"]`)
+    await expect(card).toBeInViewport()
+    await expect(card).toBeFocused()
+    await expect(card).toHaveAttribute('data-highlighted', 'true')
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(dialog).not.toBeVisible()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    await dialog.getByRole('button', { name: 'Add source', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Add source' }).getByLabel('Source location')).toBeFocused()
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/source-selection-filters-resources-and-clears-in-place
+// spec: gui-shell/clearing-the-source-retains-the-current-search
+// spec: gui-shell/empty-or-unavailable-source-cannot-reveal-unrelated-rows
+test('built GUI filters configured sources in Resources and clears without changing the query', async ({ page }, testInfo) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the source browse journey')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  const configPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  try {
+    const configBefore = await readFile(configPath)
+    await launchBuiltUserApp(page, bootstrap)
+    const solo = page.getByRole('option').filter({ hasText: 'solo' })
+    const fragment = page.getByRole('option').filter({ hasText: 'fragment' })
+    await expect(solo).toBeVisible({ timeout: 60_000 })
+    await expect(fragment).toBeVisible()
+    const detail = page.getByRole('complementary', { name: 'Detail' })
+    await fragment.click()
+    await expect(detail.getByRole('heading', { name: 'fragment', exact: true })).toBeVisible()
+
+    const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+    const browseSource = page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await browseSource.focus()
+    await page.keyboard.press('Enter')
+
+    const clearSource = page.getByRole('button', { name: /^Clear source filter / })
+    const skillsFacet = page.getByRole('button', { name: 'Kind facet Skills' })
+    await skillsFacet.press('Enter')
+    await expect(skillsFacet).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('heading', { name: 'Resources', level: 1 })).toBeVisible()
+    await expect(clearSource).toBeVisible()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toHaveCount(0)
+    await skillsFacet.click()
+
+    await expect(clearSource).toBeVisible()
+    await expect(clearSource).toHaveAccessibleName(/Clear source filter/)
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
+    await expect(solo).toBeVisible()
+    await expect(fragment).toHaveCount(0)
+    await expect(detail.getByRole('heading', { name: 'solo', exact: true })).toBeVisible()
+    await expect(detail.getByRole('heading', { name: 'fragment', exact: true })).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('source-filter-active.png'), animations: 'disabled' })
+
+    await clearSource.click()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toBeVisible()
+
+    await browseSource.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await search.fill('fragment')
+    await search.press('Enter')
+    await expect(page.getByText('No resources match “fragment”.')).toBeVisible()
+    await expect(clearSource).toBeVisible()
+    await clearSource.click()
+    await expect(fragment).toBeVisible()
+    await expect(solo).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await expect(solo).toBeVisible()
+    await expect(fragment).toBeVisible()
+
+    const emptyDirectory = join(bootstrap.home!, 'browse-empty')
+    await page.getByRole('button', { name: `Browse source ${emptyDirectory}` }).focus()
+    await page.keyboard.press('Enter')
+    await expect(clearSource).toBeVisible()
+    await expect(solo).toHaveCount(0)
+    await expect(fragment).toHaveCount(0)
+    await expect(detail.getByRole('heading')).toHaveCount(0)
+    await expect(page.getByText(/No resources from/)).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('source-filter-empty.png'), animations: 'disabled' })
+
+    expect((await readFile(configPath)).equals(configBefore)).toBe(true)
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/source-shortcut-preserves-removal-confirmation-and-scope
+test('built GUI confirms removal requested from the source header', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run the GUI build before the source removal journey')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'source-browse' })
+  const { bootstrap } = harness
+  const configPath = join(bootstrap.home!, '.agents', 'config.yaml')
+  const fragmentDirectory = join(bootstrap.home!, 'browse-fragment')
+  const sharedDirectory = join(bootstrap.home!, 'browse-shared')
+  try {
+    const configBefore = await readFile(configPath)
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: `Browse source ${fragmentDirectory}` }).click()
+
+    const sourceActions = page.getByRole('button', { name: 'Source actions' })
+    await expect(sourceActions).toBeVisible({ timeout: 3_000 })
+    await sourceActions.click()
+    await page.getByRole('button', { name: 'Remove source', exact: true }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Sources' }).click()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+    const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
+    await expect(confirmation).toContainText(`Remove source ${fragmentDirectory}?`)
+    expect(await readFile(configPath)).toEqual(configBefore)
+    await dialog.getByRole('button', { name: 'Cancel remove' }).click()
+    await expect(confirmation).toHaveCount(0)
+    expect(await readFile(configPath)).toEqual(configBefore)
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await sourceActions.click()
+    await page.getByRole('button', { name: 'Remove source', exact: true }).click()
+    await expect(dialog.getByRole('region', { name: 'Confirm removal' })).toContainText(`Remove source ${fragmentDirectory}?`)
+    await dialog.getByRole('button', { name: 'Confirm remove' }).click()
+
+    await expect.poll(async () => await readFile(configPath, 'utf8'), { timeout: 60_000 }).not.toContain(fragmentDirectory)
+    const configAfter = await readFile(configPath, 'utf8')
+    expect(configAfter).toContain(sharedDirectory)
+    await expect(page.getByRole('button', { name: `Browse source ${fragmentDirectory}` })).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(page.getByRole('button', { name: `Browse source ${sharedDirectory} /` }).first()).toBeVisible()
+  } finally {
+    await harness.stop()
+  }
+})

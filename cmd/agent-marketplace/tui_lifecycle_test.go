@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,8 +12,10 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func assertNoArchiveRefreshWarnings(t *testing.T, warnings []error) {
@@ -54,7 +58,7 @@ func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T)
 		}
 		t.Run(operation, func(t *testing.T) {
 			newDigest := drift()
-			lifecycle, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
+			lifecycle, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
 			warnings := lifecycle.Warnings
 			if err != nil {
 				t.Fatalf("TUI %s after archive drift: %v", operation, err)
@@ -84,7 +88,7 @@ func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			lifecycle, err = runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
+			lifecycle, err = session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
 			warnings = lifecycle.Warnings
 			if err != nil {
 				t.Fatalf("healthy TUI %s: %v", operation, err)
@@ -100,6 +104,47 @@ func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T)
 				t.Fatalf("healthy TUI %s rewrote the lock: %v", operation, err)
 			}
 		})
+	}
+}
+
+func TestTUIDependencyLifecycleReusesSourceRevisionAcrossPreparationAndResolve(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repo := setupLocalGitSyncFixture(t, 1)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed exact v4 lock: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	for action := 1; action <= 2; action++ {
+		var logs bytes.Buffer
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		result, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+		slog.SetDefault(previousLogger)
+		if err != nil {
+			t.Fatalf("TUI sync lifecycle %d: %v", action, err)
+		}
+		if builds := strings.Count(logs.String(), `msg="built direct-Git source revision"`); builds != 1 {
+			t.Fatalf("TUI sync lifecycle %d built the same locked source %d times across preparation and resolve, want one\n%s", action, builds, logs.String())
+		}
+		if len(result.Errors) != 0 {
+			t.Fatalf("TUI sync lifecycle %d returned errors: %v", action, result.Errors)
+		}
+		installed, err := os.ReadFile(filepath.Join(repo, ".factory", "skills", "review-0", "SKILL.md"))
+		if err != nil || !strings.Contains(string(installed), "# Review") {
+			t.Fatalf("TUI sync lifecycle %d broke materialized skill: %v\n%s", action, err, installed)
+		}
+		lockAfter, err := os.ReadFile(lockPath)
+		if err != nil || !bytes.Equal(lockBefore, lockAfter) {
+			t.Fatalf("TUI sync lifecycle %d changed exact lock bytes: %v\nbefore: %s\nafter:  %s", action, err, lockBefore, lockAfter)
+		}
 	}
 }
 
@@ -136,7 +181,7 @@ func TestTUIDependencyLifecycleFailedReacquisitionPreservesLastGood(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+	lifecycle, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
 	warnings := lifecycle.Warnings
 	if err == nil {
 		t.Fatal("TUI sync with unreachable advertised artifact succeeded")
@@ -185,9 +230,9 @@ func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(
 	}
 	drift()
 
-	commit := commitDependencyTransaction
+	commit := lifecycle.CommitDependencyTransaction
 	var mutated bool
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		for _, file := range desired {
 			if file.Path == lockPath && !file.Delete {
 				if err := os.Chmod(lockPath, file.ExpectedMode^0o020); err != nil {
@@ -198,7 +243,7 @@ func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(
 		}
 		return commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = commit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = commit })
 
 	for _, upgrade := range []bool{false, true} {
 		operation := "sync"
@@ -211,7 +256,7 @@ func TestTUIDependencyLifecycleRefreshedLockPublicationFailurePreservesLastGood(
 				t.Fatal(err)
 			}
 			mutated = false
-			lifecycle, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
+			lifecycle, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), upgrade)
 			warnings := lifecycle.Warnings
 			if err == nil {
 				t.Fatalf("TUI %s committed refreshed evidence onto a lock whose mode drifted", operation)
@@ -269,16 +314,16 @@ func TestTUIDependencyLifecycleSkippedRefreshDropsClaimButKeepsOtherWarnings(t *
 
 	unrelatedWarning := errors.New("unrelated catalog warning")
 	unrelatedFailure := errors.New("unrelated materialization failure")
-	real := runTUIExactSync
-	runTUIExactSync = func(ctx context.Context, options pipeline.ResolveOptions) pipeline.SyncResult {
+	real := session.RunTUIExactSync
+	session.RunTUIExactSync = func(ctx context.Context, options pipeline.ResolveOptions) pipeline.SyncResult {
 		result := real(ctx, options)
 		result.Warnings = append(result.Warnings, unrelatedWarning)
 		result.Errors = append(result.Errors, unrelatedFailure)
 		return result
 	}
-	t.Cleanup(func() { runTUIExactSync = real })
+	t.Cleanup(func() { session.RunTUIExactSync = real })
 
-	lifecycle, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+	lifecycle, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
 
 	warnings := lifecycle.Warnings
 	if !errors.Is(err, unrelatedFailure) {

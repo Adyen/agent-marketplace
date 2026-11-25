@@ -11,7 +11,7 @@ reviews:
     drafts: false
     labels: []
     base_branches:
-      - main
+      - ".*"
     ignore_title_keywords:
       - WIP
       - DO NOT REVIEW

@@ -1,14 +1,19 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +23,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -40,7 +46,7 @@ func TestToggleSnapshotReloadPreservesNonEmptyMarketplaceQuery(t *testing.T) {
 
 	m := newTestModel()
 	m.filter = "remote query"
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	updated, cmd := m.Update(snapshotLoadedMsg{
 		generation:      generation,
 		mergedCfg:       &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "market-id"}}},
@@ -54,13 +60,16 @@ func TestToggleSnapshotReloadPreservesNonEmptyMarketplaceQuery(t *testing.T) {
 	for _, candidate := range commands {
 		_ = candidate()
 	}
-	select {
-	case got := <-queries:
-		if got != "remote query" {
-			t.Fatalf("remote query = %q, want %q", got, "remote query")
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case got := <-queries:
+			if got == "remote query" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("snapshot reload did not issue Marketplace search")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("snapshot reload did not issue Marketplace search")
 	}
 }
 
@@ -101,10 +110,10 @@ func TestMarketplaceDiscoveryCommandPublishesFastEndpointBeforeSlowEndpointCompl
 	}}
 
 	m := newTestModel()
-	generation := m.beginRequest(requestDiscovery)
-	m.discoveryLoading = true
+	generation := m.beginRequest(requestBrowse)
+	m.browseLoading = true
 	messages := make(chan tea.Msg, 1)
-	go func() { messages <- loadMarketplaceDiscovery(context.Background(), cfg, "", generation)() }()
+	go func() { messages <- loadMarketplaceBrowse(context.Background(), cfg, generation)() }()
 	select {
 	case <-blocked:
 	case <-time.After(time.Second):
@@ -123,10 +132,10 @@ func TestMarketplaceDiscoveryCommandPublishesFastEndpointBeforeSlowEndpointCompl
 			t.Fatal("partial discovery message did not schedule the next endpoint update")
 		}
 		next = cmd
-		if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "fast" {
-			t.Fatalf("visible discovery rows = %#v, want fast endpoint only", m.discoveryRows)
+		if len(m.browseDiscoveryRows) != 1 || m.browseDiscoveryRows[0].Artifact.Name != "fast" {
+			t.Fatalf("visible browse rows = %#v, want fast endpoint only", m.browseDiscoveryRows)
 		}
-		if !m.discoveryLoading {
+		if !m.browseLoading {
 			t.Fatal("discovery stopped loading while the slow endpoint was blocked")
 		}
 	case <-time.After(time.Second):
@@ -134,18 +143,17 @@ func TestMarketplaceDiscoveryCommandPublishesFastEndpointBeforeSlowEndpointCompl
 	}
 
 	release <- struct{}{}
-	updated, finalCmd := m.Update(next().(discoveryLoadedMsg))
-	m = updated.(Model)
-	if len(m.discoveryRows) != 2 || m.discoveryRows[0].Artifact.Name != "fast" || m.discoveryRows[1].Artifact.Name != "slow" {
-		t.Fatalf("completed discovery rows = %#v, want deterministic fast, slow order", m.discoveryRows)
+	for next != nil {
+		updated, following := m.Update(next().(discoveryLoadedMsg))
+		m = updated.(Model)
+		next = following
 	}
-	if finalCmd == nil {
-		t.Fatal("last endpoint update did not schedule stream completion")
+	if len(m.browseDiscoveryRows) != 2 || m.browseDiscoveryRows[0].Artifact.Name != "fast" || m.browseDiscoveryRows[1].Artifact.Name != "slow" {
+		t.Fatalf("completed browse rows = %#v, want deterministic fast, slow order", m.browseDiscoveryRows)
 	}
-	updated, _ = m.Update(finalCmd().(discoveryLoadedMsg))
-	m = updated.(Model)
-	if m.discoveryLoading || m.requests.active(requestDiscovery) != 0 {
-		t.Fatalf("completed discovery remained active: loading=%t generation=%d", m.discoveryLoading, m.requests.active(requestDiscovery))
+
+	if m.browseLoading || m.requests.Active(requestBrowse) != 0 {
+		t.Fatalf("completed browse remained active: loading=%t generation=%d", m.browseLoading, m.requests.Active(requestBrowse))
 	}
 }
 
@@ -157,11 +165,11 @@ func TestMarketplaceDiscoveryCompletionPreservesAuthoritativeRowsAndSelection(t 
 	m.recomputeView()
 	m.cursor = 1 // first resource after the section header
 	selected := m.selectionKey()
-	generation := m.beginRequest(requestDiscovery)
+	generation := m.beginRequest(requestBrowse)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public"}, Items: []mpapi.ResourceListItem{item}, Total: 1, ObservedAt: time.Now()}
 
-	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "enabled" || m.rows[1].Artifact.Name != "remote" {
 		t.Fatalf("rows = %#v, want authoritative plus discovery", m.rows)
@@ -185,68 +193,69 @@ func TestMarketplaceDiscoveryCompletionPreservesAuthoritativeRowsAndSelection(t 
 
 func TestMarketplaceDiscoveryRejectsSupersededAndDuplicateCompletions(t *testing.T) {
 	m := newTestModel()
-	old := m.beginRequest(requestDiscovery)
-	current := m.beginRequest(requestDiscovery)
+	old := m.beginRequest(requestBrowse)
+	current := m.beginRequest(requestBrowse)
 	outcome := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{InstanceID: "market", Alias: "public"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "stale", Availability: mpapi.AvailabilityAvailable}}}
 
-	updated, _ := m.Update(discoveryLoadedMsg{generation: old, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ := m.Update(discoveryLoadedMsg{generation: old, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
-	if len(m.discoveryRows) != 0 {
-		t.Fatalf("superseded completion changed rows: %#v", m.discoveryRows)
+	if len(m.browseDiscoveryRows) != 0 {
+		t.Fatalf("superseded completion changed rows: %#v", m.browseDiscoveryRows)
 	}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: current, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: current, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
-	if len(m.discoveryRows) != 1 {
-		t.Fatalf("current completion produced %d rows", len(m.discoveryRows))
+	if len(m.browseDiscoveryRows) != 1 {
+		t.Fatalf("current completion produced %d rows", len(m.browseDiscoveryRows))
 	}
-	m.discoveryRows[0].Artifact.Name = "accepted"
-	updated, _ = m.Update(discoveryLoadedMsg{generation: current, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	m.browseDiscoveryRows[0].Artifact.Name = "accepted"
+	updated, _ = m.Update(discoveryLoadedMsg{generation: current, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
-	if m.discoveryRows[0].Artifact.Name != "accepted" {
+	if m.browseDiscoveryRows[0].Artifact.Name != "accepted" {
 		t.Fatal("duplicate completion replayed")
 	}
 }
 
 func TestMarketplaceDiscoveryRejectsOlderPartialReplay(t *testing.T) {
 	m := newTestModel()
-	generation := m.beginRequest(requestDiscovery)
+	generation := m.beginRequest(requestBrowse)
 	newer := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "newer", Availability: mpapi.AvailabilityAvailable}}}
 	older := marketplace.DiscoveryOutcome{Endpoint: newer.Endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "older", Availability: mpapi.AvailabilityAvailable}}}
 
-	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 2, outcomes: []marketplace.DiscoveryOutcome{newer}})
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, browse: true, sequence: 2, outcomes: []marketplace.DiscoveryOutcome{newer}})
 	m = updated.(Model)
-	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, sequence: 1, outcomes: []marketplace.DiscoveryOutcome{older}})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, browse: true, sequence: 1, outcomes: []marketplace.DiscoveryOutcome{older}})
 	m = updated.(Model)
-	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "newer" {
-		t.Fatalf("older partial replay changed rows: %#v", m.discoveryRows)
+	if len(m.browseDiscoveryRows) != 1 || m.browseDiscoveryRows[0].Artifact.Name != "newer" {
+		t.Fatalf("older partial replay changed rows: %#v", m.browseDiscoveryRows)
 	}
 }
 
 func TestMarketplaceDiscoveryRemovalCancelsAndRejectsLateCompletion(t *testing.T) {
 	m := newTestModel()
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", InstanceID: "market"}}}
-	generation := m.beginRequest(requestDiscovery)
+	generation := m.beginRequest(requestBrowse)
 	cancelled := false
-	m.discoveryCancel = func() { cancelled = true }
-	m.discoveryLoading = true
-	m.discoverySequence = 7
-	m.discoveryRows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "old"}}}}
-	m.browseDiscoveryRows = append([]row(nil), m.discoveryRows...)
-	m.discoveryOutcomes = []marketplace.DiscoveryOutcome{{Endpoint: m.mergedCfg.Marketplaces[0]}}
-	m.discoveryErrs = []error{errors.New("old failure")}
+	m.browseCancel = func() { cancelled = true }
+	m.browseLoading = true
+	m.browseSequence = 7
+	m.browseDiscoveryRows = []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "old"}}}}
+	m.browseOutcomes = []marketplace.DiscoveryOutcome{{Endpoint: m.mergedCfg.Marketplaces[0]}}
+	m.browseErrs = []error{errors.New("old failure")}
 	m.mergedCfg = &config.Config{}
 
 	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
 		t.Fatal("zero Marketplace config scheduled discovery")
 	}
-	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 {
-		t.Fatalf("discovery was not invalidated: cancelled=%t cancel=%v generation=%d sequence=%d", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence)
+
+	if !cancelled || m.discoveryCancel != nil || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 {
+		t.Fatalf("discovery was not invalidated: cancelled=%t cancel=%v generation=%d sequence=%d", cancelled, m.discoveryCancel, m.requests.Active(requestDiscovery), m.discoverySequence)
+
 	}
-	if m.discoveryLoading || len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
-		t.Fatalf("removed Marketplace state retained: loading=%t rows=%#v browse=%#v outcomes=%#v errs=%#v", m.discoveryLoading, m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
+	if m.browseLoading || len(m.browseDiscoveryRows) != 0 || len(m.browseOutcomes) != 0 || len(m.browseErrs) != 0 {
+		t.Fatalf("removed Marketplace browse state retained: loading=%t rows=%#v outcomes=%#v errs=%#v", m.browseLoading, m.browseDiscoveryRows, m.browseOutcomes, m.browseErrs)
 	}
 	late := marketplace.DiscoveryOutcome{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
-	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 8, outcomes: []marketplace.DiscoveryOutcome{late}})
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, browse: true, sequence: 8, outcomes: []marketplace.DiscoveryOutcome{late}})
 	m = updated.(Model)
 	if len(m.discoveryRows) != 0 || len(m.rows) != 0 {
 		t.Fatalf("late completion repopulated removed Marketplace: rows=%#v all=%#v", m.discoveryRows, m.rows)
@@ -260,44 +269,46 @@ func TestMarketplaceDiscoveryAllowlistTighteningClearsPriorStateAndRejectsLateCo
 	m.authoritativeRows = []row{authoritative}
 	m.rows = []row{authoritative}
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
 		Endpoint:  endpoint,
 		Items:     []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "now-blocked", Availability: mpapi.AvailabilityAvailable}},
 		Total:     75,
 		Truncated: true,
 		Err:       errors.New("old endpoint failure"),
 	}})
-	generation := m.beginRequest(requestDiscovery)
-	m.discoverySequence = 4
-	m.discoveryLoading = true
+	generation := m.beginRequest(requestBrowse)
+	m.browseSequence = 4
+	m.browseLoading = true
 	cancelled := false
-	m.discoveryCancel = func() { cancelled = true }
+	m.browseCancel = func() { cancelled = true }
 	allowed := []string{`^allowed\.example$`}
 	m.mergedCfg.AllowedMarketplaces = &allowed
 
-	if cmd := m.beginMarketplaceDiscovery("", false); cmd != nil {
+	if cmd := m.beginMarketplaceBrowse(false); cmd != nil {
 		t.Fatal("invalid Marketplace config scheduled discovery")
 	}
-	if !cancelled || m.discoveryCancel != nil || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
-		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+
+	if !cancelled || m.discoveryCancel != nil || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+		t.Fatalf("prior discovery remained active: cancelled=%t cancel=%v generation=%d sequence=%d loading=%t", cancelled, m.discoveryCancel, m.requests.Active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+
 	}
-	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 {
-		t.Fatalf("blocked endpoint metadata remained: rows=%#v browse=%#v outcomes=%#v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes)
+	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.browseOutcomes) != 0 {
+		t.Fatalf("blocked endpoint metadata remained: rows=%#v browse=%#v outcomes=%#v", m.discoveryRows, m.browseDiscoveryRows, m.browseOutcomes)
 	}
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 		t.Fatalf("authoritative rows were not rebuilt: %#v", m.rows)
 	}
-	if len(m.discoveryErrs) != 1 {
-		t.Fatalf("discovery errors = %v, want only current validation error", m.discoveryErrs)
+	if len(m.browseErrs) != 1 {
+		t.Fatalf("browse errors = %v, want only current validation error", m.browseErrs)
 	}
 	var blocked *config.MarketplaceURLBlockedError
-	if !errors.As(m.discoveryErrs[0], &blocked) {
-		t.Fatalf("discovery error = %v, want MarketplaceURLBlockedError", m.discoveryErrs[0])
+	if !errors.As(m.browseErrs[0], &blocked) {
+		t.Fatalf("browse error = %v, want MarketplaceURLBlockedError", m.browseErrs[0])
 	}
 	late := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "late", Availability: mpapi.AvailabilityAvailable}}}
-	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 5, outcomes: []marketplace.DiscoveryOutcome{late}})
+	updated, _ := m.Update(discoveryLoadedMsg{generation: generation, browse: true, sequence: 5, outcomes: []marketplace.DiscoveryOutcome{late}})
 	m = updated.(Model)
-	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: generation, browse: true, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
 	m = updated.(Model)
 	if len(m.discoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 		t.Fatalf("late prior completion changed cleared state: discovery=%#v outcomes=%#v rows=%#v", m.discoveryRows, m.discoveryOutcomes, m.rows)
@@ -326,18 +337,18 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			m.authoritativeRows = []row{authoritative}
 			m.rows = []row{authoritative}
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
-			m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "old", Availability: mpapi.AvailabilityAvailable}}, Err: errors.New("old endpoint failure")}})
+			m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "old", Availability: mpapi.AvailabilityAvailable}}, Err: errors.New("old endpoint failure")}})
 			discoveryGeneration := m.beginRequest(requestDiscovery)
 			m.discoverySequence = 3
 			m.discoveryLoading = true
 			cancelled := false
 			m.discoveryCancel = func() { cancelled = true }
-			test.snapshot.generation = m.requests.active(requestSnapshot)
+			test.snapshot.generation = m.requests.Active(requestSnapshot)
 
 			updated, _ := m.Update(test.snapshot)
 			m = updated.(Model)
-			if !cancelled || m.requests.active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
-				t.Fatalf("active discovery was not invalidated: cancelled=%t generation=%d sequence=%d loading=%t", cancelled, m.requests.active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
+			if !cancelled || m.requests.Active(requestDiscovery) != 0 || m.discoverySequence != 0 || m.discoveryLoading {
+				t.Fatalf("active discovery was not invalidated: cancelled=%t generation=%d sequence=%d loading=%t", cancelled, m.requests.Active(requestDiscovery), m.discoverySequence, m.discoveryLoading)
 			}
 			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
@@ -367,16 +378,21 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 	}
 }
 
+// spec: tui-startup/cold-startup-browses-beyond-the-first-page
 func TestMarketplaceDiscoveryDedupesInstalledAliasByPinnedCoordinate(t *testing.T) {
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public", Source: config.RepoCommitted}
 	m := newTestModel()
 	m.authoritativeRows = []row{{
 		Artifact:              resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "installed-alias"}, IsMarketplace: true, MarketplaceInstanceID: endpoint.InstanceID, MarketplaceRegistryID: "registry"},
+		EnabledGlobal:         true,
 		MarketplaceSelections: map[config.Source]marketplaceSelection{config.RepoCommitted: {Entry: endpoint, Pin: config.MarketplaceResourcePin{RegistryID: "registry", Kind: "skill", Name: "original-name"}}},
 	}}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "original-name", Availability: mpapi.AvailabilityAvailable}}}})
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{{RegistryID: "registry", Kind: "skill", Name: "original-name", Availability: mpapi.AvailabilityAvailable}}}})
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed-alias" {
 		t.Fatalf("discovery duplicated pinned resource under original name: %#v", m.rows)
+	}
+	if got := originBadge(m.rows[0]); got != "G" {
+		t.Fatalf("merged installed row badge = %q, want G", got)
 	}
 }
 
@@ -385,10 +401,11 @@ func TestMarketplaceDiscoveryDropsSameInstanceAtReplacedEndpoint(t *testing.T) {
 	old := config.MarketplaceEntry{URL: "https://old.example", InstanceID: "market", Alias: "old"}
 	remaining := config.MarketplaceEntry{URL: "https://remaining.example", InstanceID: "remaining", Alias: "remaining"}
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{old, remaining}}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{
 		{Endpoint: old, Total: 75, Truncated: true, Err: errors.New("old failure")},
 		{Endpoint: remaining, Total: 1, Err: errors.New("remaining failure")},
 	})
+	m.browseKey, _, _ = marketplaceBrowseRequestKey(m.mergedCfg)
 	m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{
 		{URL: "https://new.example", InstanceID: "market", Alias: "new"},
 		remaining,
@@ -398,13 +415,13 @@ func TestMarketplaceDiscoveryDropsSameInstanceAtReplacedEndpoint(t *testing.T) {
 	if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 {
 		t.Fatalf("superseded endpoint rows retained: discovery=%#v browse=%#v", m.discoveryRows, m.browseDiscoveryRows)
 	}
-	if len(m.discoveryOutcomes) != 1 || m.discoveryOutcomes[0].Endpoint.InstanceID != "remaining" {
-		t.Fatalf("superseded endpoint outcome retained: %#v", m.discoveryOutcomes)
+	if len(m.browseOutcomes) != 1 || m.browseOutcomes[0].Endpoint.InstanceID != "remaining" {
+		t.Fatalf("superseded endpoint outcome retained: %#v", m.browseOutcomes)
 	}
-	if len(m.discoveryErrs) != 1 || !strings.HasPrefix(m.discoveryErrs[0].Error(), "remaining: ") {
-		t.Fatalf("discovery errors were not rebuilt from retained outcomes: %v", m.discoveryErrs)
+	if len(m.browseErrs) != 1 || !strings.HasPrefix(m.browseErrs[0].Error(), "remaining: ") {
+		t.Fatalf("browse errors were not rebuilt from retained outcomes: %v", m.browseErrs)
 	}
-	if !m.discoveryLoading {
+	if !m.browseLoading {
 		t.Fatal("remaining endpoint discovery did not proceed")
 	}
 }
@@ -423,11 +440,11 @@ func TestMarketplaceInstallReloadHardDiagnosticFailsWithUsableConfig(t *testing.
 		generation:      m.marketplaceInstallReload,
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftFailed,
-		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, diagnosticCatalog, failure)},
+		diagnostics:     []tuiDiagnostic{snapshotDiagnostic(diagnosticError, session.DiagnosticCatalog, failure)},
 	})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("failed reload did not unblock operation: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("failed reload did not unblock operation: active=%#v reload=%d", m.operations.Active, m.marketplaceInstallReload)
 	}
 	if !strings.HasPrefix(m.toast, "Marketplace install reload failed:") || strings.Contains(m.toast, "resource installed") {
 		t.Fatalf("hard snapshot diagnostic reported success: %q", m.toast)
@@ -445,16 +462,16 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 		t.Fatal(err)
 	}
 	prepared := &pipeline.PreparedMarketplaceInstall{}
-	oldPrepare, oldCommit := prepareDiscoveryMarketplaceInstall, commitPreparedMarketplaceInstall
+	oldPrepare, oldCommit := session.PrepareDiscoveryMarketplaceInstall, session.CommitPreparedMarketplaceInstall
 	t.Cleanup(func() {
-		prepareDiscoveryMarketplaceInstall = oldPrepare
-		commitPreparedMarketplaceInstall = oldCommit
+		session.PrepareDiscoveryMarketplaceInstall = oldPrepare
+		session.CommitPreparedMarketplaceInstall = oldCommit
 	})
-	prepareDiscoveryMarketplaceInstall = func(context.Context, pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+	session.PrepareDiscoveryMarketplaceInstall = func(context.Context, pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
 		return prepared, nil // low-risk plan: no findings or capabilities requiring CLI consent
 	}
 	var committed *pipeline.PreparedMarketplaceInstall
-	commitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
+	session.CommitPreparedMarketplaceInstall = func(_ context.Context, got *pipeline.PreparedMarketplaceInstall) (*pipeline.InstallResult, error) {
 		committed = got
 		return &pipeline.InstallResult{Installed: []string{"review"}}, nil
 	}
@@ -504,10 +521,10 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 
 // spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
 func TestMarketplaceDiscoveryInstallSyncsThroughTheDependencyReconciler(t *testing.T) {
-	oldPrepare := prepareDiscoveryMarketplaceInstall
-	t.Cleanup(func() { prepareDiscoveryMarketplaceInstall = oldPrepare })
+	oldPrepare := session.PrepareDiscoveryMarketplaceInstall
+	t.Cleanup(func() { session.PrepareDiscoveryMarketplaceInstall = oldPrepare })
 	var prepared []pipeline.InstallOptions
-	prepareDiscoveryMarketplaceInstall = func(_ context.Context, options pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+	session.PrepareDiscoveryMarketplaceInstall = func(_ context.Context, options pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
 		prepared = append(prepared, options)
 		return &pipeline.PreparedMarketplaceInstall{}, nil
 	}
@@ -583,8 +600,8 @@ func TestMarketplaceInstallOperationRemainsSerializedThroughReload(t *testing.T)
 	generation := m.marketplaceInstallReload
 	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("install operation remained active after reload: %#v", m.operations.active)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("install operation remained active after reload: %#v", m.operations.Active)
 	}
 }
 
@@ -602,13 +619,13 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 
 	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active == nil {
+	if m.operations.Active == nil {
 		t.Fatal("stale install snapshot finished the operation")
 	}
 	updated, _ = m.Update(updateDoneMsg{generation: updateGeneration, snapshot: snapshotLoadedMsg{generation: updateGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady}})
 	m = updated.(Model)
-	if m.operations.active != nil || m.marketplaceInstallReload != 0 {
-		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.active, m.marketplaceInstallReload)
+	if m.operations.Active != nil || m.marketplaceInstallReload != 0 {
+		t.Fatalf("superseding update snapshot did not finish install: active=%#v reload=%d", m.operations.Active, m.marketplaceInstallReload)
 	}
 	if m.toast != "Marketplace resource installed" {
 		t.Fatalf("install outcome = %q", m.toast)
@@ -619,7 +636,7 @@ func TestMarketplaceInstallReloadFinishesOnceFromSupersedingUpdateSnapshot(t *te
 	}
 	updated, _ = m.Update(snapshotLoadedMsg{generation: installGeneration, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if !m.operations.accepts(later) {
+	if !m.operations.Accepts(later) {
 		t.Fatal("stale original snapshot finished the later operation")
 	}
 }
@@ -629,20 +646,20 @@ func TestAliaslessMarketplaceEndpointDisplayIsCanonicalAndStable(t *testing.T) {
 	m.loading = false
 	endpoint := config.MarketplaceEntry{URL: "HTTPS://Z.EXAMPLE/", InstanceID: "z"}
 	item := mpapi.ResourceListItem{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "review", Availability: mpapi.AvailabilityAvailable}
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{
 		{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Err: errors.New("unavailable")},
 		{Endpoint: config.MarketplaceEntry{URL: "https://a.example", InstanceID: "a"}, Items: []mpapi.ResourceListItem{item}},
 	})
-	if got := m.discoveryRows[1].RegistryName; got != "https://z.example/tools" {
+	if got := m.browseDiscoveryRows[1].RegistryName; got != "https://z.example/tools" {
 		t.Fatalf("alias-less row registry = %q", got)
 	}
-	if got := m.discoveryRows[0].MarketplaceDiscovery.Endpoint.InstanceID; got != "a" {
+	if got := m.browseDiscoveryRows[0].MarketplaceDiscovery.Endpoint.InstanceID; got != "a" {
 		t.Fatalf("alias-less ordering first instance = %q, want a", got)
 	}
-	if len(m.discoveryErrs) != 1 || !strings.HasPrefix(m.discoveryErrs[0].Error(), "https://z.example: ") {
-		t.Fatalf("alias-less error prefix = %v", m.discoveryErrs)
+	if len(m.browseErrs) != 1 || !strings.HasPrefix(m.browseErrs[0].Error(), "https://z.example: ") {
+		t.Fatalf("alias-less error prefix = %v", m.browseErrs)
 	}
-	m.rows = m.discoveryRows
+	m.rows = m.browseDiscoveryRows
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 	for i, flat := range m.flatItems {
@@ -656,12 +673,13 @@ func TestAliaslessMarketplaceEndpointDisplayIsCanonicalAndStable(t *testing.T) {
 	}
 }
 
+// spec: session-rendering-safety/hostile-text-is-inert
 func TestHostileMarketplaceDiscoveryRenderingUsesTerminalSanitizer(t *testing.T) {
 	m := newTestModel()
 	m.loading = false
 	m.width, m.height = 80, 20
 	hostile := "remote\x1b]52;c;c2VjcmV0\a\u202e\nname"
-	m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: hostile}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: hostile, Kind: "skill", Name: hostile, Description: hostile, Availability: mpapi.AvailabilityAvailable}}}})
+	m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: hostile}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: hostile, Kind: "skill", Name: hostile, Description: hostile, Availability: mpapi.AvailabilityAvailable}}}})
 	output := m.View().Content
 	if strings.Contains(output, "\x1b]52;") || strings.ContainsAny(output, "\a\u202e") || strings.Contains(output, "\nname") {
 		t.Fatalf("hostile discovery data reached terminal output: %q", output)
@@ -774,7 +792,7 @@ func TestUnavailableMarketplaceDiscoveryRowsCannotOpenInstallScope(t *testing.T)
 		t.Run(string(availability), func(t *testing.T) {
 			m := newTestModel()
 			m.loading = false
-			m.applyDiscovery("", []marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{InstanceID: "market", Alias: "public"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "unavailable", Availability: availability}}}})
+			m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: config.MarketplaceEntry{InstanceID: "market", Alias: "public"}, Items: []mpapi.ResourceListItem{{RegistryID: "registry", RegistrySlug: "tools", Kind: "skill", Name: "unavailable", Availability: availability}}}})
 			for i, item := range m.flatItems {
 				if item.Kind == flatArtifact {
 					m.cursor = i
@@ -791,4 +809,420 @@ func TestUnavailableMarketplaceDiscoveryRowsCannotOpenInstallScope(t *testing.T)
 			}
 		})
 	}
+}
+
+// spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
+// spec: tui-navigation/other-kinds-retain-additive-text-matching
+func TestMarketplaceKindQueriesIncludeHostedAndTextMatches(t *testing.T) {
+	cases := []struct {
+		query string
+		kind  string
+	}{
+		{query: ""},
+		{query: "skill", kind: "skill"},
+		{query: "Command", kind: "command"},
+		{query: "subagent", kind: "subagent"},
+		{query: "HOOK", kind: "hook"},
+		{query: "MCP", kind: "mcpserver"},
+		{query: "collection", kind: "collection"},
+		{query: "mcpserver", kind: "mcpserver"},
+		{query: "agents", kind: "subagent"},
+		{query: "all"},
+		{query: "plugin"},
+		{query: "mcp server"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			var requestedKinds []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/agent-marketplace.json":
+					_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("kind-query-market", "https://example.com", "https://example.com"))
+				case "/api/v1/search":
+					query, kind := r.URL.Query().Get("q"), r.URL.Query().Get("kind")
+					requestedKinds = append(requestedKinds, kind)
+					offset, limit := 0, marketplace.DiscoveryPageLimit
+					_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+					_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+					var items []mpapi.ResourceListItem
+					total := 0
+					if tc.kind != "" && query == "" && kind == tc.kind {
+						items = []mpapi.ResourceListItem{tuiDiscoverySearchItem("kind-source", tc.kind, "atlas", "opaque details")}
+						total = len(items)
+					} else if query != "" && kind == "" {
+						term := strings.ToLower(strings.TrimSpace(query))
+						items = []mpapi.ResourceListItem{
+							tuiDiscoverySearchItem("text-source", "skill", "name-"+term, "ordinary text result"),
+							tuiDiscoverySearchItem("metadata-source", "skill", "aaa-metadata", term+" metadata result"),
+						}
+						total = len(items)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: items, Total: total, Offset: offset, Limit: limit})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "kind-query-market", Alias: "kind-query"}
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+			msg, ok := loadMarketplaceDiscovery(context.Background(), cfg, tc.query, 1)().(discoveryLoadedMsg)
+			if !ok || msg.err != nil {
+				t.Fatalf("discovery message = %#v", msg)
+			}
+			if tc.kind != "" {
+				if !hasDiscoveryKind(requestedKinds, tc.kind) {
+					t.Fatalf("kind filters = %v, want %q", requestedKinds, tc.kind)
+				}
+			} else {
+				for _, requestedKind := range requestedKinds {
+					if requestedKind != "" {
+						t.Fatalf("non-kind query unexpectedly requested kind %q: %v", requestedKind, requestedKinds)
+					}
+				}
+			}
+
+			local := mkRow("local-"+strings.ToLower(strings.ReplaceAll(tc.query, " ", "-")), withAvailable, withRegistry("local", "local"))
+			m := newTestModel()
+			m.mergedCfg = cfg
+			m.authoritativeRows = []row{local}
+			m.rows = []row{local}
+			m.filter = tc.query
+			m.applyDiscovery(tc.query, msg.outcomes)
+			if tc.kind == "" {
+				return
+			}
+			names := artifactNames(m.flatItems)
+			nameIndex, metadataIndex, kindIndex := -1, -1, -1
+			for i, name := range names {
+				switch name {
+				case "name-" + strings.ToLower(tc.query):
+					nameIndex = i
+				case "aaa-metadata":
+					metadataIndex = i
+				case "atlas":
+					kindIndex = i
+				}
+			}
+			if nameIndex < 0 || metadataIndex < 0 || kindIndex < 0 {
+				t.Fatalf("filtered names = %v; want text, metadata, and kind-only matches", names)
+			}
+			if nameIndex >= metadataIndex || nameIndex >= kindIndex {
+				t.Fatalf("name match must rank above metadata and kind-only matches: %v", names)
+			}
+			for _, r := range m.filteredRows {
+				if r.Artifact.Name == "atlas" && (r.SearchNameMatch || len(r.SearchMatchRunes) != 0) {
+					t.Fatalf("kind-only result %q highlighted name characters: %+v", r.Artifact.Name, r)
+				}
+			}
+		})
+	}
+}
+
+// spec: tui-navigation/superseded-kind-search-cannot-replace-current-results
+func TestSupersededKindDiscoveryCannotReplaceSearchOrBrowseInventory(t *testing.T) {
+	for _, mode := range []string{"changed", "cleared"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/agent-marketplace.json":
+					_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("held-kind-market", "https://example.com", "https://example.com"))
+				case "/api/v1/search":
+					if r.URL.Query().Get("kind") == "mcpserver" {
+						entered <- struct{}{}
+						<-release
+						_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{tuiDiscoverySearchItem("registry", "mcpserver", "late-opaque", "held result")}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{}, Total: 0, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: "held-kind-market", Alias: "held"}
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}
+			browseItem := tuiDiscoverySearchItem("registry", "mcpserver", "browse-opaque", "browse inventory")
+			local := mkRow("local-mcp", withAvailable, withRegistry("local", "local"))
+			m := newTestModel()
+			m.mergedCfg = cfg
+			m.authoritativeRows = []row{local}
+			m.rows = []row{local}
+			m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{Endpoint: endpoint, Items: []mpapi.ResourceListItem{browseItem}, Total: 1}})
+			m.currentFoldState()["status:available"] = true
+			m.filter = "mcp"
+			m.recomputeView()
+			oldGeneration := m.beginRequest(requestDiscovery)
+			m.discoveryLoading = true
+			messages := make(chan discoveryLoadedMsg, 1)
+			go func() {
+				messages <- loadMarketplaceDiscovery(context.Background(), cfg, "mcp", oldGeneration)().(discoveryLoadedMsg)
+			}()
+			select {
+			case <-entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Marketplace kind page was not held")
+			}
+			if got := artifactNames(m.flatItems); !namesEqual(got, []string{"local-mcp", "browse-opaque"}) {
+				t.Fatalf("local filtering blocked or changed while kind page was held: %v", got)
+			}
+			browseNames := []string{m.browseDiscoveryRows[0].Artifact.Name}
+
+			var expectedFilter string
+			if mode == "changed" {
+				expectedFilter = "command"
+				m.filter = expectedFilter
+				m.recomputeView()
+				m.beginMarketplaceDiscovery(expectedFilter, true)
+			} else {
+				m.filter = "no-such-resource"
+				m.recomputeView()
+				if len(artifactNames(m.flatItems)) != 0 {
+					t.Fatalf("no-match query left visible resources: %v", artifactNames(m.flatItems))
+				}
+				updated, _ := m.clearSearch()
+				m = updated.(Model)
+				if !m.currentFoldState()["status:available"] {
+					t.Fatal("clearing search did not restore the saved browse fold")
+				}
+			}
+			selected := m.selectionKey()
+			close(release)
+			msg := <-messages
+			updated, _ := m.Update(msg)
+			m = updated.(Model)
+			if m.filter != expectedFilter || m.selectionKey() != selected {
+				t.Fatalf("late completion changed query/selection: filter=%q selection=%q, want %q/%q", m.filter, m.selectionKey(), expectedFilter, selected)
+			}
+			if len(m.browseDiscoveryRows) != 1 || m.browseDiscoveryRows[0].Artifact.Name != browseNames[0] {
+				t.Fatalf("late completion changed browse inventory: %#v", m.browseDiscoveryRows)
+			}
+			if slices.ContainsFunc(m.discoveryRows, func(candidate row) bool { return candidate.Artifact.Name == "late-opaque" }) {
+				t.Fatalf("late completion entered the current search inventory: %#v", m.discoveryRows)
+			}
+			if m.cursor < 0 || (len(m.flatItems) > 0 && m.cursor >= len(m.flatItems)) {
+				t.Fatalf("search left unsafe cursor %d for %d items", m.cursor, len(m.flatItems))
+			}
+			if mode == "cleared" && m.filter != "" {
+				t.Fatalf("clear restored filter %q, want empty", m.filter)
+			}
+		})
+	}
+}
+
+// spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
+func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	home := t.TempDir()
+	repo := t.TempDir()
+	t.Setenv("HOME", home)
+	consumerFiles := map[string]string{
+		"user config": filepath.Join(home, ".agents", "config.yaml"),
+		"repo config": filepath.Join(repo, ".agents", "config.yaml"),
+		"repo lock":   filepath.Join(repo, ".agents", "lock.yaml"),
+		"resource":    filepath.Join(repo, ".claude", "skills", "kept", "SKILL.md"),
+	}
+	consumerContents := map[string][]byte{
+		"user config": []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"),
+		"repo config": []byte("apiVersion: agent-marketplace/v4\nsources: {}\n"),
+		"repo lock":   []byte("apiVersion: agent-marketplace-lock/v2\nscope: repo\n"),
+		"resource":    []byte("---\nname: kept\ndescription: Existing materialized resource\n---\n\nKeep unchanged.\n"),
+	}
+	for name, path := range consumerFiles {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create %s directory: %v", name, err)
+		}
+		if err := os.WriteFile(path, consumerContents[name], 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	snapshotConsumerFiles := func() map[string][]byte {
+		t.Helper()
+		snapshot := make(map[string][]byte, len(consumerFiles))
+		for name, path := range consumerFiles {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			snapshot[name] = content
+		}
+		return snapshot
+	}
+	assertConsumerFilesUnchanged := func(stage string, before map[string][]byte) {
+		t.Helper()
+		for name, path := range consumerFiles {
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, before[name]) {
+				t.Errorf("%s changed %s: err=%v before=%q after=%q", stage, name, err, before[name], after)
+			}
+		}
+	}
+	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("failing-market", "https://example.com", "https://example.com"))
+			return
+		}
+		http.Error(w, "endpoint unavailable", http.StatusServiceUnavailable)
+	}))
+	defer failed.Close()
+	newKindEndpoint := func(instanceID string, requests *atomic.Int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			switch r.URL.Path {
+			case "/.well-known/agent-marketplace.json":
+				_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com", "https://example.com"))
+			case "/api/v1/search":
+				items := []mpapi.ResourceListItem{}
+				if r.URL.Query().Get("kind") == "mcpserver" {
+					items = append(items, tuiDiscoverySearchItem("registry", "mcpserver", "healthy-opaque", "healthy kind result"))
+				}
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: items, Total: len(items), Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+	}
+	var healthyRequests atomic.Int32
+	healthy := newKindEndpoint("healthy-market", &healthyRequests)
+	defer healthy.Close()
+	endpoints := []config.MarketplaceEntry{
+		{URL: failed.URL, InstanceID: "failing-market", Alias: "failing"},
+		{URL: healthy.URL, InstanceID: "healthy-market", Alias: "healthy"},
+	}
+	cfg := &config.Config{Marketplaces: endpoints}
+	local := mkRow("local-mcp", withAvailable, withRegistry("local", "local"))
+	m := newTestModel()
+	m.repoRoot, m.homeDir = repo, home
+	m.mergedCfg = cfg
+	m.authoritativeRows = []row{local}
+	m.rows = []row{local}
+	m.filter = "mcp"
+	generation := m.beginRequest(requestDiscovery)
+	m.discoveryLoading = true
+	beforeFailed := snapshotConsumerFiles()
+	raw := loadMarketplaceDiscovery(context.Background(), cfg, "mcp", generation)()
+	for {
+		msg := raw.(discoveryLoadedMsg)
+		updated, next := m.Update(msg)
+		m = updated.(Model)
+		if next == nil {
+			break
+		}
+		raw = next()
+	}
+	assertConsumerFilesUnchanged("failed discovery", beforeFailed)
+	if len(m.discoveryErrs) != 1 || !strings.Contains(m.discoveryErrs[0].Error(), "failing") || !strings.Contains(m.View().Content, "Marketplace: 1 failed") {
+		t.Fatalf("failed endpoint diagnostic is not visible: errors=%v view=%s", m.discoveryErrs, m.View().Content)
+	}
+	if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "healthy-opaque" {
+		t.Fatalf("healthy kind result was lost: %#v", m.discoveryRows)
+	}
+	if got := artifactNames(m.flatItems); !namesEqual(got, []string{"local-mcp", "healthy-opaque"}) {
+		t.Fatalf("failed endpoint removed usable local or healthy rows: %v", got)
+	}
+
+	var contacted atomic.Int32
+	deniedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contacted.Add(1)
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("denied-market", "https://example.com", "https://example.com"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer deniedServer.Close()
+	denied := []string{}
+	deniedCfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: deniedServer.URL, InstanceID: "denied-market", Alias: "denied"}}, AllowedMarketplaces: &denied}
+	deniedModel := newTestModel()
+	deniedModel.repoRoot, deniedModel.homeDir = repo, home
+	deniedModel.mergedCfg = deniedCfg
+	deniedModel.authoritativeRows = []row{local}
+	deniedModel.rows = []row{local}
+	deniedModel.filter = "mcp"
+	beforeDenied := snapshotConsumerFiles()
+	if cmd := deniedModel.beginMarketplaceDiscovery("mcp", false); cmd != nil {
+		t.Fatal("denied endpoint scheduled discovery")
+	}
+	assertConsumerFilesUnchanged("denied discovery", beforeDenied)
+	if contacted.Load() != 0 {
+		t.Fatalf("denied endpoint received %d requests", contacted.Load())
+	}
+	if len(deniedModel.discoveryErrs) != 1 || !strings.Contains(deniedModel.View().Content, "Marketplace: 1 failed") {
+		t.Fatalf("denied configuration diagnostic is not visible: errors=%v view=%s", deniedModel.discoveryErrs, deniedModel.View().Content)
+	}
+	if got := artifactNames(deniedModel.flatItems); !namesEqual(got, []string{"local-mcp"}) {
+		t.Fatalf("denied discovery removed local results: %v", got)
+	}
+
+	contacted.Store(0)
+	var mixedAllowedRequests atomic.Int32
+	mixedHealthy := newKindEndpoint("mixed-healthy-market", &mixedAllowedRequests)
+	defer mixedHealthy.Close()
+	allowedPatterns := []string{"^" + regexp.QuoteMeta(mixedHealthy.URL) + "$"}
+	mixedCfg := &config.Config{
+		Marketplaces: []config.MarketplaceEntry{
+			{URL: mixedHealthy.URL, InstanceID: "mixed-healthy-market", Alias: "healthy"},
+			{URL: deniedServer.URL, InstanceID: "denied-market", Alias: "denied"},
+		},
+		AllowedMarketplaces: &allowedPatterns,
+	}
+	mixedModel := newTestModel()
+	mixedModel.repoRoot, mixedModel.homeDir = repo, home
+	mixedModel.mergedCfg = mixedCfg
+	mixedModel.authoritativeRows = []row{local}
+	mixedModel.rows = []row{local}
+	mixedModel.filter = "mcp"
+	beforeMixed := snapshotConsumerFiles()
+	cmd := mixedModel.beginMarketplaceDiscovery("mcp", false)
+	if cmd == nil {
+		t.Fatal("mixed allowed and denied endpoints did not schedule discovery")
+	}
+	raw = cmd()
+	for {
+		msg := raw.(discoveryLoadedMsg)
+		updated, next := mixedModel.Update(msg)
+		mixedModel = updated.(Model)
+		if next == nil {
+			break
+		}
+		raw = next()
+	}
+	assertConsumerFilesUnchanged("mixed discovery", beforeMixed)
+	if len(mixedModel.discoveryErrs) != 1 || !strings.Contains(mixedModel.discoveryErrs[0].Error(), "denied") || !strings.Contains(mixedModel.View().Content, "Marketplace: 1 failed") {
+		t.Fatalf("mixed denial diagnostic is not visible: errors=%v view=%s", mixedModel.discoveryErrs, mixedModel.View().Content)
+	}
+	if len(mixedModel.discoveryRows) != 1 || mixedModel.discoveryRows[0].Artifact.Name != "healthy-opaque" {
+		t.Fatalf("mixed discovery lost allowed kind result: %#v", mixedModel.discoveryRows)
+	}
+	if got := artifactNames(mixedModel.flatItems); !namesEqual(got, []string{"local-mcp", "healthy-opaque"}) {
+		t.Fatalf("mixed discovery removed local or allowed results: %v", got)
+	}
+	if contacted.Load() != 0 || mixedAllowedRequests.Load() == 0 {
+		t.Fatalf("mixed request counts = denied %d, allowed %d; want only allowed requests", contacted.Load(), mixedAllowedRequests.Load())
+	}
+}
+
+func tuiDiscoverySearchItem(registryID, kind, name, description string) mpapi.ResourceListItem {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	return mpapi.ResourceListItem{RegistryID: registryID, RegistrySlug: registryID, Kind: kind, Name: name, Revision: digest, ContentDigest: digest, Description: description, Availability: mpapi.AvailabilityAvailable}
+}
+
+func hasDiscoveryKind(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

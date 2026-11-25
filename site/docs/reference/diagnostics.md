@@ -68,7 +68,7 @@ Where each prefix's hints send you:
 | `ownership.*` | Retry after the other process finishes, run `agent-marketplace doctor --repair`, or fix the named cause, as the hint says. |
 | `materialize.*` | Resolve the reported harness file or destination problem, then run `agent-marketplace sync` again or `sync --check` to verify it, as the hint says. |
 | `organization.trust.*` | Ask your administrator. Hints for organization-owned configuration, locks, and trust never suggest editing or deleting organization files yourself. |
-| `git.*` | Check credentials, your SSH agent, or move authentication settings to trusted Git configuration, then rerun the command. |
+| `git.*` | Check the repository URL and credentials, your SSH agent and host key, or move authentication settings to trusted Git configuration, then rerun the command. |
 | `marketplace.*` install/remove refusals | Run `agent-marketplace list` to confirm names, use `remove --scope` or `remove --from` to disambiguate, or ask your administrator for organization-owned selections. |
 | no code | A command-aware fallback: the command's own `--check` mode for sync and lock, `doctor --debug` for doctor, `doctor` (and the command's `--help` for install, remove, and update) for the rest, or `<command> --help` for usage errors. |
 

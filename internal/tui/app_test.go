@@ -379,11 +379,11 @@ func TestRowStatusText(t *testing.T) {
 		{"enabled", row{}, "enabled"},
 		{"available", row{IsAvailable: true}, "available"},
 		{"excluded", row{IsAvailable: true, IsExcluded: true}, "excluded"},
-		{"required org", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.Organization}}, "required (org)"},
+		{"required org", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.Organization}}, "required by org"},
 		{"required user", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.UserPersonal}}, "required"},
 		{"malformed", row{IsMalformed: true, MalformedMsg: "bad"}, "malformed: bad"},
-		{"pending", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}}, "enabled (pending sync)"},
-		{"orphaned copy", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}, "enabled (pending sync)"},
+		{"pending", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}}, "enabled, waiting for sync"},
+		{"orphaned copy", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}, "enabled, waiting for sync"},
 		{"broken", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftBroken}}, "broken"},
 	}
 
@@ -427,7 +427,7 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		rows:         []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		refreshing:   true,
-		requests:     requestState{next: 1, snapshot: 1},
+		requests:     requestState{Next: 1, Snapshot: 1},
 		width:        80,
 		height:       24,
 		keys:         defaultKeyMap,
@@ -440,7 +440,7 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 	}
 
 	gotModel := updatedModel.(Model)
-	if got := gotModel.requests.active(requestSnapshot); got != 2 {
+	if got := gotModel.requests.Active(requestSnapshot); got != 2 {
 		t.Fatalf("active snapshot generation = %d, want 2", got)
 	}
 

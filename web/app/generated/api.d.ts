@@ -875,6 +875,21 @@ export interface components {
             source_fingerprint: string;
             version: number;
         };
+        AdvisoryFinding: {
+            code: string;
+            path?: string;
+            severity: string;
+            summary: string;
+        };
+        AdvisoryReport: {
+            findings?: components["schemas"]["AdvisoryFinding"][];
+            reason?: string;
+            status: components["schemas"]["AdvisoryStatus"];
+            tool: string;
+            version?: string;
+        };
+        /** @enum {string} */
+        AdvisoryStatus: "complete" | "complete_with_caveats" | "partial" | "failed" | "not_run";
         AssessmentFinding: {
             code: string;
             location?: components["schemas"]["FindingLocation"];
@@ -1073,6 +1088,7 @@ export interface components {
             slug: string;
         };
         ResourceAssessment: {
+            advisory_reports?: components["schemas"]["AdvisoryReport"][];
             analyzer_version: string;
             /** Format: date-time */
             assessed_at: string;

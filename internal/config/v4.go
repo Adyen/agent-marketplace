@@ -186,15 +186,16 @@ type v4TelemetryFields struct {
 // V4ValidationError carries a stable diagnostic code while retaining useful
 // path and line context in Error().
 type V4ValidationError struct {
-	Code       string
-	File       string
-	LockFile   string
-	Path       string
-	Line       int
-	Msg        string
-	Variant    string
-	layer      layerKind
-	layerKnown bool
+	Code           string
+	File           string
+	LockFile       string
+	Path           string
+	Line           int
+	Msg            string
+	Variant        string
+	layer          layerKind
+	layerKnown     bool
+	authoredConfig bool
 }
 
 func (e *V4ValidationError) Error() string {
@@ -334,7 +335,7 @@ func withV4Provenance(err error, origins ...V4Provenance) error {
 	return err
 }
 
-func v4errVariant(code, p string, line int, variant, format string, args ...any) error {
+func v4errVariant(code, p string, line int, variant, format string, args ...any) *V4ValidationError {
 	return &V4ValidationError{Code: code, Path: p, Line: line, Msg: fmt.Sprintf(format, args...), Variant: variant}
 }
 
@@ -2405,7 +2406,9 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			continue
 		}
 		if _, duplicate := marketplaceEndpoints[src.CanonicalURL]; duplicate {
-			return nil, v4errVariant(v4MarketplaceLockMismatchCode, "sources."+name, src.Line, "configuration", "duplicate Marketplace source declaration for endpoint %q", src.CanonicalURL)
+			err := v4errVariant(v4MarketplaceLockMismatchCode, "sources."+name, src.Line, "configuration", "duplicate Marketplace source declaration for endpoint %q", src.CanonicalURL)
+			err.authoredConfig = true
+			return nil, err
 		}
 		marketplaceEndpoints[src.CanonicalURL] = name
 	}

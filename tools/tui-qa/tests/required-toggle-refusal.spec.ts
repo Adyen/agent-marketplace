@@ -7,7 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-feedback/toggle-hints-follow-row-eligibility
-// spec: tui-feedback/notification-overflow
+// spec: session-feedback/notification-overflow
 const journey = defineFixture("required-toggle-refusal", ["tui"], 80, 24, { organization: "published-lock" });
 before(journey.setup);
 after(journey.cleanup);
@@ -38,7 +38,7 @@ journey.test("space on a required organization resource is refused without write
 
   await step("select the required resource", () => terminal.write("j"), async () => {
     await locate(terminal, /Name:\s+org-review/).unique().expect();
-    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, /Status:\s+required by org/).unique().expect();
     // Neither the detail pane nor the footer offers a toggle the row refuses.
     await locate(terminal, "enter = full view").unique().expect();
     await locate(terminal, "space = toggle").expect({ not: true });
@@ -48,7 +48,7 @@ journey.test("space on a required organization resource is refused without write
   await step("space is refused with an explanation and no scope modal", () => terminal.write(" "), async () => {
     await locate(terminal, "required items cannot be toggled").expect();
     await locate(terminal, "toggle project").expect({ not: true });
-    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, /Status:\s+required by org/).unique().expect();
     await locate(terminal, "~ in sync").unique().expect();
   });
   for (let count = 1; count <= 3; count += 1) {
@@ -67,7 +67,7 @@ journey.test("space on a required organization resource is refused without write
   });
   await step("all three notifications expire without further input", () => {}, async () => {
     await locate(terminal, "already in sync").expect({ not: true });
-    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, /Status:\s+required by org/).unique().expect();
     await locate(terminal, "~ in sync").unique().expect();
   });
   for (const { file, bytes } of snapshot) {

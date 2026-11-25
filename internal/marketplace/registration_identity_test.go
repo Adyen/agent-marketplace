@@ -130,7 +130,8 @@ func TestRegistrationIdentitySourceOnlyConsumerPaths(t *testing.T) {
 	t.Run("resolve", func(t *testing.T) {
 		before := fixture.wellKnown.Load()
 		for _, mode := range []resolver.MarketplaceResolveMode{resolver.MarketplaceResolveModeCached, resolver.MarketplaceResolveModeRefresh} {
-			if resolved, errs := r.Resolve(ctx, ec.Merged, nil, mode); len(resolved) != 0 || len(errs) != 0 {
+			phaseResolver := &Resolver{Cache: r.Cache}
+			if resolved, errs := phaseResolver.Resolve(ctx, ec.Merged, nil, mode); len(resolved) != 0 || len(errs) != 0 {
 				t.Fatalf("source-only Resolve(%v): artifacts = %v, errors = %v", mode, resolved, errs)
 			}
 		}

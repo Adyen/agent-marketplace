@@ -53,21 +53,7 @@ func (s *Store) ProofFromSnapshot(snapshot StateSnapshot, rel string) (Proof, er
 		err := s.missingStateError()
 		return Proof{}, coded(diag.CodeOwnershipStateMissing, s.StateFile(), err)
 	}
-	file, ok := snapshot.record.Files[rel]
-	if !ok {
-		return Proof{file: rel, generation: snapshot.record.Generation}, nil
-	}
-	entries := make(map[string]Entry, len(file.Entries))
-	for _, entry := range file.Entries {
-		entries[entry.ID().mapKey()] = entry
-	}
-	return Proof{
-		file:              rel,
-		generation:        snapshot.record.Generation,
-		contentDigest:     file.ContentDigest,
-		entries:           entries,
-		hookSatisfactions: append([]HookSatisfaction(nil), file.HookSatisfactions...),
-	}, nil
+	return proofFromRecord(snapshot.record, rel), nil
 }
 
 func (s *Store) PrepareBatch(snapshot StateSnapshot, mutations []Mutation, satisfactions map[string][]HookSatisfaction) (dependencytxn.DesiredFile, error) {
@@ -158,6 +144,7 @@ func cloneRecord(record *Record) *Record {
 		file.Entries = append([]Entry(nil), file.Entries...)
 		for i := range file.Entries {
 			file.Entries[i].SourceEvidence = append([]HookSourceEvidence(nil), file.Entries[i].SourceEvidence...)
+			file.Entries[i].PluginGenerations = append([]PluginGenerationRef(nil), file.Entries[i].PluginGenerations...)
 		}
 		file.HookSatisfactions = append([]HookSatisfaction(nil), file.HookSatisfactions...)
 		for i := range file.HookSatisfactions {

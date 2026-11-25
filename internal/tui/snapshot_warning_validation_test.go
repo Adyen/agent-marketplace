@@ -121,7 +121,7 @@ func TestMissingLockedSnapshotWarnsAndRecovers(t *testing.T) {
 		model = next.(Model)
 		next, _ = model.Update(syncDoneMsg{err: syncFailure})
 		model = next.(Model)
-		actual.generation = model.requests.active(requestSnapshot)
+		actual.generation = model.requests.Active(requestSnapshot)
 		next, _ = model.Update(actual)
 		model = next.(Model)
 		if !errors.Is(errors.Join(model.errs...), syncFailure) || !errors.Is(errors.Join(model.warnings...), cache.ErrExactGitSnapshotUnavailable) || strings.Contains(model.driftStatusSegment(), "in sync") {

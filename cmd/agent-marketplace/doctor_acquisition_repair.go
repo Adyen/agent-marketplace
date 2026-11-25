@@ -19,12 +19,13 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/internal/tui"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 type doctorAcquisitionDiagnostic struct {
@@ -119,14 +120,14 @@ func doctorAcquisitionLayer(ec config.EffectiveConfig, diagnostic doctorAcquisit
 	var path string
 	matches := 0
 	for _, layer := range ec.PresentLayers() {
-		scope := lockScopeForSource(layer.Source)
+		scope := lifecycle.LockScopeForSource(layer.Source)
 		if diagnostic.scope != "" && diagnostic.scope != scope {
 			continue
 		}
 		if len(layer.Sources) == 0 {
 			continue
 		}
-		lockPath, err := layerLockDestination(layer, nil)
+		lockPath, err := lifecycle.LayerLockDestination(layer)
 		if err != nil {
 			continue
 		}
@@ -168,9 +169,9 @@ func doctorAcquisitionStep(
 			return true, err
 		}
 		if stage == repairplanner.StageCache {
-			_, _, err := prepareExactLocks(ctx, repoRoot, localDir, lockMode{
-				locked: true, selects: map[lockfile.Scope]bool{scope: true}, allowTransientOrganization: true,
-				commitReads: append([]dependencytxn.ReadAssertion(nil), (*reads)...),
+			_, _, err := lifecycle.PrepareExactLocks(ctx, repoRoot, localDir, lifecycle.LockMode{
+				Locked: true, Selects: map[lockfile.Scope]bool{scope: true}, AllowTransientOrganization: true,
+				CommitReads: append([]dependencytxn.ReadAssertion(nil), (*reads)...),
 			})
 			if err != nil {
 				slog.Error("doctor acquisition repair step failed", "code", code, "scope", scope, "status", "error")
@@ -180,9 +181,9 @@ func doctorAcquisitionStep(
 			return true, err
 		}
 
-		mode := lockMode{
-			selects:     map[lockfile.Scope]bool{scope: true},
-			commitReads: append([]dependencytxn.ReadAssertion(nil), (*reads)...),
+		mode := lifecycle.LockMode{
+			Selects:     map[lockfile.Scope]bool{scope: true},
+			CommitReads: append([]dependencytxn.ReadAssertion(nil), (*reads)...),
 		}
 		if code == "lock.unsupported-version" {
 			edit, err := doctorStageSupportedLockVersion(path, scope)
@@ -190,18 +191,18 @@ func doctorAcquisitionStep(
 				slog.Error("doctor acquisition repair step failed", "code", code, "scope", scope, "status", "error")
 				return true, err
 			}
-			mode.stagedLockEdits = []pipeline.StagedLockEdit{edit}
+			mode.StagedLockEdits = []pipeline.StagedLockEdit{edit}
 		} else {
-			edits, err := prepareMissingMarketplaceLockEdits(ctx, repoRoot, localDir, mode.selects, nil)
+			edits, err := lifecycle.PrepareMissingMarketplaceLockEdits(ctx, repoRoot, localDir, mode.Selects, nil)
 			if err != nil {
 				slog.Error("doctor acquisition repair step failed", "code", code, "scope", scope, "status", "error")
 				return true, err
 			}
-			mode.stagedLockEdits = edits
+			mode.StagedLockEdits = edits
 		}
 		prepared := map[string]dependencytxn.Generation{}
-		mode.updatePreview = func(_ context.Context, view preparedUpdateView) error {
-			for desiredPath, data := range view.lockDesired {
+		mode.UpdatePreview = func(_ context.Context, view lifecycle.PreparedUpdateView) error {
+			for desiredPath, data := range view.LockDesired {
 				if filepath.Clean(desiredPath) != filepath.Clean(path) {
 					return fmt.Errorf("%w: acquisition repair prepared an unexpected lock destination", dependencytxn.ErrGenerationConflict)
 				}
@@ -214,7 +215,7 @@ func doctorAcquisitionStep(
 			}
 			return nil
 		}
-		_, _, err := prepareExactLocks(ctx, repoRoot, localDir, mode)
+		_, _, err := lifecycle.PrepareExactLocks(ctx, repoRoot, localDir, mode)
 		if err != nil {
 			slog.Error("doctor acquisition repair step failed", "code", code, "scope", scope, "status", "error")
 			return true, err
@@ -307,8 +308,8 @@ func doctorDeprecatedWritableLockErrors(ec config.EffectiveConfig) []error {
 		if !layer.Source.IsWritable() || len(layer.Sources) == 0 {
 			continue
 		}
-		scope := lockScopeForSource(layer.Source)
-		path, err := layerLockDestination(layer, nil)
+		scope := lifecycle.LockScopeForSource(layer.Source)
+		path, err := lifecycle.LayerLockDestination(layer)
 		if err != nil {
 			diagnostics = append(diagnostics, &pipeline.LockViewError{Code: "lock.read", Scope: scope, Err: err})
 			continue
@@ -395,7 +396,7 @@ func doctorDestructiveAcquisitionStep(
 				_, printErr := fmt.Fprintf(opts.out, "  no valid pin choice for %s; acquisition lock left unchanged\n", doctorSafeGitIdentity(choice.url))
 				return true, errors.Join(repairplanner.ErrIncomplete, printErr)
 			}
-			selected[gitLockIdentity(choice.url, choice.ref)] = answer
+			selected[lifecycle.GitLockIdentity(choice.url, choice.ref)] = answer
 		}
 		seed, err := doctorMergeAcquisitionCandidates(candidates, selected)
 		if err != nil {
@@ -461,14 +462,14 @@ func doctorDestructiveAcquisitionStep(
 		}
 
 		preparedGeneration := dependencytxn.Generation{}
-		mode := lockMode{
-			selects:     map[lockfile.Scope]bool{diagnostic.scope: true},
-			commitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
-			stagedLockEdits: []pipeline.StagedLockEdit{{
+		mode := lifecycle.LockMode{
+			Selects:     map[lockfile.Scope]bool{diagnostic.scope: true},
+			CommitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
+			StagedLockEdits: []pipeline.StagedLockEdit{{
 				Path: path, Expected: originalGeneration, ExpectedMode: originalMode,
 				Bytes: seedBytes, Mode: originalMode,
 			}},
-			updatePreview: func(previewCtx context.Context, view preparedUpdateView) error {
+			UpdatePreview: func(previewCtx context.Context, view lifecycle.PreparedUpdateView) error {
 				if err := revalidate(); err != nil {
 					return err
 				}
@@ -482,7 +483,7 @@ func doctorDestructiveAcquisitionStep(
 				if currentGeneration != originalGeneration || !bytes.Equal(current, original) {
 					return fmt.Errorf("%w: acquisition lock changed before publication", dependencytxn.ErrGenerationConflict)
 				}
-				prepared, ok := view.lockDesired[path]
+				prepared, ok := view.LockDesired[path]
 				if !ok {
 					return fmt.Errorf("lock recovery prepared no update for %s", filepath.Base(path))
 				}
@@ -505,7 +506,7 @@ func doctorDestructiveAcquisitionStep(
 				return nil
 			},
 		}
-		_, _, err = prepareExactLocks(ctx, repoRoot, localDir, mode)
+		_, _, err = lifecycle.PrepareExactLocks(ctx, repoRoot, localDir, mode)
 		if err != nil {
 			return true, err
 		}
@@ -543,11 +544,11 @@ func doctorDivergentGitPins(candidates []lockfile.Document, hasGitConflict bool)
 	}
 	left := make(map[string]lockfile.GitRegistry, len(candidates[0].Registries))
 	for _, registry := range candidates[0].Registries {
-		left[gitLockIdentity(registry.URL, registry.Ref)] = registry
+		left[lifecycle.GitLockIdentity(registry.URL, registry.Ref)] = registry
 	}
 	var choices []doctorGitPinChoice
 	for _, registry := range candidates[1].Registries {
-		prior, exists := left[gitLockIdentity(registry.URL, registry.Ref)]
+		prior, exists := left[lifecycle.GitLockIdentity(registry.URL, registry.Ref)]
 		if !exists || prior.Commit == registry.Commit {
 			continue
 		}
@@ -572,7 +573,7 @@ func promptDoctorGitPin(out io.Writer, reader *bufio.Reader, choice doctorGitPin
 		return lockfile.GitOID{}, nil
 	}
 	prompt := fmt.Sprintf("  divergent pin for %s@%s: left %s, right %s; keep [left/right] ",
-		doctorSafeGitIdentity(choice.url), tui.TerminalSafeLine(choice.ref),
+		doctorSafeGitIdentity(choice.url), session.TerminalSafeLine(choice.ref),
 		choice.left.String(), choice.right.String())
 	if _, err := fmt.Fprint(out, prompt); err != nil {
 		return lockfile.GitOID{}, err
@@ -602,7 +603,7 @@ func doctorSafeGitIdentity(raw string) string {
 		return "Git registry"
 	}
 	parsed.User = nil
-	return tui.TerminalSafeLine(parsed.Redacted())
+	return session.TerminalSafeLine(parsed.Redacted())
 }
 
 func doctorCaptureAcquisitionDestination(repoRoot, path string, scope lockfile.Scope) (*fsboundary.Dir, *fsboundary.Destination, *fsboundary.Dir, error) {
@@ -707,15 +708,15 @@ func doctorRequireExistingAcquisitionPins(layer config.LayerIntent, seed lockfil
 	if err := layer.ValidateDeployedMarketplaceLock(&seed); err != nil {
 		return fmt.Errorf("recovery seed does not retain the declared Marketplace identity: %w", err)
 	}
-	if selectedMarketplaceResourcesMissing(layer, &seed) {
+	if lifecycle.SelectedMarketplaceResourcesMissing(layer, &seed) {
 		return errors.New("recovery seed is missing a selected Marketplace pin; refusing to acquire a replacement")
 	}
-	if missing := unrecordedRegistrations(layer, &seed); len(missing) > 0 {
+	if missing := lifecycle.UnrecordedRegistrations(layer, &seed); len(missing) > 0 {
 		return errors.New("recovery seed is missing a Marketplace identity binding; refusing to rebind the endpoint")
 	}
 	registries := make(map[string]bool, len(seed.Registries))
 	for _, registry := range seed.Registries {
-		registries[gitLockIdentity(registry.URL, registry.Ref)] = true
+		registries[lifecycle.GitLockIdentity(registry.URL, registry.Ref)] = true
 	}
 	for _, source := range layer.Sources() {
 		if source.Kind != config.V4SourceGit || !source.All && !source.Required && len(source.Decisions) == 0 {
@@ -725,8 +726,8 @@ func doctorRequireExistingAcquisitionPins(layer config.LayerIntent, seed lockfil
 		if err != nil {
 			return err
 		}
-		if !registries[gitLockIdentity(canonical, source.Ref)] {
-			return fmt.Errorf("recovery seed has no exact Git commit for selected source %s@%s", doctorSafeGitIdentity(canonical), tui.TerminalSafeLine(source.Ref))
+		if !registries[lifecycle.GitLockIdentity(canonical, source.Ref)] {
+			return fmt.Errorf("recovery seed has no exact Git commit for selected source %s@%s", doctorSafeGitIdentity(canonical), session.TerminalSafeLine(source.Ref))
 		}
 	}
 	return nil
@@ -748,14 +749,14 @@ func doctorMergeAcquisitionCandidates(candidates []lockfile.Document, choices ma
 			return lockfile.Document{}, errors.New("lock recovery candidates have different scopes")
 		}
 		for _, incoming := range owned.Registries {
-			key := gitLockIdentity(incoming.URL, incoming.Ref)
+			key := lifecycle.GitLockIdentity(incoming.URL, incoming.Ref)
 			if chosen, exists := choices[key]; exists && incoming.Commit != chosen {
 				continue
 			}
 			if index, exists := registryIndexes[key]; exists {
 				current := &merged.Registries[index]
 				if current.Commit != incoming.Commit {
-					return lockfile.Document{}, fmt.Errorf("git registry %s@%s has divergent commits without an explicit choice", doctorSafeGitIdentity(incoming.URL), tui.TerminalSafeLine(incoming.Ref))
+					return lockfile.Document{}, fmt.Errorf("git registry %s@%s has divergent commits without an explicit choice", doctorSafeGitIdentity(incoming.URL), session.TerminalSafeLine(incoming.Ref))
 				}
 				if err := doctorMergeGitRegistry(current, incoming); err != nil {
 					return lockfile.Document{}, err
@@ -817,7 +818,7 @@ func doctorMergeGitRegistry(current *lockfile.GitRegistry, incoming lockfile.Git
 
 func doctorMergeMarketplace(current *lockfile.MarketplaceLock, incoming lockfile.MarketplaceLock) error {
 	if current.InstanceID != incoming.InstanceID {
-		return fmt.Errorf("marketplace endpoint %s has differing instance identities", tui.TerminalSafeLine(current.URL))
+		return fmt.Errorf("marketplace endpoint %s has differing instance identities", session.TerminalSafeLine(current.URL))
 	}
 	bindings := make(map[string]int, len(current.RegistryBindings))
 	for i, binding := range current.RegistryBindings {
@@ -875,7 +876,7 @@ type doctorOneSidedGitPin struct {
 	resource  lockfile.GitResource
 }
 
-func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdateView, layer config.LayerResult, candidates []lockfile.Document, prepared lockfile.Document) error {
+func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view lifecycle.PreparedUpdateView, layer config.LayerResult, candidates []lockfile.Document, prepared lockfile.Document) error {
 	occurrences := make(map[doctorGitResourceIdentity]map[int]doctorOneSidedGitPin)
 	for candidateIndex, candidate := range candidates {
 		for _, registry := range candidate.Registries {
@@ -897,7 +898,7 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 	}
 	preparedRegistries := make(map[string]lockfile.GitRegistry, len(prepared.Registries))
 	for _, registry := range prepared.Registries {
-		preparedRegistries[gitLockIdentity(registry.URL, registry.Ref)] = registry
+		preparedRegistries[lifecycle.GitLockIdentity(registry.URL, registry.Ref)] = registry
 	}
 	var oneSided []doctorOneSidedGitPin
 	candidatesToVerify := make(map[int]bool)
@@ -907,14 +908,14 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 		}
 		for candidateIndex, pin := range byCandidate {
 			oneSided = append(oneSided, pin)
-			preparedRegistry, exists := preparedRegistries[gitLockIdentity(pin.identity.url, pin.identity.ref)]
+			preparedRegistry, exists := preparedRegistries[lifecycle.GitLockIdentity(pin.identity.url, pin.identity.ref)]
 			if !exists || preparedRegistry.Commit != pin.registry.Commit {
 				candidatesToVerify[candidateIndex] = true
 			}
 		}
 	}
-	preparedExact := view.lookup(view.desiredSet, nil)
-	actual := resolvePreparedSelection(ctx, view, preparedExact, view.desiredSet.catalogs)
+	preparedExact := view.Lookup(view.DesiredSet, nil)
+	actual := lifecycle.ResolvePreparedSelection(ctx, view, preparedExact, view.DesiredSet.Catalogs(), nil, false)
 	if len(oneSided) == 0 {
 		return doctorPreparedSelectionRefusal(actual, nil, false)
 	}
@@ -942,17 +943,15 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 	})
 
 	sideResults := make(map[int]pipeline.ResolveResult, len(candidatesToVerify))
-	entries := pipeline.GitRegistryEntries(layer.Sources)
 	for candidateIndex := range candidates {
 		if !candidatesToVerify[candidateIndex] {
 			continue
 		}
-		side := &exactLockSet{bySource: map[string]lockedGit{}, byIdentity: map[string][]lockedGit{}}
 		candidate := candidates[candidateIndex]
-		if err := addLayerSnapshots(ctx, side, layer.Source, entries, layer.Sources, candidate, view.offline, false, nil, view.priorPlanner); err != nil {
+		sideExact, sideCatalogs, err := view.VerifiedCandidateLayer(ctx, layer, candidate)
+		if err != nil {
 			return fmt.Errorf("verify original acquisition-lock view: %w", err)
 		}
-		sideExact := view.lookup(side, nil)
 		routedExact := func(entry config.RegistryEntry) (string, string, error) {
 			if entry.Source == layer.Source {
 				recorded, err := doctorCandidateHasEntry(candidate, entry)
@@ -965,8 +964,8 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 			}
 			return preparedExact(entry)
 		}
-		catalogs := doctorUnionVerifiedCatalogs(view.desiredSet.catalogs, side.catalogs)
-		comparison := resolvePreparedSelection(ctx, view, routedExact, catalogs)
+		catalogs := doctorUnionVerifiedCatalogs(view.DesiredSet.Catalogs(), sideCatalogs)
+		comparison := lifecycle.ResolvePreparedSelection(ctx, view, routedExact, catalogs, nil, false)
 		candidatePins := make([]doctorOneSidedGitPin, 0, len(oneSided))
 		for _, pin := range oneSided {
 			if pin.candidate == candidateIndex {
@@ -994,7 +993,7 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 }
 
 func doctorCandidateHasEntry(candidate lockfile.Document, entry config.RegistryEntry) (bool, error) {
-	canonical, err := canonicalRegistryURL(entry.URL)
+	canonical, err := lifecycle.CanonicalRegistryURL(entry.URL)
 	if err != nil {
 		return false, err
 	}
@@ -1071,7 +1070,7 @@ func doctorPreparedSelectionRefusal(result pipeline.ResolveResult, pins []doctor
 }
 
 func doctorSelectedNotFoundMatchesPin(miss *resolver.SelectedNotFoundError, identity doctorGitResourceIdentity) bool {
-	canonical, err := canonicalRegistryURL(miss.URL)
+	canonical, err := lifecycle.CanonicalRegistryURL(miss.URL)
 	if err != nil || canonical != identity.url || miss.Ref != identity.ref || miss.Kind.String() != identity.kind || miss.Name != identity.name {
 		return false
 	}
@@ -1097,7 +1096,7 @@ func doctorSelectionContainsPin(result pipeline.ResolveResult, source config.Sou
 			artifact.SourceHarness != identity.harness {
 			continue
 		}
-		canonical, err := canonicalRegistryURL(artifact.RegistryURL)
+		canonical, err := lifecycle.CanonicalRegistryURL(artifact.RegistryURL)
 		if err == nil && canonical == identity.url {
 			return true
 		}
@@ -1134,18 +1133,18 @@ func doctorPreparedRetainsOneSidedPin(prepared lockfile.Document, pin doctorOneS
 
 func doctorOneSidedPinRefusal(pin doctorOneSidedGitPin) error {
 	return fmt.Errorf("chosen commit cannot retain still-selected one-sided Git pin %s/%s from %s@%s; refusing acquisition-lock replacement",
-		pin.identity.kind, pin.identity.name, doctorSafeGitIdentity(pin.identity.url), tui.TerminalSafeLine(pin.identity.ref))
+		pin.identity.kind, pin.identity.name, doctorSafeGitIdentity(pin.identity.url), session.TerminalSafeLine(pin.identity.ref))
 }
 
 func doctorValidatePreparedAcquisitionPins(seed, prepared lockfile.Document) error {
 	seedRegistries := make(map[string]lockfile.GitRegistry, len(seed.Registries))
 	for _, registry := range seed.Registries {
-		seedRegistries[gitLockIdentity(registry.URL, registry.Ref)] = registry
+		seedRegistries[lifecycle.GitLockIdentity(registry.URL, registry.Ref)] = registry
 	}
 	for _, registry := range prepared.Registries {
-		pinned, exists := seedRegistries[gitLockIdentity(registry.URL, registry.Ref)]
+		pinned, exists := seedRegistries[lifecycle.GitLockIdentity(registry.URL, registry.Ref)]
 		if !exists || pinned.Commit != registry.Commit {
-			return fmt.Errorf("prepared Git lock has no matching recovered commit for %s@%s; refusing latest acquisition", doctorSafeGitIdentity(registry.URL), tui.TerminalSafeLine(registry.Ref))
+			return fmt.Errorf("prepared Git lock has no matching recovered commit for %s@%s; refusing latest acquisition", doctorSafeGitIdentity(registry.URL), session.TerminalSafeLine(registry.Ref))
 		}
 		for _, root := range registry.Roots {
 			for _, prior := range pinned.Roots {
@@ -1172,7 +1171,7 @@ func doctorValidatePreparedAcquisitionPins(seed, prepared lockfile.Document) err
 	for _, marketplace := range prepared.Marketplaces {
 		prior, exists := seedMarketplaces[marketplace.URL]
 		if !exists || prior.InstanceID != marketplace.InstanceID {
-			return fmt.Errorf("prepared Marketplace lock changes the recovered endpoint identity for %s", tui.TerminalSafeLine(marketplace.URL))
+			return fmt.Errorf("prepared Marketplace lock changes the recovered endpoint identity for %s", session.TerminalSafeLine(marketplace.URL))
 		}
 		bindings := make(map[string]string, len(prior.RegistryBindings))
 		for _, binding := range prior.RegistryBindings {

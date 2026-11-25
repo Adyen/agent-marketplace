@@ -576,6 +576,10 @@ func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
 	}
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+`)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
@@ -587,12 +591,18 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	_, err := executeCommand("status")
+	output, err := executeCommand("status")
 	if err == nil {
 		t.Fatal("expected status command to fail for blocked registry")
 	}
 	if !strings.Contains(err.Error(), "blocked by allowed_registries") {
 		t.Fatalf("expected error to contain 'blocked by allowed_registries', got: %v", err)
+	}
+	if !strings.Contains(output, "none configured") {
+		t.Fatalf("TARGET HARNESS SET should retain the existing none-configured output:\n%s", output)
+	}
+	if !strings.Contains(output, "add harnesses to ~/.agents/config.yaml") {
+		t.Fatalf("status should retain the existing add-harnesses hint:\n%s", output)
 	}
 }
 

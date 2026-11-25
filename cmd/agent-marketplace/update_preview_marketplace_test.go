@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 )
 
 // spec: update-preview/live-sources-are-not-mistaken-for-unchanged-versioned-resources
@@ -135,14 +137,15 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 	server.resources["gone"].missing.Store(true)
 
 	output, err := updateDryRun(t, "--include-diff")
-	if err == nil {
-		t.Fatalf("missing-pin preview succeeded, want exit 1:\n%s", output)
+	if err != nil {
+		t.Fatalf("missing-pin preview failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
 		"Dry run: no updates were applied.",
 		"Marketplace pins proposed for update: 1",
 		"update",
-		"gone",
+		"/skill/gone",
+		"pinned revision kept",
 		"agent-marketplace remove gone",
 		"+stay body v2",
 	} {
@@ -153,7 +156,8 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 	// The retained missing pin has no proposed content change: its lock entry
 	// stays at the pinned revision and no diff is invented for it.
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "gone") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed") || strings.HasPrefix(strings.TrimSpace(line), "+") || strings.HasPrefix(strings.TrimSpace(line), "-")) {
+		if strings.Contains(line, "gone") && !strings.Contains(line, "skipped") && !strings.HasPrefix(line, "warning:") &&
+			(strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed") || strings.HasPrefix(strings.TrimSpace(line), "+") || strings.HasPrefix(strings.TrimSpace(line), "-")) {
 			t.Fatalf("missing pin got an invented content change or hunk: %s", line)
 		}
 	}
@@ -171,6 +175,7 @@ func TestUpdateDryRunMissingMarketplacePinRetainsStateAndReportsOthers(t *testin
 }
 
 // spec: update-output/applied-diffs-retain-partial-update-behavior
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
 func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -195,13 +200,14 @@ func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T)
 	server.resources["gone"].missing.Store(true)
 
 	output, err := executeCommand("update", "--include-diff")
-	if err == nil {
-		t.Fatalf("partial update succeeded, want exit 1:\n%s", output)
+	if err != nil {
+		t.Fatalf("partial update failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
 		"Marketplace pins updated: 1",
 		"+stay body v2 applied",
-		"gone",
+		"/skill/gone",
+		"pinned revision kept",
 		"agent-marketplace remove gone",
 	} {
 		if !strings.Contains(output, want) {
@@ -209,7 +215,7 @@ func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T)
 		}
 	}
 	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, "\"gone\"") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed")) {
+		if strings.Contains(line, "\"gone\"") && !strings.Contains(line, "skipped") && (strings.Contains(line, "modified") || strings.Contains(line, "added") || strings.Contains(line, "removed")) {
 			t.Fatalf("retained missing pin was reported as an invented content change: %s", line)
 		}
 	}
@@ -225,6 +231,135 @@ func TestUpdateIncludeDiffAppliesEligibleAndReportsRetainedMissing(t *testing.T)
 	}
 }
 
+// spec: update-output/unusable-pinned-revision-remains-an-error
+func TestUpdateIncludeDiffReportsUnusableMissingMarketplacePin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4UpdateServer(t, "stay", "gone")
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  mp: {marketplace: "+server.URL+"}\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	for _, name := range []string{"stay", "gone"} {
+		if output, err := executeCommand("install", "--scope", "repo", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
+			t.Fatalf("install %s: %v\n%s", name, err, output)
+		}
+	}
+
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	goneBefore := commandLockResource(t, lockPath, "gone")
+	if goneBefore == nil || commandLockResource(t, lockPath, "stay") == nil {
+		t.Fatal("initial lock does not contain both Marketplace pins")
+	}
+	beforeLock := readRequiredFile(t, lockPath)
+	beforeConfig := readRequiredFile(t, configPath)
+	gonePath := filepath.Join(repo, ".factory", "skills", "gone", "SKILL.md")
+	stayPath := filepath.Join(repo, ".factory", "skills", "stay", "SKILL.md")
+	goneContent := readRequiredFile(t, gonePath)
+	beforeTree := snapshotConsumerTree(t, repo)
+
+	cache := marketplace.DefaultCache()
+	goneMetadata := cache.MetadataPath(server.URL, string(goneBefore.RegistryID), "skill", "gone", string(goneBefore.ContentDigest))
+	if _, err := os.Stat(goneMetadata); err != nil {
+		t.Fatalf("gone pin metadata was not cached: %v", err)
+	}
+	var cachedGoneArtifact bool
+	for _, path := range []string{
+		cache.ArtifactPath(string(goneBefore.ArchiveDigest)),
+		cache.PlaceholderArchivePath(string(goneBefore.ArchiveDigest)),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			cachedGoneArtifact = true
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat gone pin cache %s: %v", path, err)
+		}
+	}
+	if !cachedGoneArtifact {
+		t.Fatal("gone pin artifact was not cached")
+	}
+	if err := os.Remove(goneMetadata); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		cache.ArtifactPath(string(goneBefore.ArchiveDigest)),
+		cache.PlaceholderArchivePath(string(goneBefore.ArchiveDigest)),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	delete(server.resources, "gone")
+	server.setSkill(t, "stay", "stay body v2")
+
+	var previewErr error
+	for _, invocation := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "dry run", args: []string{"update", "--dry-run", "--include-diff"}, want: "Marketplace pins proposed for update: 1"},
+		{name: "apply", args: []string{"update", "--include-diff"}, want: "Marketplace pins updated: 1"},
+	} {
+		output, err := executeCommand(invocation.args...)
+		if err == nil {
+			t.Errorf("%s succeeded with an unusable removed pin:\n%s", invocation.name, output)
+		} else {
+			for _, want := range []string{server.URL, "src/skill/gone", "agent-marketplace remove gone", "install the new name"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s error %q does not name %q", invocation.name, err, want)
+				}
+			}
+			if invocation.name == "dry run" {
+				previewErr = err
+			} else if previewErr != nil && err.Error() != previewErr.Error() {
+				t.Errorf("preview error %q differs from apply error %q", previewErr, err)
+			}
+		}
+		if !strings.Contains(output, invocation.want) {
+			t.Errorf("%s report missing %q:\n%s", invocation.name, invocation.want, output)
+		}
+		if !strings.Contains(output, "+stay body v2") {
+			t.Errorf("%s report omitted the eligible Marketplace diff:\n%s", invocation.name, output)
+		}
+		diffStart := strings.Index(output, "Resource content diffs")
+		if diffStart < 0 {
+			t.Errorf("%s report omitted the resource diff section:\n%s", invocation.name, output)
+		} else {
+			diffSection := output[diffStart:]
+			if errorStart := strings.Index(diffSection, "\nError:"); errorStart >= 0 {
+				diffSection = diffSection[:errorStart]
+			}
+			if strings.Contains(diffSection, "gone") {
+				t.Errorf("%s invented content changes for the unusable pin:\n%s", invocation.name, output)
+			}
+		}
+		if invocation.name == "dry run" {
+			if string(readRequiredFile(t, lockPath)) != string(beforeLock) || string(readRequiredFile(t, configPath)) != string(beforeConfig) {
+				t.Error("dry-run preview changed config or lock bytes")
+			}
+			assertTreesIdentical(t, "dry-run consumer", beforeTree, snapshotConsumerTree(t, repo))
+		}
+	}
+
+	if after := commandLockResource(t, lockPath, "gone"); after == nil || !reflect.DeepEqual(*after, *goneBefore) {
+		t.Fatalf("unusable pin lock entry changed: got %#v, want %#v", after, goneBefore)
+	}
+	if after := commandLockResource(t, lockPath, "stay"); after == nil || string(after.ContentDigest) != string(server.resources["stay"].revision.ContentDigest) {
+		t.Fatalf("eligible pin was not updated: got %#v", after)
+	}
+	if !strings.Contains(string(readRequiredFile(t, stayPath)), "stay body v2") {
+		t.Fatal("applying update did not install the eligible Marketplace revision")
+	}
+	if string(readRequiredFile(t, gonePath)) != string(goneContent) {
+		t.Fatal("applying update changed the unusable pin's installed content")
+	}
+}
+
 // spec: update-preview/pending-dependency-transaction-is-not-replayed
 func TestUpdateDryRunRefusesPendingJournalWithoutReplay(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -237,7 +372,7 @@ func TestUpdateDryRunRefusesPendingJournalWithoutReplay(t *testing.T) {
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle v2 newer upstream", []string{"openstack"})
 	commitAndPushAll(t, working, "advance v2")
 
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}

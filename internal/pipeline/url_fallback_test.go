@@ -122,6 +122,35 @@ func TestPreferReachableTransport(t *testing.T) {
 	})
 }
 
+// spec: git-authentication/web-url-ssh-host-key-failure-still-falls-back-to-https
+func TestPreferReachableTransportHostKeyFailureFallsBackToHTTPS(t *testing.T) {
+	const raw = "https://github.com/org/repo"
+	const ssh = "git@github.com:org/repo"
+	const https = "https://github.com/org/repo.git"
+	var probed []string
+	original := remoteProbe
+	remoteProbe = func(_ context.Context, gitURL string) (string, string, error) {
+		probed = append(probed, gitURL)
+		if gitURL == ssh {
+			return "", "", errors.New("Host key verification failed.")
+		}
+		return "main", probedCommit, nil
+	}
+	t.Cleanup(func() { remoteProbe = original })
+
+	got := PreferReachableTransport(context.Background(), raw, ssh, allowAll)
+	want := TransportChoice{URL: https, DefaultBranch: "main", Commit: probedCommit, FellBackFrom: ssh}
+	if got != want {
+		t.Fatalf("PreferReachableTransport() = %+v, want %+v", got, want)
+	}
+	if len(probed) != 2 || probed[0] != ssh || probed[1] != https {
+		t.Fatalf("probed URLs = %v, want SSH followed by HTTPS", probed)
+	}
+	if got := got.Notice("recorded"); got != "SSH could not reach "+ssh+"; recorded "+https+" instead" {
+		t.Fatalf("fallback notice = %q", got)
+	}
+}
+
 // spec: resource-installation/configured-form-of-a-web-url-is-reused
 func TestSelectAdHocTransport(t *testing.T) {
 	const raw = "https://github.com/org/repo"

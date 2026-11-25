@@ -1,2 +1,6 @@
 packages:
   - .
+
+allowBuilds:
+  # Koffi loads its platform prebuild without running the install script.
+  "koffi@3.3.5": false

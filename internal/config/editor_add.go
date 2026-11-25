@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
@@ -105,10 +106,6 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if isLocalConfigPath(configPath) {
 		return fmt.Errorf("harnesses cannot be set in repository personal config %q", configPath)
 	}
-	harnesses, err := canonicalCompilerHarnesses("harnesses", harnesses)
-	if err != nil {
-		return err
-	}
 	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
@@ -121,7 +118,30 @@ func SetHarnessesInConfig(configPath string, harnesses []string) error {
 	if err != nil {
 		return fmt.Errorf("update config %q: %w", configPath, err)
 	}
-	setSequenceValues(sequence, harnesses)
+	existing := make(map[string]bool, len(sequence.Content))
+	for _, item := range sequence.Content {
+		if item.Kind == yaml.ScalarNode && item.Tag == "!!str" {
+			existing[strings.TrimSpace(item.Value)] = true
+		}
+	}
+
+	// Normalize, dedupe, and reject unknown or non-compiler targets before any
+	// file is written, so a typo cannot land in the target harness set.
+	canonical, strictErr := canonicalCompilerHarnesses("harnesses", harnesses)
+	if strictErr != nil {
+		normalized := normalizedUniqueValues(harnesses)
+		if len(normalized) == 0 {
+			return strictErr
+		}
+		for _, harness := range normalized {
+			if !IsSupportedHarness(harness) && !existing[harness] {
+				return strictErr
+			}
+		}
+		canonical = normalized
+	}
+
+	setSequenceValues(sequence, canonical)
 	if err := writeConfigDocument(configPath, mode, doc); err != nil {
 		return err
 	}

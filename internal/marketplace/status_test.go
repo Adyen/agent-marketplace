@@ -91,6 +91,45 @@ func TestInspectPreservesPinStates(t *testing.T) {
 	}
 }
 
+// spec: status-reporting/removed-pin-keeps-its-state-and-gains-a-note
+// spec: status-reporting/cached-only-status-adds-no-removal-note
+func TestInspectNotesRemovedPinOnlyAfterOnlineLatestLookup(t *testing.T) {
+	contentDigest := "sha256:" + strings.Repeat("e", 64)
+	archiveDigest := "sha256:" + strings.Repeat("f", 64)
+	revision := assessedRevision(store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: "review"},
+		ContentDigest: store.RevisionDigest(contentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "mp")
+		case "/api/v1/resources/source-slug/skill/review/revisions/" + contentDigest:
+			_ = json.NewEncoder(w).Encode(revision)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{{
+		RegistryID: "src", RegistrySlug: "source-slug", Kind: "skill", Name: "review", Revision: "v1", Digest: contentDigest,
+	}}}
+	inspector := &Resolver{Cache: NewCache(t.TempDir())}
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}
+	online := inspector.Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeInspect)
+	if len(online.Pins) != 1 || online.Pins[0].State != PinStateCurrent ||
+		!strings.Contains(online.Pins[0].Detail, "removed from the Marketplace; pinned revision kept") {
+		t.Fatalf("online removed pin status = %#v, want current with removal detail", online.Pins)
+	}
+
+	cached := inspector.Inspect(context.Background(), cfg, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(cached.Pins) != 1 || strings.Contains(cached.Pins[0].Detail, "removed from the Marketplace; pinned revision kept") {
+		t.Fatalf("cached-only removed pin status = %#v, want no removal detail", cached.Pins)
+	}
+}
+
 func TestPinStatusFollowsExplicitOrganizationPolicy(t *testing.T) {
 	pin := config.MarketplaceResourcePin{RegistryID: "source", Kind: "skill", Name: "review"}
 	for _, required := range []bool{false, true} {

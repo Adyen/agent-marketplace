@@ -42,7 +42,7 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
     await step("the failed sync reports an error instead of success", () => terminal.write("s"), async () => {
       await locate(terminal, /! 1 errors: materialize\.wri/).unique().expect({ timeout: 30_000 });
       await locate(terminal, "~ in sync").expect({ not: true });
-      await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+      await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
     });
     assert.equal(fs.lstatSync(alphaSkill, { throwIfNoEntry: false }), undefined, "the failed sync installed alpha-skill");
     await step("the errors screen keeps the cause and gives next steps", () => terminal.write("e"), async () => {

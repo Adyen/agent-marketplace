@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -117,6 +119,102 @@ type MissingResourceError struct {
 func (e *MissingResourceError) Error() string { return e.Err.Error() }
 func (e *MissingResourceError) Unwrap() error { return e.Err }
 
+// VerifyPinnedRevision checks a pin with the normal Marketplace assessment,
+// revocation, artifact, and cache validation paths.
+func (r *Resolver) VerifyPinnedRevision(ctx context.Context, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (bool, error) {
+	canonical, err := canonicalMarketplaceEntry(entry)
+	if err != nil {
+		return false, err
+	}
+	cacheRoot, err := os.MkdirTemp("", "agent-marketplace-pin-check-")
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if err := os.RemoveAll(cacheRoot); err != nil {
+			slog.Warn("remove temporary Marketplace pin cache", "error", err)
+		}
+	}()
+
+	remote := &Resolver{
+		HTTPClient: r.HTTPClient, Cache: NewCache(cacheRoot), AllowedRegistries: r.AllowedRegistries,
+		LockEvidenceStrict: r.LockEvidenceStrict, Verified: r.Verified,
+	}
+	locator := MarketplaceLocator{
+		Registry: marketplaceAPIRegistry(pin), Kind: pin.Kind, Name: pin.Name,
+		Revision: pin.Revision, Digest: pin.Digest,
+	}
+	if prepared, err := remote.PrepareLocator(ctx, canonical, locator, nil); err == nil {
+		if prepared.Pin.RegistryID != pin.RegistryID {
+			return false, fmt.Errorf("registry identity mismatch: got %q, want %q", prepared.Pin.RegistryID, pin.RegistryID)
+		}
+		if err := validateResourceRevision(canonical, pin, prepared.Revision); err != nil {
+			return false, err
+		}
+		if pin.RegistryCommit != "" && prepared.Revision.Occurrence.Commit != pin.RegistryCommit ||
+			pin.RegistryManifestDigest != "" && string(prepared.Revision.Occurrence.ManifestDigest) != pin.RegistryManifestDigest {
+			return false, nil
+		}
+		if pin.LockCollectionManifestDigest != "" && prepared.CollectionManifest.ContentDigest != pin.LockCollectionManifestDigest {
+			return false, fmt.Errorf("locked collection manifest digest does not match the pinned revision")
+		}
+		if err := r.archiveEvidenceDrift(pin, string(prepared.Revision.ArchiveDigest)); err != nil {
+			return false, err
+		}
+		r.Verified.record(canonical, pin, prepared.Revision, false)
+		return true, nil
+	} else {
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return false, err
+		}
+	}
+
+	cachedEntry := canonical
+	cachedEntry.Resources = []config.MarketplaceResourcePin{pin}
+	if pin.Kind == "collection" {
+		for _, leaf := range entry.Resources {
+			for _, selected := range leaf.SelectedBy.List() {
+				if selected.RegistryID == pin.RegistryID && selected.Name == pin.Name && selected.Revision == pin.Revision {
+					cachedEntry.Resources = append(cachedEntry.Resources, leaf)
+					break
+				}
+			}
+		}
+	}
+	_, errs := r.Resolve(ctx, &config.Config{Marketplaces: []config.MarketplaceEntry{cachedEntry}}, nil, resolver.MarketplaceResolveModeCachedNoFetch)
+	if len(errs) > 0 {
+		for _, resolveErr := range errs {
+			if !IsCacheEvidenceError(resolveErr) {
+				return false, errors.Join(errs...)
+			}
+		}
+		return false, nil
+	}
+	cache := r.cache()
+	var revision store.AssessedResourceRevision
+	var found bool
+	if pin.Acquisition == config.MarketplaceAcquisitionIndexOnly {
+		revision, found, err = cache.ReadIndexOnlyResourceRevision(indexOnlyIdentity(canonical, pin), pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	} else {
+		revision, found, err = cache.ReadResourceRevision(canonical.URL, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	}
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, fmt.Errorf("verified pinned revision metadata is missing from cache")
+	}
+	if err := validateResourceRevision(canonical, pin, revision); err != nil {
+		return false, err
+	}
+	if err := r.archiveEvidenceDrift(pin, string(revision.ArchiveDigest)); err != nil {
+		return false, err
+	}
+	r.Verified.record(canonical, pin, revision, pin.Acquisition == config.MarketplaceAcquisitionIndexOnly)
+	return true, nil
+}
+
 // LatestRevision verifies the endpoint and registry identity, then fetches the
 // latest metadata for an existing pin. Index-only pins also validate the exact
 // registry occurrence, but this method does not fetch an artifact.
@@ -190,6 +288,7 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
 		}
 	}
+	r.Verified.record(canonical, pin, latest, false)
 	return registry, latest, nil
 }
 
@@ -216,7 +315,7 @@ func validateLocatorRevision(locator MarketplaceLocator, revision store.Assessed
 // verifies its mirror artifact. It deliberately does not edit configuration.
 // Collection traversal shares the lock-bootstrap work limit.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
-	return r.prepareLocator(ctx, entry, locator, targets, lockfile.MaxMarketplaceLockResources, nil)
+	return r.prepareLocator(ctx, entry, locator, targets, NewPreparationBudget(lockfile.MaxMarketplaceLockResources), nil)
 }
 
 // PrepareLocatorWithResourceLimit is PrepareLocator with an upper bound on
@@ -225,16 +324,47 @@ func (r *Resolver) PrepareLocatorWithResourceLimit(ctx context.Context, entry co
 	if resourceLimit < 1 {
 		return nil, fmt.Errorf("marketplace prepared resource limit must be positive")
 	}
+	return r.PrepareLocatorWithBudget(ctx, entry, locator, targets, NewPreparationBudget(resourceLimit), policies...)
+}
+
+// PrepareLocatorWithBudget is PrepareLocatorWithResourceLimit with a budget that
+// concurrent preparations may share.
+func (r *Resolver) PrepareLocatorWithBudget(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, budget *PreparationBudget, policies ...resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	var policy resolver.MarketplaceRevocationPolicy
 	if len(policies) > 0 {
 		policy = policies[0]
 	}
-	return r.prepareLocator(ctx, entry, locator, targets, resourceLimit, policy)
+	return r.prepareLocator(ctx, entry, locator, targets, budget, policy)
+}
+
+// PreparationBudget bounds the preparation work shared by concurrent preparations.
+type PreparationBudget struct {
+	mu    sync.Mutex
+	limit int
+	used  int
+}
+
+func NewPreparationBudget(limit int) *PreparationBudget {
+	return &PreparationBudget{limit: limit}
+}
+
+func (b *PreparationBudget) reserve(count int) error {
+	if b == nil || count == 0 {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if count < 0 || b.used > b.limit-count {
+		return fmt.Errorf("marketplace collection preparation work exceeds resource limit %d", b.limit)
+	}
+	b.used += count
+	return nil
 }
 
 type collectionPreparationBudget struct {
-	limit int
-	used  int
+	// shared is reserved on every consume; nil means unlimited.
+	shared *PreparationBudget
+	used   int
 	// verified records the nested collections fully verified by this
 	// preparation, keyed by registry, name and content revision.
 	verified map[string]bool
@@ -254,16 +384,22 @@ func (b *collectionPreparationBudget) consume(count int) error {
 	if b == nil || count == 0 {
 		return nil
 	}
-	if count < 0 || (b.limit > 0 && b.used > b.limit-count) {
-		return fmt.Errorf("marketplace collection preparation work exceeds resource limit %d", b.limit)
+	if err := b.shared.reserve(count); err != nil {
+		return err
 	}
 	b.used += count
 	return nil
 }
 
-func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, resourceLimit int, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, shared *PreparationBudget, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	budget := &collectionPreparationBudget{shared: shared}
+	if locator.Kind != "collection" {
+		if err := budget.consume(1); err != nil {
+			return nil, err
+		}
 	}
 	canonical, err := canonicalMarketplaceEntry(entry)
 	if err != nil {
@@ -357,7 +493,6 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 
 	cache := r.cache()
 	if locator.Kind == "collection" {
-		budget := &collectionPreparationBudget{limit: resourceLimit}
 		if err := budget.consume(1); err != nil {
 			return nil, err
 		}

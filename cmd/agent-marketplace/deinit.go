@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -282,7 +283,7 @@ func purgeConfigPairs(ctx context.Context, out io.Writer, configFiles []string, 
 		}
 	}
 	if !dryRun && len(desired) > 0 {
-		stateDir, err := dependencyStateDir()
+		stateDir, err := lifecycle.DependencyStateDir()
 		if err != nil {
 			return err
 		}

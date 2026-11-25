@@ -134,13 +134,17 @@ Unknown top-level fields are rejected.
 | `resources` | mapping | no | Resource groups, each keyed by a source name. |
 | `allowed_marketplaces` | list of regular expressions | no | Restricts hosted Marketplace endpoint URLs. |
 | `allowed_registries` | list of regular expressions | no | Restricts remote Git origins. |
-| `backup` | mapping | no | Pre-sync backups of machine-scope harness folders: `enabled` (default `true`), `max_days` (default `14`), `max_per_day` (default `10`). Both limits must be positive. Organization and user files only. |
+| `backup` | mapping | no | Pre-sync backups of machine-scope harness folders and the `agents-config` user configuration archive: `enabled` (default `true`), `max_days` (default `14`), `max_per_day` (default `10`). Both limits must be positive. Organization and user files only. |
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
 | `update_check` | mapping | no | Release upgrade notice: `enabled` (default `true`). Organization and user files only; the user value wins. |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
 
 `harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions.
+
+## Release checks
+
+The desktop GUI, CLI, and TUI use the same `update_check.enabled` setting. It defaults to `true`; organization and user-personal configuration may set it, and the user value wins. Set it to `false` to disable release checks.
 
 ## `harnesses`
 

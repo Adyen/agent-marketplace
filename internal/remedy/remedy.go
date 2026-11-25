@@ -355,13 +355,14 @@ var catalog = map[string]hintFunc{
 	"config.edit.include-owned":         configurationHint("Change the selection in the included configuration file that owns this entry"),
 	"config.edit.invalid-binding":       configurationHint("Rerun the configuration edit with the source selected from the current configuration"),
 	"config.edit.request-missing":       configurationHint("Run `agent-marketplace list` and select a resource that is present in the named source"),
+	"config.edit.source-in-use":         configurationHint("Remove the resources from this Marketplace source before removing its registration"),
 	"config.edit.unsafe-directory":      configurationHint("Choose a local source directory contained by the configuration layer"),
 	"config.edit.unsupported-operation": configurationHint("Use a supported resource command such as `agent-marketplace install --help` or `agent-marketplace remove --help`"),
 
 	"dependency.recovery-required": staticHint("Run `agent-marketplace sync` or `agent-marketplace lock` while online (not with `--check`, `--locked`, or `--offline`) to finish the interrupted write."),
 
 	"git.auth-config-untrusted": staticHint("Move Git authentication settings to trusted system or global configuration, then rerun the command."),
-	"git.auth-transport-failed": staticHint("Check your SSH agent or Git credentials and repository access, then rerun the command."),
+	"git.auth-transport-failed": staticHint("Check the repository URL and credentials, or the SSH host key and access, then rerun the command."),
 
 	"lock.alias-forbidden":          lockHint("Replace YAML aliases in the acquisition lock with explicit values"),
 	"lock.change-required":          lockScopeHint("Run `agent-marketplace lock` for the affected scope to write the required acquisition-lock changes"),

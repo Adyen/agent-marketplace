@@ -1,6 +1,9 @@
 package store_test
 
 import (
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -81,6 +84,135 @@ func TestResourceAssessmentIdentityIsSensitiveToEveryContentField(t *testing.T) 
 			}
 			if got.AssessmentDigest == finalized.AssessmentDigest {
 				t.Fatalf("changing %s did not change assessment identity", name)
+			}
+		})
+	}
+}
+
+func TestResourceAssessmentAdvisoryReportsValidateAndFinalize(t *testing.T) {
+	statuses := []struct {
+		status store.AdvisoryStatus
+		wire   string
+	}{
+		{store.AdvisoryComplete, "complete"},
+		{store.AdvisoryCompleteWithCaveats, "complete_with_caveats"},
+		{store.AdvisoryPartial, "partial"},
+		{store.AdvisoryFailed, "failed"},
+		{store.AdvisoryNotRun, "not_run"},
+	}
+	for _, test := range statuses {
+		if string(test.status) != test.wire {
+			t.Fatalf("status %q, want wire value %q", test.status, test.wire)
+		}
+		assessment := validResourceAssessment()
+		assessment.AdvisoryReports = []store.AdvisoryReport{{Tool: "skillspector", Status: test.status}}
+		if _, err := store.FinalizeResourceAssessment(assessment); err != nil {
+			t.Fatalf("FinalizeResourceAssessment for %s: %v", test.wire, err)
+		}
+	}
+
+	ruleFinding := store.AdvisoryFinding{Code: "rule", Severity: "high", Summary: "finding"}
+	invalid := []struct {
+		name    string
+		kind    string
+		reports []store.AdvisoryReport
+	}{
+		{"empty tool", "", []store.AdvisoryReport{{Status: store.AdvisoryComplete}}},
+		{"duplicate tool", "", []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryComplete}, {Tool: "skillspector", Status: store.AdvisoryPartial}}},
+		{"invalid status", "", []store.AdvisoryReport{{Tool: "skillspector", Status: "unknown"}}},
+		{"failed findings", "", []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryFailed, Findings: []store.AdvisoryFinding{ruleFinding}}}},
+		{"not-run findings", "", []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryNotRun, Findings: []store.AdvisoryFinding{ruleFinding}}}},
+		{"finding missing summary", "", []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryComplete, Findings: []store.AdvisoryFinding{{Code: "rule", Severity: "high"}}}}},
+		{"non-skill report", "mcpserver", []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryNotRun}}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			assessment := validResourceAssessment()
+			if test.kind != "" {
+				assessment.Coordinate.Kind = test.kind
+			}
+			assessment.AdvisoryReports = test.reports
+			if _, err := store.FinalizeResourceAssessment(assessment); err == nil {
+				t.Fatal("FinalizeResourceAssessment accepted invalid advisory evidence")
+			}
+		})
+	}
+
+	emptyReports := validResourceAssessment()
+	emptyReports.AdvisoryReports = []store.AdvisoryReport{}
+	finalizedEmpty, err := store.FinalizeResourceAssessment(emptyReports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalizedEmpty.AdvisoryReports != nil {
+		t.Fatal("FinalizeResourceAssessment did not canonicalize empty advisory reports to nil")
+	}
+
+	findings := []store.AdvisoryFinding{{Code: "rule", Severity: "high", Summary: "Avoid process execution.", Path: "SKILL.md"}}
+	caller := validResourceAssessment()
+	caller.AdvisoryReports = []store.AdvisoryReport{{Tool: "skillspector", Status: store.AdvisoryComplete, Findings: findings}}
+	finalized, err := store.FinalizeResourceAssessment(caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings[0].Code = "caller-mutated"
+	caller.AdvisoryReports[0].Tool = "caller-mutated"
+	if finalized.AdvisoryReports[0].Tool != "skillspector" || finalized.AdvisoryReports[0].Findings[0].Code != "rule" {
+		t.Fatal("FinalizeResourceAssessment retained caller-owned advisory report data")
+	}
+
+	emptyFindings := validResourceAssessment()
+	emptyFindings.AdvisoryReports = []store.AdvisoryReport{{
+		Tool: "skillspector", Status: store.AdvisoryComplete, Findings: []store.AdvisoryFinding{},
+	}}
+	finalizedEmptyFindings, err := store.FinalizeResourceAssessment(emptyFindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalizedEmptyFindings.AdvisoryReports[0].Findings != nil {
+		t.Fatal("FinalizeResourceAssessment did not canonicalize empty advisory findings to nil")
+	}
+}
+
+func TestDecodeAdvisoryReports(t *testing.T) {
+	for _, encoded := range []string{"[]", "null", "[] "} {
+		got, err := store.DecodeAdvisoryReports(encoded)
+		if err != nil || got != nil {
+			t.Fatalf("DecodeAdvisoryReports(%q) = %#v, %v, want nil, nil", encoded, got, err)
+		}
+	}
+	encoded := `[{"tool":"skillspector","version":"2.13.6","status":"partial","findings":[{"code":"SS0001","severity":"high","summary":"Potential risky skill behavior."}]}]`
+	got, err := store.DecodeAdvisoryReports(encoded)
+	if err != nil {
+		t.Fatalf("DecodeAdvisoryReports: %v", err)
+	}
+	want := []store.AdvisoryReport{{
+		Tool: "skillspector", Version: "2.13.6", Status: store.AdvisoryPartial,
+		Findings: []store.AdvisoryFinding{{Code: "SS0001", Severity: "high", Summary: "Potential risky skill behavior."}},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DecodeAdvisoryReports = %#v, want %#v", got, want)
+	}
+	for _, tt := range []struct {
+		name    string
+		encoded string
+		cause   error
+	}{
+		{"malformed", "[", nil},
+		{"duplicate report member", `[{"tool":"skillspector","status":"partial","status":"complete"}]`, jsontext.ErrDuplicateName},
+		{"duplicate finding member", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","severity":"high","severity":"low","summary":"Potential risky skill behavior."}]}]`, jsontext.ErrDuplicateName},
+		{"report alias after canonical", `[{"tool":"skillspector","status":"","Status":"complete"}]`, jsonv2.ErrUnknownName},
+		{"report alias before canonical", `[{"tool":"skillspector","Status":"complete","status":""}]`, jsonv2.ErrUnknownName},
+		{"finding alias after canonical", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","severity":"","Severity":"low","summary":"Potential risky skill behavior."}]}]`, jsonv2.ErrUnknownName},
+		{"finding alias before canonical", `[{"tool":"skillspector","status":"partial","findings":[{"code":"SS0001","Severity":"low","severity":"","summary":"Potential risky skill behavior."}]}]`, jsonv2.ErrUnknownName},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.DecodeAdvisoryReports(tt.encoded)
+			if got != nil || err == nil || !strings.HasPrefix(err.Error(), "unmarshal advisory reports: ") {
+				t.Fatalf("DecodeAdvisoryReports = %#v, %v; want nil and unmarshal advisory reports error", got, err)
+			}
+			if tt.cause != nil && !errors.Is(err, tt.cause) {
+				t.Fatalf("DecodeAdvisoryReports error = %v, want cause %v", err, tt.cause)
 			}
 		})
 	}

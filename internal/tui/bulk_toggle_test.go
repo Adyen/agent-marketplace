@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -313,7 +314,7 @@ func TestBulkSubmitRefusesWhileOperationBusy(t *testing.T) {
 	}
 	mi, cmd := m.Update(keyNamed("enter"))
 	m = mi.(Model)
-	if m.operations.active == nil || m.operations.active.id != op {
+	if m.operations.Active == nil || m.operations.Active.ID != op {
 		t.Fatalf("busy submit replaced the active operation")
 	}
 	if mutations != 0 {
@@ -342,10 +343,10 @@ func TestStaleBulkCompletionRejected(t *testing.T) {
 	}
 	m.recordOperationFailure(operationTargets, diagnosticMutation, fmt.Errorf("sentinel diagnostic"))
 	beforeLen := len(m.flatItems)
-	beforeDiags := len(m.diagnostics.all())
+	beforeDiags := len(m.diagnostics.All())
 	mi, cmd := m.Update(configWrittenMsg{operation: stale, skillName: "x", enabled: false})
 	m = mi.(Model)
-	if m.operations.active == nil || m.operations.active.id != newer {
+	if m.operations.Active == nil || m.operations.Active.ID != newer {
 		t.Fatalf("stale completion disturbed the active operation")
 	}
 	if m.pendingToggleReload != 0 {
@@ -354,7 +355,7 @@ func TestStaleBulkCompletionRejected(t *testing.T) {
 	if len(m.flatItems) != beforeLen {
 		t.Fatalf("stale completion changed the view")
 	}
-	if len(m.diagnostics.all()) != beforeDiags {
+	if len(m.diagnostics.All()) != beforeDiags {
 		t.Fatalf("stale completion changed diagnostics")
 	}
 	if cmd != nil {
@@ -403,16 +404,16 @@ func newBulkFixture(t *testing.T) *bulkFixture {
 	if err := os.WriteFile(projectPath, []byte(project), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
-	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
+	originalOrg, originalGlobal := session.LoadOrgConfig, session.LoadGlobalConfig
+	originalRepo, originalLocal := session.LoadRepoConfig, session.LoadLocalConfig
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
-		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig = originalOrg, originalGlobal
+		session.LoadRepoConfig, session.LoadLocalConfig = originalRepo, originalLocal
 	})
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) { return nil, nil }
-	loadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(projectPath) }
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(projectPath) }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 
 	workspace, err := pipeline.NewWorkspace(repo, "")
 	if err != nil {
@@ -955,7 +956,7 @@ func TestBulkSubmitThroughModelUpdateRunsOneMutationAndOneReload(t *testing.T) {
 	m := helperFlatCursorOnSection(t, f.snap.rows, "status:available")
 	m.workspace = f.workspace
 	m.dependencyLifecycle.Mutate = f.mutate()
-	genBefore := m.requests.active(requestSnapshot)
+	genBefore := m.requests.Active(requestSnapshot)
 
 	mi, _ := m.Update(keyNamed("space"))
 	m = mi.(Model)
@@ -985,7 +986,7 @@ func TestBulkSubmitThroughModelUpdateRunsOneMutationAndOneReload(t *testing.T) {
 	if reload == nil {
 		t.Fatalf("completion must schedule the authoritative reload")
 	}
-	genAfter := m.requests.active(requestSnapshot)
+	genAfter := m.requests.Active(requestSnapshot)
 	if genAfter != genBefore+1 {
 		t.Fatalf("expected exactly one new snapshot generation, %d -> %d", genBefore, genAfter)
 	}

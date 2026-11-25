@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -300,6 +301,11 @@ func TestConformanceCatalogProjectionPersistsProvenanceAndPages(t *testing.T) {
 		t.Fatalf("conflicting source origin error = %v, want ErrConflict", err)
 	}
 
+	expectedReports := []store.AdvisoryReport{{
+		Tool: "skillspector", Version: "2.13.6", Status: store.AdvisoryCompleteWithCaveats,
+		Reason:   "offline_limitations",
+		Findings: []store.AdvisoryFinding{{Code: "unsafe-process", Severity: "high", Summary: "Avoid process execution.", Path: "SKILL.md"}},
+	}}
 	putCurrent := func(kind, name, digestChar, sourcePath string) store.ResourceRevision {
 		t.Helper()
 		rev := store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: marketplace, Registry: registry, Kind: kind, Name: name}, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat(digestChar, 64)), Description: name}
@@ -309,10 +315,15 @@ func TestConformanceCatalogProjectionPersistsProvenanceAndPages(t *testing.T) {
 		if err := meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, Commit: commit, ManifestDigest: manifest, SourcePath: sourcePath}); err != nil {
 			t.Fatal(err)
 		}
+		reports := expectedReports
+		if kind != "skill" {
+			reports = nil
+		}
 		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 			Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "projection/v1",
 			PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("b", 64)), Decision: store.AssessmentDecisionAllow,
 			InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("c", 64)), AssessedAt: time.Unix(1, 0).UTC(),
+			AdvisoryReports: reports,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -336,6 +347,20 @@ func TestConformanceCatalogProjectionPersistsProvenanceAndPages(t *testing.T) {
 		t.Fatal("traversal source path unexpectedly accepted")
 	}
 	review := putCurrent("skill", "review", "e", "skills/review/SKILL.md")
+	reviewRead, err := meta.GetResourceRevision(ctx, review.Coordinate, review.ContentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reviewRead.Assessment.AdvisoryReports, expectedReports) {
+		t.Fatalf("joined revision advisory reports = %+v, want %+v", reviewRead.Assessment.AdvisoryReports, expectedReports)
+	}
+	byDigest, err := meta.GetResourceAssessment(ctx, reviewRead.Assessment.AssessmentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(byDigest.AdvisoryReports, expectedReports) {
+		t.Fatalf("assessment digest advisory reports = %+v, want %+v", byDigest.AdvisoryReports, expectedReports)
+	}
 	beforeRetry, err := catalogVersion()
 	if err != nil {
 		t.Fatal(err)
@@ -397,6 +422,9 @@ func TestConformanceCatalogProjectionPersistsProvenanceAndPages(t *testing.T) {
 	}
 	if all[3].Source == nil || all[3].Source.RepositoryURL != gotOccurrence.SourceOrigin || all[3].Source.Path != "skills/review/SKILL.md" {
 		t.Fatalf("resource provenance = %+v, want sanitized source", all[3])
+	}
+	if !reflect.DeepEqual(all[3].Assessment.AdvisoryReports, expectedReports) {
+		t.Fatalf("catalog projection advisory reports = %+v, want %+v", all[3].Assessment.AdvisoryReports, expectedReports)
 	}
 	blocked, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 		Coordinate: member.Coordinate, ContentDigest: member.ContentDigest, AnalyzerVersion: "projection/v2",

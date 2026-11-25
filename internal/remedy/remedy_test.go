@@ -72,6 +72,13 @@ func TestForLookupOrder(t *testing.T) {
 	}
 }
 
+func TestGitTransportFailureHintExplainsURLCredentialsAndSSHHostKeys(t *testing.T) {
+	const want = "Check the repository URL and credentials, or the SSH host key and access, then rerun the command."
+	if got := For(testCodedError{code: "git.auth-transport-failed", text: "transport failure"}, "sync"); got != want {
+		t.Fatalf("For(git.auth-transport-failed) = %q, want %q", got, want)
+	}
+}
+
 func TestForFindsFirstNonemptyRemediationInJoinedErrors(t *testing.T) {
 	err := errors.Join(
 		testRemediableError{testCodedError: testCodedError{code: "lock.stale", text: "stale"}, hint: ""},

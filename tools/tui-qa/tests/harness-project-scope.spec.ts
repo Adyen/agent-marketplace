@@ -7,7 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-interactions/scope-and-selection-without-write
-// spec: tui-interactions/empty-selection
+// spec: session-interactions/empty-selection
 // spec: tui-interactions/retargeted-resource-is-pending-sync
 const journey = defineFixture("harness-project-scope", ["tui"]);
 before(journey.setup);
@@ -80,7 +80,7 @@ journey.test("project harnesses are saved from the harness modal and retarget th
     await locate(terminal, /~ \d+ out of sync/).unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
     await locate(terminal, /Targets:\s+Claude Code \(project default\)/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
     await locate(terminal, /Broken\s+\(/).expect({ not: true });
   });
   await step("sync moves the skill to the new target", () => terminal.write("s"), async () => {

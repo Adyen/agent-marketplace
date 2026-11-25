@@ -29,7 +29,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/internal/tui"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // doctorOptions carries everything doctor needs that a test must be able to
@@ -784,7 +784,7 @@ func writeDoctorErrorList(out io.Writer, errs []error) error {
 		if _, err := fmt.Fprintf(out, "error: %s\n", terminalSafeLines(fmt.Sprint(e))); err != nil {
 			return err
 		}
-		hint := tui.TerminalSafeLine(remedy.For(e, "doctor"))
+		hint := session.TerminalSafeLine(remedy.For(e, "doctor"))
 		if _, exists := seenHints[hint]; exists {
 			continue
 		}

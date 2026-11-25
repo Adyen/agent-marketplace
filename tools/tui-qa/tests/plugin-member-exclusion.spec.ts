@@ -48,7 +48,7 @@ journey.test("member toggles edit only the selected plugin exclusion", async (te
   await step("restore member in selected plugin", () => terminal.write("p"), async () => {
     await locate(terminal, /●.*skill t\/review/).first().expect();
     await locate(terminal, /Status:\s+enabled/).first().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).expect({ not: true });
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).expect({ not: true });
     await locate(terminal, /Pending sync\s+\(\d+\)/).expect({ not: true });
   });
   config = fs.readFileSync(configPath, "utf8");

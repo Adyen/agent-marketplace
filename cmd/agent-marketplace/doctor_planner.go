@@ -17,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -24,7 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/internal/tui"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -157,9 +158,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := "review " + code
 			if !opts.json {
-				action = tui.TerminalSafeLine(issue.Error())
+				action = session.TerminalSafeLine(issue.Error())
 				if hint := remedy.For(issue, "doctor"); hint != "" {
-					action += "; " + tui.TerminalSafeLine(hint)
+					action += "; " + session.TerminalSafeLine(hint)
 				}
 			}
 			key := fmt.Sprintf("cause-%d", len(diagnosis.Steps)+1)
@@ -217,7 +218,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				switch {
 				case isDoctorSafeAcquisitionCode(diagnostic.code):
 					step = doctorAcquisitionStep(repoRoot, config.FindLocalConfigDir(),
-						diagnostic.code, lockScopeForSource(layer.Source), lockPath,
+						diagnostic.code, lifecycle.LockScopeForSource(layer.Source), lockPath,
 						&reads, revalidate, authorizeLockGeneration)
 				case isDoctorDestructiveAcquisitionCode(diagnostic.code):
 					var stepErr error
@@ -311,13 +312,13 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			selects := make(map[lockfile.Scope]bool)
 			for _, layer := range current.PresentLayers() {
 				if layer.Source.IsWritable() && len(layer.Sources) > 0 {
-					selects[lockScopeForSource(layer.Source)] = true
+					selects[lifecycle.LockScopeForSource(layer.Source)] = true
 				}
 			}
 			if len(selects) > 0 {
-				_, _, checkErr := prepareExactLocks(ctx, repoRoot, config.FindLocalConfigDir(), lockMode{
-					check: true, selects: selects, allowTransientOrganization: true,
-					commitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
+				_, _, checkErr := lifecycle.PrepareExactLocks(ctx, repoRoot, config.FindLocalConfigDir(), lifecycle.LockMode{
+					Check: true, Selects: selects, AllowTransientOrganization: true,
+					CommitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
 				})
 				if checkErr != nil {
 					incompleteCause = checkErr
@@ -500,7 +501,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		}
 		for _, step := range steps {
 			if step.Class == repairplanner.Guided && (opts.yes || !opts.isTTY) {
-				if _, err := fmt.Fprintf(out, "  deferred: %s\n", tui.TerminalSafeLine(step.Action)); err != nil {
+				if _, err := fmt.Fprintf(out, "  deferred: %s\n", session.TerminalSafeLine(step.Action)); err != nil {
 					return err
 				}
 			}
@@ -870,7 +871,7 @@ func addConfigurationIssue(
 	line := repairDiagnosticLine(validation)
 	source, err := config.ReadConfigFile(file)
 	if err != nil {
-		return addHuman(repairplanner.StageConfiguration, code, fmt.Errorf("read configuration source %s: %w", tui.TerminalSafeLine(file), err))
+		return addHuman(repairplanner.StageConfiguration, code, fmt.Errorf("read configuration source %s: %w", session.TerminalSafeLine(file), err))
 	}
 	lines := strings.Split(string(source), "\n")
 	var action string
@@ -884,11 +885,11 @@ func addConfigurationIssue(
 	default:
 		action = fmt.Sprintf("edit %s manually; %s", file, validation.Msg)
 	}
-	action = tui.TerminalSafeLine(action)
+	action = session.TerminalSafeLine(action)
 	key := fmt.Sprintf("guided-%s-%s-%d-%s", layer.Source, file, line, code)
 	diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 		Key: key, Stage: repairplanner.StageConfiguration, Class: repairplanner.Guided,
-		Action: action, Code: code, Files: []string{tui.TerminalSafeLine(file)},
+		Action: action, Code: code, Files: []string{session.TerminalSafeLine(file)},
 		Apply: func(ctx context.Context) (bool, error) {
 			return applyGuidedConfigurationEdit(ctx, opts, file, protectedPaths, revalidate, refreshEditedFile)
 		},
@@ -1013,13 +1014,13 @@ func applyGuidedConfigurationEdit(
 	if editor == "" {
 		editor = strings.TrimSpace(os.Getenv("EDITOR"))
 	}
-	safePath := tui.TerminalSafeLine(path)
+	safePath := session.TerminalSafeLine(path)
 	if editor == "" {
 		_, err := fmt.Fprintf(opts.out, "  deferred: no $VISUAL or $EDITOR is set; edit %s manually, then run `agent-marketplace doctor --repair` again\n", safePath)
 		return false, err
 	}
 	accepted, err := confirmPrompt(opts.out, opts.repairReader,
-		fmt.Sprintf("Edit %s with %s? [y/N] ", safePath, tui.TerminalSafeLine(editor)))
+		fmt.Sprintf("Edit %s with %s? [y/N] ", safePath, session.TerminalSafeLine(editor)))
 	if err != nil {
 		return false, err
 	}

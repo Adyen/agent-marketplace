@@ -15,10 +15,18 @@ export interface MarketplaceStub {
   driftedArchiveDigest: string;
   acquisitionDataRequestCount(): number;
   acquisitionDataRequestPaths(): string[];
+  searchRequestCount(): number;
+  browseRequestCount(): number;
+  waitForBrowseFirstPage(): Promise<void>;
+  releaseBrowseFirstPage(): void;
+  waitForBrowseLaterPage(): Promise<void>;
+  releaseBrowsePages(): void;
   archiveFetches(): { placeholder: string[]; final: string[] };
   delayNextAcquisition(ms: number): void;
   delayedAcquisitionCount(): number;
   driftArchiveDigest(): void;
+  removeLatest(): void;
+  removeExactRevision(): void;
   close(): void;
 }
 
@@ -119,6 +127,7 @@ export interface MarketplaceStubOptions {
   mismatchedPlaceholderArchive?: boolean;
   // Answer a query matching the installable skill with its exact revision.
   searchableInstall?: boolean;
+  startupBrowse?: boolean;
   // Assess the installable skill with one warning finding, so installing it
   // requires consent.
   installFindings?: boolean;
@@ -235,6 +244,28 @@ const installSearchItem = {
   description: "Organization review fixture",
   availability: "available"
 };
+const kindSearchItems = [
+  ...["atlas", "beacon"].map((name) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "mcpserver",
+    name,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Opaque hosted resource",
+    availability: "available"
+  })),
+  ...["archivist", "sentinel"].map((name) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "command",
+    name,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Opaque hosted resource",
+    availability: "available"
+  }))
+];
 
 // A loopback stand-in for a hosted Marketplace endpoint. It serves one exact,
 // assessed skill and both forms of its canonical archive so a missing
@@ -243,9 +274,55 @@ const installSearchItem = {
 export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}): Promise<MarketplaceStub> => {
   const instanceID = "tui-qa-marketplace";
   const acquisitionDataRequests: string[] = [];
+  const startupBrowseItems = Array.from({ length: 61 }, (_, index) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "skill",
+    name: `browse-resource-${String(index).padStart(2, "0")}`,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Startup browse fixture resource",
+    availability: "available"
+  }));
   let nextAcquisitionDelayMs = 0;
   let delayedAcquisitions = 0;
   let servedArchiveDigest = archiveDigest;
+  let searchRequests = 0;
+  let browseRequests = 0;
+  let heldFirstBrowsePageArmed = false;
+  let browseFirstPageEntered = Promise.resolve();
+  let resolveBrowseFirstPageEntered = () => {};
+  let browseFirstPageReleased = Promise.resolve();
+  let resolveBrowseFirstPageReleased = () => {};
+  let heldBrowsePageArmed = false;
+  let browsePageEntered = Promise.resolve();
+  let resolveBrowsePageEntered = () => {};
+  let browsePageReleased = Promise.resolve();
+  let resolveBrowsePageReleased = () => {};
+  const holdNextBrowsePage = (): void => {
+    heldBrowsePageArmed = true;
+    browsePageEntered = new Promise<void>((resolve) => {
+      resolveBrowsePageEntered = resolve;
+    });
+    browsePageReleased = new Promise<void>((resolve) => {
+      resolveBrowsePageReleased = resolve;
+    });
+  };
+  const holdFirstBrowsePage = (): void => {
+    heldFirstBrowsePageArmed = true;
+    browseFirstPageEntered = new Promise<void>((resolve) => {
+      resolveBrowseFirstPageEntered = resolve;
+    });
+    browseFirstPageReleased = new Promise<void>((resolve) => {
+      resolveBrowseFirstPageReleased = resolve;
+    });
+  };
+  if (options.startupBrowse) {
+    holdFirstBrowsePage();
+    holdNextBrowsePage();
+  }
+  let latestMissing = false;
+  let exactMissing = false;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
@@ -283,13 +360,37 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     if (request.method === "GET" && url.pathname === searchPath) {
       response.writeHead(200, { "content-type": "application/json" });
       const offset = Number(url.searchParams.get("offset") ?? "") || 0;
-      const limit = Number(url.searchParams.get("limit") ?? "") || 0;
+      const limit = Number(url.searchParams.get("limit") ?? "") || 50;
       const terms = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      const items = [
-        ...(terms.some((term) => inspectionSkillName.includes(term)) ? [inspectionSearchItem] : []),
-        ...(options.searchableInstall && terms.some((term) => resourceName.includes(term)) ? [installSearchItem] : [])
-      ];
-      response.end(JSON.stringify({ items, total: items.length, offset, limit }));
+      const kind = url.searchParams.get("kind") ?? "";
+      searchRequests++;
+      if (options.startupBrowse && terms.length === 0 && kind === "") {
+        browseRequests++;
+        if (offset === 0 && heldFirstBrowsePageArmed) {
+          heldFirstBrowsePageArmed = false;
+          resolveBrowseFirstPageEntered();
+          response.once("close", resolveBrowseFirstPageReleased);
+          await browseFirstPageReleased;
+          if (response.destroyed) return;
+        }
+        if (offset >= 50 && heldBrowsePageArmed) {
+          heldBrowsePageArmed = false;
+          resolveBrowsePageEntered();
+          response.once("close", resolveBrowsePageReleased);
+          await browsePageReleased;
+          if (response.destroyed) return;
+        }
+      }
+      const candidates = options.startupBrowse
+        ? startupBrowseItems
+        : [inspectionSearchItem, ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : [])];
+      const matches = candidates.filter((item) => {
+        const matchesKind = !kind || item.kind === kind;
+        const text = `${item.name} ${item.description}`.toLowerCase();
+        const matchesQuery = terms.length > 0 ? terms.some((term) => text.includes(term)) : Boolean(kind) || Boolean(options.startupBrowse);
+        return matchesKind && matchesQuery;
+      });
+      response.end(JSON.stringify({ items: matches.slice(offset, offset + limit), total: matches.length, offset, limit }));
       return;
     }
     if (request.method === "GET" && url.pathname.includes(`/skill/${inspectionSkillName}`)) {
@@ -345,6 +446,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
         url.pathname === `/api/v1/resources/${registryID}/skill/${resourceName}` ||
         url.pathname.startsWith(`/api/v1/resources/${registryID}/skill/${resourceName}/revisions/`))
     ) {
+      if (url.pathname.includes("/revisions/") ? exactMissing : latestMissing) {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ message: "not found" }));
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
       const assessment = options.installFindings ? findingsAssessment : revision.assessment;
       response.end(JSON.stringify({ ...revision, assessment, archive_digest: servedArchiveDigest }));
@@ -389,6 +495,12 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     materializedSkillContent,
     acquisitionDataRequestCount: () => acquisitionDataRequests.length,
     acquisitionDataRequestPaths: () => [...acquisitionDataRequests],
+    searchRequestCount: () => searchRequests,
+    browseRequestCount: () => browseRequests,
+    waitForBrowseFirstPage: () => browseFirstPageEntered,
+    releaseBrowseFirstPage: () => resolveBrowseFirstPageReleased(),
+    waitForBrowseLaterPage: () => browsePageEntered,
+    releaseBrowsePages: () => resolveBrowsePageReleased(),
     archiveFetches: () => {
       const fetched = (route: string): string[] =>
         acquisitionDataRequests.filter((requested) => requested.startsWith(route)).map((requested) => `sha256:${requested.slice(route.length)}`);
@@ -401,6 +513,12 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     delayedAcquisitionCount: () => delayedAcquisitions,
     driftArchiveDigest: () => {
       servedArchiveDigest = driftedArchiveDigest;
+    },
+    removeLatest: () => {
+      latestMissing = true;
+    },
+    removeExactRevision: () => {
+      exactMissing = true;
     },
     close: () => {
       server.closeAllConnections();

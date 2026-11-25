@@ -603,12 +603,20 @@ func (s *portableState) save(dryRun bool) error {
 // RunOption configures optional behavior for Run.
 type RunOption func(*runConfig)
 
+type RetainedMarketplacePin struct {
+	Kind    ir.ResourceKind
+	Name    string
+	Source  config.Source
+	Targets []hcc.Target
+}
+
 type runConfig struct {
 	dryRun                  bool
 	pluginStateReconcile    bool
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
 	beforePublish           func() error
+	retainedMarketplacePins []RetainedMarketplacePin
 	beforeSupportWrite      func(string, string) error
 	supportCommitFault      dependencytxn.FaultHook
 	linkPublicationHook     func(string)
@@ -621,6 +629,10 @@ type runConfig struct {
 // this explicit prevents a project config from ever changing user-wide output.
 func WithMaterializationModes(modes config.MaterializationModes) RunOption {
 	return func(c *runConfig) { c.modes = modes }
+}
+
+func WithRetainedMarketplacePins(pins []RetainedMarketplacePin) RunOption {
+	return func(c *runConfig) { c.retainedMarketplacePins = pins }
 }
 
 // WithDryRun causes Run to report what it would do without writing files.
@@ -845,7 +857,7 @@ func runMaterialization(ctx context.Context, repoRoot string, resolved []resolve
 	}
 
 	// Phase 2: Compile each work item and collect artifacts per target.
-	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot)
+	compileResult := compileWorkItems(work, allDiags, allOutputs, blocked, repoRoot, rc.retainedMarketplacePins...)
 	markNilSharedNativeMCPInputs(resolved, repoRoot, rc.scopeFilter, compileResult.nativeMCPIncomplete)
 	compileResult.scopeFilter = rc.scopeFilter
 	compileResult.openCodeAggregateScope = openCodeAggregateScope(work, rc.scopeFilter, allOutputs)
@@ -1298,7 +1310,7 @@ func hookDuplicateExecutionDiagnostics(work []skillTarget) []diag.Diagnostic {
 
 // compileWorkItems compiles each skill-target pair, splits artifacts by kind,
 // and groups results by output key.
-func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
+func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string, retainedPins ...RetainedMarketplacePin) compilePhaseResult {
 	allDiags = append(allDiags, hookDuplicateExecutionDiagnostics(work)...)
 	pluginBlocked, pluginDiags := preflightPluginInstances(work)
 	allDiags = append(allDiags, pluginDiags...)
@@ -1384,6 +1396,35 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		nativeHookWork(key).markIncomplete(file.rel)
 	}
 	var blockedResources []BlockedResource
+	for _, pin := range retainedPins {
+		for _, target := range pin.Targets {
+			key := outputKey{target: target, machineScope: pin.Source.IsMachineScope()}
+			if pin.Kind == ir.KindHook {
+				hookKey := key
+				if !allOutputs[hookKey] {
+					// Reconcile the shared hook file without activating the pin's scope.
+					other := outputKey{target: key.target, machineScope: !key.machineScope}
+					if allOutputs[other] && sameNativeHookOutput(key, other, repoRoot) {
+						hookKey = other
+					}
+				}
+				if allOutputs[hookKey] {
+					markNativeHookIncomplete(hookKey)
+					if selectedHookNames[hookKey] == nil {
+						selectedHookNames[hookKey] = make(map[string]bool)
+					}
+					selectedHookNames[hookKey][pin.Name] = true
+				}
+			}
+			if !allOutputs[key] {
+				continue
+			}
+			blocked.blockKind(key, pin.Kind)
+			blockedResources = append(blockedResources, BlockedResource{
+				Kind: pin.Kind, Name: pin.Name, Target: target, MachineScope: key.machineScope,
+			})
+		}
+	}
 	blockResource := func(key outputKey, w skillTarget) {
 		blocked.blockResource(key, w)
 		blockedResources = append(blockedResources, blockedResourceFor(key, w))
@@ -2396,7 +2437,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		runTarget := func() error {
 			var supportPublication nativeHookSupportPublication
 			if sharedSession != nil {
-				outcomes, recoverErr := sharedSession.store.Recover()
+				outcomes, recoverErr := recoverOwnedAggregate(sharedSession.store)
 				for _, outcome := range outcomes {
 					report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
 						fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",
@@ -7049,6 +7090,9 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 					Message:  fmt.Sprintf("preserved user-owned symlink %q (not managed by agent-marketplace)", name),
 				})
 			}
+			continue
+		}
+		if !pruneStaleEntries {
 			continue
 		}
 		var boundary *destinationBoundary

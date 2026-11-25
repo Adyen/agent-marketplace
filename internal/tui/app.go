@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,28 +23,20 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
 
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error)
-type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
-
-type DependencyLifecycle struct {
-	Sync   DependencyLifecycleFunc
-	Update DependencyLifecycleFunc
-	Mutate DependencyMutationFunc
-	// InstallReconcile prepares acquisition locks for the sync that follows a
-	// Marketplace install, so other sources stay at their locked revisions.
-	InstallReconcile pipeline.DependencyReconciler
-	InstallPrepare   pipeline.InstallDependencyPreparer
-}
-
 type Option func(*Model)
 
 func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
 	return func(model *Model) { model.dependencyLifecycle = lifecycle }
+}
+
+func WithOperationGate(gate *session.OperationGate) Option {
+	return func(model *Model) { model.operationGate = gate }
 }
 
 // WithWorkspace supplies the already validated roots shared by every TUI
@@ -138,21 +129,6 @@ func newTUIViewport(width, height int) viewport.Model {
 // code never touches it; see init_test.go's TestMain for the setter.
 var testSkipInitModal bool
 
-// shouldShowInitModal returns true when the home directory exists but the
-// user personal config file does not. We require the home directory itself to
-// be present so test sandboxes with synthetic paths don't accidentally trigger
-// the first-run dialog.
-func shouldShowInitModal(homeDir string) bool {
-	if homeDir == "" {
-		return false
-	}
-	if info, err := os.Stat(homeDir); err != nil || !info.IsDir() {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml"))
-	return os.IsNotExist(err)
-}
-
 func (m Model) Init() tea.Cmd {
 	var warningCmd tea.Cmd
 	if m.viewPrefsWarning != "" {
@@ -161,7 +137,7 @@ func (m Model) Init() tea.Cmd {
 			return toastMsg{text: text, duration: 5 * time.Second}
 		}
 	}
-	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.Active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
@@ -169,7 +145,7 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	if msg.stage != snapshotStageFinal {
 		m.driftAssessment = assessment
 		m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-		m.rowsStale = len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+		m.rowsStale = len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 		return
 	}
 	if assessment == driftUnknown {
@@ -181,10 +157,10 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	}
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 	m.configInvalid = false
-	for _, d := range m.diagnostics.snapshot {
-		if d.severity == diagnosticError && d.category == diagnosticConfig {
+	for _, d := range m.diagnostics.Snapshot {
+		if d.Severity == diagnosticError && d.Category == diagnosticConfig {
 			m.configInvalid = true
 			break
 		}
@@ -263,6 +239,7 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	m.updatePendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// Match the direct updateDoneMsg path: an update never satisfies sync+quit.
 	m.quitAfterSync = false
 	switch {
@@ -289,9 +266,9 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 // or a newer superseding snapshot — is accepted or fails. The sync's own
 // pipeline error, when it carried one, wins over the reload verdict so a
 // failed sync is never reported as success.
-func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) tea.Cmd {
+func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) (tea.Cmd, bool) {
 	if m.syncReload == 0 || generation < m.syncReload {
-		return nil
+		return nil, false
 	}
 	m.syncReload = 0
 	pendingErr := m.syncPendingErr
@@ -314,6 +291,7 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	m.syncPendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// A sync+quit confirmed while the reload was already in flight still
 	// quits once the authoritative reload lands; the verdict is carried to
 	// Run() rather than toasted.
@@ -324,7 +302,8 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 			m.syncQuitErr = reloadErr
 		}
 		slog.Debug("sync reload complete, quitting as requested", "err", m.syncQuitErr)
-		return tea.Quit
+		m.cancelMarketplaceLoads()
+		return tea.Quit, true
 	}
 	if m.quitAfterSync {
 		m.syncQuitErr = errors.Join(pendingErr, reloadErr)
@@ -336,11 +315,11 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 		m.pushToast(fmt.Sprintf("sync error: %v", pendingErr), 5*time.Second)
 		slog.Error("sync failed", "err", pendingErr)
 		recordControlledErrorSpan(m.ctx, "sync", pendingErr)
-		return toastExpiryCmd(5 * time.Second)
+		return toastExpiryCmd(5 * time.Second), false
 	case reloadErr != nil:
 		m.recordOperationFailure(operationSync, diagnosticSync, reloadErr)
 		m.pushToast(fmt.Sprintf("sync reload failed: %v", reloadErr), 5*time.Second)
-		return toastExpiryCmd(5 * time.Second)
+		return toastExpiryCmd(5 * time.Second), false
 	default:
 		m.syncQuitErr = nil
 		m.recordOperationSuccess(operationSync)
@@ -349,7 +328,7 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 		} else {
 			m.pushToast("Sync complete", 2*time.Second)
 		}
-		return toastExpiryCmd(2 * time.Second)
+		return toastExpiryCmd(2 * time.Second), false
 	}
 }
 
@@ -399,6 +378,66 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 		m.pendingInventory.set(msg.inventoryResult)
 		recordConfigSnapshotSpans(m.ctx, msg)
 	}
+}
+
+func (m Model) handleSnapshotLoaded(msg snapshotLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.stage == snapshotStageConfig {
+		if m.requests.Active(requestSnapshot) != msg.generation {
+			return m, nil
+		}
+		if msg.provisionalCfg != nil {
+			m.setProvisionalRows(msg.provisionalRows)
+		}
+		if msg.mergedCfg == nil {
+			return m, waitSnapshotStages(msg.stages)
+		}
+		m.mergedCfg = msg.mergedCfg
+		return m, tea.Batch(m.beginMarketplaceRefresh(false), waitSnapshotStages(msg.stages))
+	}
+	if msg.stage == snapshotStageInventory {
+		if m.requests.Active(requestSnapshot) != msg.generation {
+			return m, nil
+		}
+		m.loading = false
+		m.assessmentPending = true
+		m.applySnapshotStatus(msg)
+		m.applySnapshotData(msg)
+		return m, waitSnapshotStages(msg.stages)
+	}
+	if !m.acceptsRequest(requestSnapshot, msg.generation) {
+		return m, nil
+	}
+	m.loading = false
+	m.assessmentPending = false
+	m.applySnapshotStatus(msg)
+	updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
+	syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
+	if msg.mergedCfg == nil && len(m.errs) > 0 {
+		m.pendingInventory.set(nil)
+		m.provisionalRows = nil
+		m.refreshing = false
+		m.clearMarketplaceDiscovery(true)
+		return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
+	}
+	m.applySnapshotData(msg)
+	var discoveryCmd tea.Cmd
+	if !syncQuitting {
+		discoveryCmd = m.beginMarketplaceRefresh(msg.forceMarketplaceBrowse)
+	}
+	installCmd := m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
+	if msg.forceMarketplaceBrowse {
+		m.pushToast("Reloaded", 2*time.Second)
+	}
+	if msg.refreshAfterLoad && !syncQuitting {
+		m.refreshing = true
+		generation := m.beginRequest(requestSnapshot)
+		return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, updateCmd, syncCmd, m.spinner.Tick, toastExpiryCmd(2*time.Second))
+	}
+	m.refreshing = false
+	if msg.forceMarketplaceBrowse {
+		return m, tea.Batch(toastExpiryCmd(2*time.Second), discoveryCmd, installCmd, updateCmd, syncCmd)
+	}
+	return m, tea.Batch(discoveryCmd, installCmd, updateCmd, syncCmd)
 }
 
 // Update delegates to update and closes the palette whenever the pane
@@ -528,54 +567,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case snapshotLoadedMsg:
-		if msg.stage == snapshotStageConfig {
-			if m.requests.active(requestSnapshot) != msg.generation {
-				return m, nil
-			}
-			if msg.provisionalCfg != nil {
-				m.setProvisionalRows(msg.provisionalRows)
-			}
-			if msg.mergedCfg == nil {
-				return m, waitSnapshotStages(msg.stages)
-			}
-			m.mergedCfg = msg.mergedCfg
-			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
-		}
-		if msg.stage == snapshotStageInventory {
-			if m.requests.active(requestSnapshot) != msg.generation {
-				return m, nil
-			}
-			m.loading = false
-			m.assessmentPending = true
-			m.applySnapshotStatus(msg)
-			m.applySnapshotData(msg)
-			return m, waitSnapshotStages(msg.stages)
-		}
-		if !m.acceptsRequest(requestSnapshot, msg.generation) {
-			return m, nil
-		}
-		m.loading = false
-		m.assessmentPending = false
-		m.applySnapshotStatus(msg)
-		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
-		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
-		if msg.mergedCfg == nil && len(m.errs) > 0 {
-			m.pendingInventory.set(nil)
-			m.provisionalRows = nil
-			m.refreshing = false
-			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
-		}
-		m.applySnapshotData(msg)
-		discoveryCmd := m.beginMarketplaceDiscovery(m.filter, false)
-		installCmd := m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg))
-		if msg.refreshAfterLoad {
-			m.refreshing = true
-			generation := m.beginRequest(requestSnapshot)
-			return m, tea.Batch(refreshSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation), discoveryCmd, installCmd, updateCmd, syncCmd, m.spinner.Tick)
-		}
-		m.refreshing = false
-		return m, tea.Batch(discoveryCmd, installCmd, updateCmd, syncCmd)
+		return m.handleSnapshotLoaded(msg)
 
 	case refreshLoadedMsg:
 		if !m.acceptsRequest(requestSnapshot, msg.generation) {
@@ -585,7 +577,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
-		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
+		syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
@@ -593,41 +585,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
 		}
 		m.applySnapshotData(msg.snapshotLoadedMsg)
-		return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd, syncCmd)
+		var marketplaceCmd tea.Cmd
+		if !syncQuitting {
+			marketplaceCmd = m.beginMarketplaceRefresh(false)
+		}
+		return m, tea.Batch(marketplaceCmd, m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg)), updateCmd, syncCmd)
 
 	case reloadMsg:
 		snapshot := snapshotLoadedMsg(msg)
-		if !m.acceptsRequest(requestSnapshot, snapshot.generation) {
-			// Update may have changed disk after a newer snapshot started. Its
-			// stale delivery cannot be applied, so schedule a current snapshot
-			// rather than leaving either result as authoritative.
-			if m.syncReload == 0 {
-				m.syncing = false
-			}
-			generation := m.beginRequest(requestSnapshot)
-			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
-		}
-		m.loading = false
-		m.assessmentPending = false
-		if m.syncReload == 0 {
-			m.syncing = false
-		}
-		m.refreshing = false
-		m.applySnapshotStatus(snapshot)
-		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
-		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
-		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
-			m.pendingInventory.set(nil)
-			m.provisionalRows = nil
-			m.clearMarketplaceDiscovery(true)
-			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
-		}
-		m.applySnapshotData(snapshot)
-		m.pushToast("Reloaded", 2*time.Second)
-		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
+		snapshot.forceMarketplaceBrowse = true
+		return m.handleSnapshotLoaded(snapshot)
 
 	case discoveryDebounceMsg:
-		if m.requests.active(requestDiscovery) != msg.generation {
+		if m.requests.Active(requestDiscovery) != msg.generation {
 			return m, nil
 		}
 		ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
@@ -635,8 +605,30 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadMarketplaceDiscovery(ctx, m.mergedCfg, msg.query, msg.generation)
 
 	case discoveryLoadedMsg:
+		request := requestDiscovery
+		sequence := m.discoverySequence
+		if msg.browse {
+			request = requestBrowse
+			sequence = m.browseSequence
+		}
 		if msg.done {
-			if !m.acceptsRequest(requestDiscovery, msg.generation) {
+			if !m.acceptsRequest(request, msg.generation) {
+				return m, nil
+			}
+			if msg.browse {
+				if m.browseCancel != nil {
+					m.browseCancel()
+					m.browseCancel = nil
+				}
+				m.browseLoading = false
+				m.browseFinished = true
+				if msg.err != nil {
+					m.browseErrs = []error{msg.err}
+				}
+				if msg.outcomes != nil {
+					m.applyBrowseDiscovery(msg.outcomes)
+				}
+				m.browsePending = nil
 				return m, nil
 			}
 			if m.discoveryCancel != nil {
@@ -653,8 +645,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.requests.active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
+		if m.requests.Active(request) != msg.generation || msg.sequence == 0 || msg.sequence <= sequence {
 			return m, nil
+		}
+		if msg.browse {
+			m.browseSequence = msg.sequence
+			m.applyBrowseDiscovery(msg.outcomes)
+			return m, waitMarketplaceBrowseUpdate(msg.generation, msg.sequence+1, msg.updates)
 		}
 		m.discoverySequence = msg.sequence
 		m.applyDiscovery(msg.query, msg.outcomes)
@@ -819,8 +816,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncing = false
 			m.quitAfterSync = false
 			m.clearOperationProgress()
+			m.finishDependencyOperation()
 			slog.Debug("sync complete, quitting as requested", "err", msg.err)
 			m.syncQuitErr = msg.err
+			m.cancelMarketplaceLoads()
 			return m, tea.Quit
 		}
 		// Completion is not the verdict: the sync stays serialized and
@@ -856,6 +855,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setHookReview(msg.report)
 		m.syncing = false
 		m.clearOperationProgress()
+		m.finishDependencyOperation()
 		var installCmd tea.Cmd
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
@@ -994,7 +994,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		// Only keep ticking while there is in-flight work.
-		if m.loading || m.assessmentPending || m.syncing || m.refreshing || m.discoveryLoading {
+		if m.loading || m.assessmentPending || m.syncing || m.refreshing || m.discoveryLoading || m.browseLoading {
 			return m, cmd
 		}
 		return m, nil
@@ -1072,6 +1072,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.pane == paneInstallSource {
 			m.cancelInstallSourcePreview()
 		}
+		m.cancelMarketplaceLoads()
 		return m, tea.Quit
 	}
 	if m.previewSel.active && msg.Code == tea.KeyEscape {
@@ -1080,6 +1081,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.belowMinimumTerminal() {
 		if key.Matches(msg, m.keys.Quit) {
+			m.cancelMarketplaceLoads()
 			return m, tea.Quit
 		}
 		return m, nil
@@ -1310,6 +1312,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit?", m.driftReport.PendingCount())
 			return m, nil
 		}
+		m.cancelMarketplaceLoads()
 		return m, tea.Quit
 
 	case actionSearch:
@@ -1422,7 +1425,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 	case actionReload:
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
-		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+		return m, loadSnapshotForReload(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 
 	case actionSync:
 		if m.configInvalid {
@@ -1437,11 +1440,14 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
 		}
+		if !m.beginDependencyOperation(operationSync) {
+			return m, operationBlockedCmd()
+		}
 		m.refreshing = false
 		// Sync does not allocate a snapshot generation until syncDoneMsg
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
-		m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+		m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 
@@ -1451,6 +1457,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		}
 		if m.loading || m.syncing {
 			return m, nil
+		}
+		if !m.beginDependencyOperation(operationUpdate) {
+			return m, operationBlockedCmd()
 		}
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
@@ -1464,12 +1473,17 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) restoreBrowseDiscovery() {
-	if m.authoritativeRows != nil {
-		m.discoveryRows = slices.Clone(m.browseDiscoveryRows)
-		m.mergeDiscoveryRows()
-	} else {
+	m.discoveryRows = nil
+	m.discoveryOutcomes = nil
+	m.discoveryErrs = nil
+	if m.authoritativeRows == nil && m.provisionalRows == nil && len(m.browseDiscoveryRows) == 0 {
+		m.rows = slices.DeleteFunc(m.rows, func(candidate row) bool {
+			return candidate.MarketplaceDiscovery != nil
+		})
 		m.recomputeView()
+		return
 	}
+	m.mergeDiscoveryRows()
 }
 
 func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
@@ -1510,13 +1524,19 @@ func (m Model) clearSearch() (tea.Model, tea.Cmd) {
 	m.filter = ""
 	m.searchInput.SetValue("")
 	m.searchInput.Blur()
-	m.restoreBrowseDiscovery()
+	browseCmd := m.restoreBrowseAfterSearch()
 	// Rows hidden by the filter reappear above the selection; scroll as
 	// little as possible so they are visible instead of kept off-screen.
 	m.listOffset = 0
 	m.clampListOffset()
 	recordActionSpan(m.ctx, "filter", map[string]string{"result_count": strconv.Itoa(len(m.filteredRows))})
-	return m, m.beginMarketplaceDiscovery("", false)
+	return m, browseCmd
+}
+
+func (m *Model) restoreBrowseAfterSearch() tea.Cmd {
+	m.cancelMarketplaceDiscovery()
+	m.restoreBrowseDiscovery()
+	return m.beginMarketplaceBrowse(false)
 }
 
 func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1528,9 +1548,10 @@ func (m Model) applySearchInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.filter == previous {
 		return m, cmd
 	}
-	if m.filter == "" {
-		m.restoreBrowseDiscovery()
-		return m, tea.Batch(cmd, m.beginMarketplaceDiscovery("", false), m.spinner.Tick)
+	if strings.TrimSpace(m.filter) == "" {
+		m.filter = ""
+		m.searchInput.SetValue("")
+		return m, tea.Batch(cmd, m.restoreBrowseAfterSearch(), m.spinner.Tick)
 	}
 	return m, tea.Batch(cmd, m.beginMarketplaceDiscovery(m.filter, true), m.spinner.Tick)
 }
@@ -1586,7 +1607,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			m.ensureBundleCursorVisible()
 			return
 		}
-		if marketplaceInspectableSkill(current) && m.requests.active(requestDetail) != 0 {
+		if marketplaceInspectableSkill(current) && m.requests.Active(requestDetail) != 0 {
 			return
 		}
 		m.bundle = nil
@@ -1618,52 +1639,21 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	m.ensureBundleCursorVisible()
 }
 
-// toggleDenial identifies why the guarded row toggle cannot proceed, in the
-// order the keyboard Space dispatch reports it. toggleEligible means the
-// toggle modal may open. This is the single authoritative toggle policy:
-// the keyboard path maps each denial to its toast/no-op outcome and the
-// palette maps any denial to hiding the toggle action.
-type toggleDenial int
+type toggleDenial = session.RowToggleDenial
 
 const (
-	toggleEligible toggleDenial = iota
-	toggleBusy
-	toggleConfigInvalid
-	toggleMalformed
-	togglePendingVerification
-	toggleMarketplaceBlocked
-	toggleRequired
-	toggleCollectionOnly
+	toggleEligible            = session.RowToggleEligible
+	toggleBusy                = session.RowToggleBusy
+	toggleConfigInvalid       = session.RowToggleConfigInvalid
+	toggleMalformed           = session.RowToggleMalformed
+	togglePendingVerification = session.RowTogglePendingVerification
+	toggleMarketplaceBlocked  = session.RowToggleMarketplaceBlocked
+	toggleRequired            = session.RowToggleRequired
+	toggleCollectionOnly      = session.RowToggleCollectionOnly
 )
 
-// rowToggleEligibility evaluates the shared toggle guards against the
-// current model and row without dispatching.
 func (m Model) rowToggleEligibility(r row) toggleDenial {
-	if m.loading || m.syncing {
-		return toggleBusy
-	}
-	if m.configInvalid {
-		return toggleConfigInvalid
-	}
-	return rowToggleDenial(r)
-}
-
-// rowToggleDenial evaluates the guards that belong to the row itself, so
-// hints can follow what the row supports regardless of transient states.
-func rowToggleDenial(r row) toggleDenial {
-	switch {
-	case r.IsMalformed:
-		return toggleMalformed
-	case r.PendingVerification:
-		return togglePendingVerification
-	case r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r):
-		return toggleMarketplaceBlocked
-	case r.Artifact.Required:
-		return toggleRequired
-	case r.MarketplaceCollectionOnly && !r.canOverrideMarketplace():
-		return toggleCollectionOnly
-	}
-	return toggleEligible
+	return session.RowToggleEligibility(r, m.loading || m.syncing, m.configInvalid)
 }
 
 func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
@@ -1916,6 +1906,9 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 		m.quitAfterSync = true
 		return m, nil
 	}
+	if !m.beginDependencyOperation(operationSync) {
+		return m, operationBlockedCmd()
+	}
 	// Sync then quit — start the sync and defer tea.Quit to the
 	// syncDoneMsg handler. Including tea.Quit in the batch here
 	// would race the sync goroutine and quit before materialization
@@ -1923,7 +1916,7 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.syncing = true
 	m.quitAfterSync = true
-	m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+	m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 	slog.Debug("sync+quit confirmed, deferring quit until sync completes")
 	return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 }
@@ -1932,6 +1925,7 @@ func (m Model) confirmSyncQuitNo() (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.quitAfterSync = false
 	recordActionSpan(m.ctx, "modal_outcome", map[string]string{"outcome": "cancelled", "modal": "sync+quit"})
+	m.cancelMarketplaceLoads()
 	return m, tea.Quit
 }
 
@@ -2135,9 +2129,9 @@ func filepathBase(path string) string {
 
 func (m *Model) applyFilter() []row {
 	for i := range m.rows {
-		m.rows[i].ensureLabelMemo()
+		rowLabelMemoFor(&m.rows[i])
 		if m.filter != "" {
-			m.rows[i].ensureSearchable()
+			m.rows[i].EnsureSearchable()
 		}
 	}
 	if m.filter == "" {
@@ -2153,21 +2147,22 @@ func (m *Model) applyFilter() []row {
 	// Metadata only matches when every query term begins one of its words,
 	// so letters scattered through a long description never match.
 	nameMatches := fuzzy.FindFromNoSort(strings.Join(terms, ""), searchNameSource(m.rows))
+	kind, _, kindQuery := marketplaceKindQuery(m.filter)
 
 	filtered := m.filterScratch[:0]
 	next := 0
 	for i := range m.rows {
 		r := m.rows[i]
-		r.searchRanked = true
+		r.SearchRanked = true
 		if next < len(nameMatches) && nameMatches[next].Index == i {
-			r.searchNameMatch = true
-			r.searchScore = nameMatches[next].Score
-			r.searchMatchRunes = runeIndexes(r.searchName, nameMatches[next].MatchedIndexes)
+			r.SearchNameMatch = true
+			r.SearchScore = nameMatches[next].Score
+			r.SearchMatchRunes = runeIndexes(r.SearchName, nameMatches[next].MatchedIndexes)
 			next++
-		} else if rowHasAllWordPrefixes(&r, terms) {
-			r.searchNameMatch = false
-			r.searchScore = 0
-			r.searchMatchRunes = nil
+		} else if rowHasAllWordPrefixes(&r, terms) || kindQuery && r.Artifact.Kind == kind {
+			r.SearchNameMatch = false
+			r.SearchScore = 0
+			r.SearchMatchRunes = nil
 		} else {
 			continue
 		}
@@ -2179,7 +2174,7 @@ func (m *Model) applyFilter() []row {
 
 func rowHasAllWordPrefixes(r *row, terms []string) bool {
 	for _, term := range terms {
-		if !r.hasWordWithPrefix(term) {
+		if !r.HasWordWithPrefix(term) {
 			return false
 		}
 	}
@@ -2189,15 +2184,15 @@ func rowHasAllWordPrefixes(r *row, terms []string) bool {
 // searchRankLess reports whether a ranks strictly above b: name matches
 // before metadata-only matches, then by descending fuzzy score.
 func searchRankLess(a, b row) bool {
-	if a.searchNameMatch != b.searchNameMatch {
-		return a.searchNameMatch
+	if a.SearchNameMatch != b.SearchNameMatch {
+		return a.SearchNameMatch
 	}
-	return a.searchScore > b.searchScore
+	return a.SearchScore > b.SearchScore
 }
 
 type searchNameSource []row
 
-func (s searchNameSource) String(i int) string { return s[i].searchName }
+func (s searchNameSource) String(i int) string { return s[i].SearchName }
 func (s searchNameSource) Len() int            { return len(s) }
 
 func fuzzyMatch(pattern, text string) (fuzzy.Match, bool) {
