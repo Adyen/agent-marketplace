@@ -142,6 +142,10 @@ Unknown top-level fields are rejected.
 
 `harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions.
 
+## Release checks
+
+The desktop GUI, CLI, and TUI use the same `update_check.enabled` setting. It defaults to `true`; organization and user-personal configuration may set it, and the user value wins. Set it to `false` to disable release checks.
+
 ## `harnesses`
 
 Supported targets are:

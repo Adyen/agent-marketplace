@@ -1,0 +1,502 @@
+<script setup lang="ts">
+import { computed, nextTick, ref, watch } from 'vue'
+import type { Configuration, SourceDescription } from './api/client'
+import { useAppearance, type AppearancePreference } from './appearance'
+import type { WorkspaceController } from './controller'
+import { operationLabel } from './feedback'
+import GuiIcon, { type IconName } from './GuiIcon.vue'
+import GuiModal from './GuiModal.vue'
+import GlobalSettingsPanel from './GlobalSettingsPanel.vue'
+import SourceList from './SourceList.vue'
+import { groupSources } from './source-groups'
+
+export type SettingsTab = 'general' | 'targets' | 'install' | 'backups' | 'logging' | 'sources'
+export interface SourceRevealRequest {
+  sourceId: string
+  sequence: number
+  remove?: true
+}
+
+const props = defineProps<{
+  controller: WorkspaceController
+  tab: SettingsTab
+  revealRequest: SourceRevealRequest | null
+}>()
+const open = defineModel<boolean>('open', { default: false })
+const emit = defineEmits<{ addSource: [] }>()
+
+const tabs: { id: SettingsTab; label: string; icon: IconName }[] = [
+  { id: 'general', label: 'General', icon: 'gear' },
+  { id: 'targets', label: 'Harness targets', icon: 'target' },
+  { id: 'install', label: 'Install mode', icon: 'branch' },
+  { id: 'backups', label: 'Backups', icon: 'file' },
+  { id: 'logging', label: 'Logging', icon: 'view' },
+  { id: 'sources', label: 'Sources', icon: 'folder' },
+]
+const active = ref<SettingsTab>(props.tab)
+const activeTitle = computed(() => tabs.find((tab) => tab.id === active.value)?.label ?? '')
+
+const configuration = computed<Configuration | null>(() => props.controller.state.configuration)
+const sourceQuery = ref('')
+const showSourceSearch = computed(
+  () => (configuration.value?.userSources.length ?? 0) + (configuration.value?.organizationSources.length ?? 0) > 6,
+)
+const activeSourceQuery = computed(() => (showSourceSearch.value ? sourceQuery.value : ''))
+const highlightedSourceId = ref('')
+const sourceLists = computed(() => ({
+  user: groupSources(
+    (configuration.value?.userSources ?? []).map((source) => ({ source, layer: 'user' as const })),
+    activeSourceQuery.value,
+  ),
+  organization: groupSources(
+    (configuration.value?.organizationSources ?? []).map((source) => ({ source, layer: 'organization' as const })),
+    activeSourceQuery.value,
+  ),
+}))
+const loading = ref(false)
+const sourceRemovalConfigLoaded = ref(false)
+const actionError = ref<string | null>(null)
+const draft = ref<Set<string>>(new Set())
+const pendingRemove = ref<SourceDescription | null>(null)
+let openEpoch = 0
+let handledRemoveSourceSequence = 0
+
+const { preference, setPreference } = useAppearance()
+const appearanceOptions: { value: AppearancePreference; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+]
+
+const options = computed<string[]>(() => configuration.value?.supportedTargets ?? [])
+
+const busy = computed(() => props.controller.state.operation != null || props.controller.state.requesting)
+const editable = computed(() => configuration.value?.editable === true)
+const fieldsDisabled = computed(() => loading.value || busy.value || !editable.value)
+const saveDisabled = computed(() => loading.value || !editable.value || draft.value.size === 0 || busy.value)
+const organizationIds = computed(() => new Set(configuration.value?.organizationTargets ?? []))
+const dirty = computed(() => {
+  if (loading.value || configuration.value == null) {
+    return false
+  }
+  const saved = configuration.value.userTargets
+  return draft.value.size !== saved.length || saved.some((id) => !draft.value.has(id))
+})
+const mutationErrors = computed(() => {
+  const baseline = props.controller.state.addSourceBaseline
+  return props.controller.state.diagnostics.filter(
+    (d) => d.severity === 'error' && d.category === 'mutation' && (baseline == null || baseline.includes(d)),
+  )
+})
+const managedOutsideText = computed(() => {
+  const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
+})
+
+function resetDrafts() {
+  draft.value = new Set<string>()
+  pendingRemove.value = null
+  sourceRemovalConfigLoaded.value = false
+}
+
+watch(open, () => {
+  const epoch = ++openEpoch
+  resetDrafts()
+  if (!open.value) {
+    highlightedSourceId.value = ''
+    return
+  }
+  active.value = props.tab
+  sourceQuery.value = ''
+  actionError.value = null
+  loading.value = true
+  void props.controller.loadConfiguration().then((loaded) => {
+    if (epoch !== openEpoch) {
+      return
+    }
+    sourceRemovalConfigLoaded.value = loaded
+    loading.value = false
+    if (configuration.value == null) {
+      actionError.value = 'Settings could not be loaded'
+      return
+    }
+    draft.value = new Set(configuration.value.userTargets)
+  })
+})
+
+watch(
+  () => props.revealRequest,
+  (request) => {
+    if (request == null) {
+      return
+    }
+    active.value = 'sources'
+    sourceQuery.value = ''
+    highlightedSourceId.value = request.sourceId
+  },
+)
+
+watch(
+  [() => props.revealRequest, loading, busy],
+  async ([request, isLoading, isBusy]) => {
+    if (request == null || !request.remove || isLoading || isBusy || !open.value || request.sequence <= handledRemoveSourceSequence) {
+      return
+    }
+    handledRemoveSourceSequence = request.sequence
+    if (!sourceRemovalConfigLoaded.value) {
+      actionError.value = 'Could not verify the source. Close Settings and try again.'
+      return
+    }
+    const source = configuration.value?.userSources.find((candidate) => candidate.id === request.sourceId)
+    if (fieldsDisabled.value || source == null || !removable(source)) {
+      return
+    }
+    pendingRemove.value = source
+    await nextTick()
+    document
+      .querySelector<HTMLElement>('#settings-panel-sources [aria-label="Confirm removal"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  },
+  { flush: 'post' },
+)
+
+watch(
+  () => props.tab,
+  (tab) => {
+    active.value = tab
+  },
+)
+
+function selectTab(id: SettingsTab) {
+  active.value = id
+}
+
+function onTabKey(event: KeyboardEvent, index: number) {
+  const last = tabs.length - 1
+  let next: number | null = null
+  if (event.key === 'ArrowDown') {
+    next = index === last ? 0 : index + 1
+  } else if (event.key === 'ArrowUp') {
+    next = index === 0 ? last : index - 1
+  } else if (event.key === 'Home') {
+    next = 0
+  } else if (event.key === 'End') {
+    next = last
+  }
+  if (next == null) {
+    return
+  }
+  event.preventDefault()
+  const list = (event.currentTarget as HTMLElement).parentElement
+  selectTab(tabs[next].id)
+  void nextTick(() => {
+    list?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
+  })
+}
+
+function toggle(id: string, checked: boolean | 'indeterminate') {
+  const next = new Set(draft.value)
+  if (checked === true) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  draft.value = next
+}
+
+function revert() {
+  draft.value = new Set(configuration.value?.userTargets ?? [])
+}
+
+async function save() {
+  const targets = options.value.filter((id) => draft.value.has(id))
+  if (await props.controller.saveTargets(targets)) {
+    actionError.value = null
+    draft.value = new Set(targets)
+    return
+  }
+  actionError.value = props.controller.state.error ?? 'The action could not be started'
+}
+
+function removable(source: SourceDescription) {
+  return source.kind === 'git' || source.kind === 'directory' || source.kind === 'marketplace'
+}
+
+async function confirmRemove() {
+  const source = pendingRemove.value
+  pendingRemove.value = null
+  if (source == null) {
+    return
+  }
+  if (!(await props.controller.removeSource(source.id))) {
+    actionError.value = props.controller.state.error ?? 'The action could not be started'
+  }
+}
+</script>
+
+<template>
+  <GuiModal v-model:open="open" title="Settings" icon="gear" size="settings" bare>
+    <div class="settings-window">
+      <nav class="settings-window__rail" aria-label="Settings">
+        <p class="gui-caps settings-window__rail-label">Settings</p>
+        <div role="tablist" aria-orientation="vertical" aria-label="Settings sections" class="settings-window__tabs">
+          <button
+            v-for="(tab, index) in tabs"
+            :id="`settings-tab-${tab.id}`"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            class="settings-window__tab"
+            :class="{ 'settings-window__tab--selected': active === tab.id }"
+            :aria-selected="active === tab.id"
+            :aria-controls="`settings-panel-${tab.id}`"
+            :tabindex="active === tab.id ? 0 : -1"
+            @click="selectTab(tab.id)"
+            @keydown="onTabKey($event, index)"
+          >
+            <GuiIcon :name="tab.icon" />
+            <span class="settings-window__tab-label">{{ tab.label }}</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="settings-window__pane">
+        <header class="settings-window__pane-header">
+          <h2 class="settings-window__pane-title">{{ activeTitle }}</h2>
+          <button type="button" class="gui-modal__close" aria-label="Close dialog" @click="open = false"><GuiIcon name="close" /></button>
+        </header>
+
+        <div class="settings-window__content">
+          <p v-if="actionError" role="alert" class="settings__notice settings__notice--danger">
+            <GuiIcon name="error" class="settings__notice-icon" />
+            <span>{{ actionError }}</span>
+          </p>
+          <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+            <GuiIcon name="error" class="settings__notice-icon" />
+            <span>{{ d.message }}</span>
+          </p>
+          <p v-if="controller.state.operation" role="status" class="settings__notice">
+            <GuiIcon name="info" class="settings__notice-icon" />
+            <span>{{ operationLabel(controller.state.operation.kind) }}</span>
+          </p>
+          <p v-if="configuration == null && !actionError" role="status" class="settings__notice settings__notice--loading">Loading settings…</p>
+          <p v-if="configuration != null && !configuration.editable" role="status" class="settings__notice">
+            <GuiIcon name="info" class="settings__notice-icon" />
+            <span>The user configuration is not editable.</span>
+          </p>
+
+          <section
+            v-show="active === 'general'"
+            id="settings-panel-general"
+            role="tabpanel"
+            aria-labelledby="settings-tab-general"
+            class="settings-window__panel settings-window__panel--flush"
+          >
+            <fieldset class="settings-window__section" aria-label="Appearance">
+              <legend class="gui-visually-hidden">Appearance</legend>
+              <div class="settings-window__row">
+                <div class="settings-window__row-text">
+                  <p id="settings-theme-label" class="settings-window__row-title">Theme</p>
+                  <p class="settings-window__row-hint">Follow the system, or pick a theme for this app.</p>
+                </div>
+                <div class="theme-tiles" role="radiogroup" aria-labelledby="settings-theme-label">
+                  <label
+                    v-for="option in appearanceOptions"
+                    :key="option.value"
+                    class="theme-tile"
+                    :class="{ 'theme-tile--selected': preference === option.value }"
+                  >
+                    <input
+                      class="gui-visually-hidden"
+                      type="radio"
+                      name="am-appearance"
+                      :value="option.value"
+                      :checked="preference === option.value"
+                      @change="setPreference(option.value)"
+                    />
+                    <span class="theme-tile__preview" aria-hidden="true">
+                      <span class="theme-tile__window" data-preview="light">
+                        <span class="theme-tile__side" />
+                        <span class="theme-tile__main">
+                          <span class="theme-tile__bar" />
+                          <span class="theme-tile__line" />
+                          <span class="theme-tile__line theme-tile__line--short" />
+                          <span class="theme-tile__line theme-tile__line--mid" />
+                          <span class="theme-tile__accent" />
+                        </span>
+                      </span>
+                      <span
+                        v-if="option.value === 'dark' || option.value === 'system'"
+                        class="theme-tile__window"
+                        :class="{ 'theme-tile__window--diagonal': option.value === 'system' }"
+                        data-preview="dark"
+                      >
+                        <span class="theme-tile__side" />
+                        <span class="theme-tile__main">
+                          <span class="theme-tile__bar" />
+                          <span class="theme-tile__line" />
+                          <span class="theme-tile__line theme-tile__line--short" />
+                          <span class="theme-tile__line theme-tile__line--mid" />
+                          <span class="theme-tile__accent" />
+                        </span>
+                      </span>
+                    </span>
+                    <span class="theme-tile__label">{{ option.label }}</span>
+                  </label>
+                </div>
+              </div>
+            </fieldset>
+            <GlobalSettingsPanel
+              v-if="configuration != null"
+              section="general"
+              :controller="controller"
+              :settings="configuration.settings"
+              :user-targets="configuration.userTargets"
+              :disabled="fieldsDisabled"
+            />
+          </section>
+
+          <section
+            v-show="active === 'targets'"
+            id="settings-panel-targets"
+            role="tabpanel"
+            aria-labelledby="settings-tab-targets"
+            class="settings-window__panel settings-window__panel--targets"
+          >
+            <fieldset class="settings-window__section" :disabled="fieldsDisabled">
+              <legend class="gui-caps">Harness targets</legend>
+              <p class="settings__hint">Synced resources are written into each selected harness.</p>
+              <div class="settings__list">
+                <label v-for="id in options" :key="id" class="settings__option">
+                  <span class="settings__row-main">
+                    <span class="mono settings__target">{{ id }}</span>
+                    <span v-if="organizationIds.has(id)" class="settings__row-hint">Also set by organization</span>
+                  </span>
+                  <UCheckbox
+                    :model-value="draft.has(id)"
+                    :aria-label="`Target ${id}`"
+                    @update:model-value="toggle(id, $event)"
+                  />
+                </label>
+              </div>
+            </fieldset>
+
+            <section v-if="configuration != null && configuration.organizationTargets.length > 0" class="settings-window__section" aria-label="Organization targets">
+              <h3 class="gui-caps">Organization</h3>
+              <ul class="settings__list">
+                <li v-for="id in configuration.organizationTargets" :key="id" class="settings__option settings__option--static">
+                  <span class="settings__row-main">
+                    <span class="mono settings__target">{{ id }}</span>
+                    <span class="settings__badge">Org</span>
+                  </span>
+                  <GuiIcon name="lock" class="settings__lock" />
+                </li>
+              </ul>
+              <p class="settings__caption">Managed by your organization. Always applied in addition to your targets.</p>
+            </section>
+
+            <div class="settings-window__savebar">
+              <span class="settings__status" aria-live="polite">
+                <span v-if="dirty" class="settings__dirty"><span class="settings__dirty-dot" aria-hidden="true" />Unsaved changes</span>
+              </span>
+              <UButton
+                label="Revert"
+                aria-label="Revert"
+                color="neutral"
+                variant="outline"
+                :disabled="!dirty || fieldsDisabled"
+                @click="revert"
+              />
+              <UButton
+                v-if="configuration != null"
+                label="Save targets"
+                aria-label="Save targets"
+                :disabled="saveDisabled"
+                @click="save"
+              />
+            </div>
+          </section>
+
+          <section
+            v-for="panelTab in ['install', 'backups', 'logging'] as const"
+            v-show="active === panelTab"
+            :id="`settings-panel-${panelTab}`"
+            :key="panelTab"
+            role="tabpanel"
+            :aria-labelledby="`settings-tab-${panelTab}`"
+            class="settings-window__panel"
+          >
+            <GlobalSettingsPanel
+              v-if="configuration != null"
+              :section="panelTab"
+              :controller="controller"
+              :settings="configuration.settings"
+              :user-targets="configuration.userTargets"
+              :disabled="fieldsDisabled"
+            />
+          </section>
+
+          <section
+            v-show="active === 'sources'"
+            id="settings-panel-sources"
+            role="tabpanel"
+            tabindex="-1"
+            aria-labelledby="settings-tab-sources"
+            class="settings-window__panel"
+          >
+            <template v-if="configuration != null">
+              <label v-if="showSourceSearch" class="settings__source-search">
+                <span class="gui-visually-hidden">Search sources</span>
+                <input v-model="sourceQuery" type="search" class="gui-input" aria-label="Search sources" placeholder="Search sources">
+              </label>
+
+              <p
+                v-if="activeSourceQuery !== '' && sourceLists.user.length + sourceLists.organization.length === 0"
+                class="settings__hint"
+                role="status"
+              >No sources match “{{ activeSourceQuery }}”.</p>
+
+              <SourceList
+                title="User sources"
+                :entries="sourceLists.user"
+                :source-count="configuration.userSources.length"
+                :organization="false"
+                :reveal-request="props.revealRequest"
+                :highlighted-source-id="highlightedSourceId"
+              >
+                <template #actions="{ source }">
+                  <button
+                    v-if="removable(source)"
+                    type="button"
+                    class="gui-icon-button gui-icon-button--danger"
+                    :aria-label="`Remove source ${source.location}`"
+                    :disabled="fieldsDisabled"
+                    @click="pendingRemove = source"
+                  ><GuiIcon name="trash" /></button>
+                </template>
+              </SourceList>
+
+              <section v-if="pendingRemove != null" class="settings__group" aria-label="Confirm removal">
+                <p role="status">Remove source {{ pendingRemove.location }}?</p>
+                <UButton label="Confirm remove" aria-label="Confirm remove" :disabled="fieldsDisabled" @click="confirmRemove" />
+                <UButton label="Cancel remove" color="neutral" variant="outline" aria-label="Cancel remove" @click="pendingRemove = null" />
+              </section>
+
+              <SourceList title="Organization sources" :entries="sourceLists.organization" :source-count="configuration.organizationSources.length"
+                :organization="true" :reveal-request="props.revealRequest" :highlighted-source-id="highlightedSourceId" />
+
+              <section class="settings__group" aria-label="Add user source">
+                <UButton label="Add source" aria-label="Add source" class="gui-button--secondary" color="neutral" variant="soft" :disabled="fieldsDisabled" @click="emit('addSource')"><template #leading><GuiIcon name="plus" /></template></UButton>
+              </section>
+
+              <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__footnote" aria-label="Managed outside the GUI">
+                <GuiIcon name="info" class="settings__notice-icon" />
+                <p>{{ managedOutsideText }}</p>
+              </section>
+            </template>
+          </section>
+        </div>
+      </div>
+    </div>
+  </GuiModal>
+</template>

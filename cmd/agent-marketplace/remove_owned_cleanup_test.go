@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -225,9 +226,9 @@ func TestRemoveBlockedOwnedMCPPreservesSiblings(t *testing.T) {
 			}
 			f.block(t)
 			var acquisitions atomic.Int32
-			previous := lockSnapshotAcquiredHook
-			lockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
-			defer func() { lockSnapshotAcquiredHook = previous }()
+			previous := lifecycle.LockSnapshotAcquiredHook
+			lifecycle.LockSnapshotAcquiredHook = func() { acquisitions.Add(1) }
+			defer func() { lifecycle.LockSnapshotAcquiredHook = previous }()
 			out, err := f.remove(tc.inferred)
 			if err != nil {
 				t.Fatalf("remove: %v\n%s", err, out)
@@ -380,11 +381,11 @@ func TestRemoveBlockedOwnedMCPRejectsChangedAuthorization(t *testing.T) {
 			f.block(t)
 			originalConfig := ownedCommandRead(t, f.configPath)
 			originalAggregate := ownedCommandRead(t, f.aggregate)
-			originalCommit := commitDependencyTransaction
-			defer func() { commitDependencyTransaction = originalCommit }()
+			originalCommit := lifecycle.CommitDependencyTransaction
+			defer func() { lifecycle.CommitDependencyTransaction = originalCommit }()
 			var expected map[string]string
 			calls := 0
-			commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+			lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 				calls++
 				if scenario == "restored after publish" {
 					options = append(options, dependencytxn.WithFaultHook(func(point dependencytxn.FaultPoint) error {
@@ -506,10 +507,10 @@ func TestRemoveBlockedOwnedMCPLateFailureRetainsTrustWarning(t *testing.T) {
 	f.block(t)
 	before := ownedCommandSnapshot(t, f.base)
 	sentinel := errors.New("late cleanup failure")
-	original := commitDependencyTransaction
-	defer func() { commitDependencyTransaction = original }()
+	original := lifecycle.CommitDependencyTransaction
+	defer func() { lifecycle.CommitDependencyTransaction = original }()
 	calls := 0
-	commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 		calls++
 		result, err := original(ctx, state, desired, options...)
 		if err != nil {

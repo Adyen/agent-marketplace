@@ -2,12 +2,11 @@ package tui
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // operationProgressMsg carries one observed pipeline phase for the active
@@ -39,71 +38,22 @@ type operationProgressPollMsg struct {
 	source *operationProgressSource
 }
 
-// progressPollInterval bounds how long an idle observation pump may block.
-const progressPollInterval = 200 * time.Millisecond
-
-// operationPhaseConsent is the model-entered phase shown while a Marketplace
-// install waits on the consent pane. It is set only when the pane is
-// actually entered, mirroring the pipeline's "phases only when entered" rule.
-const operationPhaseConsent = "awaiting consent"
-
-// operationProgressSource is the producer side of a phase observation. The
-// pipeline emits phases through observer(); the model reads them from the
-// buffered channel via waitOperationProgress. Emissions are dropped rather
-// than blocking the pipeline, and close() makes late emissions safe.
-type operationProgressSource struct {
-	operation  operationID
-	generation requestGeneration
-	updates    chan operationProgressMsg
-	sequence   atomic.Uint64
-	// accepted is the newest sequence the model accepted; written only
-	// from Update.
-	accepted uint64
-
-	mu     sync.Mutex
-	closed bool
-}
-
-func (s *operationProgressSource) observer() pipeline.PhaseObserver {
-	return func(phase pipeline.Phase) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.closed {
-			return
-		}
-		msg := operationProgressMsg{
-			operation:  s.operation,
-			generation: s.generation,
-			sequence:   s.sequence.Add(1),
-			phase:      string(phase),
-		}
-		select {
-		case s.updates <- msg:
-		default:
-		}
-	}
-}
-
-func (s *operationProgressSource) close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.closed {
-		s.closed = true
-		close(s.updates)
-	}
-}
-
 // waitOperationProgress is the observation pump: it yields one
 // operationProgressMsg per real phase and reschedules itself while the
 // operation stays active.
 func waitOperationProgress(s *operationProgressSource) tea.Cmd {
 	return func() tea.Msg {
 		select {
-		case msg, ok := <-s.updates:
+		case event, ok := <-s.Events():
 			if !ok {
 				return operationProgressDoneMsg{source: s}
 			}
-			return msg
+			return operationProgressMsg{
+				operation:  event.Operation,
+				generation: event.Generation,
+				sequence:   event.Sequence,
+				phase:      event.Phase,
+			}
 		case <-time.After(progressPollInterval):
 			return operationProgressPollMsg{source: s}
 		}
@@ -115,20 +65,16 @@ func waitOperationProgress(s *operationProgressSource) tea.Cmd {
 // the same monotonic space real operations use, so progress can never be
 // confused with another operation's events.
 func (m *Model) beginOperationProgress(label string, generation requestGeneration) {
-	m.beginOperationProgressFor(m.operations.issue(), label, generation)
+	m.beginOperationProgressFor(m.operations.Issue(), label, generation)
 }
 
 // beginOperationProgressFor opens phase observation bound to an existing
 // serialized operation identity (Marketplace install).
 func (m *Model) beginOperationProgressFor(operation operationID, label string, generation requestGeneration) {
 	if m.progress != nil {
-		m.progress.close()
+		m.progress.Close()
 	}
-	m.progress = &operationProgressSource{
-		operation:  operation,
-		generation: generation,
-		updates:    make(chan operationProgressMsg, 8),
-	}
+	m.progress = session.NewOperationProgressSource(operation, generation)
 	m.progressLabel = label
 	m.operationPhase = ""
 }
@@ -137,7 +83,7 @@ func (m *Model) beginOperationProgressFor(operation operationID, label string, g
 // finishes, fails, or is cancelled. Late observations are then rejected.
 func (m *Model) clearOperationProgress() {
 	if m.progress != nil {
-		m.progress.close()
+		m.progress.Close()
 	}
 	m.progress = nil
 	m.progressLabel = ""
@@ -160,20 +106,24 @@ func (m Model) observedContext(ctx context.Context) context.Context {
 	if m.progress == nil {
 		return ctx
 	}
-	return pipeline.WithPhaseObserver(ctx, m.progress.observer())
+	return pipeline.WithPhaseObserver(ctx, m.progress.Observer())
 }
 
 // applyOperationProgress validates one phase observation. Only an event for
 // the active operation, its applicable generation, and a sequence newer than
 // the last accepted event may advance the visible phase.
 func (m *Model) applyOperationProgress(msg operationProgressMsg) bool {
-	if m.progress == nil || msg.operation != m.progress.operation {
+	if m.progress == nil {
 		return false
 	}
-	if msg.generation != m.progress.generation || msg.sequence <= m.progress.accepted {
+	accepted := m.progress.Accept(session.ProgressEvent{
+		Operation:  msg.operation,
+		Generation: msg.generation,
+		Sequence:   msg.sequence,
+	})
+	if !accepted {
 		return false
 	}
-	m.progress.accepted = msg.sequence
 	m.operationPhase = msg.phase
 	return true
 }

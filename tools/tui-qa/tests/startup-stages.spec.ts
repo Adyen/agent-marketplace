@@ -64,7 +64,7 @@ after(() => {
 });
 
 // spec: tui-startup/provisional-config-stage-publishes-verification-pending-rows
-// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 // spec: tui-startup/local-all-true-selections-expand-into-pending-rows-on-the-normal-config-path
 journey.test("startup shows guarded configured rows while acquisition is blocked, then verifies and syncs them", async (terminal) => {
   const fixture = journey.current();
@@ -111,7 +111,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   const pending = async (name: string): Promise<void> => {
     await locate(terminal, new RegExp(`Name:\\s+${name}`)).unique().expect();
-    await locate(terminal, /Status:\s+enabled in config; verification\s+pending/).unique().expect();
+    await locate(terminal, /Status:\s+enabled in config, waiting for\s+verification/).unique().expect();
     await locate(terminal, "verifying resources...").unique().expect();
     await locate(terminal, /toggle (global|project|local)/).expect({ not: true });
     await locate(terminal, /enter apply.*esc cancel/).expect({ not: true });
@@ -153,9 +153,9 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   await step("release acquisition and replace pending rows with verified inventory", releaseAcquisition, async () => {
     await locate(terminal, "~ 4 out of sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
     await locate(terminal, "/ alpha-skill  1 match").unique().expect();
-    await locate(terminal, "verification pending").expect({ not: true });
+    await locate(terminal, "waiting for verification").expect({ not: true });
     await locate(terminal, "verifying resources").expect({ not: true });
   });
   unchanged();
@@ -165,7 +165,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   await select("org-review", async () => {
     await locate(terminal, /Name:\s+org-review/).unique().expect();
-    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, /Status:\s+required by org/).unique().expect();
     await locate(terminal, /\sR\s+skill\s+[^\n]*\/org-review/).unique().expect();
     await locate(terminal, /verification\s+pending/).expect({ not: true });
   });
@@ -175,7 +175,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   await select("alpha-skill", async () => {
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
   });
   await step("the same verified optional row now opens its toggle", () => terminal.write(" "), async () => {
     await locate(terminal, "toggle global").unique().expect();

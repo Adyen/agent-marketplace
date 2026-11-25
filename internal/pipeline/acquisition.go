@@ -324,6 +324,13 @@ func transientReadAssertions(layers []config.LayerResult, lockPath string) ([]de
 	if err != nil {
 		return nil, err
 	}
+	for _, layer := range layers {
+		for _, read := range layer.Reads {
+			if read.Overlay {
+				delete(byRequested, read.RequestedPath)
+			}
+		}
+	}
 	expected, err := dependencytxn.ReadGeneration(lockPath)
 	if err != nil {
 		return nil, err

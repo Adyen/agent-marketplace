@@ -61,7 +61,7 @@ const registries = [
             <dt>Targets</dt>
             <dd>Claude Code · Codex · Devin</dd>
             <dt>Status</dt>
-            <dd class="pending">enabled (pending sync)</dd>
+            <dd class="pending">enabled, waiting for sync</dd>
           </dl>
         </aside>
       </div>

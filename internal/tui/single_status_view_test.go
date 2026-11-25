@@ -11,6 +11,7 @@ import (
 )
 
 // spec: tui-navigation/single-status-list-at-minimum-size
+// spec: session-navigation/status-grouped-resource-order-and-filtering
 func TestSingleStatusGroupingWithoutTabBar(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -164,7 +165,7 @@ func TestSingleStatusHostileAndUnicodeLabels(t *testing.T) {
 
 	hostileMatch := mkRow("déploy", withGlobal)
 	hostileMatch.RegistryName = "evil\x1b[31m\x07name"
-	hostileMatch.searchMatchRunes = []int{0, 1, 2, 3}
+	hostileMatch.SearchMatchRunes = []int{0, 1, 2, 3}
 	wantEsc := "skill evil\\x1B[31m\\x07name/" + styleSearchMatch.Render("dépl") + "oy"
 	if got := highlightNameMatches(hostileMatch, "skill evil\\x1B[31m\\x07name/déploy"); got != wantEsc {
 		t.Fatalf("escaped-prefix highlighted label = %q, want %q", got, wantEsc)
@@ -273,7 +274,7 @@ func TestSingleStatusModalTabKeepsNativeFieldFocus(t *testing.T) {
 		if m.toggleForm == nil || m.toggleForm.State != huh.StateNormal {
 			t.Fatalf("key %v must stay inside the running native form", key.Code)
 		}
-		if m.operations.active != nil {
+		if m.operations.Active != nil {
 			t.Fatalf("key %v dispatched a mutation without an explicit submit", key.Code)
 		}
 	}
@@ -323,6 +324,8 @@ func TestSingleStatusDetailBrowseSpanHasNoTabAttr(t *testing.T) {
 }
 
 // spec: tui-navigation/browse-inspect-search-fold-and-scroll-in-one-view
+// spec: session-navigation/status-grouped-resource-order-and-filtering
+// spec: session-navigation/local-search-applies-immediately
 func TestSingleStatusBrowseSearchFoldScroll(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	var rows []row
@@ -372,7 +375,7 @@ func TestSingleStatusBrowseSearchFoldScroll(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestSingleStatusReloadAnchorsSelection(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{

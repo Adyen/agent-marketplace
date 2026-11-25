@@ -76,8 +76,6 @@ func TestDiscoverFreshCacheAvoidsSecondNetworkRequest(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/cold-startup-browses-beyond-the-first-page
-// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
 func TestDiscoverBrowsePaginatesAndPublishesCumulativeSnapshots(t *testing.T) {
 	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+13)
 	for i := range items {
@@ -133,7 +131,6 @@ func TestDiscoverBrowsePaginatesAndPublishesCumulativeSnapshots(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
 func TestDiscoverBrowseEmptyEndpointMakesOneSearchRequest(t *testing.T) {
 	var searches atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +153,6 @@ func TestDiscoverBrowseEmptyEndpointMakesOneSearchRequest(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/cold-startup-browses-beyond-the-first-page
 func TestDiscoverBrowseEndpointsProgressIndependently(t *testing.T) {
 	laterPageStarted := make(chan struct{}, 1)
 	releaseLaterPage := make(chan struct{}, 1)
@@ -240,7 +236,6 @@ func TestDiscoverBrowseEndpointsProgressIndependently(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
 func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T) {
 	var offsets []int
 	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+3)
@@ -278,13 +273,17 @@ func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T)
 	}
 }
 
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
 func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t *testing.T) {
+	var searches atomic.Int32
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			writeTestWellKnown(w, "partial-browse")
 			return
 		}
+
+		searches.Add(1)
+
 		offset, limit := 0, DiscoveryPageLimit
 		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
@@ -315,9 +314,16 @@ func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t 
 	if _, err := os.Stat(cache.catalogPath(ep, DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial catalog record was cached: %v", err)
 	}
+
+	again, err := Discover(context.Background(), ec, "", DiscoveryOptions{Cache: cache})
+	if err != nil || len(again) != 1 || again[0].Err == nil || len(again[0].Items) != DiscoveryPageLimit {
+		t.Fatalf("new load after partial browse = %#v, err=%v", again, err)
+	}
+	if searches.Load() != 4 {
+		t.Fatalf("partial browse made %d page requests across two loads, want 4", searches.Load())
+	}
 }
 
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
 func TestDiscoverReturnsCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -331,7 +337,6 @@ func TestDiscoverReturnsCallerCancellation(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
 func TestDiscoverBrowseStaleCacheMergesReceivedRowsAfterLaterPageFailure(t *testing.T) {
 	staleItems := make([]mpapi.ResourceListItem, DiscoveryPageLimit+10)
 	for i := range staleItems {
@@ -406,7 +411,6 @@ func TestDiscoverBrowseStaleCacheMergesReceivedRowsAfterLaterPageFailure(t *test
 	}
 }
 
-// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
 func TestDiscoverStaleBrowseCachePrecedesHeldRefreshAndDoesNotRepeat(t *testing.T) {
 	release := make(chan struct{})
 	searchRequests := make(chan struct{}, 4)
@@ -479,7 +483,6 @@ func TestDiscoverStaleBrowseCachePrecedesHeldRefreshAndDoesNotRepeat(t *testing.
 	}
 }
 
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
 func TestDiscoverBrowseDeniedEndpointReceivesNoRequests(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1383,8 +1386,6 @@ func TestDiscoverRetainsStaleEndpointAfterPartialFailure(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
-// spec: tui-navigation/other-kinds-retain-additive-text-matching
 func TestDiscoverIncludesEveryKindAcrossPagesAndCachesTheUnion(t *testing.T) {
 	for _, kind := range []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"} {
 		t.Run(kind, func(t *testing.T) {
@@ -1541,7 +1542,6 @@ func TestDiscoverKindPaginationRejectsNonProgressingPage(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
 func TestDiscoverUpdatesKeepsAllowedEndpointWhenAnotherIsDenied(t *testing.T) {
 	var allowedRequests, deniedRequests atomic.Int32
 	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1672,7 +1672,6 @@ func TestDiscoverUpdatesMaintainsCacheWhenAnotherEndpointIsDenied(t *testing.T) 
 	}
 }
 
-// spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
 func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1725,7 +1724,6 @@ func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 func TestDiscoverKindPaginationUsesConfiguredTimeout(t *testing.T) {
 	kindPageStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

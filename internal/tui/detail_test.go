@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	ansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -154,7 +155,7 @@ func TestRenderMarkdownWithStyleProducesStyledOutput(t *testing.T) {
 func TestRenderMarkdownWithStyleFallsBackOnError(t *testing.T) {
 	// Using an invalid style path should error, but the caller
 	// (renderDetailFull) falls back to raw content.
-	_, err := renderMarkdownWithStyle("# test", glamour.WithStylePath("/nonexistent/style.json"))
+	_, err := renderMarkdownWithStyle("# test", glamour.WithStylePath("/nonexistent/style.JSON"))
 	if err == nil {
 		t.Fatal("expected error from invalid style path")
 	}
@@ -189,7 +190,7 @@ func TestRenderDetailFullRendersWithGlamour(t *testing.T) {
 		Artifact:      resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "myskill", Path: skillDir}},
 		EnabledGlobal: true,
 	}}
-	m.rows[0].DetailSource = captureDetailSource(skillDir)
+	m.rows[0].DetailSource = session.CaptureDetailSource(skillDir)
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 
@@ -225,7 +226,7 @@ func TestRenderDetailFullRendersCapturedNonSkillSource(t *testing.T) {
 
 	r := row{
 		Artifact:     resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "continue", Path: commandPath}},
-		DetailSource: captureDetailSource(commandPath),
+		DetailSource: session.CaptureDetailSource(commandPath),
 	}
 	out := renderDetailFullContent(newTheme(true), r, 80)
 	stripped := ansi.Strip(out)
@@ -554,20 +555,20 @@ func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var budget detailCaptureBudget
-	var snapshots []*detailSourceSnapshot
-	for i := 0; i < maxDetailCaptureEntries+16; i++ {
-		snapshots = append(snapshots, budget.capture(path))
+	var budget session.DetailCaptureBudget
+	var snapshots []*session.DetailSourceSnapshot
+	for i := 0; i < session.MaxDetailCaptureEntries+16; i++ {
+		snapshots = append(snapshots, budget.Capture(path))
 	}
-	if budget.bytes > maxDetailCaptureBytes || budget.entries > maxDetailCaptureEntries {
-		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.bytes, budget.entries)
+	if budget.Bytes > session.MaxDetailCaptureBytes || budget.Entries > session.MaxDetailCaptureEntries {
+		t.Fatalf("aggregate capture exceeded budget: bytes=%d entries=%d", budget.Bytes, budget.Entries)
 	}
 	var truncated, omitted int
 	for _, snapshot := range snapshots {
-		if snapshot.truncationMarker != "" {
+		if snapshot.TruncationMarker != "" {
 			truncated++
 		}
-		if snapshot.omitted {
+		if snapshot.Omitted {
 			omitted++
 			if got := renderDetailFullContent(newTheme(true), row{DetailSource: snapshot}, 80); got != detailCaptureOmittedMarker {
 				t.Fatalf("omitted detail marker = %q, want %q", got, detailCaptureOmittedMarker)
@@ -578,17 +579,17 @@ func TestDetailCaptureBudgetBoundsManyMaximumEntries(t *testing.T) {
 		t.Fatalf("budget must visibly mark both truncated and omitted details: truncated=%d omitted=%d", truncated, omitted)
 	}
 
-	var entryBudget detailCaptureBudget
+	var entryBudget session.DetailCaptureBudget
 	small := filepath.Join(t.TempDir(), "small.md")
 	if err := os.WriteFile(small, []byte("small"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < maxDetailCaptureEntries; i++ {
-		if snapshot := entryBudget.capture(small); snapshot.omitted {
+	for i := 0; i < session.MaxDetailCaptureEntries; i++ {
+		if snapshot := entryBudget.Capture(small); snapshot.Omitted {
 			t.Fatalf("entry %d omitted before entry budget", i)
 		}
 	}
-	if snapshot := entryBudget.capture(small); !snapshot.omitted {
+	if snapshot := entryBudget.Capture(small); !snapshot.Omitted {
 		t.Fatal("entry beyond entry budget was captured")
 	}
 }

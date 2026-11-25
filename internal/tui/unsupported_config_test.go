@@ -17,7 +17,7 @@ import (
 // spec: consumer-config-format/consumers-do-not-offer-in-process-conversion
 // spec: consumer-config-format/writable-layer-version-refusals-name-the-older-migrator
 // spec: tui-interactions/guarded-submission
-// spec: tui-startup/invalid-configuration-delivers-one-fail-closed-final-stage
+// spec: session-startup/invalid-configuration-delivers-one-fail-closed-final-stage
 func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
 	for _, tc := range []struct {
 		name, root, fragment, code string
@@ -66,21 +66,21 @@ func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
 			if !strings.Contains(errors.Join(snapshot.errs...).Error(), badPath) || !strings.Contains(errors.Join(snapshot.errs...).Error(), "apiVersion") {
 				t.Fatalf("format diagnostic lacks offending path/field: %v", snapshot.errs)
 			}
-			snapshot.generation = m.requests.active(requestSnapshot)
+			snapshot.generation = m.requests.Active(requestSnapshot)
 			stages := collectSnapshotStages(readSnapshotStages(context.Background(), repo, home, catalogLoadCached, snapshot.generation))
 			if len(stages) != 1 || stages[0].stage != snapshotStageFinal || stages[0].mergedCfg != nil || stages[0].provisionalCfg != nil || len(stages[0].rows) != 0 {
 				t.Fatalf("unsupported startup published a usable config/inventory stage: %+v", stages)
 			}
 			updated, _ := m.Update(snapshot)
 			m = updated.(Model)
-			if !m.configInvalid || m.pane != paneList || m.mergedCfg != nil || m.operations.active != nil {
-				t.Fatalf("unsupported config entered operation: invalid=%t pane=%v cfg=%v operation=%v", m.configInvalid, m.pane, m.mergedCfg, m.operations.active)
+			if !m.configInvalid || m.pane != paneList || m.mergedCfg != nil || m.operations.Active != nil {
+				t.Fatalf("unsupported config entered operation: invalid=%t pane=%v cfg=%v operation=%v", m.configInvalid, m.pane, m.mergedCfg, m.operations.Active)
 			}
 			for _, key := range []rune{'s', 'u', 'H', ' ', 'm'} {
 				updated, _ = m.Update(keyPress(key))
 				m = updated.(Model)
-				if m.operations.active != nil || m.syncing || m.pane != paneList {
-					t.Fatalf("%q bypassed refusal: pane=%v operation=%v syncing=%t", key, m.pane, m.operations.active, m.syncing)
+				if m.operations.Active != nil || m.syncing || m.pane != paneList {
+					t.Fatalf("%q bypassed refusal: pane=%v operation=%v syncing=%t", key, m.pane, m.operations.Active, m.syncing)
 				}
 			}
 			updated, _ = m.Update(keyPress('e'))
@@ -156,7 +156,7 @@ func TestV4StartupRetainsHarnessesWithoutConversion(t *testing.T) {
 	if len(snapshot.errs) > 0 {
 		t.Fatalf("valid v4 refused: %v", snapshot.errs)
 	}
-	snapshot.generation = m.requests.active(requestSnapshot)
+	snapshot.generation = m.requests.Active(requestSnapshot)
 	updated, _ := m.Update(snapshot)
 	m = updated.(Model)
 	if m.configInvalid || m.pane != paneList || m.mergedCfg == nil || !equalStrings(m.globalHarnesses, []string{"factory"}) {

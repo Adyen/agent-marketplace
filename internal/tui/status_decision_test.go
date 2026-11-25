@@ -13,6 +13,7 @@ import (
 // one precedence chain derives the ASCII glyph, the color-profile symbol, and
 // the status label so they can never diverge.
 // spec: tui-rendering/colorless-and-narrow-rendering
+// spec: status-reporting/compound-status-reads-in-plain-words
 func TestRowStatusDecision(t *testing.T) {
 	marketplaceRow := func(stale bool) row {
 		r := mkRow("s", withAvailable)
@@ -38,9 +39,9 @@ func TestRowStatusDecision(t *testing.T) {
 		symbol string
 		label  string
 	}{
-		{"pending enabled", mkRow("s", pending), "[x]", "●", "enabled in config; verification pending"},
-		{"pending available", mkRow("s", withAvailable, pending), "[ ]", "○", "available; verification pending"},
-		{"pending excluded", mkRow("s", withAvailable, withExcluded, pending), "[ ]", "○", "excluded; verification pending"},
+		{"pending enabled", mkRow("s", pending), "[x]", "●", "enabled in config, waiting for verification"},
+		{"pending available", mkRow("s", withAvailable, pending), "[ ]", "○", "available, waiting for verification"},
+		{"pending excluded", mkRow("s", withAvailable, withExcluded, pending), "[ ]", "○", "excluded, waiting for verification"},
 		{"malformed", mkRow("s", withMalformed("bad frontmatter")), "[!]", "✗", "malformed: bad frontmatter"},
 		{"unavailable", mkRow("s", unavailable), "[!]", "✗", "unavailable: catalog fetch failed"},
 		{"available", mkRow("s", withAvailable), "[ ]", "○", "available"},
@@ -48,18 +49,18 @@ func TestRowStatusDecision(t *testing.T) {
 		{"marketplace fresh", marketplaceRow(false), "[ ]", "○", "available via Marketplace"},
 		{"marketplace stale", marketplaceRow(true), "[ ]", "○", "available, stale via Marketplace"},
 		{"required", mkRow("s", withRequired), "[R]", "■", "required"},
-		{"required org", mkRow("s", requiredOrg), "[R]", "■", "required (org)"},
-		{"drift pending", mkRow("s", withDrift(materialize.DriftMissing)), "[*]", "◐", "enabled (pending sync)"},
-		{"orphaned copy", mkRow("s", withDrift(materialize.DriftOrphaned)), "[*]", "◐", "enabled (pending sync)"},
+		{"required org", mkRow("s", requiredOrg), "[R]", "■", "required by org"},
+		{"drift pending", mkRow("s", withDrift(materialize.DriftMissing)), "[*]", "◐", "enabled, waiting for sync"},
+		{"orphaned copy", mkRow("s", withDrift(materialize.DriftOrphaned)), "[*]", "◐", "enabled, waiting for sync"},
 		{"broken", mkRow("s", withDrift(materialize.DriftBroken)), "[!]", "✗", "broken"},
 		{"enabled", mkRow("s"), "[x]", "●", "enabled"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := tc.row.status()
-			if st.glyph != tc.glyph || st.symbol != tc.symbol || st.label != tc.label {
+			st := tc.row.Status()
+			if st.Glyph != tc.glyph || st.Symbol != tc.symbol || st.Label != tc.label {
 				t.Fatalf("status() = {%q %q %q}, want {%q %q %q}",
-					st.glyph, st.symbol, st.label, tc.glyph, tc.symbol, tc.label)
+					st.Glyph, st.Symbol, st.Label, tc.glyph, tc.symbol, tc.label)
 			}
 			if got := tc.row.Glyph(); got != tc.glyph {
 				t.Fatalf("Glyph() = %q, want %q", got, tc.glyph)

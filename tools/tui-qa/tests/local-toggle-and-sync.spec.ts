@@ -41,7 +41,7 @@ journey.test("local toggle reaches pending state before sync", async (terminal) 
 
   await step("toggle local", () => terminal.write("l"), async () => {
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
     await locate(terminal, "~ 1 out of sync").unique().expect();
   });
   assert.equal(fs.readFileSync(localConfig, "utf8"), fixture.expectedLocalConfig);

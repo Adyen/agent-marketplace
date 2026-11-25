@@ -242,6 +242,88 @@ func TestTrace(t *testing.T) {
 	}
 }
 
+// spec: spec-governance/session-scenario-has-both-surface-witnesses
+// spec: spec-governance/missing-surface-witness-is-reported
+func TestTraceSurfaceParity(t *testing.T) {
+	const scenario = "session-navigation/browse"
+	sessionSpec := "## Requirements\n\n### Requirement: Browse\n\n#### Scenario: Browse\n\n- **WHEN** a user selects a resource\n- **THEN** its details are available\n"
+	sessionFiles := func(paths ...string) map[string]string {
+		files := map[string]string{"openspec/specs/session-navigation/spec.md": sessionSpec}
+		for _, path := range paths {
+			files[path] = ann(scenario)
+		}
+		return files
+	}
+	cases := []struct {
+		name       string
+		files      map[string]string
+		wantKinds  []string
+		wantDetail []string
+	}{
+		{
+			name:  "TUI and GUI Go and TypeScript witnesses",
+			files: sessionFiles("internal/tui/browse_test.go", "gui/src/browse.test.ts"),
+		},
+		{
+			name:  "TUI QA and GUI host witnesses",
+			files: sessionFiles("tools/tui-qa/tests/browse.spec.ts", "cmd/agent-marketplace-gui/browse_test.go"),
+		},
+		{
+			name:       "TUI witness without GUI",
+			files:      sessionFiles("internal/tui/browse_test.go"),
+			wantKinds:  []string{"missing-surface-witness"},
+			wantDetail: []string{"session-navigation/browse missing GUI witness"},
+		},
+		{
+			name:       "GUI witness without TUI",
+			files:      sessionFiles("gui/src/browse.test.ts"),
+			wantKinds:  []string{"missing-surface-witness"},
+			wantDetail: []string{"session-navigation/browse missing TUI witness"},
+		},
+		{
+			name:       "generic binding without either surface",
+			files:      sessionFiles("internal/session/browse_test.go"),
+			wantKinds:  []string{"missing-surface-witness", "missing-surface-witness"},
+			wantDetail: []string{"session-navigation/browse missing TUI witness", "session-navigation/browse missing GUI witness"},
+		},
+		{
+			name:       "no annotations",
+			files:      sessionFiles(),
+			wantKinds:  []string{"missing-surface-witness", "missing-surface-witness", kindUnboundScenario},
+			wantDetail: []string{"session-navigation/browse", "session-navigation/browse missing TUI witness", "session-navigation/browse missing GUI witness"},
+		},
+		{
+			name:       "similarly named directories do not count",
+			files:      sessionFiles("internal/tui-extra/browse_test.go", "gui-extra/browse_test.go"),
+			wantKinds:  []string{"missing-surface-witness", "missing-surface-witness"},
+			wantDetail: []string{"session-navigation/browse missing TUI witness", "session-navigation/browse missing GUI witness"},
+		},
+		{
+			name: "non-session capability is not surface checked",
+			files: map[string]string{
+				"openspec/specs/alpha/spec.md":    "## Requirements\n\n### Requirement: Browse\n\n#### Scenario: Browse\n\n- **WHEN** an item is selected\n- **THEN** it is shown\n",
+				"internal/session/browse_test.go": ann("alpha/browse"),
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, _, err := trace(writeTree(t, tc.files))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := kinds(findings); !slices.Equal(got, tc.wantKinds) {
+				t.Fatalf("kinds = %v, want %v\n%s", got, tc.wantKinds, details(findings))
+			}
+			for _, want := range tc.wantDetail {
+				if !strings.Contains(details(findings), want) {
+					t.Errorf("findings do not mention %q:\n%s", want, details(findings))
+				}
+			}
+		})
+	}
+}
+
 func TestArchived(t *testing.T) {
 	cases := []struct {
 		name      string

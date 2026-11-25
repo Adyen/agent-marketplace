@@ -49,6 +49,10 @@ func (m *LayerMutation) Apply(binding config.SourceBinding, change config.Select
 	return m.editor.Apply(binding, change)
 }
 
+func (m *LayerMutation) ApplyRootOwned(binding config.SourceBinding, change config.SelectionChange) error {
+	return m.editor.ApplyRootOwned(binding, change)
+}
+
 func (m *LayerMutation) SetPluginMemberExcluded(binding config.SourceBinding, pluginName string, member config.ResourceLocator, excluded bool) error {
 	if m == nil || m.editor == nil {
 		return errors.New("layer mutation has no open editor")
@@ -62,6 +66,10 @@ func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.Sourc
 
 func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	return m.editor.RemoveSource(binding)
+}
+
+func (m *LayerMutation) RemoveMarketplaceRegistration(entry config.MarketplaceEntry) error {
+	return m.editor.RemoveMarketplaceRegistration(entry)
 }
 
 func (m *LayerMutation) ClearInstallExclude(entry config.RegistryEntry, locator config.ResourceLocator) error {

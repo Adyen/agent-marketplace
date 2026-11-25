@@ -3,158 +3,48 @@ package tui
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	inspectiontest "github.com/Adyen/agent-marketplace/internal/testutil/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-type inspectionFixture struct {
-	server   *httptest.Server
-	revision string
-	manifest inspection.Manifest
-	primary  []byte
-	support  map[string][]byte
+type inspectionFixture = inspectiontest.Fixture
 
-	mu    sync.Mutex
-	paths []string
+func newInspectionFixture(t *testing.T, mutate inspectiontest.Mutate) *inspectionFixture {
+	return inspectiontest.NewFixture(t, mutate)
 }
 
-func (f *inspectionFixture) log() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.paths...)
+func newInspectionFixtureContent(t *testing.T, primary []byte, support map[string][]byte, mutate inspectiontest.Mutate) *inspectionFixture {
+	return inspectiontest.NewFixtureContent(t, primary, support, mutate)
 }
 
-func newInspectionFixture(t *testing.T, mutate func(f *inspectionFixture, wk *mpapi.WellKnown, rev *store.AssessedResourceRevision, manifestPayload *[]byte, bodies map[string][]byte)) *inspectionFixture {
-	return newInspectionFixtureContent(t,
-		[]byte("# Grill with docs\n\nPrimary inspection."),
-		map[string][]byte{
-			"notes.md": []byte("# Notes\n\nSupporting inspection."),
-			"logo.png": []byte("\x89PNG\r\n\x1a\nfake-image"),
-		}, mutate)
-}
-
-func newInspectionFixtureContent(t *testing.T, primary []byte, support map[string][]byte, mutate func(f *inspectionFixture, wk *mpapi.WellKnown, rev *store.AssessedResourceRevision, manifestPayload *[]byte, bodies map[string][]byte)) *inspectionFixture {
-	t.Helper()
-	f := &inspectionFixture{
-		revision: "sha256:" + strings.Repeat("a", 64),
-		primary:  primary,
-		support:  support,
-	}
-	coord := store.ResourceCoordinate{Marketplace: "test-instance", Registry: "registry-1", Kind: "skill", Name: "grill"}
-	projection, err := inspection.Build(coord, f.revision, f.primary, f.support, 10, 1<<20, 2<<20)
-	if err != nil {
-		t.Fatalf("inspection.Build: %v", err)
-	}
-	f.manifest = projection.Manifest
-	revision := store.ResourceRevision{Coordinate: coord, ContentDigest: store.RevisionDigest(f.revision)}
-	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
-		Coordinate:               coord,
-		ContentDigest:            revision.ContentDigest,
-		AnalyzerVersion:          "tui-test",
-		PolicyDigest:             store.PolicyDigest("sha256:" + strings.Repeat("c", 64)),
-		Decision:                 store.AssessmentDecisionAllow,
-		InspectionManifestDigest: store.RevisionDigest(projection.Manifest.ManifestDigest),
-		AssessedAt:               time.Unix(1, 0).UTC(),
-	})
-	if err != nil {
-		t.Fatalf("FinalizeResourceAssessment: %v", err)
-	}
-	rev := store.AssessedResourceRevision{
-		ResourceRevision: revision,
-		Assessment:       assessment,
-		Occurrence: store.ResourceOccurrence{
-			Coordinate:     coord,
-			ContentDigest:  revision.ContentDigest,
-			Commit:         strings.Repeat("a", 40),
-			ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64)),
-		},
-	}
-	wk := mpapi.DefaultWellKnown("test-instance", "https://market.example")
-	manifestPayload := projection.Payload
-	bodies := map[string][]byte{inspection.Digest(f.primary): f.primary}
-	for _, body := range f.support {
-		bodies[inspection.Digest(body)] = body
-	}
-	if mutate != nil {
-		mutate(f, &wk, &rev, &manifestPayload, bodies)
-	}
-	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		f.paths = append(f.paths, r.URL.Path)
-		f.mu.Unlock()
-		switch {
-		case r.URL.Path == "/.well-known/agent-marketplace.json":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(wk)
-		case r.URL.Path == "/api/v1/resources/registry-1/skill/grill/revisions/"+f.revision:
-			_ = json.NewEncoder(w).Encode(rev)
-		case strings.HasSuffix(r.URL.Path, "/inspection"):
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(manifestPayload)
-		case r.URL.Path == "/api/v1/resources/registry-1/skill/grill/revisions/"+f.revision+"/inspection/content":
-			w.Header().Set("Content-Type", inspection.MediaMarkdown)
-			_, _ = w.Write(f.primary)
-		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/registry-1/skill/grill/revisions/"+f.revision+"/inspection/content/"):
-			digest := strings.TrimPrefix(r.URL.Path, "/api/v1/resources/registry-1/skill/grill/revisions/"+f.revision+"/inspection/content/")
-			body, ok := bodies[digest]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			media := inspection.MediaMarkdown
-			for _, file := range projection.Manifest.Files {
-				if file.ContentDigest == digest {
-					media = file.MediaType
-				}
-			}
-			w.Header().Set("Content-Type", media)
-			_, _ = w.Write(body)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(f.server.Close)
-	return f
-}
-
-func (f *inspectionFixture) row() row {
+func inspectionFixtureRow(f *inspectionFixture) row {
+	endpoint := f.Endpoint()
+	item := f.Item()
 	return row{
 		Artifact: resolver.ResolvedArtifact{
-			Entry:                 catalog.Entry{Kind: ir.KindSkill, Name: "grill", Description: "inspected grill"},
+			Entry:                 catalog.Entry{Kind: ir.KindSkill, Name: item.Name, Description: item.Description},
 			IsMarketplace:         true,
-			MarketplaceURL:        f.server.URL,
-			MarketplaceInstanceID: "test-instance",
-			MarketplaceRegistryID: "registry-1",
+			MarketplaceURL:        endpoint.URL,
+			MarketplaceInstanceID: endpoint.InstanceID,
+			MarketplaceRegistryID: item.RegistryID,
 		},
-		IsAvailable: true,
-		MarketplaceDiscovery: &marketplaceDiscovery{
-			Endpoint: config.MarketplaceEntry{URL: f.server.URL, InstanceID: "test-instance"},
-			Item: mpapi.ResourceListItem{
-				RegistryID: "registry-1", RegistrySlug: "tools", Kind: "skill", Name: "grill",
-				Revision: f.revision, ContentDigest: f.revision,
-				Availability: mpapi.AvailabilityAvailable, Description: "inspected grill",
-			},
-		},
+		IsAvailable:          true,
+		MarketplaceDiscovery: &marketplaceDiscovery{Endpoint: endpoint, Item: item},
 	}
 }
 
@@ -184,7 +74,7 @@ func inspectionModelDirs(t *testing.T, r row, repoRoot, homeDir string, opts ...
 	return m
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	f := newInspectionFixture(t, nil)
 	repoRoot := t.TempDir()
@@ -220,7 +110,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 			return errors.New("mutate must not run")
 		},
 	}
-	m := inspectionModelDirs(t, f.row(), repoRoot, homeDir, WithDependencyLifecycle(lifecycle))
+	m := inspectionModelDirs(t, inspectionFixtureRow(f), repoRoot, homeDir, WithDependencyLifecycle(lifecycle))
 
 	m, cmd := enterDetail(t, m)
 	if cmd == nil {
@@ -232,7 +122,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	if out := ansi.Strip(m.detailViewport.View()); !contains(out, "Loading") {
 		t.Fatalf("pending inspection did not show a loading state:\n%s", out)
 	}
-	if got := f.log(); len(got) != 0 {
+	if got := f.Log(); len(got) != 0 {
 		t.Fatalf("inspection performed HTTP before the command ran: %v", got)
 	}
 
@@ -267,9 +157,9 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	if !contains(out, "Primary inspection.") {
 		t.Fatalf("inspection primary preview missing body:\n%s", out)
 	}
-	for _, path := range f.log() {
+	for _, path := range f.Log() {
 		if strings.Contains(path, "/inspection/content/") {
-			t.Fatalf("support file %q was fetched eagerly; requests: %v", path, f.log())
+			t.Fatalf("support file %q was fetched eagerly; requests: %v", path, f.Log())
 		}
 	}
 
@@ -299,13 +189,13 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 		t.Fatalf("image file preview leaked bytes or lost identity:\n%s", out)
 	}
 	var fetched []string
-	for _, path := range f.log() {
+	for _, path := range f.Log() {
 		if strings.Contains(path, "/inspection/content/") {
 			fetched = append(fetched, path)
 		}
 	}
 	notesDigest := ""
-	for _, file := range f.manifest.Files {
+	for _, file := range f.Manifest.Files {
 		if file.Path == "support/notes.md" {
 			notesDigest = file.ContentDigest
 		}
@@ -313,7 +203,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	if len(fetched) != 1 || !strings.HasSuffix(fetched[0], notesDigest) {
 		t.Fatalf("lazy file requests = %v, want exactly the notes.md digest %q", fetched, notesDigest)
 	}
-	for _, path := range f.log() {
+	for _, path := range f.Log() {
 		if strings.Contains(path, "/artifacts") || strings.Contains(path, "/install") || strings.HasSuffix(path, "/sync") {
 			t.Fatalf("inspection triggered a mutating request %q", path)
 		}
@@ -329,7 +219,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -346,27 +236,27 @@ func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 			rev.Assessment.InspectionManifestDigest = ""
 		}},
 		{name: "revision endpoint returns 404", row: func(f *inspectionFixture) row {
-			r := f.row()
+			r := inspectionFixtureRow(f)
 			r.MarketplaceDiscovery.Item.Revision = "sha256:" + strings.Repeat("d", 64)
 			return r
 		}},
 		{name: "inspection transport failure", row: func(f *inspectionFixture) row {
-			f.server.Close()
-			return f.row()
+			f.Server.Close()
+			return inspectionFixtureRow(f)
 		}},
 		{name: "discovery content digest mismatch", row: func(f *inspectionFixture) row {
-			r := f.row()
+			r := inspectionFixtureRow(f)
 			r.MarketplaceDiscovery.Item.ContentDigest = "sha256:" + strings.Repeat("f", 64)
 			return r
 		}},
 		{name: "primary body hash mismatch", mutate: func(f *inspectionFixture, _ *mpapi.WellKnown, _ *store.AssessedResourceRevision, _ *[]byte, _ map[string][]byte) {
-			f.primary = []byte("corrupted primary body")
+			f.Primary = []byte("corrupted primary body")
 		}},
 		{name: "manifest digest mismatch", mutate: func(_ *inspectionFixture, _ *mpapi.WellKnown, _ *store.AssessedResourceRevision, manifestPayload *[]byte, _ map[string][]byte) {
 			*manifestPayload = append(append([]byte(nil), *manifestPayload...), ' ')
 		}},
 		{name: "incomplete discovery coordinates", row: func(f *inspectionFixture) row {
-			r := f.row()
+			r := inspectionFixtureRow(f)
 			r.MarketplaceDiscovery.Item.Revision = ""
 			return r
 		}},
@@ -374,7 +264,7 @@ func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newInspectionFixture(t, tc.mutate)
-			r := f.row()
+			r := inspectionFixtureRow(f)
 			if tc.row != nil {
 				r = tc.row(f)
 			}
@@ -404,7 +294,7 @@ func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 
 	t.Run("primary success control", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		_, cmd := enterDetail(t, m)
 		msg, ok := cmd().(marketplaceDetailMsg)
 		if !ok || msg.err != nil {
@@ -413,7 +303,7 @@ func TestMarketplaceSkillInspectionFailsVisibly(t *testing.T) {
 	})
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 	oversize := func(sentinel string) []byte {
 		data := make([]byte, maxDetailSourceBytes+64)
@@ -427,7 +317,7 @@ func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 
 	t.Run("primary", func(t *testing.T) {
 		f := newInspectionFixtureContent(t, oversize("TAIL-SENTINEL-P"), map[string][]byte{"notes.md": []byte("# Notes\n\nSupporting inspection.")}, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		_, cmd := enterDetail(t, m)
 		msg := cmd().(marketplaceDetailMsg)
 		if msg.err != nil {
@@ -446,7 +336,7 @@ func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 		f := newInspectionFixtureContent(t,
 			[]byte("# Grill with docs\n\nPrimary inspection."),
 			map[string][]byte{"notes.md": oversize("TAIL-SENTINEL-S")}, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(cmd().(marketplaceDetailMsg))
 		m = updated.(Model)
@@ -467,7 +357,7 @@ func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 
 	t.Run("small support control", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(cmd().(marketplaceDetailMsg))
 		m = updated.(Model)
@@ -481,12 +371,12 @@ func TestMarketplaceSkillInspectionTruncatesOversizeBodies(t *testing.T) {
 	})
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionRejectsCorruptSupportFile(t *testing.T) {
 	f := newInspectionFixture(t, func(f *inspectionFixture, _ *mpapi.WellKnown, _ *store.AssessedResourceRevision, _ *[]byte, bodies map[string][]byte) {
-		bodies[inspection.Digest(f.support["notes.md"])] = []byte("corrupted notes body")
+		bodies[inspection.Digest(f.Support["notes.md"])] = []byte("corrupted notes body")
 	})
-	m := inspectionModel(t, f.row())
+	m := inspectionModel(t, inspectionFixtureRow(f))
 	m, cmd := enterDetail(t, m)
 	msg := cmd().(marketplaceDetailMsg)
 	if msg.err != nil {
@@ -503,11 +393,11 @@ func TestMarketplaceSkillInspectionRejectsCorruptSupportFile(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 	t.Run("result after escape is ignored", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		msg := cmd().(marketplaceDetailMsg)
 		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -521,12 +411,12 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 
 	t.Run("result for another resource is ignored", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		msg := cmd().(marketplaceDetailMsg)
 		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 		m = updated.(Model)
-		other := f.row()
+		other := inspectionFixtureRow(f)
 		other.Artifact.Name = "other"
 		other.MarketplaceDiscovery.Item.Name = "other"
 		m.rows = []row{other}
@@ -543,7 +433,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 
 	t.Run("resize while initial load pending reflows at current width", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 		m = updated.(Model)
@@ -572,7 +462,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 
 	t.Run("support response after escape and reopen is ignored", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(cmd().(marketplaceDetailMsg))
 		m = updated.(Model)
@@ -583,7 +473,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 		}
 		updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 		m = updated.(Model)
-		other := f.row()
+		other := inspectionFixtureRow(f)
 		other.Artifact.Name = "other"
 		other.MarketplaceDiscovery.Item.Name = "other"
 		m.rows = []row{other}
@@ -601,7 +491,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 
 	t.Run("resize while support fetch pending rejects the stale result", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(cmd().(marketplaceDetailMsg))
 		m = updated.(Model)
@@ -626,7 +516,7 @@ func TestMarketplaceSkillInspectionStaleResponses(t *testing.T) {
 
 	t.Run("same row snapshot preserves the accepted tree", func(t *testing.T) {
 		f := newInspectionFixture(t, nil)
-		m := inspectionModel(t, f.row())
+		m := inspectionModel(t, inspectionFixtureRow(f))
 		m, cmd := enterDetail(t, m)
 		updated, _ := m.Update(cmd().(marketplaceDetailMsg))
 		m = updated.(Model)

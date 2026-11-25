@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func TestSyncCLIAndTUIParity(t *testing.T) {
@@ -64,7 +65,7 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 				if !report.InSync() {
 					t.Errorf("TUI reports drift after CLI sync: writes=%d, removals=%d", report.TotalWritten(), report.TotalRemoved())
 				}
-				if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
+				if _, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 					t.Fatal(err)
 				}
 				assertLink := func() {

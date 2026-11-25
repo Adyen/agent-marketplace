@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -50,7 +51,7 @@ func loadPluginForInspection(ctx context.Context, locator string) (pipeline.Reso
 	if err != nil {
 		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
 	}
-	if err := prepareDependencyTransactions(ctx, true); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, true); err != nil {
 		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
 	}
 	workspace, err := pipeline.NewWorkspace(config.FindRepoRoot(), config.FindLocalConfigDir())

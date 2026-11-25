@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // TestStaleProgressPollDoesNotSpawnPump proves an idle wake from a finished
@@ -45,6 +46,7 @@ func TestStaleProgressPollDoesNotSpawnPump(t *testing.T) {
 // update completion cannot finish the operation early: progress and
 // serialization stay active through the authoritative reload and only
 // resolve when the fresh snapshot is accepted or fails.
+// spec: session-interactions/cancel-or-stale-completion
 // spec: tui-interactions/cancel-or-stale-completion
 func TestStaleUpdateDoneKeepsOperationActiveThroughReload(t *testing.T) {
 	m := progressTestModel(t)
@@ -59,7 +61,7 @@ func TestStaleUpdateDoneKeepsOperationActiveThroughReload(t *testing.T) {
 	// completion message arrives.
 	m.beginRequest(requestSnapshot)
 
-	next, cmd := m.Update(updateDoneMsg{generation: gen1, stage: updateStageMaterialization, warnings: []error{warning}})
+	next, cmd := m.Update(updateDoneMsg{generation: gen1, stage: session.UpdateStageMaterialization, warnings: []error{warning}})
 	m = next.(Model)
 	if !m.syncing {
 		t.Fatal("superseded update completion finished the operation before its reload")
@@ -78,7 +80,7 @@ func TestStaleUpdateDoneKeepsOperationActiveThroughReload(t *testing.T) {
 	}
 
 	next, _ = m.Update(snapshotLoadedMsg{
-		generation:      m.requests.active(requestSnapshot),
+		generation:      m.requests.Active(requestSnapshot),
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftReady,
 	})
@@ -105,12 +107,12 @@ func TestStaleUpdateReloadFailureEndsOperation(t *testing.T) {
 	m.beginOperationProgress("update", gen1)
 	m.beginRequest(requestSnapshot)
 
-	next, _ := m.Update(updateDoneMsg{generation: gen1, stage: updateStageMaterialization, warnings: []error{pendingWarning}})
+	next, _ := m.Update(updateDoneMsg{generation: gen1, stage: session.UpdateStageMaterialization, warnings: []error{pendingWarning}})
 	m = next.(Model)
 
 	m.errs = []error{errors.New("reload failed")}
 	next, _ = m.Update(snapshotLoadedMsg{
-		generation: m.requests.active(requestSnapshot),
+		generation: m.requests.Active(requestSnapshot),
 		// mergedCfg nil + errs → failed authoritative reload.
 	})
 	m = next.(Model)

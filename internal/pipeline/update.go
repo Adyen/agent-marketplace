@@ -29,6 +29,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -151,6 +152,12 @@ type UpdateResult struct {
 
 // Update refreshes selected Git dependency locks and syncs enabled resources.
 func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retErr error) {
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
 	tel := telemetry.TelemetryFromContext(ctx)
 	var updateSpan telemetry.Span
 	if tel != nil {

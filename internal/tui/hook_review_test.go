@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
@@ -25,8 +26,8 @@ func TestCompletedHookReviewSurvivesTUIReload(t *testing.T) {
 			}}}
 			warning := pipeline.PromoteDiagnostic(diag.Diagnostic{Code: diag.CodeMaterializeHookReview, Severity: diag.SeverityWarning, Message: "review changed hooks"})
 			failure := errors.New("independent materialization failed")
-			previousSync, previousSnapshot := runPipelineSync, readSnapshotForUpdate
-			runPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
+			previousSync, previousSnapshot := session.RunPipelineSync, readSnapshotForUpdate
+			session.RunPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 				result := pipeline.SyncResult{Report: report}
 				if len(report.HookChanges) > 0 {
 					result.Warnings = []error{warning}
@@ -39,7 +40,7 @@ func TestCompletedHookReviewSurvivesTUIReload(t *testing.T) {
 			readSnapshotForUpdate = func(context.Context, pipeline.Workspace, string, catalogLoadMode) snapshotLoadedMsg {
 				return snapshotLoadedMsg{mergedCfg: &config.Config{}, driftAssessment: driftReady}
 			}
-			t.Cleanup(func() { runPipelineSync, readSnapshotForUpdate = previousSync, previousSnapshot })
+			t.Cleanup(func() { session.RunPipelineSync, readSnapshotForUpdate = previousSync, previousSnapshot })
 			model := NewModel(t.TempDir(), t.TempDir())
 			model.loading = false
 			model.syncing = true
@@ -67,7 +68,7 @@ func TestCompletedHookReviewSurvivesTUIReload(t *testing.T) {
 			}
 			updated, _ := model.Update(message)
 			model = updated.(Model)
-			updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
+			updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.Active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
 			model = updated.(Model)
 			if model.pane != paneErrors {
 				t.Fatalf("%s left review hidden in pane %v", operation, model.pane)
@@ -102,7 +103,7 @@ func TestCompletedHookReviewSurvivesTUIReload(t *testing.T) {
 			model.syncing = true
 			updated, _ = model.Update(model.dependencySyncCmd()())
 			model = updated.(Model)
-			updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
+			updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.Active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
 			model = updated.(Model)
 			if strings.Contains(renderErrors(model), "Hook changes:") {
 				t.Fatal("unchanged sync retained the previous hook review")
@@ -124,7 +125,7 @@ func TestSyncAndQuitPresentsMaterializationWarnings(t *testing.T) {
 	if cmdProducesQuitMsg(cmd) {
 		t.Fatal("sync-and-quit discarded a materialization warning")
 	}
-	updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
+	updated, _ = model.Update(snapshotLoadedMsg{generation: model.requests.Active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	model = updated.(Model)
 	if model.pane != paneErrors || !strings.Contains(renderErrors(model), "skill.allowed-tools-omitted") || model.syncQuitErr != nil {
 		t.Fatalf("warning-only sync did not remain reviewable and successful: pane=%v warnings=%v err=%v", model.pane, model.warnings, model.syncQuitErr)
@@ -141,7 +142,7 @@ func TestPreMaterializationFailureKeepsCompletedReviewAndWarnings(t *testing.T) 
 		t.Helper()
 		next, _ := model.Update(done)
 		model = next.(Model)
-		next, _ = model.Update(snapshotLoadedMsg{generation: model.requests.active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
+		next, _ = model.Update(snapshotLoadedMsg{generation: model.requests.Active(requestSnapshot), mergedCfg: &config.Config{}, driftAssessment: driftReady})
 		model = next.(Model)
 	}
 	finish(syncDoneMsg{report: report, warnings: []error{review}})

@@ -57,7 +57,7 @@ func TestOlderManualReloadCannotSupersedeNewerSnapshot(t *testing.T) {
 
 	updated, cmd := m.Update(reloadMsg(snapshotLoadedMsg{generation: older}))
 	m = updated.(Model)
-	if got := m.requests.active(requestSnapshot); got != newer {
+	if got := m.requests.Active(requestSnapshot); got != newer {
 		t.Fatalf("stale reload replaced generation %d with %d", newer, got)
 	}
 	if cmd != nil || m.browseLoading || m.discoveryLoading {
@@ -203,7 +203,7 @@ func TestWhitespaceSearchCancelsInFlightDiscovery(t *testing.T) {
 		t.Fatal("search did not start discovery")
 	}
 	defer m.cancelMarketplaceLoads()
-	generation := m.requests.active(requestDiscovery)
+	generation := m.requests.Active(requestDiscovery)
 	m.beginMarketplaceDiscovery(" ", false)
 	updated, _ := m.Update(discoveryLoadedMsg{
 		generation: generation,

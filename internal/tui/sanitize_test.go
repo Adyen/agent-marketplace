@@ -5,13 +5,14 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSanitizeTerminalDataFixtures(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		mode  terminalDataMode
+		mode  session.TerminalDataMode
 		input string
 		want  string
 	}{
@@ -35,7 +36,7 @@ func TestSanitizeTerminalDataFixtures(t *testing.T) {
 func TestNeedsSanitizingAgreesWithTransform(t *testing.T) {
 	for _, test := range []struct {
 		value string
-		mode  terminalDataMode
+		mode  session.TerminalDataMode
 	}{
 		{value: "ordinary printable text", mode: terminalSingleLine},
 		{value: "line one\nline two", mode: terminalMarkdownBody},
@@ -47,7 +48,7 @@ func TestNeedsSanitizingAgreesWithTransform(t *testing.T) {
 		{value: "benign &amp; entity", mode: terminalMarkdownBody},
 	} {
 		changed := sanitizeTerminalData(test.value, test.mode) != test.value
-		if got := terminalDataNeedsSanitizing(test.value, test.mode); got != changed {
+		if got := session.TerminalDataNeedsSanitizing(test.value, test.mode); got != changed {
 			t.Fatalf("needsSanitizing(%q, %v) = %v, transform changed=%v", test.value, test.mode, got, changed)
 		}
 	}

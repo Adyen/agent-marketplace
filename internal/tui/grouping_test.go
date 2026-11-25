@@ -423,10 +423,10 @@ func TestGroupedSearchMatchesKindAndSource(t *testing.T) {
 			t.Fatalf("%v: kind search found %v, want [gamma-mcp]", combo, names)
 		}
 		r, _ := m.selectedRow()
-		if r.searchNameMatch {
+		if r.SearchNameMatch {
 			t.Fatalf("%v: kind match must be metadata-only (no name match)", combo)
 		}
-		if len(r.searchMatchRunes) != 0 {
+		if len(r.SearchMatchRunes) != 0 {
 			t.Fatalf("%v: metadata-only match must not mark name runes", combo)
 		}
 		// Sections without matches are hidden.
@@ -456,7 +456,7 @@ func TestGroupedSearchMatchesKindAndSource(t *testing.T) {
 		}
 		// "frontend" is metadata-only for all of them.
 		for _, it := range m.flatItems {
-			if it.Kind == flatArtifact && it.Row.searchNameMatch {
+			if it.Kind == flatArtifact && it.Row.SearchNameMatch {
 				t.Fatalf("%v: source-label match marked name match on %q", combo, it.Row.Artifact.Name)
 			}
 		}
@@ -500,7 +500,7 @@ func TestGroupedSearchNameMatchOutranksMetadata(t *testing.T) {
 	if !ok || r.Artifact.Name != "alpha-skill" {
 		t.Fatalf("name match should select alpha-skill, got %+v", r.Artifact.Name)
 	}
-	if !r.searchNameMatch {
+	if !r.SearchNameMatch {
 		t.Fatalf("alpha-skill should be a name match")
 	}
 	var metadataRow *row
@@ -509,7 +509,7 @@ func TestGroupedSearchNameMatchOutranksMetadata(t *testing.T) {
 			metadataRow = &m.filteredRows[i]
 		}
 	}
-	if metadataRow == nil || metadataRow.searchNameMatch {
+	if metadataRow == nil || metadataRow.SearchNameMatch {
 		t.Fatalf("competing row must be present as a metadata-only match")
 	}
 }

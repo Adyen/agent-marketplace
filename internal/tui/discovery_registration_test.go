@@ -149,8 +149,10 @@ func TestDiscoveryRegistrationTUIRejectsLateGenerationsAndEndpointChanges(t *tes
 			m := newTestModel()
 			declaration := config.MarketplaceEntry{URL: "https://old.example", Alias: "public"}
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{declaration}}
-			m.beginMarketplaceDiscovery("review", true)
-			oldGeneration := m.requests.active(requestDiscovery)
+
+			m.beginMarketplaceDiscovery("", true)
+			oldGeneration := m.requests.Active(requestDiscovery)
+
 			returned := declaration
 			returned.InstanceID = "old-instance"
 			late := registrationDiscoveryOutcome(returned, "late")
@@ -161,15 +163,17 @@ func TestDiscoveryRegistrationTUIRejectsLateGenerationsAndEndpointChanges(t *tes
 				current.InstanceID = "new-instance"
 			}
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{current}}
-			m.beginMarketplaceDiscovery("review", true)
-			generation := m.requests.active(requestDiscovery)
+
+			m.beginMarketplaceDiscovery("", true)
+			generation := m.requests.Active(requestDiscovery)
+
 			for _, msg := range []discoveryLoadedMsg{
 				{generation: oldGeneration, sequence: 1, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}},
 				{generation: oldGeneration, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}, done: true},
 			} {
 				updated, _ := m.Update(msg)
 				m = updated.(Model)
-				if len(m.discoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || m.requests.active(requestDiscovery) != generation {
+				if len(m.discoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || m.requests.Active(requestDiscovery) != generation {
 					t.Fatalf("late source-only generation attached metadata: %#v", m.discoveryOutcomes)
 				}
 			}

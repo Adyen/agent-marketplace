@@ -22,6 +22,8 @@ var categories = []string{
 	"container_web",
 	"container_site",
 	"helm",
+	"gui_distribution",
+	"gui_native_events",
 }
 
 var benchmarkRoots = []string{
@@ -160,6 +162,25 @@ func classifyPath(p string) (map[string]bool, error) {
 
 	if isLicenseOrNotice(p) {
 		return c, nil
+	}
+
+	switch {
+	case strings.HasPrefix(p, "gui/"),
+		strings.HasPrefix(p, "packaging/gui/"),
+		strings.HasPrefix(p, "scripts/gui-"),
+		strings.HasPrefix(p, "tools/gui-release-check/"):
+		c["gui_distribution"] = true
+		c["gui_native_events"] = true
+		return c, nil
+	case strings.HasPrefix(p, "cmd/agent-marketplace-gui/"),
+		strings.HasPrefix(p, "internal/guiupdate/"),
+		strings.HasPrefix(p, "internal/localapi/release"),
+		strings.HasPrefix(p, "internal/localapi/update"):
+		c["gui_distribution"] = true
+		c["gui_native_events"] = true
+	}
+	if strings.HasPrefix(p, "internal/localapi/") && !proseOnly(p) {
+		c["gui_native_events"] = true
 	}
 
 	switch p {

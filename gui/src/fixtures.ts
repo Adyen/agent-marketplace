@@ -1,0 +1,122 @@
+import type { Configuration, SessionEvent, Snapshot, SourceDescription } from './api/client'
+import type { Row } from './controller'
+
+export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): Snapshot {
+  return {
+    stage: 'final',
+    drift: 'ready',
+    rows,
+    groups: [
+      { id: 'required', title: 'Required' },
+      { id: 'enabled', title: 'Enabled' },
+      { id: 'pending', title: 'Pending sync' },
+      { id: 'stale', title: 'Stale' },
+      { id: 'broken', title: 'Broken' },
+      { id: 'available', title: 'Available' },
+      { id: 'malformed', title: 'Malformed' },
+    ],
+    diagnostics: [],
+    harnesses: ['devin'],
+    pendingChanges: 0,
+    availableUpdates: 0,
+    discoveryEnabled: false,
+    discoveryHealth: [],
+    discoveryQuery: '',
+    discoveryRequestId: 0,
+    discoverySequence: 0,
+    discoveryLoading: false,
+    operation: null,
+    ...overrides,
+  }
+}
+
+export function row(name: string, overrides: Partial<Row> = {}): Row {
+  return {
+    id: `skill/${name}#${name.length.toString(16)}`,
+    name,
+    displayName: name,
+    searchName: name.toLowerCase(),
+    searchWords: [name.toLowerCase()],
+    kind: 'skill',
+    description: `${name} description`,
+    registry: 'local',
+    source: { id: 'local', label: '(local)' },
+    scope: 'user',
+    required: false,
+    pendingVerification: false,
+    checked: true,
+    disabled: false,
+    harnessOverride: false,
+    harnesses: ['devin'],
+    status: 'enabled',
+    group: 'enabled',
+    discovery: false,
+    inspectable: false,
+    installedFiles: false,
+    resourceAction: 'none',
+    ...overrides,
+  }
+}
+
+export function event(overrides: Partial<SessionEvent>): SessionEvent {
+  return { type: 'snapshot', sequence: 0, generation: 1, operation: null, payload: snapshot(), ...overrides } as SessionEvent
+}
+
+export function source(overrides: Partial<SourceDescription> = {}): SourceDescription {
+  return {
+    id: 'src-1',
+    name: '',
+    kind: 'directory',
+    location: '/home/dev/registry',
+    path: '',
+    ref: '',
+    sourceHarness: '',
+    rowSourceId: '',
+    ...overrides,
+  }
+}
+
+export const defaultSettings: Configuration['settings'] = {
+  backup: {
+    enabled: { value: true, default: true, source: 'default', locked: false },
+    maxDays: { value: 14, default: 14, source: 'default', locked: false },
+    maxPerDay: { value: 10, default: 10, source: 'default', locked: false },
+  },
+  logging: {
+    enabled: { value: true, default: true, source: 'default', locked: false },
+    level: { value: 'info', default: 'info', source: 'default', locked: false },
+    file: { value: null, default: null, source: 'default', locked: false },
+    maxSizeMB: { value: 10, default: 10, source: 'default', locked: false },
+    maxBackups: { value: 5, default: 5, source: 'default', locked: false },
+    maxAgeDays: { value: 30, default: 30, source: 'default', locked: false },
+    compress: { value: true, default: true, source: 'default', locked: false },
+  },
+  updateCheck: { enabled: { value: true, default: true, source: 'default', locked: false } },
+  materialization: {
+    mode: { value: 'symlink', default: 'symlink', source: 'default', locked: false },
+    targets: { value: {}, default: {}, source: 'default', locked: false },
+  },
+  telemetry: { level: { value: null, default: null, source: 'default', locked: false } },
+  }
+
+export function configuration(overrides: Partial<Configuration> = {}): Configuration {
+  return {
+    userTargets: ['devin'],
+    organizationTargets: [],
+    userSources: [source({ id: 'default-source' })],
+    organizationSources: [],
+    supportedTargets: ['devin'],
+    rootPresent: true,
+    editable: true,
+    managedOutsideGUI: [],
+    firstRun: false,
+    canInitialize: false,
+    detectedTargets: [],
+    detectionUnavailable: false,
+    consentRequired: false,
+    telemetryDestination: 'not configured',
+    retentionPolicyURL: 'not configured',
+    settings: defaultSettings,
+    ...overrides,
+  }
+}

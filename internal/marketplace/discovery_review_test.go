@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +19,13 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
-// spec: tui-startup/cold-startup-browses-beyond-the-first-page
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestDiscoveryCacheNilLoadReturnsMiss(t *testing.T) {
+	var cache *DiscoveryCache
+	if _, ok := cache.Load(config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}, "", "", DiscoveryPageLimit); ok {
+		t.Fatal("nil discovery cache returned a hit")
+	}
+}
+
 func TestDiscoverOverlappingPagesRemainPartialAndUncached(t *testing.T) {
 	for _, mode := range []string{"browse", "kind"} {
 		t.Run(mode, func(t *testing.T) {
@@ -27,13 +33,13 @@ func TestDiscoverOverlappingPagesRemainPartialAndUncached(t *testing.T) {
 			for i := range items {
 				items[i] = canonicalSearchItem("registry", "mcpserver", fmt.Sprintf("item-%02d", i), 0)
 			}
-			var requests int
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/.well-known/agent-marketplace.json" {
 					writeTestWellKnown(w, "overlapping-"+mode)
 					return
 				}
-				requests++
+				requests.Add(1)
 				offset := 0
 				_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 				if mode == "kind" {
@@ -62,15 +68,37 @@ func TestDiscoverOverlappingPagesRemainPartialAndUncached(t *testing.T) {
 				query = "needle"
 				opts.IncludeKind = "mcpserver"
 			}
-			outcomes, err := Discover(context.Background(), ec, query, opts)
-			if err != nil || len(outcomes) != 1 {
-				t.Fatalf("discovery = %#v, err=%v", outcomes, err)
+			var outcomes []DiscoveryOutcome
+			if mode == "browse" {
+				updates, err := DiscoverUpdates(context.Background(), ec, query, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for snapshot := range updates {
+					if len(snapshot) != 1 {
+						t.Fatalf("browse snapshot = %#v, want one endpoint", snapshot)
+					}
+					outcome := snapshot[0]
+					if len(outcome.Items) < outcome.Total && !outcome.Truncated {
+						t.Errorf("browse snapshot claims completion with %d items of %d", len(outcome.Items), outcome.Total)
+					}
+					outcomes = snapshot
+				}
+			} else {
+				var err error
+				outcomes, err = Discover(context.Background(), ec, query, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(outcomes) != 1 {
+				t.Fatalf("discovery = %#v", outcomes)
 			}
 			if outcomes[0].Err == nil || !outcomes[0].Truncated || len(outcomes[0].Items) != DiscoveryPageLimit {
 				t.Fatalf("overlapping scan = %d items, total %d, truncated %t, err %v; want partial inventory and error", len(outcomes[0].Items), outcomes[0].Total, outcomes[0].Truncated, outcomes[0].Err)
 			}
-			if requests < 2 {
-				t.Fatalf("requests = %d, want the overlapping later page to be exercised", requests)
+			if got := requests.Load(); got < 2 {
+				t.Fatalf("requests = %d, want the overlapping later page to be exercised", got)
 			}
 			records, err := filepath.Glob(filepath.Join(cache.root, "*", "*.json"))
 			if err != nil {
@@ -83,7 +111,91 @@ func TestDiscoverOverlappingPagesRemainPartialAndUncached(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/warm-startup-and-empty-endpoints-remain-usable
+func TestDiscoverBrowseChangingTotalRemainsPartialAndUncached(t *testing.T) {
+	const limit = 2
+	items := make([]mpapi.ResourceListItem, 0, 4)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		items = append(items, canonicalSearchItem("registry", "skill", name, 0))
+	}
+
+	for _, tc := range []struct {
+		name       string
+		firstTotal int
+		laterTotal int
+		laterItems []mpapi.ResourceListItem
+		wantNames  []string
+	}{
+		{"empty-shrink", 3, 2, items[:0], []string{"a", "b"}},
+		{"nonempty-shrink", 4, 3, items[3:], []string{"a", "b", "d"}},
+		{"growth", 3, 4, items[2:], []string{"a", "b", "c", "d"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instanceID := "changing-total-" + tc.name
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/.well-known/agent-marketplace.json" {
+					writeTestWellKnown(w, instanceID)
+					return
+				}
+				if r.URL.Path != "/api/v1/search" || r.URL.Query().Get("limit") != "2" {
+					t.Errorf("unexpected request: %s", r.URL)
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+					return
+				}
+				var page SearchResponse
+				switch r.URL.Query().Get("offset") {
+				case "":
+					page = SearchResponse{Items: items[:limit], Total: tc.firstTotal, Limit: limit}
+				case "2":
+					page = SearchResponse{Items: tc.laterItems, Total: tc.laterTotal, Offset: limit, Limit: limit}
+				default:
+					t.Errorf("unexpected page offset: %s", r.URL)
+					http.Error(w, "unexpected page offset", http.StatusBadRequest)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(page)
+			}))
+			defer server.Close()
+
+			endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: instanceID}
+			ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}}
+			cache := NewDiscoveryCache(t.TempDir())
+			updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: cache, Limit: limit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var final DiscoveryOutcome
+			var snapshots int
+			for snapshot := range updates {
+				snapshots++
+				if len(snapshot) != 1 {
+					t.Errorf("browse snapshot = %#v, want one endpoint", snapshot)
+					continue
+				}
+				final = snapshot[0]
+				if !final.Truncated {
+					t.Errorf("snapshot %d falsely claims completion with %d items and total %d", snapshots, len(final.Items), final.Total)
+				}
+			}
+			if snapshots < 2 || final.Err == nil {
+				t.Errorf("final outcome: %d snapshots, error %v; want progress and a final endpoint error", snapshots, final.Err)
+			}
+			if want := max(tc.firstTotal, tc.laterTotal); final.Total != want {
+				t.Errorf("final total = %d, want %d", final.Total, want)
+			}
+			names := make([]string, 0, len(final.Items))
+			for _, item := range final.Items {
+				names = append(names, item.Name)
+			}
+			if !slices.Equal(names, tc.wantNames) {
+				t.Errorf("received names = %v, want %v", names, tc.wantNames)
+			}
+			if cached, ok := cache.loadBrowse(endpoint, limit); ok {
+				t.Errorf("changing-total browse was cached: %d items, total %d, truncated %t", len(cached.Items), cached.Total, cached.Truncated)
+			}
+		})
+	}
+}
+
 func TestDiscoverCompleteBrowseDoesNotReplaceLegacySinglePageCache(t *testing.T) {
 	items := make([]mpapi.ResourceListItem, DiscoveryPageLimit+12)
 	for i := range items {
@@ -141,7 +253,84 @@ func TestDiscoverCompleteBrowseDoesNotReplaceLegacySinglePageCache(t *testing.T)
 	}
 }
 
-// spec: tui-startup/offline-partial-and-denied-discovery-preserve-useful-browsing
+func TestDiscoverCompleteLiveBrowseDoesNotOverlayStaleRows(t *testing.T) {
+	const instanceID = "stale-overlay"
+	const limit = 1
+	liveItems := []mpapi.ResourceListItem{
+		canonicalSearchItem("registry", "skill", "live-first", 0),
+		canonicalSearchItem("registry", "skill", "live-last", 0),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, instanceID)
+		case "/api/v1/search":
+			offset := 0
+			_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+			if offset < 0 || offset >= len(liveItems) || r.URL.Query().Get("limit") != "1" {
+				http.Error(w, "unexpected paging request", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(SearchResponse{
+				Items: liveItems[offset : offset+limit], Total: len(liveItems), Offset: offset, Limit: limit,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	endpoint := config.MarketplaceEntry{URL: server.URL, InstanceID: instanceID}
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := cache.storeBrowse(DiscoveryOutcome{
+		Endpoint:   endpoint,
+		Items:      []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "cached-only", 0)},
+		Total:      1,
+		ObservedAt: time.Now().Add(-DiscoveryFreshTTL - time.Second),
+	}, limit); err != nil {
+		t.Fatal(err)
+	}
+	ec := config.EffectiveConfig{Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{endpoint}}}
+	updates, err := DiscoverUpdates(context.Background(), ec, "", DiscoveryOptions{Cache: cache, Limit: limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantLive := []string{"live-first", "live-last"}
+	var finalNames []string
+	var sawInitial, sawOverlay bool
+	for snapshot := range updates {
+		if len(snapshot) != 1 || snapshot[0].Err != nil {
+			t.Fatalf("browse snapshot = %#v; want one successful endpoint", snapshot)
+		}
+		outcome := snapshot[0]
+		names := make([]string, len(outcome.Items))
+		for i, item := range outcome.Items {
+			names[i] = item.Name
+		}
+		finalNames = names
+		switch {
+		case !sawInitial:
+			sawInitial = true
+			if outcome.Truncated || outcome.CacheState != DiscoveryCacheStale || !slices.Equal(names, []string{"cached-only"}) {
+				t.Errorf("initial snapshot = %v, cache=%s, truncated=%t; want cached-only stale catalog", names, outcome.CacheState, outcome.Truncated)
+			}
+		case outcome.Truncated:
+			sawOverlay = sawOverlay || slices.Equal(names, []string{"live-first", "cached-only"})
+		default:
+			if outcome.CacheState != DiscoveryCacheMiss || !slices.Equal(names, wantLive) {
+				t.Errorf("complete live snapshot = %v, cache=%s; want %v, cache=%s", names, outcome.CacheState, wantLive, DiscoveryCacheMiss)
+			}
+		}
+	}
+	if !sawOverlay {
+		t.Error("no truncated snapshot included live-first and cached-only")
+	}
+	if !slices.Equal(finalNames, wantLive) {
+		t.Errorf("final snapshot = %v; want %v", finalNames, wantLive)
+	}
+}
+
 func TestDiscoverFreshBrowseCacheOverlaysReceivedRowsUntilLaterPageFails(t *testing.T) {
 	cachedItems := make([]mpapi.ResourceListItem, DiscoveryPageLimit)
 	for i := range cachedItems {

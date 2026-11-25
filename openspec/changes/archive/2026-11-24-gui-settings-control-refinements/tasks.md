@@ -1,0 +1,3 @@
+- [x] Add source keyboard submission and cancellation scenario coverage.
+- [x] Add backup and logging dependent-control scenario coverage.
+- [x] Run focused Vitest and OpenSpec checks. The commit hooks passed; `make validate` reported the existing CGO-disabled `shutdownTimeout` lint error.

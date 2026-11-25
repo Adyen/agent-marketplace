@@ -1,0 +1,6 @@
+- [x] Fix the staged-edit conflict in transient organization Marketplace acquisition, with a regression test.
+- [x] Accept a Git source without a ref and resolve the default branch.
+- [x] Add the source preview endpoint and the Add source preview step.
+- [x] Stop showing validation errors for blank fields; summarise failures in plain words.
+- [x] Update `gui/DESIGN.md`, unit tests, and Playwright tests.
+- [x] Run validation and commit. The commit hooks passed; `make validate` reported the existing CGO-disabled `shutdownTimeout` lint error.

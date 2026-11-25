@@ -1,0 +1,645 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { source } from './fixtures'
+import { VIEW_STORAGE_KEY } from './grouping'
+import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
+
+const inspectorStorageKey = 'am-gui-inspector'
+const appearanceStorageKey = 'vitepress-theme-appearance'
+
+type Mounted = ReturnType<typeof mountWorkspace>['wrapper']
+
+async function mountShell(rows = [row('a')]) {
+  const { client, push } = fakeClient()
+  const { wrapper, controller } = mountWorkspace(client)
+  push(event({ sequence: 1, payload: snapshot(rows) }))
+  await tick()
+  return { client, push, wrapper, controller }
+}
+
+function button(wrapper: Mounted, label: string) {
+  return wrapper.get(`button[aria-label="${label}"]`)
+}
+
+function keydown(target: EventTarget, init: KeyboardEventInit) {
+  target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+}
+
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width, writable: true })
+}
+
+beforeEach(() => {
+  window.localStorage.clear()
+  document.documentElement.classList.remove('dark')
+  setViewportWidth(1200)
+})
+
+afterEach(() => {
+  setViewportWidth(1024)
+  vi.restoreAllMocks()
+})
+
+describe('panel toggles', () => {
+  it('keeps the sidebar docked without a toggle at every width', async () => {
+    setViewportWidth(500)
+    const { wrapper } = await mountShell()
+    const sidebar = wrapper.get('aside[aria-label="Navigation"]')
+    expect(sidebar.classes()).not.toContain('gui-sidebar--overlay')
+    expect(sidebar.element.hasAttribute('inert')).toBe(false)
+    expect(wrapper.findAll('button[aria-label="Toggle sidebar"]')).toHaveLength(0)
+    expect(wrapper.find('.gui-scrim').exists()).toBe(false)
+  })
+
+  it('folds the inspector from its named toggle and restores the stored fold on mount', async () => {
+    window.localStorage.setItem(inspectorStorageKey, 'folded')
+    const { wrapper } = await mountShell()
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    expect(inspector.element.hasAttribute('inert')).toBe(true)
+
+    await button(wrapper, 'Toggle inspector').trigger('click')
+    await tick()
+
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem(inspectorStorageKey)).toBe('open')
+  })
+
+  it('toggles the inspector with ⌘⌥B and leaves ⌘B alone', async () => {
+    const { wrapper } = await mountShell()
+    const sidebar = wrapper.get('aside[aria-label="Navigation"]')
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+
+    keydown(document.body, { key: 'b', code: 'KeyB', metaKey: true })
+    await tick()
+    expect(sidebar.element.hasAttribute('inert')).toBe(false)
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+
+    keydown(document.body, { key: '∫', code: 'KeyB', metaKey: true, altKey: true })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem(inspectorStorageKey)).toBe('folded')
+  })
+
+  it('moves focus to the toggle when folding the panel that holds focus', async () => {
+    const { wrapper } = await mountShell([row('a', { inspectable: true })])
+    const openResource = button(wrapper, 'Open resource').element as HTMLButtonElement
+    openResource.focus()
+    keydown(document.body, { key: '∫', code: 'KeyB', metaKey: true, altKey: true })
+    await tick()
+    expect(document.activeElement).toBe(button(wrapper, 'Toggle inspector').element)
+  })
+
+  it('starts with the inspector folded below 1000 px and dismisses its overlay with Escape', async () => {
+    setViewportWidth(900)
+    const { wrapper } = await mountShell()
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+
+    await button(wrapper, 'Toggle inspector').trigger('click')
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--overlay')
+    expect(wrapper.find('.gui-scrim').exists()).toBe(true)
+
+    keydown(document.body, { key: 'Escape' })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    expect(wrapper.find('.gui-scrim').exists()).toBe(false)
+  })
+})
+
+describe('appearance control', () => {
+  async function chooseAppearance(value: 'system' | 'light' | 'dark') {
+    const input = document.querySelector<HTMLInputElement>(`input[name="am-appearance"][value="${value}"]`)
+    expect(input).not.toBeNull()
+    input!.checked = true
+    input!.dispatchEvent(new Event('change', { bubbles: true }))
+    await tick()
+  }
+
+  it('System, Light, and Dark set and clear the dark class and the stored choice', async () => {
+    const { wrapper } = await mountShell()
+    await button(wrapper, 'Settings').trigger('click')
+    await tick()
+
+    await chooseAppearance('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(window.localStorage.getItem(appearanceStorageKey)).toBe('dark')
+
+    await chooseAppearance('light')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(window.localStorage.getItem(appearanceStorageKey)).toBe('light')
+
+    await chooseAppearance('dark')
+    await chooseAppearance('system')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(window.localStorage.getItem(appearanceStorageKey)).toBeNull()
+  })
+})
+
+describe('sidebar navigation', () => {
+  it('Group rows select and bring their group into view', async () => {
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => undefined)
+    const { wrapper } = await mountShell([row('a'), row('p', { group: 'pending', status: 'pending' })])
+    const pendingSection = () => wrapper.get('button.workspace__group-toggle[aria-label="Pending sync"]')
+    expect(pendingSection().attributes('aria-current')).toBeUndefined()
+
+    await wrapper.get('button[aria-label="Show Pending sync group"]').trigger('click')
+    await tick()
+    expect(pendingSection().attributes('aria-current')).toBe('true')
+    expect(scrollIntoView).toHaveBeenCalled()
+
+    await wrapper.get('button[aria-label="Show Enabled group"]').trigger('click')
+    await tick()
+    expect(wrapper.get('button.workspace__group-toggle[aria-label="Enabled"]').attributes('aria-current')).toBe('true')
+    expect(pendingSection().attributes('aria-current')).toBeUndefined()
+  })
+
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('offers each navigation control once, with counts on filters and no search or pending-sync row', async () => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('p', { group: 'pending', status: 'pending sync' }),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
+      row('s', { group: 'stale', status: 'stale' }),
+    ])
+    const labels = (selector: string) => wrapper.findAll(selector).map((element) => element.attributes('aria-label'))
+
+    expect(labels('.gui-sidebar__nav button')).toEqual(['All resources', 'Needs attention', 'Required by org', 'Show diagnostics'])
+    expect(button(wrapper, 'Needs attention').get('.gui-nav-row__count').text()).toBe('1')
+    expect(button(wrapper, 'Required by org').get('.gui-nav-row__count').text()).toBe('1')
+    expect(labels('section[aria-label="Kind"] button')).toEqual(['Kind facet Skills', 'Kind facet Commands'])
+    expect(button(wrapper, 'Kind facet Skills').get('.gui-nav-row__count').text()).toBe('3')
+    expect(button(wrapper, 'Kind facet Commands').get('.gui-nav-row__count').text()).toBe('1')
+    expect(wrapper.find('.gui-sidebar').text()).not.toContain('Filters')
+    expect(wrapper.find('button[aria-label="Open search"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Pending sync group"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="Show all groups"]').exists()).toBe(false)
+  })
+
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('All resources clears the facets but keeps the search', async () => {
+    const { wrapper } = await mountShell([row('a'), row('b', { kind: 'command', required: true, group: 'required', status: 'required by org' })])
+    await button(wrapper, 'Kind facet Commands').trigger('click')
+    await button(wrapper, 'Required by org').trigger('click')
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    const input = wrapper.get('input[aria-label="Search resources"]')
+    await input.setValue('b')
+    await input.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(rowNames(wrapper)).toEqual(['b'])
+
+    await button(wrapper, 'All resources').trigger('click')
+    await tick()
+    expect(button(wrapper, 'Kind facet Commands').attributes('aria-pressed')).toBe('false')
+    expect(button(wrapper, 'Required by org').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.find('button[aria-label="Clear search"]').exists()).toBe(true)
+    expect(rowNames(wrapper)).toEqual(['b'])
+    expect(button(wrapper, 'All resources').attributes('aria-current')).toBe('page')
+  })
+
+  // spec: gui-shell/sidebar-offers-each-navigation-control-once
+  it('omits the Groups list under Kind grouping and the pinned Needs attention group under Source grouping', async () => {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, '{"version":1,"groupBy":"kind","thenBy":"none"}')
+    const byKind = await mountShell([row('a'), row('s', { group: 'stale', status: 'stale' })])
+    expect(byKind.wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)
+    byKind.wrapper.unmount()
+
+    window.localStorage.setItem(VIEW_STORAGE_KEY, '{"version":1,"groupBy":"source","thenBy":"none"}')
+    const bySource = await mountShell([row('a'), row('s', { group: 'stale', status: 'stale' })])
+    const groups = bySource.wrapper.findAll('section[aria-label="Groups"] button').map((element) => element.attributes('aria-label'))
+    expect(groups).not.toContain('Show Needs attention group')
+    expect(groups.length).toBeGreaterThan(0)
+  })
+})
+
+describe('keyboard shortcuts', () => {
+  it('⌘K opens the search field', async () => {
+    const { wrapper } = await mountShell()
+    keydown(document.body, { key: 'k', metaKey: true })
+    await tick()
+    expect(wrapper.find('input[aria-label="Search resources"]').exists()).toBe(true)
+  })
+
+  it('s syncs only from the resource list, not from a text input or while a modal is open', async () => {
+    const { client, wrapper } = await mountShell()
+    const action = vi.mocked(client.action)
+    const syncCalls = () => action.mock.calls.filter(([name]) => name === 'sync').length
+
+    const option = wrapper.get('[role="option"]').element as HTMLElement
+    option.focus()
+    keydown(option, { key: 's' })
+    await tick()
+    expect(syncCalls()).toBe(1)
+
+    keydown(document.body, { key: '/' })
+    await tick()
+    const input = wrapper.get('input[aria-label="Search resources"]').element as HTMLInputElement
+    input.focus()
+    keydown(input, { key: 's' })
+    await tick()
+    expect(syncCalls()).toBe(1)
+
+    await button(wrapper, 'Settings').trigger('click')
+    await tick()
+    keydown(option, { key: 's' })
+    await tick()
+    expect(syncCalls()).toBe(1)
+  })
+
+  it('Update is a visible button separate from Sync', async () => {
+    const { client, wrapper } = await mountShell()
+    const sync = button(wrapper, 'Sync').element
+    const update = button(wrapper, 'Update').element
+    expect(update).not.toBe(sync)
+    expect(update.parentElement).toBe(sync.parentElement)
+
+    await button(wrapper, 'Update').trigger('click')
+    await tick()
+    expect(client.action).toHaveBeenCalledWith('update')
+  })
+})
+
+describe('empty states and sidebar labels', () => {
+  it('shows the add-source empty state only after a final snapshot with no resources', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'inventory' }) }))
+    await tick()
+    expect(wrapper.find('.gui-empty').exists()).toBe(false)
+
+    push(event({ sequence: 2, payload: snapshot([]) }))
+    await tick()
+    expect(wrapper.get('.gui-empty').text()).toContain('No resources yet')
+    await wrapper.get('button[aria-label="Add a source"]').trigger('click')
+    await tick()
+    expect(document.body.querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Add source')
+  })
+
+  it('hides the empty Kind heading and folds the inspector on an empty workspace without saving it', async () => {
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect(wrapper.find('section[aria-label="Kind"]').exists()).toBe(false)
+    expect(wrapper.get('aside[aria-label="Detail"]').classes()).toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem('am-gui-inspector')).toBeNull()
+  })
+
+  it('keeps a saved open inspector open on an empty workspace', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'open')
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect(wrapper.get('aside[aria-label="Detail"]').classes()).not.toContain('gui-inspector--folded')
+    expect(window.localStorage.getItem('am-gui-inspector')).toBe('open')
+  })
+
+  it('disables Update and Sync when no source is configured', async () => {
+    const { client, push } = fakeClient({ configuration: { userSources: [], organizationSources: [] } })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([]) }))
+    await tick()
+
+    expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  // spec: gui-shell/sidebar-groups-start-collapsed-in-short-windows
+  it('folds the Groups section by default in short windows and keeps its group buttons', async () => {
+    const original = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+    try {
+      const { wrapper } = await mountShell([row('p', { group: 'pending', status: 'pending sync' })])
+      const toggle = wrapper.get('section[aria-label="Groups"] button[aria-expanded]')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      expect(wrapper.get('section[aria-label="Groups"] ul').isVisible()).toBe(false)
+      expect(wrapper.find('button[aria-label="Show Pending sync group"]').exists()).toBe(true)
+
+      await toggle.trigger('click')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      expect(wrapper.get('section[aria-label="Groups"] ul').isVisible()).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: original })
+    }
+  })
+
+  it('omits the Groups section when there are no groups', async () => {
+    const { wrapper } = await mountShell([])
+    expect(wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)
+    expect(wrapper.find('.gui-sidebar').text()).not.toContain('Groups')
+  })
+
+  it('labels a configured source with its rows label when the identities match, else with its location label', async () => {
+    const { client, push } = fakeClient({
+      configuration: {
+        userSources: [
+          source({ id: 'src-dir', kind: 'directory', location: '/home/dev/platform/agent-skills', rowSourceId: 'dir-key' }),
+          source({ id: 'src-git', kind: 'git', location: 'https://github.com/org/tools.git', ref: 'main', rowSourceId: 'git-unmatched' }),
+        ],
+      },
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([row('a', { source: { id: 'dir-key', label: 'platform registry' } })]),
+      }),
+    )
+    await tick()
+
+    const dirRow = wrapper.get('button[aria-label="Browse source /home/dev/platform/agent-skills"]')
+    expect(dirRow.text()).toContain('platform registry')
+    await dirRow.trigger('focus')
+    await tick()
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe('/home/dev/platform/agent-skills')
+    await dirRow.trigger('blur')
+    await tick()
+    const gitRow = wrapper.get('button[aria-label="Browse source https://github.com/org/tools.git"]')
+    expect(gitRow.text()).toContain('org/tools')
+    await gitRow.trigger('focus')
+    await tick()
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe('https://github.com/org/tools.git')
+  })
+})
+
+describe('target harness loading', () => {
+  it('does not claim that no targets are configured before inventory resolves', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'config', harnesses: [] }) }))
+    await tick()
+    expect(wrapper.text()).not.toContain('No supported target harnesses are configured')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('Loading targets…')
+
+    push(event({ sequence: 2, payload: snapshot([], { stage: 'final', harnesses: [] }) }))
+    await tick()
+    expect(wrapper.text()).toContain('No supported target harnesses are configured')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('No harnesses')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).not.toContain('Loading targets…')
+  })
+
+  it('shows configured targets in the sidebar as soon as the config stage reports them', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'config', harnesses: ['devin', 'claude'] }) }))
+    await tick()
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('devin · claude')
+    expect(wrapper.text()).not.toContain('Loading targets…')
+  })
+})
+
+describe('diagnostics view', () => {
+  const warning = { severity: 'warning' as const, category: 'catalog', code: 'w', message: 'Retained warning' }
+  const failure = { severity: 'error' as const, category: 'config', code: 'e', message: 'Broken config' }
+
+  it('shows the sidebar count tinted by the worst severity and swaps the main column', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics: [warning, failure] }) }))
+    await tick()
+
+    const nav = wrapper.get('button[aria-label="Show diagnostics"]')
+    expect(nav.text()).toContain('Diagnostics')
+    expect(nav.get('.gui-nav-row__count').text()).toBe('2')
+    expect(nav.get('.gui-nav-row__count').classes()).toContain('gui-nav-row__count--danger')
+    expect(wrapper.find('[role="option"]').exists()).toBe(true)
+
+    await nav.trigger('click')
+    await tick()
+    expect(nav.attributes('aria-current')).toBe('page')
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+    expect(wrapper.get('.gui-diagnostics-view ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
+    expect(wrapper.get('[role="option"]').isVisible()).toBe(false)
+  })
+
+  it.each([
+    { name: 'status', select: (wrapper: Mounted) => button(wrapper, 'Required by org') },
+    { name: 'kind', select: (wrapper: Mounted) => wrapper.get('.gui-sidebar__kinds button') },
+  ])('clears the $name resource filter when opening diagnostics', async ({ select }) => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
+    ])
+    const facet = select(wrapper)
+    await facet.trigger('click')
+    await tick()
+    expect(facet.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(true)
+
+    await button(wrapper, 'Show diagnostics').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(false)
+    expect(select(wrapper).attributes('aria-pressed')).toBe('false')
+  })
+
+  it.each([
+    { name: 'status', facet: (wrapper: Mounted) => button(wrapper, 'Required by org'), clear: 'Clear status filter' },
+    { name: 'kind', facet: (wrapper: Mounted) => wrapper.get('.gui-sidebar__kinds button'), clear: 'Clear kind filter' },
+  ])('moves the active navigation highlight to the $name facet and back', async ({ facet, clear }) => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
+    ])
+    const resources = button(wrapper, 'All resources')
+    expect(resources.attributes('aria-current')).toBe('page')
+
+    await facet(wrapper).trigger('click')
+    await tick()
+    expect(facet(wrapper).attributes('aria-pressed')).toBe('true')
+    expect(facet(wrapper).classes()).toContain('gui-sidebar__facet-button--selected')
+    expect(resources.attributes('aria-current')).toBeUndefined()
+
+    await wrapper.get(`button[aria-label^="${clear}"]`).trigger('click')
+    await tick()
+    expect(facet(wrapper).attributes('aria-pressed')).toBe('false')
+    expect(resources.attributes('aria-current')).toBe('page')
+  })
+
+  // spec: gui-shell/clear-filters-removes-every-active-filter
+  it('clears every active resource filter from the Clear filters control', async () => {
+    const { wrapper } = await mountShell([
+      row('a'),
+      row('m', { kind: 'command', required: true, group: 'required', status: 'required by org' }),
+    ])
+    const clearFilters = () => wrapper.findAll('button').find((element) => element.text() === 'Clear filters')
+    const kindFacet = () => wrapper.get('.gui-sidebar__kinds button')
+    await button(wrapper, 'Required by org').trigger('click')
+    await kindFacet().trigger('click')
+    await tick()
+    expect(wrapper.get('[aria-label="Active resource filters"]').findAll('.workspace__filter-chip')).toHaveLength(2)
+    expect(clearFilters()).toBeDefined()
+
+    await clearFilters()!.trigger('click')
+    await tick()
+    expect(wrapper.find('[aria-label="Active resource filters"]').exists()).toBe(false)
+    expect(button(wrapper, 'Required by org').attributes('aria-pressed')).toBe('false')
+    expect(kindFacet().attributes('aria-pressed')).toBe('false')
+    expect(button(wrapper, 'All resources').attributes('aria-current')).toBe('page')
+    expect(rowNames(wrapper).sort()).toEqual(['a', 'm'])
+    expect(document.activeElement).toBe(button(wrapper, 'All resources').element)
+  })
+
+  it('offers Clear filters while a single filter is active', async () => {
+    const { wrapper } = await mountShell([row('a')])
+    await button(wrapper, 'Required by org').trigger('click')
+    await tick()
+    expect(wrapper.findAll('button').some((element) => element.text() === 'Clear filters')).toBe(true)
+  })
+
+  it('returns to resources from the Resources row and shows no problems when clean', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('No problems found.')
+    expect(wrapper.get('button[aria-label="Show diagnostics"] .gui-nav-row__count').classes()).not.toContain('gui-nav-row__count--danger')
+
+    await wrapper.get('button[aria-label="All resources"]').trigger('click')
+    await tick()
+    expect(wrapper.find('.gui-diagnostics-view').exists()).toBe(false)
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Resources')
+  })
+
+  it('keeps list shortcuts inert while diagnostics are shown', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics: [warning] }) }))
+    await tick()
+    await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+    await tick()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', bubbles: true }))
+    await tick()
+    expect(document.querySelector('[role="menu"], .gui-view-panel')).toBeNull()
+  })
+})
+
+describe('inspector uninstall action', () => {
+  // spec: gui-shell/installed-resource-offers-a-labeled-uninstall
+  it('offers a labeled Uninstall text button instead of a trash icon and opens its dialog', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a', { id: 'row-a', resourceAction: 'remove', checked: true })]) }))
+    vi.mocked(client.resourcePlan).mockResolvedValue({
+      rowId: 'row-a', generation: 1, planId: 'a'.repeat(64), action: 'remove', preview: 'Resource: skill/a', requiresRiskAcceptance: false,
+    })
+    await tick()
+    await wrapper.get('[role="option"][id="row-row-a"]').trigger('click')
+    await tick()
+
+    const detail = wrapper.get('aside[aria-label="Detail"]')
+    const uninstall = detail.get('button[aria-label="Uninstall resource"]')
+    expect(uninstall.text()).toBe('Uninstall')
+    expect(uninstall.classes()).toContain('gui-button--danger')
+    expect(detail.find('.gui-icon-button').exists()).toBe(false)
+
+    await uninstall.trigger('click')
+    await tick()
+    expect(document.body.querySelector('.resource-actions__copy')?.textContent).toContain('Uninstall a from ')
+    expect(document.body.querySelector('button[aria-label="Confirm uninstall"]')).not.toBeNull()
+  })
+
+  it('lists Open resource before Uninstall in the inspector', async () => {
+    const { wrapper, client } = await mountShell([row('a', { id: 'row-a', resourceAction: 'remove', checked: true, inspectable: true })])
+    vi.mocked(client.resourcePlan).mockResolvedValue({
+      rowId: 'row-a', generation: 1, planId: 'a'.repeat(64), action: 'remove', preview: 'Resource: skill/a', requiresRiskAcceptance: false,
+    })
+    await wrapper.get('[role="option"][id="row-row-a"]').trigger('click')
+    await tick()
+
+    const labels = wrapper.findAll('aside[aria-label="Detail"] .gui-inspector__actions button').map((button) => button.attributes('aria-label'))
+    expect(labels).toEqual(['Open resource', 'Uninstall resource'])
+  })
+})
+
+describe('resource opening actions', () => {
+  // spec: gui-shell/enter-and-open-resource-agree-across-source-kinds
+  it('offers inspection only for the Marketplace row with inspectable content', async () => {
+    const marketplace = row('marketplace-skill', {
+      id: 'marketplace-row',
+      registry: 'Marketplace registry',
+      source: { id: 'marketplace-source', label: 'Marketplace source' },
+      discovery: true,
+      inspectable: true,
+      group: 'available',
+      checked: false,
+      scope: 'available',
+      status: 'available',
+    })
+    const directory = row('directory-skill', {
+      id: 'directory-row',
+      registry: 'Directory registry',
+      source: { id: 'directory-source', label: 'Directory source' },
+    })
+    const git = row('git-skill', {
+      id: 'git-row',
+      registry: 'Git registry',
+      source: { id: 'git-source', label: 'Git source' },
+    })
+    const { client, push } = fakeClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([marketplace, directory, git], { discoveryEnabled: true }) }))
+    await tick()
+
+    const marketplaceOption = wrapper.get('[role="option"][id="row-marketplace-row"]')
+    await marketplaceOption.trigger('click')
+    await tick()
+    expect(wrapper.find('button[aria-label="Open resource"]').exists()).toBe(true)
+
+    await marketplaceOption.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(marketplace.id)
+    expect(client.inspection).toHaveBeenCalledTimes(1)
+
+    controller.closeInspection()
+    await tick()
+    await wrapper.get('button[aria-label="Open resource"]').trigger('click')
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(marketplace.id)
+    expect(client.inspection).toHaveBeenCalledTimes(2)
+
+    for (const item of [directory, git]) {
+      const option = wrapper.get(`[role="option"][id="row-${item.id}"]`)
+      await option.trigger('click')
+      await tick()
+      expect(wrapper.find('button[aria-label="Open resource"]').exists()).toBe(false)
+
+      await option.trigger('keydown', { key: 'Enter' })
+      await tick()
+      expect(controller.state.inspection).toBeNull()
+    }
+    expect(client.inspection).toHaveBeenCalledTimes(2)
+    expect(client.installedSkillFiles).not.toHaveBeenCalled()
+  })
+})
+
+describe('notification toasts', () => {
+  it('links a warning toast to diagnostics and gives info toasts no action', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    push(event({ sequence: 2, type: 'notification', payload: { severity: 'info', outcome: 'success', message: 'Sync complete' } }))
+    await tick()
+    expect(wrapper.get('.gui-toast--success').text()).toContain('Sync complete')
+    expect(wrapper.find('.gui-toast--success .gui-toast__action').exists()).toBe(false)
+
+    push(event({ sequence: 3, type: 'notification', payload: { severity: 'warning', outcome: 'warning', message: 'Sync complete with 2 warning(s)' } }))
+    await tick()
+    const action = wrapper.get('.gui-toast--warning .gui-toast__action')
+    expect(action.text()).toBe('View diagnostics')
+
+    await action.trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+  })
+})

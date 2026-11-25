@@ -1,0 +1,155 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import type { Snapshot } from './api/client'
+import type { Diagnostic } from './controller'
+import { copyText } from './clipboard'
+import { groupDiagnostics } from './diagnostics'
+import GuiIcon from './GuiIcon.vue'
+
+const props = defineProps<{
+  drift: string
+  discoveryEnabled: boolean
+  discoveryLoading: boolean
+  discoveryError: string | null
+  discoveryHealth: Snapshot['discoveryHealth']
+  discoveryFailed: boolean
+  diagnostics: Diagnostic[]
+}>()
+
+const emit = defineEmits<{
+  retryDiscovery: []
+}>()
+
+const driftTone = computed(() => {
+  switch (props.drift) {
+    case 'ready':
+      return 'signal'
+    case 'pending':
+      return 'warning'
+    case 'failed':
+      return 'danger'
+    default:
+      return null
+  }
+})
+
+const diagnosticGroups = computed(() => groupDiagnostics(props.diagnostics))
+const copiedText = computed(() => props.diagnostics
+  .map((diagnostic) => `${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`)
+  .join('\n'))
+const copied = ref(false)
+
+const expandedDiagnostics = ref(new Set<string>())
+
+watch(() => props.diagnostics, () => {
+  copied.value = false
+}, { deep: true })
+
+function toggleDiagnostic(key: string) {
+  const next = new Set(expandedDiagnostics.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expandedDiagnostics.value = next
+}
+
+function expandLabel(group: { key: string; severity: string }): string {
+  const action = expandedDiagnostics.value.has(group.key) ? 'Collapse' : 'Expand'
+  const code = group.key.slice(group.severity.length + 1)
+  return `${action} ${group.severity} diagnostics for ${code}`
+}
+
+async function copyDiagnostics() {
+  copied.value = false
+  try {
+    copied.value = await copyText(copiedText.value)
+  } catch {
+    copied.value = false
+  }
+}
+
+const driftCopy: Record<string, string> = {
+  ready: 'In sync',
+  pending: 'Changes pending',
+  failed: 'Sync failed',
+}
+
+const driftText = computed(() => driftCopy[props.drift] ?? 'Unknown')
+
+function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
+  if (health.cacheState === 'fresh' || (health.cacheState === 'miss' && health.checked)) {
+    return 'results are current'
+  }
+  if (health.cacheState === 'stale') {
+    return 'showing saved results from an earlier check'
+  }
+  return 'not checked yet'
+}
+
+function breakablePath(message: string): string[] {
+  return message.split(/(?<=\/)/)
+}
+</script>
+
+<template>
+  <div class="gui-diagnostics-view">
+    <section class="gui-diagnostics-view__card" aria-label="Session">
+      <h2 class="gui-caps">Session</h2>
+      <p class="gui-kv">
+        <span v-if="driftTone" class="gui-dot" :class="`gui-dot--${driftTone}`" aria-hidden="true" />{{ driftText }}
+      </p>
+    </section>
+
+    <section v-if="discoveryEnabled" role="region" aria-label="Marketplace discovery health" class="gui-diagnostics-view__card workspace__discovery-health">
+      <h2 class="gui-caps">Marketplace discovery</h2>
+      <p v-if="discoveryLoading" role="status" aria-live="polite">Marketplace discovery is updating.</p>
+      <p v-if="discoveryError" role="status">{{ discoveryError }}</p>
+      <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="emit('retryDiscovery')">Retry Marketplace search</button>
+      <ul v-if="discoveryHealth.length" aria-label="Marketplace endpoint health">
+        <li v-for="health in discoveryHealth" :key="health.id">
+          <p>{{ health.label }}: {{ discoveryStatus(health) }} ({{ health.total }} {{ health.total === 1 ? 'resource' : 'resources' }})<span v-if="health.truncated">; only part of the catalog is shown, search to find more</span></p>
+          <p v-if="health.message">{{ health.message }}</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="gui-diagnostics-view__card">
+      <div class="gui-diagnostics__header">
+        <h2 class="gui-caps">Diagnostics<span v-if="diagnostics.length > 0" class="gui-caps__count">{{ diagnostics.length }}</span></h2>
+        <UButton
+          aria-label="Copy diagnostics"
+          class="gui-button--secondary"
+          color="neutral"
+          variant="soft"
+          :disabled="diagnostics.length === 0"
+          @click="copyDiagnostics"
+        >{{ copied ? 'Copied' : 'Copy diagnostics' }}</UButton>
+      </div>
+      <ul v-if="diagnostics.length > 0" aria-label="Diagnostics" class="gui-diagnostics">
+        <li v-for="group in diagnosticGroups" :key="group.key" :class="`diag--${group.severity}`">
+          <div class="gui-diagnostics__row">
+            <GuiIcon :name="group.severity === 'error' ? 'error' : group.severity === 'warning' ? 'warning' : 'info'" class="gui-diagnostics__icon" />
+            <p class="gui-diagnostics__message"><span class="gui-visually-hidden">{{ group.severity }}: </span><template v-for="(segment, index) in breakablePath(group.messages[0] ?? '')" :key="index">{{ segment }}<wbr /></template></p>
+            <button
+              v-if="group.messages.length > 1"
+              type="button"
+              class="gui-diagnostics__expand"
+              :aria-label="expandLabel(group)"
+              :aria-expanded="expandedDiagnostics.has(group.key)"
+              @click="toggleDiagnostic(group.key)"
+            >
+              <span class="gui-visually-hidden">{{ expandedDiagnostics.has(group.key) ? 'Collapse' : 'Expand' }} diagnostics</span>
+              <span class="gui-tag">×{{ group.messages.length }}</span>
+            </button>
+          </div>
+          <ul v-if="group.messages.length > 1 && expandedDiagnostics.has(group.key)" class="gui-diagnostics__messages">
+            <li v-for="(message, index) in group.messages" :key="index"><template v-for="(segment, part) in breakablePath(message)" :key="part">{{ segment }}<wbr /></template></li>
+          </ul>
+        </li>
+      </ul>
+      <p v-else class="gui-diagnostics-view__empty"><GuiIcon name="check" /> No problems found.</p>
+    </section>
+  </div>
+</template>

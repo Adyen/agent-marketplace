@@ -112,11 +112,11 @@ func TestEditorExitReloadsAndFreesLaterWrites(t *testing.T) {
 	if exited == nil {
 		t.Fatal("the editor command never reached the exec boundary")
 	}
-	before := m.requests.active(requestSnapshot)
+	before := m.requests.Active(requestSnapshot)
 
 	mi, cmd = m.Update(exited(nil))
 	m = mi.(Model)
-	if cmd == nil || m.requests.active(requestSnapshot) == before {
+	if cmd == nil || m.requests.Active(requestSnapshot) == before {
 		t.Fatal("the editor exit did not reload the edited configuration")
 	}
 	if _, ok := m.beginOperation(operationMutation); !ok {

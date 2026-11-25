@@ -38,7 +38,7 @@ journey.test("selects OpenCode and installs a skill through the harness modal", 
   await terminal.write(" ");
   await locate(terminal, "toggle global").unique().expect();
   await terminal.write("g");
-  await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+  await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
   await step("install selected skill", () => terminal.write("s"), async () => {
     await locate(terminal, "Sync complete").unique().expect({ timeout: 30_000 });
   });

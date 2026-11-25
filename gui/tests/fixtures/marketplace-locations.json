@@ -1,0 +1,23 @@
+[
+  {"name":"https endpoint","location":"https://market.example/api","admitted":true,"clientValid":true},
+  {"name":"http endpoint","location":"http://market.example/api","admitted":true,"clientValid":true},
+  {"name":"upper-case scheme","location":"HTTPS://market.example/api","admitted":true,"clientValid":true},
+  {"name":"large numeric port","location":"https://market.example:99999/api","admitted":true,"clientValid":true},
+  {"name":"large IPv6 numeric port","location":"https://[::1]:99999/api","admitted":true,"clientValid":true},
+  {"name":"leading Go NEL whitespace","location":"\u0085https://market.example/api","admitted":true,"clientValid":true},
+  {"name":"trailing Go NEL whitespace","location":"https://market.example/api\u0085","admitted":true,"clientValid":true},
+  {"name":"ASCII padding","location":" \thttps://market.example/api\n","admitted":true,"clientValid":true},
+  {"name":"FEFF is not Go whitespace","location":"\ufeffhttps://market.example/api","admitted":false,"clientValid":false},
+  {"name":"scheme without delimiter","location":"https:market.example","admitted":false,"clientValid":false},
+  {"name":"single slash delimiter","location":"https:/market.example","admitted":false,"clientValid":false},
+  {"name":"empty authority","location":"https:///market.example","admitted":false,"clientValid":false},
+  {"name":"missing host","location":"https://","admitted":false,"clientValid":false},
+  {"name":"alphabetic port","location":"https://market.example:abc/api","admitted":false,"clientValid":false},
+  {"name":"empty host with port","location":"https://:443/api","admitted":false,"clientValid":false},
+  {"name":"authority space","location":"https://market example/api","admitted":false,"clientValid":false},
+  {"name":"backslash authority","location":"https://\\market.example","admitted":false,"clientValid":false},
+  {"name":"invalid percent escape","location":"https://market.example/%zz","admitted":false,"clientValid":false},
+  {"name":"server rejects user info","location":"https://user@market.example/api","admitted":false,"clientValid":true},
+  {"name":"server rejects query","location":"https://market.example/api?q=x","admitted":false,"clientValid":true},
+  {"name":"server rejects fragment","location":"https://market.example/api#part","admitted":false,"clientValid":true}
+]

@@ -251,7 +251,7 @@ onUnmounted(clearSyncTimers)
             >
               {{
                 selected.enabled
-                  ? (syncState === 'synced' ? 'enabled' : syncState === 'syncing' ? 'syncing...' : 'enabled (pending sync)')
+                  ? (syncState === 'synced' ? 'enabled' : syncState === 'syncing' ? 'syncing...' : 'enabled, waiting for sync')
                   : 'disabled'
               }}
             </dd>

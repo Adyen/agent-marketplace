@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -85,7 +86,7 @@ func TestProvisionalRowsRenderSelectedCollectionsAsInstalled(t *testing.T) {
 	entry.Resources = append(entry.Resources, nested)
 	cfg := &config.Config{Registries: gitCfg.Registries, Marketplaces: []config.MarketplaceEntry{entry}}
 
-	rows := buildProvisionalRows(cfg, nil, nil)
+	rows := session.BuildProvisionalRows(cfg, nil, nil)
 
 	gitRows := collectionRowsNamed(rows, "tools")
 	if len(gitRows) != 1 || gitRows[0].IsAvailable || !gitRows[0].EnabledProject || !gitRows[0].PendingVerification {

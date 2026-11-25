@@ -295,7 +295,7 @@ func TestReloadReplacesHeldStartupBrowseEndpoint(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("old endpoint later page was not held")
 	}
-	oldGeneration := m.requests.active(requestBrowse)
+	oldGeneration := m.requests.Active(requestBrowse)
 	oldSequence := m.browseSequence
 	oldCancel := m.browseCancel
 	cancelCalled := false
@@ -309,7 +309,7 @@ func TestReloadReplacesHeldStartupBrowseEndpoint(t *testing.T) {
 	if newCmd == nil {
 		t.Fatal("replacement endpoint did not start a browse load")
 	}
-	if !cancelCalled || m.requests.active(requestBrowse) == oldGeneration {
+	if !cancelCalled || m.requests.Active(requestBrowse) == oldGeneration {
 		t.Fatal("replacement browse did not synchronously cancel and supersede the old request")
 	}
 	drainStartupDiscovery(t, &m, newCmd)

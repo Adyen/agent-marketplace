@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Agent Marketplace
+Comment=Manage Agent Marketplace resources
+Exec=/usr/bin/agent-marketplace-gui
+Icon=agent-marketplace-gui
+Terminal=false
+Categories=Development;Utility;

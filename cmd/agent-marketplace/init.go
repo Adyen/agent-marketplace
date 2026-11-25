@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
@@ -99,7 +100,7 @@ func initWithHarnesses(ctx context.Context, out io.Writer, harnesses []string) e
 }
 
 func initializeAndReport(ctx context.Context, out io.Writer, harnesses []string) (string, bool, error) {
-	if err := prepareDependencyTransactions(ctx, false); err != nil {
+	if err := lifecycle.PrepareDependencyTransactions(ctx, false); err != nil {
 		return "", false, err
 	}
 	if err := pipeline.ValidateConsumerIntent(ctx, config.FindRepoRoot(), config.FindLocalConfigDir()); err != nil {

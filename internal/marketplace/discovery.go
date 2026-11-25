@@ -58,6 +58,7 @@ type DiscoveryOptions struct {
 	Timeout     time.Duration
 	UserAgent   string
 	Cache       *DiscoveryCache
+	Refresh     bool
 }
 
 type discoveryEvent struct {
@@ -156,6 +157,9 @@ func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, li
 }
 
 func (c *DiscoveryCache) load(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) (DiscoveryOutcome, bool) {
+	if c == nil {
+		return DiscoveryOutcome{}, false
+	}
 	return c.loadPath(ep, query, kind, includeKind, limit, c.path(ep, query, kind, includeKind, limit), false)
 }
 
@@ -585,7 +589,7 @@ func CachedDiscovery(ec config.EffectiveConfig, query string, opts DiscoveryOpti
 		if hit {
 			outcomes = append(outcomes, cached)
 		}
-		if !hit || cached.CacheState == DiscoveryCacheStale || (browse && cached.Total > len(cached.Items)) {
+		if opts.Refresh || !hit || cached.CacheState == DiscoveryCacheStale || (browse && cached.Total > len(cached.Items)) {
 			needsNetwork = true
 		}
 	}
@@ -661,7 +665,7 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 		}
 		if hit {
 			outcomes = append(outcomes, cached)
-			if cached.CacheState == DiscoveryCacheFresh && (!browse || cached.Total <= len(cached.Items)) {
+			if cached.CacheState == DiscoveryCacheFresh && (!browse || cached.Total <= len(cached.Items)) && !opts.Refresh {
 				continue
 			}
 		}
@@ -682,7 +686,7 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 				return
 			}
 			out, fetchErr := discoverOneWithProgress(ctx, endpoint.MarketplaceEntry, endpoint.verifyInstanceID, query, opts, limit, func(partial DiscoveryOutcome) bool {
-				if browse && hit {
+				if browse && hit && partial.Truncated {
 					partial.Items = appendUnseenItems(slices.Clone(partial.Items), discoveryItemSet(partial.Items), cached.Items)
 					partial.Total = max(partial.Total, cached.Total, len(partial.Items))
 					partial.CacheState = cached.CacheState
@@ -961,13 +965,13 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 		return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery made no progress before reported total"))
 	}
 	seen := discoveryItemSet(items)
-	if progress != nil {
+	offset := len(firstPage.Items)
+	if progress != nil && offset < total {
 		partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: total, Truncated: true, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
 		if !progress(partial) {
 			return partial, ctx.Err()
 		}
 	}
-	offset := len(firstPage.Items)
 	for offset < total {
 		pageCtx, cancel := discoveryRequestContext(ctx, true, timeout)
 		page, err := client.Search(pageCtx, SearchRequest{Limit: limit, Offset: offset})
@@ -975,18 +979,16 @@ func discoverBrowsePages(ctx context.Context, client *Client, ep config.Marketpl
 		if err != nil {
 			return partialDiscovery(ep, items, total, true, err)
 		}
-		if len(page.Items) == 0 {
-			if offset < page.Total {
-				return partialDiscovery(ep, items, page.Total, true, errors.New("marketplace browse discovery made no progress before reported total"))
-			}
-			total = page.Total
-			break
-		}
 		items = appendUnseenItems(items, seen, page.Items)
+		if page.Total != total {
+			return partialDiscovery(ep, items, max(total, page.Total), true, errors.New("marketplace browse discovery total changed during paging"))
+		}
+		if len(page.Items) == 0 {
+			return partialDiscovery(ep, items, total, true, errors.New("marketplace browse discovery made no progress before reported total"))
+		}
 		offset += len(page.Items)
-		total = page.Total
 		if progress != nil {
-			partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: page.Total, Truncated: true, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
+			partial := DiscoveryOutcome{Endpoint: ep, Items: slices.Clone(items), Total: total, Truncated: len(items) < total, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}
 			if !progress(partial) {
 				return partial, ctx.Err()
 			}
