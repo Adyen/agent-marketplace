@@ -28,6 +28,7 @@ import (
 
 // spec: target-profile-place/assessment-binds-the-exact-profile-online-and-offline
 // spec: target-profile-place/changed-xdg-state-root-reports-ownership-unavailable
+// spec: target-profile-place/direct-selection-of-a-disabled-target-refuses-without-writes
 func TestHostedTargetProfileBootstrapApprovalAndOfflineSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -183,6 +184,7 @@ resources:
 	if receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json")); err != nil || len(receipts) != 0 {
 		t.Fatalf("pre-approval receipts = %v, %v; want none", receipts, err)
 	}
+	assertHostedDirectInstallRefusals(t, fixture, server.URL, &requests)
 
 	_, stderr, err := executeTargetApprovalAtTerminal(t, "yes\n", nil, "target", "approve", fixture.identity.TargetID)
 	if err != nil {
@@ -268,6 +270,86 @@ resources:
 	assertHostedInstallationUnavailableAtChangedStateRoot(
 		t, fixture, pipeline.PlaceInstallationID(approvalBinding),
 	)
+}
+
+func assertHostedDirectInstallRefusals(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	endpoint string,
+	requests *hostedLifecycleRequestCounters,
+) {
+	t.Helper()
+	originalConfig, err := os.ReadFile(fixture.userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+	lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+	enabledConfig := bytes.Replace(
+		originalConfig, []byte("targets: [invented-app]"), []byte("targets: [factory, invented-app]"), 1,
+	)
+	disabledConfig := bytes.Replace(
+		originalConfig, []byte("targets: [invented-app]"), []byte("targets: [factory]"), 1,
+	)
+	if bytes.Equal(enabledConfig, originalConfig) || bytes.Equal(disabledConfig, originalConfig) {
+		t.Fatal("hosted authored config did not contain the expected invented-app target selection")
+	}
+	policyConfig := append(append([]byte(nil), enabledConfig...), []byte("allowed_marketplaces: []\n")...)
+	missingTarget := filepath.Join(fixture.home, "missing-target")
+	for _, test := range []struct {
+		name     string
+		config   []byte
+		override string
+		want     string
+	}{
+		{name: "unapproved", config: enabledConfig, want: "target.approval.required"},
+		{name: "disabled", config: disabledConfig, want: "target.place.disabled"},
+		{name: "unavailable", config: enabledConfig, override: missingTarget, want: "target.place.unavailable"},
+		{name: "policy blocked", config: policyConfig, want: "marketplace.profile.selection-invalid"},
+	} {
+		if !t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if err := os.WriteFile(fixture.userConfig, originalConfig, 0o600); err != nil {
+					t.Errorf("restore hosted authored config: %v", err)
+				}
+			}()
+			if err := os.WriteFile(fixture.userConfig, test.config, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if test.override != "" {
+				if _, err := os.Lstat(test.override); !os.IsNotExist(err) {
+					t.Fatalf("unavailable test root already exists: %v", err)
+				}
+				t.Setenv("INVENTED_APP_HOME", test.override)
+			}
+			configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+			requestsBefore := requests.snapshot()
+			output, err := executeCommand(
+				"install", "--scope", "user", endpoint+"/r/tools/invented-app%2Fmod/sample",
+			)
+			if after := requests.snapshot(); after != requestsBefore {
+				t.Fatalf("direct install made Marketplace requests: before=%+v after=%+v output=%s err=%v", requestsBefore, after, output, err)
+			}
+			assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+			assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+			assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+			assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+			if test.override != "" {
+				if _, err := os.Lstat(test.override); !os.IsNotExist(err) {
+					t.Fatalf("direct install created unavailable target root: %v", err)
+				}
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("direct install refusal = %v\n%s; want %q", err, output, test.want)
+			}
+			if test.name == "policy blocked" && !strings.Contains(err.Error(), "allowed_marketplaces") {
+				t.Fatalf("policy refusal did not name allowed_marketplaces: %v", err)
+			}
+		}) {
+			t.FailNow()
+		}
+	}
 }
 
 func assertHostedInstallationUnavailableAtChangedStateRoot(

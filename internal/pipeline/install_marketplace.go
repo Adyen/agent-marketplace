@@ -18,9 +18,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -260,6 +262,14 @@ func PrepareMarketplaceInstall(ctx context.Context, opts InstallOptions) (*Prepa
 	if err != nil {
 		return nil, err
 	}
+	locator, err := marketplaceInstallLocator(opts)
+	if err != nil {
+		return nil, err
+	}
+	if targetID, _, scoped := nameutil.SplitPlaceKind(locator.Kind); scoped {
+		return nil, refuseDirectPlaceInstall(ctx, ws, opts, locator, targetID)
+	}
+	opts.ExactMarketplaceLocator = &locator
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
@@ -271,18 +281,9 @@ func prepareMarketplaceInstall(ctx context.Context, opts InstallOptions, configP
 	if ec == nil || len(ec.TargetHarnesses) == 0 {
 		return nil, &TargetHarnessSetMissingError{}
 	}
-	var locator marketplace.MarketplaceLocator
-	var err error
-	if opts.ExactMarketplaceLocator != nil {
-		locator = *opts.ExactMarketplaceLocator
-	} else {
-		if len(opts.Args) != 1 {
-			return nil, fmt.Errorf("marketplace install requires exactly one resource locator")
-		}
-		locator, err = marketplaceLocator(opts.Args[0], opts.Marketplace)
-		if err != nil {
-			return nil, err
-		}
+	locator, err := marketplaceInstallLocator(opts)
+	if err != nil {
+		return nil, err
 	}
 	if opts.HasKind && !marketplaceKindMatches(opts.Kind, locator.Kind) {
 		return nil, fmt.Errorf("--kind %s does not match Marketplace locator kind %s", opts.Kind, locator.Kind)
@@ -341,6 +342,55 @@ func prepareMarketplaceInstall(ctx context.Context, opts InstallOptions, configP
 		allowedRegistries:   preparedAllowedRegistries,
 		endpointConfigured:  hasMarketplaceIdentity(ec.Merged, plan.Entry),
 	}, nil
+}
+
+func marketplaceInstallLocator(opts InstallOptions) (marketplace.MarketplaceLocator, error) {
+	if opts.ExactMarketplaceLocator != nil {
+		return *opts.ExactMarketplaceLocator, nil
+	}
+	if len(opts.Args) != 1 {
+		return marketplace.MarketplaceLocator{}, fmt.Errorf("marketplace install requires exactly one resource locator")
+	}
+	return marketplaceLocator(opts.Args[0], opts.Marketplace)
+}
+
+func refuseDirectPlaceInstall(
+	ctx context.Context,
+	ws Workspace,
+	opts InstallOptions,
+	locator marketplace.MarketplaceLocator,
+	targetID string,
+) error {
+	if opts.Scope != ScopeUser {
+		return fmt.Errorf("marketplace.profile.invalid-scope: place target %s requires user scope", targetID)
+	}
+	ec := LoadEffective(ctx, ConfigLoadStrict, config.LoadEffectiveOptions{
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+	}, nil)
+	if err := errors.Join(ec.Errors...); err != nil {
+		return err
+	}
+	entry, err := resolveMarketplaceEntry(locator, opts.Marketplace, ec.Merged)
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{entry}, ec.AllowedMarketplaces); err != nil {
+		return fmt.Errorf("marketplace endpoint rejected before network access: %w", err)
+	}
+	if !slices.Contains(ec.PlaceTargets, targetID) {
+		return fmt.Errorf("target.place.disabled: target %s is not enabled", targetID)
+	}
+	binding, err := PrepareDeployedPlaceApproval(ctx, ws, targetID)
+	if err != nil {
+		return fmt.Errorf("target.place.unavailable: target %s: %w", targetID, err)
+	}
+	if err := targetprofile.RequireApproval(binding); err != nil {
+		return fmt.Errorf("target %s approval: %w", targetID, err)
+	}
+	return fmt.Errorf(
+		"target.place.direct-install-unsupported: select the scoped package in user configuration and run sync for target %s",
+		targetID,
+	)
 }
 
 func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMarketplaceInstall) (*InstallResult, error) {
