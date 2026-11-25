@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,109 @@ func TestAssessmentDigestRouteIsStrictAndImmutable(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid path %q status = %d", path, response.Code)
 		}
+	}
+}
+
+// spec: marketplace-api/both-resource-assessment-reads-carry-identical-advisory-evidence
+// spec: marketplace-api/historical-assessment-remains-readable-without-rewritten-identity
+func TestResourceAdvisoryAssessmentReads(t *testing.T) {
+	ctx := context.Background()
+	meta := newManagedSQLite(t)
+	coordinate := store.ResourceCoordinate{Marketplace: "marketplace", Registry: "registry", Kind: KindSkill, Name: "review"}
+	revision := store.ResourceRevision{Coordinate: coordinate, ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64))}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(meta.PutMarketplace(ctx, store.Marketplace{ID: coordinate.Marketplace, Name: "Marketplace", CanonicalURL: "https://marketplace.test"}))
+	must(meta.PutRegistry(ctx, store.Registry{ID: coordinate.Registry, Slug: "source", Ref: "main", Listed: true, Acquisition: store.AcquisitionMirror}))
+	must(meta.PutResourceRevision(ctx, revision))
+	manifest := store.RevisionDigest("sha256:" + strings.Repeat("1", 64))
+	commit := strings.Repeat("e", 40)
+	must(meta.PutRegistryOccurrence(ctx, store.RegistryOccurrence{
+		RegistryID: coordinate.Registry, Ref: "main", Commit: commit,
+		RegistryRevisionManifestDigest: manifest, Acquisition: store.AcquisitionMirror,
+		OccurredAt: time.Unix(1, 0).UTC(),
+	}))
+	must(meta.PutResourceOccurrence(ctx, store.ResourceOccurrence{Coordinate: coordinate, ContentDigest: revision.ContentDigest, Commit: commit, ManifestDigest: manifest}))
+
+	builtInOnly := testRevisionAssessment(t, revision, store.AssessmentDecisionAllow)
+	builtInOnly.AnalyzerVersion = "analyzer/v1"
+	builtInOnly.PolicyDigest = store.PolicyDigest("sha256:" + strings.Repeat("c", 64))
+	builtInOnly.Findings = []store.Finding{{Code: "safe", Severity: "info", Policy: "allow", Message: "No unsafe behavior found."}}
+	builtInOnly.InspectionManifestDigest = store.RevisionDigest("sha256:" + strings.Repeat("f", 64))
+	builtInOnly.AssessedAt = time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+	const historicalDigest = store.AssessmentDigest("sha256:2e7c339d14f903ba227bc73206d33e4c4e781971477f61d294805840546f83f9")
+	builtInOnly.AssessmentDigest = historicalDigest
+	if err := builtInOnly.Validate(); err != nil {
+		t.Fatalf("historical built-in-only fixture no longer has its pre-change identity: %v", err)
+	}
+	must(meta.PutResourceAssessment(ctx, builtInOnly))
+	must(meta.SetCurrentResourceAssessment(ctx, builtInOnly))
+
+	expectedReports := []store.AdvisoryReport{{
+		Tool: "skillspector", Version: "2.13.6", Status: store.AdvisoryPartial, Reason: "coverage_gaps",
+		Findings: []store.AdvisoryFinding{{Code: "unsafe-process", Severity: "high", Summary: "Avoid process execution.", Path: "SKILL.md"}},
+	}}
+	withAdvisory := builtInOnly
+	withAdvisory.AssessmentDigest = ""
+	withAdvisory.AdvisoryReports = expectedReports
+	withAdvisory.AssessedAt = builtInOnly.AssessedAt.Add(time.Minute)
+	withAdvisory, err := store.FinalizeResourceAssessment(withAdvisory)
+	must(err)
+	if withAdvisory.AssessmentDigest == historicalDigest {
+		t.Fatal("advisory evidence did not change assessment identity")
+	}
+	must(meta.PutResourceAssessment(ctx, withAdvisory))
+	must(meta.SetCurrentResourceAssessment(ctx, withAdvisory))
+
+	handler := NewServer(config.Config{
+		Instance:   config.Instance{ID: string(coordinate.Marketplace)},
+		Registries: []config.Registry{{ID: string(coordinate.Registry), Slug: "source", Acquisition: string(store.AcquisitionMirror)}},
+	}, meta, nil).PublicHandler()
+	get := func(path string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, response.Code, response.Body.String())
+		}
+		return response
+	}
+	assessmentPath := func(digest store.AssessmentDigest) string {
+		return "/api/v1/assessments/sha256/" + strings.TrimPrefix(string(digest), "sha256:")
+	}
+
+	historicalResponse := get(assessmentPath(historicalDigest))
+	var historical struct {
+		store.ResourceAssessment
+		AdvisoryReports json.RawMessage `json:"advisory_reports"`
+	}
+	must(json.Unmarshal(historicalResponse.Body.Bytes(), &historical))
+	if historical.AssessmentDigest != historicalDigest || !reflect.DeepEqual(historical.Findings, builtInOnly.Findings) {
+		t.Fatalf("historical assessment = %#v, want the pinned built-in-only assessment", historical)
+	}
+	if historical.AdvisoryReports != nil {
+		t.Fatal("historical assessment fabricated advisory evidence")
+	}
+
+	digestResponse := get(assessmentPath(withAdvisory.AssessmentDigest))
+	var byDigest store.ResourceAssessment
+	must(json.Unmarshal(digestResponse.Body.Bytes(), &byDigest))
+	revisionPath := "/api/v1/resources/source/skill/review/revisions/" + string(revision.ContentDigest)
+	revisionResponse := get(revisionPath)
+	var byRevision struct {
+		Assessment store.ResourceAssessment `json:"assessment"`
+	}
+	must(json.Unmarshal(revisionResponse.Body.Bytes(), &byRevision))
+	if !reflect.DeepEqual(byDigest, byRevision.Assessment) ||
+		byDigest.AssessmentDigest != withAdvisory.AssessmentDigest ||
+		byDigest.ContentDigest != builtInOnly.ContentDigest ||
+		byDigest.InspectionManifestDigest != builtInOnly.InspectionManifestDigest ||
+		!reflect.DeepEqual(byDigest.Findings, builtInOnly.Findings) ||
+		!reflect.DeepEqual(byDigest.AdvisoryReports, expectedReports) {
+		t.Fatalf("route assessments disagree or differ from the expected evidence: digest=%+v revision=%+v", byDigest, byRevision.Assessment)
 	}
 }
 

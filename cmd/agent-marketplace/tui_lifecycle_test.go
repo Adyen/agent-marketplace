@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -102,6 +104,47 @@ func TestTUIDependencyLifecycleRefreshesDriftedLockArchiveEvidence(t *testing.T)
 				t.Fatalf("healthy TUI %s rewrote the lock: %v", operation, err)
 			}
 		})
+	}
+}
+
+func TestTUIDependencyLifecycleReusesSourceRevisionAcrossPreparationAndResolve(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repo := setupLocalGitSyncFixture(t, 1)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed exact v4 lock: %v\n%s", err, output)
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	for action := 1; action <= 2; action++ {
+		var logs bytes.Buffer
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		result, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false)
+		slog.SetDefault(previousLogger)
+		if err != nil {
+			t.Fatalf("TUI sync lifecycle %d: %v", action, err)
+		}
+		if builds := strings.Count(logs.String(), `msg="built direct-Git source revision"`); builds != 1 {
+			t.Fatalf("TUI sync lifecycle %d built the same locked source %d times across preparation and resolve, want one\n%s", action, builds, logs.String())
+		}
+		if len(result.Errors) != 0 {
+			t.Fatalf("TUI sync lifecycle %d returned errors: %v", action, result.Errors)
+		}
+		installed, err := os.ReadFile(filepath.Join(repo, ".factory", "skills", "review-0", "SKILL.md"))
+		if err != nil || !strings.Contains(string(installed), "# Review") {
+			t.Fatalf("TUI sync lifecycle %d broke materialized skill: %v\n%s", action, err, installed)
+		}
+		lockAfter, err := os.ReadFile(lockPath)
+		if err != nil || !bytes.Equal(lockBefore, lockAfter) {
+			t.Fatalf("TUI sync lifecycle %d changed exact lock bytes: %v\nbefore: %s\nafter:  %s", action, err, lockBefore, lockAfter)
+		}
 	}
 }
 

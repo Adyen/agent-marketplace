@@ -323,7 +323,7 @@ agent-marketplace sync [flags]
 | `--locked` | boolean | no | `false` | Requires fresh lockfiles and forbids config or lock writes. |
 | `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts a remote endpoint; lock behavior is the same as `--locked`. Cached revocation data may be stale. |
 | `--allow-revoked` | exact Marketplace revision; repeatable | no | none | Allows one revoked pin for this run: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
-| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. The mandatory safety backups of shared configuration files still happen. |
+| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories and the `agents-config` user configuration archive. The mandatory safety backups of shared configuration files still happen. |
 | `--strict` | boolean | no | `false` | Fails on unresolved selections ("selected but not found", "found but failed to load") and on unmet prerequisites. |
 | `--prune-stale` | boolean | no | `false` | After catalogs load successfully, removes direct, non-required selections that no longer exist from configuration, then syncs again. Cannot be combined with `--locked` or `--offline`. |
 | `-v`, `--verbose` | boolean | no | `false` | Prints affected files per target and malformed-resource details instead of only the summary. |
@@ -376,7 +376,7 @@ Use `agent-marketplace update --verbose` to list organization-managed pins.
 Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
 
-`--dry-run` summarizes the same decisions as a preview: proposed acquisition-lock changes, the additions, modifications, removals, and source changes in the effective selected-resource set (including collections and their affected members) with scope, source, kind, name, and old/candidate revision identities, and live local or intentionally unlocked organization sources that have no historical locked comparison. It states that no updates were applied and that the preview does not enumerate every subsequent materialization change. With `--include-diff`, definitions are rendered as normalized review content — readable but not the original authored files and not an applicable patch — and supporting files are compared as exact text, binary metadata, or mode-only changes. A recorded baseline that cannot be loaded refuses the comparison instead of being substituted with empty or installed content; a Marketplace pin whose latest revision is missing is reported with the remove-and-reinstall remediation while other pins still preview, and the preview exits 1 without changing state. If dependency publication succeeds but harness synchronization fails, the report names that phase boundary instead of claiming full application or a rollback.
+`--dry-run` summarizes the same decisions as a preview: proposed acquisition-lock changes, the additions, modifications, removals, and source changes in the effective selected-resource set (including collections and their affected members) with scope, source, kind, name, and old/candidate revision identities, and live local or intentionally unlocked organization sources that have no historical locked comparison. It states that no updates were applied and that the preview does not enumerate every subsequent materialization change. With `--include-diff`, definitions are rendered as normalized review content — readable but not the original authored files and not an applicable patch — and supporting files are compared as exact text, binary metadata, or mode-only changes. A recorded baseline that cannot be loaded refuses the comparison instead of being substituted with empty or installed content. If a Marketplace resource is missing but its pinned revision is still usable, the preview warns and exits `0` when there are no other errors. If the pinned revision is unusable, the preview still reports eligible changes, gives the remove-and-install remedy, and exits `1`. Neither outcome writes changes. If dependency publication succeeds but harness synchronization fails, the report names that phase boundary instead of claiming full application or a rollback.
 
 A preview still performs the same online acquisition work as an applying update, so it may populate the disposable registry cache (`~/.cache/agent-marketplace`) and use private temporary staging. It preserves configuration, locks, installed resources, ownership state, backups, and inventory; ordinary operational logging remains enabled. Each invocation is independent: a preview does not reserve candidates or commit any prepared state, and a later applying update prepares and validates its own candidates against the then-current upstream and configuration state.
 
@@ -451,7 +451,7 @@ Compatibility findings do not block `sync`. Repair failures, corrupt ownership s
 
 ## `backup`
 
-Manages backups of machine-scope harness output. Backups live in `~/.agent-marketplace/backups/`.
+Manages backups of machine-scope harness output and of the user configuration. Backups live in `~/.agent-marketplace/backups/`. Alongside each harness backup, the `agents-config` directory holds archives of `~/.agents/config.yaml`, `~/.agents/lock.yaml`, and the `include` fragments inside `~/.agents/`, captured with the bytes on disk when the command started. Configuration archives follow the same retention and appear in their own `backup list` group; `backup restore` does not restore them. Extract one by hand with `mkdir -p ~/.agents && tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
 
 ```text
 agent-marketplace backup <command>
@@ -465,11 +465,11 @@ Creates an on-demand backup of the machine paths Agent Marketplace currently man
 agent-marketplace backup create
 ```
 
-On success it prints `Backup created for: <targets>`. When backups are disabled in config, it prints `Backup is disabled in config; skipping.` and exits successfully. When no machine paths are managed, it prints `No managed paths to back up.` If configuration cannot be resolved, it prints each error and exits with status 1.
+On success it prints `Backup created for: <targets>`, naming `agents-config` when it wrote a configuration archive. When backups are disabled in config, it prints `Backup is disabled in config; skipping.` and exits successfully. When no machine paths are managed, it prints `No managed paths to back up.` If configuration cannot be resolved, it prints each error and exits with status 1.
 
 ### `backup list`
 
-Prints `Backups directory: <path>`, then the backup timestamps grouped by harness target. With no backups, it prints `No backups found.`
+Prints `Backups directory: <path>`, then the backup timestamps grouped by harness target, with configuration archives under an `agents-config` group. With no backups, it prints `No backups found.`
 
 ```text
 agent-marketplace backup list
@@ -487,7 +487,7 @@ agent-marketplace backup restore --target <harness>
 |---|---|:---:|---|---|
 | `-t`, `--target` | string | yes | none | Harness target: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
 
-On success it prints `Overlay-restored <target> from backup <timestamp>`. The command refuses a target root that is not a directory or is a symbolic link, and creates the root when it does not exist.
+On success it prints `Overlay-restored <target> from backup <timestamp>`. The command refuses a target root that is not a directory or is a symbolic link, and creates the root when it does not exist. `--target agents-config` fails with an error naming manual `tar` extraction and changes nothing on disk.
 
 ## `gc`
 
@@ -690,7 +690,7 @@ Starts the interactive terminal UI for browsing Git registries and hosted Market
 agent-marketplace tui
 ```
 
-The command finds the repository root from the current directory and uses your home directory for machine-scope configuration and output. It shows configured resources before any network discovery, loads up to 50 results from each Marketplace, and starts a Marketplace search 250 milliseconds after you stop typing. Discovery results stay fresh for five minutes and can be shown as stale results for up to 24 hours when an endpoint fails.
+The command finds the repository root from the current directory and uses your home directory for machine-scope configuration and output. It shows configured resources before any network discovery, loads up to 50 free-text results from each Marketplace (a single kind query reaches every match), and starts a Marketplace search 250 milliseconds after you stop typing. Discovery results stay fresh for five minutes and can be shown as stale results for up to 24 hours when an endpoint fails.
 
 Marketplace installation verifies the exact revision before saving it. Security findings show the verified preview and require confirmation; capability metadata alone does not. Blocked and revoked resources stay visible but cannot be installed.
 

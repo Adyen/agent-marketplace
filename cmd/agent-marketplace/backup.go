@@ -30,7 +30,7 @@ func validBackupTargets() []string {
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Manage backups of machine-scope harness directories",
+		Short: "Manage machine-scope harness and user configuration backups",
 	}
 
 	cmd.AddCommand(
@@ -45,7 +45,7 @@ func newBackupCmd() *cobra.Command {
 func newBackupCreateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "create",
-		Short: "Create an on-demand backup of machine-scope harness directories",
+		Short: "Create an on-demand backup of machine-scope harness directories and user configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBackupCreate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
@@ -53,6 +53,7 @@ func newBackupCreateCmd() *cobra.Command {
 }
 
 func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error {
+	userConfig := pipeline.CaptureUserConfig()
 	ws, err := pipeline.DiscoverWorkspace()
 	if err != nil {
 		return err
@@ -111,16 +112,23 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 			return fmt.Errorf("backup Codex set: %w", err)
 		}
 	}
+	configArchive, err := userConfig.WriteArchive()
+	if err != nil {
+		return fmt.Errorf("backup %s: %w", backup.ConfigArchiveTarget, err)
+	}
 	if err := backup.Rotate(bCfg); err != nil {
 		return fmt.Errorf("backup rotate: %w", err)
 	}
 
-	targets := make([]string, 0, len(managed))
+	targets := make([]string, 0, len(managed)+len(codexPartitions)+1)
 	for t := range managed {
 		targets = append(targets, string(t))
 	}
 	if len(codexPartitions) > 0 {
 		targets = append(targets, targetDisplayName(string(hcc.TargetCodex)))
+	}
+	if configArchive != "" {
+		targets = append(targets, backup.ConfigArchiveTarget)
 	}
 	sort.Strings(targets)
 	if _, err := fmt.Fprintf(out, "Backup created for: %s\n", strings.Join(targets, ", ")); err != nil {
@@ -157,6 +165,9 @@ func newBackupListCmd() *cobra.Command {
 }
 
 func runBackupRestore(out io.Writer, target string) error {
+	if strings.EqualFold(target, backup.ConfigArchiveTarget) {
+		return fmt.Errorf("agents-config archives are not restored by backup restore; extract one by hand: tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents")
+	}
 	t := hcc.Target(strings.ToLower(target))
 	if t == hcc.TargetCodex {
 		partitions, err := pipeline.CodexBackupPartitions()

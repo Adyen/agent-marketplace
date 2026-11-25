@@ -65,7 +65,7 @@ type previewLiveSource struct {
 // summary comparison digests admitted files instead of holding their bytes.
 func Build(ctx context.Context, view lifecycle.PreparedUpdateView, includeDiffs bool) (*Preview, error) {
 	started := time.Now()
-	sides, err := lifecycle.ResolvePriorAndDesired(ctx, view.Ws, view.Offline, view.PriorJobs, view.DesiredJobs, view.PriorPlanner, view.Overlays, view.LockDesired, view.DesiredSet, view.Lookup, true)
+	sides, err := lifecycle.ResolvePriorAndDesired(ctx, view.Ws, view.Offline, view.PriorJobs, view.DesiredJobs, view.PriorPlanner, view.Overlays, view.LockDesired, view.DesiredSet, view.Lookup, true, view.MarketplacePinsToSkip)
 	if err != nil {
 		return nil, err
 	}

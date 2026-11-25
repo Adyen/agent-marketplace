@@ -347,6 +347,16 @@ func (i Intent) TargetHarnesses() ([]string, Source) {
 	return nil, SourceUnset
 }
 
+func (i Intent) MachineTargetHarnesses() ([]string, Source) {
+	if harnesses := i.Layers[UserPersonal].Settings().Harnesses; len(harnesses) > 0 {
+		return append([]string(nil), harnesses...), UserPersonal
+	}
+	if harnesses := i.Layers[Organization].Settings().Harnesses; len(harnesses) > 0 {
+		return append([]string(nil), harnesses...), i.Layers[Organization].Source
+	}
+	return i.TargetHarnesses()
+}
+
 func (i Intent) AllowedRegistries() []string {
 	for _, source := range intentLayerOrder {
 		allowed := i.Layers[source].Settings().AllowedRegistries
@@ -659,7 +669,16 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	ec.Errors = nil
 	for _, layer := range ec.LayerResults() {
 		ec.Errors = append(ec.Errors, layer.Errors...)
+		for _, err := range layer.Errors {
+			var validation *V4ValidationError
+			if errors.As(err, &validation) &&
+				(validation.authoredConfig ||
+					(validation.Code != v4MarketplaceLockRequiredCode && validation.Code != v4MarketplaceLockMismatchCode)) {
+				ec.ConfigurationValidationFailed = true
+			}
+		}
 	}
+	bindingErrorCount := len(ec.Errors)
 
 	if len(intent.Layers[Organization].errors) == 0 && len(ec.Organization.Errors) > 0 {
 		var trustErr *OrganizationTrustError
@@ -745,6 +764,7 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
 	}
+	ec.ConfigurationValidationFailed = ec.ConfigurationValidationFailed || len(ec.Errors) > bindingErrorCount
 
 	if len(ec.Errors) > 0 {
 		slog.Error("effective config loaded with errors",

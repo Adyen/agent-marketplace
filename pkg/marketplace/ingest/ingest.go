@@ -23,11 +23,13 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	hccir "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/advisory"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
@@ -76,6 +78,15 @@ type RootDiagnostic struct {
 // BuildRegistryRevision discovers resources under dir for the given registry and
 // commit, builds artifacts, applies policy, and produces a publishable revision.
 func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string) (Revision, error) {
+	return buildRegistryRevision(ctx, cfg, mpID, registry, dir, commit, advisory.SkillSpector{})
+}
+
+// BuildRegistryRevisionWithAdvisory adds supplementary reports for built skills.
+func BuildRegistryRevisionWithAdvisory(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string, scanner advisory.SkillSpector) (Revision, error) {
+	return buildRegistryRevision(ctx, cfg, mpID, registry, dir, commit, scanner)
+}
+
+func buildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.MarketplaceID, registry store.Registry, dir, commit string, scanner advisory.SkillSpector) (Revision, error) {
 	var rev Revision
 
 	if mpID == "" {
@@ -100,6 +111,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		return rev, err
 	}
 
+	publicationCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, limits.IngestionDuration.Duration())
 	defer cancel()
 
@@ -111,6 +123,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		supportFiles      map[string]string
 		inspectionBody    []byte
 		inspectionSupport analyze.FileSet
+		projection        inspection.Manifest
 	}
 
 	var processedResults []processed
@@ -260,6 +273,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			if err != nil {
 				return rev, fmt.Errorf("inspection projection for %s %q: %w", kind, entry.Name, err)
 			}
+			p.projection = projection.Manifest
 			inspectionDigests[key] = projection.Manifest.ManifestDigest
 			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
 			for digest, data := range projection.Bodies {
@@ -605,6 +619,90 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 	if skippedResources && len(resources) == 0 {
 		return rev, ErrNoValidResources
+	}
+
+	if scanner.Scanner != nil {
+		started := time.Now()
+		timeout := scanner.TimeoutLimit()
+		scanDeadline := started.Add(scanner.BudgetLimit())
+		if deadline, ok := publicationCtx.Deadline(); ok {
+			publicationDeadline := deadline.Add(-timeout)
+			if publicationDeadline.Before(scanDeadline) {
+				scanDeadline = publicationDeadline
+			}
+		}
+		root, rootErr := fsboundary.OpenDir(dir)
+		if rootErr == nil {
+			defer func() { _ = root.Close() }()
+		}
+		for i, p := range processedResults {
+			if api.FromIR(p.entry.Kind) != "skill" {
+				continue
+			}
+			report := store.AdvisoryReport{Tool: "skillspector", Status: store.AdvisoryNotRun, Reason: "budget_exhausted"}
+			if time.Until(scanDeadline) >= timeout && publicationCtx.Err() == nil {
+				switch {
+				case rootErr != nil:
+					report.Reason = "unsupported_bundle"
+				default:
+					primary, _, err := root.ReadFile(p.sourcePath, advisory.MaxFileBytes)
+					switch {
+					case errors.Is(err, fsboundary.ErrTooLarge):
+						report.Reason = "bundle_limits"
+					case err != nil:
+						report.Reason = "unsupported_bundle"
+					default:
+						fileCount, totalBytes := 1, int64(len(primary))
+						files := map[string][]byte{inspection.PrimarySkillPath: primary}
+						supportPaths := make(map[string]string)
+						primaryProjected := false
+						bundleLimitsExceeded := false
+						supportUnavailable := false
+						for _, file := range p.projection.Files {
+							if file.Path == inspection.PrimarySkillPath {
+								primaryProjected = true
+								continue
+							}
+							supportPath := strings.TrimPrefix(file.Path, "support/")
+							data, ok := p.inspectionSupport[supportPath]
+							if !ok {
+								supportUnavailable = true
+								break
+							}
+							fileCount++
+							totalBytes += int64(len(data))
+							if len(data) > advisory.MaxFileBytes || totalBytes > advisory.MaxBundleBytes ||
+								fileCount > advisory.MaxFiles {
+								bundleLimitsExceeded = true
+								break
+							}
+							files[supportPath] = data
+							supportPaths[supportPath] = file.Path
+						}
+						switch {
+						case !primaryProjected, supportUnavailable:
+							report.Reason = "unsupported_bundle"
+						case bundleLimitsExceeded:
+							report.Reason = "bundle_limits"
+						default:
+							if time.Until(scanDeadline) < timeout || publicationCtx.Err() != nil {
+								report.Reason = "budget_exhausted"
+							} else {
+								scanCtx, stop := context.WithDeadline(publicationCtx, scanDeadline)
+								report = scanner.Report(scanCtx, files, supportPaths)
+								stop()
+							}
+						}
+					}
+				}
+			}
+			assessment := assessments[i]
+			assessment.AssessmentDigest = ""
+			assessment.AdvisoryReports = []store.AdvisoryReport{report}
+			if finalized, err := store.FinalizeResourceAssessment(assessment); err == nil {
+				assessments[i] = finalized
+			}
+		}
 	}
 
 	return Revision{

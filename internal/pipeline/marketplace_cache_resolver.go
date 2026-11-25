@@ -75,6 +75,50 @@ func resolveMarketplaceArtifacts(ctx context.Context, delegate resolver.Marketpl
 	return delegate.Resolve(ctx, cfg, targets, mode)
 }
 
+type marketplacePinSkippingResolver struct {
+	delegate resolver.MarketplaceResolver
+	skip     map[marketplacePinIdentity]bool
+}
+
+func (r marketplacePinSkippingResolver) Resolve(ctx context.Context, cfg *config.Config, targets []hcc.Target, mode resolver.MarketplaceResolveMode) ([]resolver.ResolvedArtifact, []error) {
+	return r.ResolveWithPolicy(ctx, cfg, targets, mode, nil)
+}
+
+func (r marketplacePinSkippingResolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, targets []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy) ([]resolver.ResolvedArtifact, []error) {
+	if cfg == nil || len(cfg.Marketplaces) == 0 {
+		return resolveMarketplaceArtifacts(ctx, r.delegate, cfg, targets, mode, policy)
+	}
+	filtered := *cfg
+	filtered.Marketplaces = make([]config.MarketplaceEntry, 0, len(cfg.Marketplaces))
+	for _, entry := range cfg.Marketplaces {
+		copyEntry := entry
+		copyEntry.Resources = make([]config.MarketplaceResourcePin, 0, len(entry.Resources))
+		for _, pin := range entry.Resources {
+			key := marketplacePinIdentityOf(entry, pin)
+			if !r.skip[key] {
+				copyEntry.Resources = append(copyEntry.Resources, pin)
+			}
+		}
+		filtered.Marketplaces = append(filtered.Marketplaces, copyEntry)
+	}
+	return resolveMarketplaceArtifacts(ctx, r.delegate, &filtered, targets, mode, policy)
+}
+
+type marketplacePinIdentity struct {
+	url, instanceID, registry, kind, name, revision, installedName string
+	source                                                         config.Source
+	direct                                                         bool
+	selectedBy                                                     config.MarketplaceSelections
+}
+
+func marketplacePinIdentityOf(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) marketplacePinIdentity {
+	return marketplacePinIdentity{
+		url: entry.URL, instanceID: entry.InstanceID, registry: pin.RegistryID, kind: pin.Kind,
+		name: pin.Name, revision: pin.Revision, installedName: pin.InstalledName, source: entry.Source,
+		direct: pin.Direct, selectedBy: pin.SelectedBy,
+	}
+}
+
 // marketplacePinCoordinate identifies one Marketplace pin by endpoint,
 // registry, kind, and name. Endpoint URLs are canonical in both the
 // inspection and the resolver, so equivalent config spellings share a key.

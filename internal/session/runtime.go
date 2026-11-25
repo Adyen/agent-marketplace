@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/updatepreview"
 )
 
@@ -28,13 +29,20 @@ var (
 // prepare exact locks (upgrading when requested), sync read-only against the
 // lease, persist refreshed Marketplace lock evidence, and surface lock
 // warnings ahead of sync warnings.
-func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (pipeline.SyncResult, error) {
+func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (result pipeline.SyncResult, retErr error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	ctx = cache.WithFreshExactGitVerificationScope(ctx)
+	ctx, closeRevisionSession := sourcerevision.WithFreshSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
 		return pipeline.SyncResult{}, err
 	}
+	var updateWarnings []error
 	var lockWarnings []error
 	mode := lifecycle.LockMode{Upgrade: upgrade, WarningSink: &lockWarnings}
 	if upgrade {
@@ -49,8 +57,22 @@ func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspac
 	if err != nil {
 		return pipeline.SyncResult{}, err
 	}
-	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
-	result := RunTUIExactSync(ctx, options)
+	if upgrade {
+		checked, checkErr := pipeline.Update(ctx, pipeline.UpdateOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), RemovedPinsOnly: true,
+		})
+		if checked != nil {
+			updateWarnings = checked.Warnings
+		}
+		if checkErr != nil {
+			return pipeline.SyncResult{Warnings: append(updateWarnings, lockWarnings...)}, checkErr
+		}
+	}
+	options := pipeline.ResolveOptions{
+		Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease,
+		MarketplaceReportArchiveEvidenceDrift: true, KeepRemovedMarketplacePinsFromCache: upgrade,
+	}
+	result = RunTUIExactSync(ctx, options)
 	errs := result.Errors
 	var persistedRefreshes map[lifecycle.ArchiveRefreshKey]bool
 	if len(errs) == 0 {
@@ -62,6 +84,7 @@ func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspac
 	}
 	result.Warnings = lifecycle.StripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
 	result.Warnings = append(lockWarnings, result.Warnings...)
+	result.Warnings = append(updateWarnings, result.Warnings...)
 	return result, errors.Join(errs...)
 }
 
@@ -86,7 +109,7 @@ func RuntimeUpdateAvailability(ctx context.Context, workspace pipeline.Workspace
 
 	var preview *updatepreview.Preview
 	var warnings []error
-	reconcile := func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
+	reconcile := func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit, missingPins []pipeline.MarketplacePinUpdate) (pipeline.DependencyLockView, error) {
 		mode := lifecycle.LockMode{
 			Upgrade:             true,
 			Selects:             selected,
@@ -98,6 +121,7 @@ func RuntimeUpdateAvailability(ctx context.Context, workspace pipeline.Workspace
 			PreviewNoCommit:     true,
 			UpdatePreview: func(ctx context.Context, view lifecycle.PreparedUpdateView) error {
 				view.RefBumps = bumps
+				view.MarketplacePinsToSkip = missingPins
 				var previewErr error
 				preview, previewErr = updatepreview.Build(ctx, view, false)
 				return previewErr

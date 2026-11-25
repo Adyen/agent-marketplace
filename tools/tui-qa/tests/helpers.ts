@@ -75,6 +75,10 @@ const runJourney = async (
     // tui-test adds its own environment to the child's; env -i keeps the
     // program to exactly the fixture's sandboxed environment.
     const environment = Object.entries(fixture.env).map(([key, value]) => `${key}=${value}`);
+    fs.rmSync(fixture.pidFile, { force: true });
+    fixture.launchStartedAtMS = Date.now();
+    fixture.marketplaceSearchRequestsAtLaunch = fixture.marketplaceSearchRequestCount?.() ?? 0;
+    fixture.marketplaceBrowseRequestsAtLaunch = fixture.marketplaceBrowseRequestCount?.() ?? 0;
     await terminal.run("/usr/bin/env", ["-i", ...environment, fixture.launcher, ...args], { cols, rows });
     await terminal.startRecording(path.join(directory, `${journey}.gif`));
     await body(terminal);
@@ -233,4 +237,47 @@ export const waitForExit = async (
   await terminal.waitExit({ timeout: timeoutMs });
   const state = await terminal.state();
   return { exitCode: state.exited, signal: state.exit_signal };
+};
+
+export const waitForSignal = (signal: Promise<void>, label: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} was not received`)), 5_000);
+    signal.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+
+export const seedStartupBrowseCache = async (fixture: Fixture): Promise<void> => {
+  const terminal = new TuiTest(uniqueSession("marketplace-startup-browse-warm-seed"));
+  let failed = true;
+  try {
+    const environment = Object.entries(fixture.env).map(([key, value]) => `${key}=${value}`);
+    fs.rmSync(fixture.pidFile, { force: true });
+    fixture.launchStartedAtMS = Date.now();
+    await terminal.run("/usr/bin/env", ["-i", ...environment, fixture.launcher], { cols: 80, rows: 24 });
+    const firstPage = fixture.marketplaceWaitForBrowseFirstPage?.();
+    assert.ok(firstPage, "warm cache fixture has no first-page hold signal");
+    await waitForSignal(firstPage, "first Marketplace page");
+    fixture.marketplaceReleaseBrowseFirstPage?.();
+    await locate(terminal, "browse-resource-00").expect({ timeout: 5_000 });
+    const laterPage = fixture.marketplaceWaitForBrowseLaterPage?.();
+    assert.ok(laterPage, "warm cache fixture has no later-page hold signal");
+    await waitForSignal(laterPage, "later Marketplace page");
+    fixture.marketplaceReleaseBrowsePages?.();
+    await locate(terminal, /Marketplace: 1 loading/).unique().expect({ not: true });
+    await terminal.write("G");
+    await locate(terminal, /Name:\s+browse-resource-60/).unique().expect({ timeout: 5_000 });
+    await terminal.write("q");
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+    failed = false;
+  } finally {
+    await finish(terminal, failed, false);
+  }
 };

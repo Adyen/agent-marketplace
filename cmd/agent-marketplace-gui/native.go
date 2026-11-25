@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/wailsapp/wails/v2"
@@ -151,6 +152,8 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		},
 	}
 }
+
+const shutdownTimeout = 5 * time.Second
 
 func run() error {
 	ctx := context.Background()

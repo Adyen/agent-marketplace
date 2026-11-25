@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,28 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
+
+// boundedGitStderr keeps the first 64 KiB of a subprocess's stderr. buf is
+// unexported so os/exec's io.Copy cannot reach bytes.Buffer.ReadFrom and bypass
+// the cap.
+type boundedGitStderr struct {
+	buf bytes.Buffer
+}
+
+func (b *boundedGitStderr) Write(p []byte) (int, error) {
+	n := len(p)
+	if remaining := 64*1024 - b.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.buf.Write(p)
+	}
+	return n, nil
+}
+
+func (b *boundedGitStderr) String() string {
+	return b.buf.String()
+}
 
 // redactSecrets removes embedded credentials from any URLs found in s while
 // preserving the rest for debugging. Strings without credentials are returned
@@ -107,19 +130,19 @@ func cloneOrPull(url, ref string) (string, error) {
 }
 
 // DefaultBranch returns the branch advertised by a remote repository's HEAD.
-func DefaultBranch(url string) (string, error) {
-	branch, _, err := RemoteDefaultBranch(url)
+func DefaultBranch(ctx context.Context, url string) (string, error) {
+	branch, _, err := RemoteDefaultBranch(ctx, url)
 	return branch, err
 }
 
 // RemoteDefaultBranch returns the branch and commit advertised by a remote
 // repository's HEAD in one ls-remote request.
-func RemoteDefaultBranch(url string) (branch, commit string, err error) {
+func RemoteDefaultBranch(ctx context.Context, url string) (branch, commit string, err error) {
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return "", "", errors.New("registry url is required")
 	}
-	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
+	output, err := runGitOutputContext(ctx, "", "ls-remote", "--symref", url, "HEAD")
 	if err != nil {
 		return "", "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
 	}
@@ -267,6 +290,10 @@ func runGit(repoDir string, args ...string) error {
 }
 
 func runGitOutput(repoDir string, args ...string) (string, error) {
+	return runGitOutputContext(context.Background(), repoDir, args...)
+}
+
+func runGitOutputContext(ctx context.Context, repoDir string, args ...string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("runGit: no git command")
 	}
@@ -276,7 +303,7 @@ func runGitOutput(repoDir string, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return runGitRawOutput(repoDir, safeArgs, start)
+	return runGitRawOutputContext(ctx, repoDir, safeArgs, start)
 }
 
 func prepareGitArgs(repoDir string, args []string) ([]string, error) {
@@ -343,10 +370,6 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 	return safeArgs, nil
 }
 
-func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string, error) {
-	return runGitRawOutputContext(context.Background(), repoDir, safeArgs, start)
-}
-
 func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []string, start time.Time) (string, error) {
 	redactedSafe := redactArgs(safeArgs)
 	slog.Debug("git command start", "dir", repoDir, "args", redactedSafe)
@@ -362,6 +385,14 @@ func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []stri
 	slog.Debug("git command end", "dir", repoDir, "args", redactedSafe, "duration_ms", time.Since(start).Milliseconds(), "success", false, "stderr", trimmedOutput)
 	if isGitTransportFailure(err) {
 		return "", err
+	}
+	args := stripGitConfigArgs(safeArgs)
+	if len(args) == 5 && args[0] == "ls-remote" && args[1] == "--symref" && args[2] == "--" && args[4] == "HEAD" {
+		if canonical, cerr := canonicalGitTransport(args[3]); cerr == nil {
+			if diagnostic, ok := classifiedGitTransportFailure(canonical, string(output)); ok {
+				return "", &gitTransportFailure{message: diagnostic, cause: err}
+			}
+		}
 	}
 
 	redactedCmd := strings.Join(redactedSafe, " ")
@@ -394,7 +425,7 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		"-c", "protocol.remote.allow=never",
 		"-c", "protocol.file.allow=always",
 	}
-	cmd := processstart.Command(ctx, "git", append(hardened, args...)...)
+	cmd := processstart.Detached(ctx, "git", append(hardened, args...)...)
 	if repoDir != "" {
 		cmd.Dir = repoDir
 	}
@@ -419,8 +450,10 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 				}
 			}
 		}
+		stderr := &boundedGitStderr{}
+		cmd.Stderr = stderr
 		if err := cmd.Run(); err != nil {
-			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
+			diagnostic := gitTransportFailureDiagnostic(resolvedSource, stderr.String())
 			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
 		}
 		return nil, nil
@@ -498,6 +531,7 @@ func gitEnv() []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
+		"SSH_ASKPASS_REQUIRE=never",
 	)
 	return env
 }

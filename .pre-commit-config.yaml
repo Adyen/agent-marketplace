@@ -1,13 +1,22 @@
 repos:
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    rev: v1.0.0-rc.4
+    hooks:
+      - id: my-cmd-pkg
+        alias: test
+        name: make test (staged Go packages)
+        exclude: ^e2e/|(^|/)(testdata|vendor)/
+        stages: [pre-commit]
+        args:
+          - sh
+          - --hook:env:GO111MODULE=on
+          - --hook:env:GOMAXPROCS=2
+          - -c
+          - exec make test TEST_PACKAGES="$1" TEST_FLAGS=-parallel=2
+          - sh
+
   - repo: local
     hooks:
-      - id: test
-        name: make test
-        entry: make test
-        language: system
-        pass_filenames: false
-        stages: [pre-commit]
-
       - id: lint
         name: make lint
         entry: make lint

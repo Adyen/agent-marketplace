@@ -234,8 +234,6 @@ func (a *App) close() {
 	})
 }
 
-const shutdownTimeout = 5 * time.Second
-
 // closeWithin runs shutdown on another goroutine and waits at most timeout for it.
 func closeWithin(shutdown func(), timeout time.Duration) bool {
 	done := make(chan struct{})

@@ -58,7 +58,7 @@ func probeGitRoot(dir string) (string, bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := processstart.Command(ctx, "git", "rev-parse", "--show-toplevel")
+	cmd := processstart.Detached(ctx, "git", "rev-parse", "--show-toplevel")
 	// Run in the directory we are keying the cache on rather than relying on
 	// the process working directory, so the memo key is the actual input.
 	cmd.Dir = dir

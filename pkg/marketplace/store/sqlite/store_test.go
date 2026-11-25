@@ -111,6 +111,60 @@ VALUES ('legacy-collection', 'reg-1', 'sha256:legacy', '[]', 0);
 	}
 }
 
+func TestAdvisoryReportsMigrationDefaultsExistingAssessments(t *testing.T) {
+	ctx := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "marketplace.db")
+	s := sqlite.New(path)
+	must(s.Open(ctx))
+	coord := store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "skill", Name: "review"}
+	revision := store.ResourceRevision{
+		Coordinate: coord, ContentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	must(s.PutResourceRevision(ctx, revision))
+	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: coord, ContentDigest: revision.ContentDigest, AnalyzerVersion: "analyzer/v1",
+		PolicyDigest:             store.PolicyDigest("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		Decision:                 store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+		AssessedAt:               time.Unix(1, 0).UTC(),
+	})
+	must(err)
+	must(s.PutResourceAssessment(ctx, assessment))
+	must(s.Close())
+	db, err := sql.Open("sqlite", path)
+	must(err)
+	_, err = db.ExecContext(ctx, `
+ALTER TABLE resource_assessments DROP COLUMN advisory_reports;
+DELETE FROM marketplace_metadata_v2_migrations
+WHERE version = (SELECT MAX(version) FROM marketplace_metadata_v2_migrations);
+`)
+	must(err)
+	must(db.Close())
+
+	s = sqlite.New(path)
+	must(s.Open(ctx))
+	t.Cleanup(func() { _ = s.Close() })
+	got, err := s.GetResourceAssessment(ctx, assessment.AssessmentDigest)
+	must(err)
+	if got.AssessmentDigest != assessment.AssessmentDigest || got.AdvisoryReports != nil {
+		t.Fatalf("migrated historical assessment = %+v, want unchanged digest and no fabricated reports", got)
+	}
+	db, err = sql.Open("sqlite", path)
+	must(err)
+	defer func() { _ = db.Close() }()
+	var stored string
+	must(db.QueryRowContext(ctx, "SELECT advisory_reports FROM resource_assessments WHERE assessment_digest=?", assessment.AssessmentDigest).Scan(&stored))
+	if stored != "[]" {
+		t.Fatalf("migrated advisory_reports = %q, want empty JSON array default", stored)
+	}
+}
+
 func TestMigrationsSerializeConcurrentStartup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "marketplace.db")
 	const count = 6

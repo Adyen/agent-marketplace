@@ -63,7 +63,7 @@ func TestDiscoveryRegistrationTUILiveAndRefreshRetainRealIdentity(t *testing.T) 
 	cfg, path, original := tuiDiscoveryRegistration(t, "HTTP"+strings.TrimPrefix(canonical, "http")+"/")
 	m := newTestModel()
 	m.mergedCfg = cfg
-	cmd := m.beginMarketplaceDiscovery("", false)
+	cmd := m.beginMarketplaceBrowse(false)
 	if cmd == nil {
 		t.Fatal("source-only discovery was not scheduled")
 	}
@@ -75,10 +75,10 @@ func TestDiscoveryRegistrationTUILiveAndRefreshRetainRealIdentity(t *testing.T) 
 		updated, next := m.Update(msg)
 		m, cmd = updated.(Model), next
 	}
-	if metadata.Load() != 1 || searches.Load() != 1 || len(m.discoveryErrs) != 0 || len(m.discoveryRows) != 1 || len(m.browseDiscoveryRows) != 1 || len(m.discoveryOutcomes) != 1 {
-		t.Fatalf("live TUI discovery = rows %#v, errors %v, requests %d/%d", m.discoveryRows, m.discoveryErrs, metadata.Load(), searches.Load())
+	if metadata.Load() != 1 || searches.Load() != 1 || len(m.browseErrs) != 0 || len(m.browseDiscoveryRows) != 1 || len(m.browseOutcomes) != 1 {
+		t.Fatalf("live TUI browse = rows %#v, errors %v, requests %d/%d", m.browseDiscoveryRows, m.browseErrs, metadata.Load(), searches.Load())
 	}
-	r := m.discoveryRows[0]
+	r := m.browseDiscoveryRows[0]
 	if r.MarketplaceDiscovery.Endpoint.InstanceID != "real-tui-instance" || r.MarketplaceDiscovery.Endpoint.URL != canonical || r.MarketplaceDiscovery.Endpoint.Alias != "public" || r.Artifact.MarketplaceInstanceID != "real-tui-instance" || r.RegistryName != "public/tools" {
 		t.Fatalf("TUI lost acquired identity or attached metadata to the wrong endpoint: %#v", r)
 	}
@@ -99,8 +99,8 @@ func TestDiscoveryRegistrationTUILiveAndRefreshRetainRealIdentity(t *testing.T) 
 	// Beginning another request must retain this same-URL verified page even
 	// though its authored declaration still deliberately has no instance ID.
 	m.beginMarketplaceDiscovery("review", true)
-	if len(m.discoveryRows) != 1 || len(m.browseDiscoveryRows) != 1 || len(m.discoveryOutcomes) != 1 || m.discoveryRows[0].Artifact.MarketplaceInstanceID != "real-tui-instance" {
-		t.Fatalf("source-only refresh discarded verified discovery: rows %#v, outcomes %#v", m.discoveryRows, m.discoveryOutcomes)
+	if len(m.browseDiscoveryRows) != 1 || len(m.browseOutcomes) != 1 || m.browseDiscoveryRows[0].Artifact.MarketplaceInstanceID != "real-tui-instance" {
+		t.Fatalf("source-only refresh discarded verified browse: rows %#v, outcomes %#v", m.browseDiscoveryRows, m.browseOutcomes)
 	}
 	if cfg.Marketplaces[0].InstanceID != "" || len(cfg.Marketplaces[0].Resources) != 0 {
 		t.Fatalf("TUI discovery mutated authored registration: %#v", cfg.Marketplaces)
@@ -129,16 +129,14 @@ func TestDiscoveryRegistrationTUIEndpointMatchIsNarrow(t *testing.T) {
 			m := newTestModel()
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{tc.configured}}
 			out := registrationDiscoveryOutcome(tc.returned, "review")
-			// Seed a previous verified page, then exercise the real refresh filter.
 			m.discoveryOutcomes = []marketplace.DiscoveryOutcome{out}
 			m.discoveryRows = []row{{MarketplaceDiscovery: &marketplaceDiscovery{Endpoint: tc.returned, Item: out.Items[0]}}}
-			m.browseDiscoveryRows = append([]row(nil), m.discoveryRows...)
 			m.beginMarketplaceDiscovery("review", true)
 			want := 0
 			if tc.keep {
 				want = 1
 			}
-			if len(m.discoveryRows) != want || len(m.browseDiscoveryRows) != want || len(m.discoveryOutcomes) != want {
+			if len(m.discoveryRows) != want || len(m.discoveryOutcomes) != want || len(m.browseDiscoveryRows) != 0 {
 				t.Fatalf("endpoint match retained wrong metadata: rows %#v, browse %#v, outcomes %#v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes)
 			}
 		})
@@ -151,8 +149,10 @@ func TestDiscoveryRegistrationTUIRejectsLateGenerationsAndEndpointChanges(t *tes
 			m := newTestModel()
 			declaration := config.MarketplaceEntry{URL: "https://old.example", Alias: "public"}
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{declaration}}
+
 			m.beginMarketplaceDiscovery("", true)
 			oldGeneration := m.requests.Active(requestDiscovery)
+
 			returned := declaration
 			returned.InstanceID = "old-instance"
 			late := registrationDiscoveryOutcome(returned, "late")
@@ -163,11 +163,13 @@ func TestDiscoveryRegistrationTUIRejectsLateGenerationsAndEndpointChanges(t *tes
 				current.InstanceID = "new-instance"
 			}
 			m.mergedCfg = &config.Config{Marketplaces: []config.MarketplaceEntry{current}}
+
 			m.beginMarketplaceDiscovery("", true)
 			generation := m.requests.Active(requestDiscovery)
+
 			for _, msg := range []discoveryLoadedMsg{
-				{generation: oldGeneration, sequence: 1, outcomes: []marketplace.DiscoveryOutcome{late}},
-				{generation: oldGeneration, outcomes: []marketplace.DiscoveryOutcome{late}, done: true},
+				{generation: oldGeneration, sequence: 1, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}},
+				{generation: oldGeneration, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}, done: true},
 			} {
 				updated, _ := m.Update(msg)
 				m = updated.(Model)
@@ -180,22 +182,22 @@ func TestDiscoveryRegistrationTUIRejectsLateGenerationsAndEndpointChanges(t *tes
 			verified := current
 			verified.InstanceID = "new-instance"
 			control := registrationDiscoveryOutcome(verified, "current")
-			updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 2, outcomes: []marketplace.DiscoveryOutcome{late, control}})
+			updated, _ := m.Update(discoveryLoadedMsg{generation: generation, sequence: 2, query: "review", outcomes: []marketplace.DiscoveryOutcome{late, control}})
 			m = updated.(Model)
-			if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "current" || m.discoveryRows[0].Artifact.MarketplaceURL != current.URL || m.discoveryRows[0].Artifact.MarketplaceInstanceID != "new-instance" || len(m.discoveryOutcomes) != 1 || len(m.browseDiscoveryRows) != 1 {
+			if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "current" || m.discoveryRows[0].Artifact.MarketplaceURL != current.URL || m.discoveryRows[0].Artifact.MarketplaceInstanceID != "new-instance" || len(m.discoveryOutcomes) != 1 || len(m.browseDiscoveryRows) != 0 {
 				t.Fatalf("current completion crossed endpoint/identity boundaries: rows %#v, outcomes %#v", m.discoveryRows, m.discoveryOutcomes)
 			}
-			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, sequence: 1, outcomes: []marketplace.DiscoveryOutcome{late}})
+			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, sequence: 1, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}})
 			m = updated.(Model)
 			if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "current" || m.discoverySequence != 2 {
 				t.Fatalf("older partial completion replaced verified metadata: %#v", m.discoveryRows)
 			}
-			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{late, control}, done: true})
+			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, query: "review", outcomes: []marketplace.DiscoveryOutcome{late, control}, done: true})
 			m = updated.(Model)
 			if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "current" {
 				t.Fatalf("final completion crossed endpoint/identity boundaries: %#v", m.discoveryRows)
 			}
-			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
+			updated, _ = m.Update(discoveryLoadedMsg{generation: generation, query: "review", outcomes: []marketplace.DiscoveryOutcome{late}, done: true})
 			m = updated.(Model)
 			if len(m.discoveryRows) != 1 || m.discoveryRows[0].Artifact.Name != "current" {
 				t.Fatalf("duplicate completion replaced verified metadata: %#v", m.discoveryRows)

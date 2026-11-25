@@ -275,12 +275,15 @@ func TestDiscoverFreshTruncatedBrowseCacheStillFetchesMissingPages(t *testing.T)
 
 func TestDiscoverBrowseLaterPageFailureKeepsItemsWithoutCachingPartialCatalog(t *testing.T) {
 	var searches atomic.Int32
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			writeTestWellKnown(w, "partial-browse")
 			return
 		}
+
 		searches.Add(1)
+
 		offset, limit := 0, DiscoveryPageLimit
 		_, _ = fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
 		_, _ = fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)

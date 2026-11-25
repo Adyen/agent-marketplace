@@ -115,12 +115,13 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
 		DryRun:           dryRun,
 		PreseedLockEdits: preseed,
-		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
+		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit, missingPins []pipeline.MarketplacePinUpdate) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
 			mode := reconcileMode
 			if mode.UpdatePreview != nil {
 				mode.UpdatePreview = func(ctx context.Context, view preparedUpdateView) error {
 					view.RefBumps = bumps
+					view.MarketplacePinsToSkip = missingPins
 					return previewHook(ctx, view)
 				}
 			}

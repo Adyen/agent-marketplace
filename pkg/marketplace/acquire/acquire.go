@@ -15,12 +15,12 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
@@ -259,7 +259,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func runGitBounded(ctx context.Context, env []string, dir string, args []string, stdoutLimit int) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := processstart.Detached(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	stdout := &boundedBuffer{limit: stdoutLimit}
@@ -463,7 +463,7 @@ func runGit(ctx context.Context, env []string, dir string, args []string) ([]byt
 }
 
 func runGitInput(ctx context.Context, env []string, dir string, args []string, input string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := processstart.Detached(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	if input != "" {

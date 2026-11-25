@@ -278,6 +278,11 @@ marketplace-gate:
 marketplace-proxy-check:
 	AM_MARKETPLACE_PROXY_IMAGE="$(NGINX_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplace(NginxRedirects|ComposeDocs)$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceNginxRedirects,TestMarketplaceComposeDocs
 
+.PHONY: skillspector-witness
+skillspector-witness:
+	@test -n "$(AM_SKILLSPECTOR_APP_IMAGE)" && test -n "$(AM_SKILLSPECTOR_RUNNER_IMAGE)" || { echo "ERROR: set AM_SKILLSPECTOR_APP_IMAGE and AM_SKILLSPECTOR_RUNNER_IMAGE to the local candidate images" >&2; exit 1; }
+	AM_SKILLSPECTOR_WITNESS=1 AM_SKILLSPECTOR_APP_IMAGE="$(AM_SKILLSPECTOR_APP_IMAGE)" AM_SKILLSPECTOR_RUNNER_IMAGE="$(AM_SKILLSPECTOR_RUNNER_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestMarketplaceSkillSpectorComposeWitness$$' ./tools/marketplace-proxy | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestMarketplaceSkillSpectorComposeWitness
+
 # Dedicated gates name their scenarios once; witness-check fails the gate when
 # any of them skipped, failed, or never ran (for example after a rename).
 comma := ,

@@ -7,6 +7,8 @@ const MAX_REGISTRY_SUMMARIES = 1_000
 const MAX_OBJECT_KEYS = 100
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/
+type AdvisoryReport = NonNullable<ResourceRevision['assessment']['advisory_reports']>[number]
+const ADVISORY_REPORT_STATUSES: readonly AdvisoryReport['status'][] = ['complete', 'complete_with_caveats', 'partial', 'failed', 'not_run']
 
 /**
  * Maximum number of registry occurrences accepted from one response. The Go
@@ -229,6 +231,34 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
       ...(location === undefined ? {} : { location }),
     }
   })
+  const advisoryReports: ResourceRevision['assessment']['advisory_reports'] = assessmentObject.advisory_reports === undefined
+    ? undefined
+    : boundedArray(assessmentObject.advisory_reports, 'assessment.advisory_reports').map((value, index) => {
+      const report = asObject(value, `assessment.advisory_reports[${index}]`)
+      const status = requiredString(report.status, `assessment.advisory_reports[${index}].status`)
+      if (!ADVISORY_REPORT_STATUSES.includes(status as AdvisoryReport['status'])) {
+        throw new ApiValidationError(`assessment.advisory_reports[${index}].status is unsupported`)
+      }
+      const reportFindings = !includeFindings || report.findings === undefined
+        ? undefined
+        : boundedArray(report.findings, `assessment.advisory_reports[${index}].findings`, MAX_ASSESSMENT_FINDINGS).map((findingValue, findingIndex) => {
+          const finding = asObject(findingValue, `assessment.advisory_reports[${index}].findings[${findingIndex}]`)
+          return {
+            code: requiredString(finding.code, `assessment.advisory_reports[${index}].findings[${findingIndex}].code`),
+            severity: requiredString(finding.severity, `assessment.advisory_reports[${index}].findings[${findingIndex}].severity`),
+            summary: requiredString(finding.summary, `assessment.advisory_reports[${index}].findings[${findingIndex}].summary`),
+            ...(finding.path === undefined ? {} : { path: boundedString(finding.path, `assessment.advisory_reports[${index}].findings[${findingIndex}].path`) }),
+          }
+        })
+      return {
+        tool: requiredString(report.tool, `assessment.advisory_reports[${index}].tool`),
+        ...optionalString(report, 'version'),
+        status: status as AdvisoryReport['status'],
+        ...optionalString(report, 'reason'),
+        ...(reportFindings === undefined ? {} : { findings: reportFindings }),
+      }
+    })
+
   const assessment: ResourceRevision['assessment'] = {
     coordinate: assessmentCoordinate,
     content_digest: assessmentContentDigest,
@@ -237,6 +267,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     policy_digest: requiredDigest(assessmentObject.policy_digest, 'assessment.policy_digest'),
     decision: decision as ResourceRevision['assessment']['decision'],
     ...(findings === undefined ? {} : { findings }),
+    ...(advisoryReports === undefined ? {} : { advisory_reports: advisoryReports }),
     inspection_manifest_digest: requiredDigest(assessmentObject.inspection_manifest_digest, 'assessment.inspection_manifest_digest'),
     assessed_at: dateTimeString(assessmentObject.assessed_at, 'assessment.assessed_at'),
   }

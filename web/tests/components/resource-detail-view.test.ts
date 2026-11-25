@@ -497,7 +497,7 @@ describe('ResourceDetailView', () => {
     expect(securityAction.text()).toBe('View security details')
     await securityAction.trigger('click')
     expect(wrapper.get('#security-tab').attributes('aria-selected')).toBe('true')
-    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Automated scan')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Marketplace analyzer')
   })
 
   it('reports a revision with no stored artifact as not installable without claiming a policy block', () => {
@@ -544,24 +544,94 @@ describe('ResourceDetailView', () => {
     expect(rows[2]?.text()).toContain('Latest')
   })
 
-  it('uses assessment finding locations for highlighting', async () => {
+  // spec: marketplace-web-ui/readers-can-compare-tool-reports
+  it('shows separate policy and tool reports while preserving built-in range navigation', async () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
-        resource: { ...resource, assessment: { ...assessmentBase, findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', line: 1, column: 2 } }] } },
+        resource: {
+          ...resource,
+          assessment: {
+            ...assessmentBase,
+            findings: [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', message: 'references a remote host', location: { path: 'SKILL.md', start_byte: 0, end_byte: 5 } }],
+            advisory_reports: [{
+              tool: 'skillspector',
+              version: '2.13.6',
+              status: 'partial',
+              reason: 'coverage_gaps',
+              findings: [{ code: 'SC4', severity: 'high', summary: 'Dependency risk detected.', path: 'support/requirements.txt' }],
+            }, {
+              tool: 'second-analyzer',
+              status: 'partial',
+              findings: [{ code: 'SA1', severity: 'warn', summary: 'Review the dependency declaration.', path: 'support/requirements.txt' }],
+            }],
+          },
+        },
         registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
         inspection: {
           schema_version: 'v1', coordinate: { marketplace: 'marketplace', registry: 'registry', kind: 'skill', name: 'review' }, revision_digest: digest, primary_path: 'SKILL.md',
           files: [{ path: 'SKILL.md', content_digest: digest, media_type: 'text/markdown', size: 44, inspection_class: 'text' }],
         },
         primaryContent: '# Hello',
+        initialTab: 'security',
       },
       global: { stubs },
     })
 
-    await wrapper.get('[aria-label="Content view"]').findAll('button')[1]!.trigger('click')
-    expect(wrapper.get('[data-testid="escaped-raw"] mark').attributes('aria-label')).toContain('remote-reference')
-    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Marketplace policy')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Marketplace analyzer')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('analyzer-v2')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('SkillSpector')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('2.13.6')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Partial coverage')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Dependency risk detected.')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').findAll('h3').map(heading => heading.text())).toContain('second-analyzer')
+    expect(wrapper.get('[aria-label="second-analyzer findings"]').text()).toContain('Review the dependency declaration.')
+    expect(wrapper.get('[aria-labelledby="security-tab"]').text()).toContain('Allowed by marketplace policy')
     expect(wrapper.findAll('[aria-label="Security findings"] > li')).toHaveLength(1)
-    expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md:1-2')
+    expect(wrapper.get('[aria-label="Security findings"]').text()).toContain('SKILL.md')
+    const range = wrapper.get('[aria-label="Security findings"]').get('button')
+    expect(range.text()).toBe('View highlighted range')
+    await range.trigger('click')
+    expect(wrapper.get('#content-tab').attributes('aria-selected')).toBe('true')
+  })
+
+  // spec: marketplace-web-ui/legacy-or-unavailable-skillspector-reports-are-not-shown-as-clean
+  it.each([
+    ['legacy skill revision', undefined, 'No SkillSpector report for this revision'],
+    ['complete scan', [{ tool: 'skillspector', version: '2.13.6', status: 'complete', findings: [] }], 'No findings reported.'],
+    ['complete scan with caveats', [{ tool: 'skillspector', status: 'complete_with_caveats', findings: [] }], 'No findings reported.'],
+    ['partial scan', [{ tool: 'skillspector', status: 'partial', findings: [] }], 'Partial coverage'],
+    ['failed scan', [{ tool: 'skillspector', version: '2.13.6', status: 'failed', findings: [] }], 'Scan failed'],
+    ['not-run scan', [{ tool: 'skillspector', status: 'not_run', findings: [] }], 'Not run'],
+  ])('%s is distinct from a clean SkillSpector result', async (_label, reports, expected) => {
+    const assessment = { ...assessmentBase, findings: [], ...(reports === undefined ? {} : { advisory_reports: reports }) }
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: { ...resource, assessment }, registry: 'registry', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example', initialTab: 'security' },
+      global: { stubs },
+    })
+    const panel = wrapper.get('[aria-labelledby="security-tab"]')
+    const paragraphs = panel.findAll('p').map(paragraph => paragraph.text())
+    expect(panel.text()).toContain(expected)
+    expect(panel.text()).not.toContain('No SkillSpector findings')
+    if (reports === undefined) {
+      expect(panel.text()).not.toContain('Scan failed')
+    } else {
+      expect(paragraphs).toContain('This report does not affect Marketplace policy.')
+      if (expected === 'No findings reported.') expect(paragraphs).toContain(expected)
+      else expect(panel.text()).not.toContain('No findings reported.')
+    }
+  })
+
+  // spec: marketplace-web-ui/non-skill-resources-retain-their-applicable-analysis
+  it('does not claim that SkillSpector analyzed a non-skill resource', () => {
+    const command = { ...resource, coordinate: { ...coordinate, kind: 'command' as const } }
+    const wrapper = mount(ResourceDetailView, {
+      props: { resource: command, registry: 'registry', kind: 'command', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example', initialTab: 'security' },
+      global: { stubs },
+    })
+    const panel = wrapper.get('[aria-labelledby="security-tab"]')
+    expect(panel.text()).toContain('Marketplace analyzer')
+    expect(panel.text()).not.toContain('SkillSpector')
+    expect(panel.text()).not.toContain('No SkillSpector report for this revision')
   })
 })

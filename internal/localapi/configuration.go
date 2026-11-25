@@ -792,7 +792,7 @@ func (a *API) executeSourceMutation(ctx context.Context, req configurationAction
 				return fmt.Errorf("%w: source request is no longer valid under the staged configuration", dependencytxn.ErrGenerationConflict)
 			}
 			if entry.V4Kind == config.V4SourceGit && entry.Ref == "" {
-				branch, err := gitDefaultBranch(entry.URL)
+				branch, err := gitDefaultBranch(ctx, entry.URL)
 				if err != nil {
 					return err
 				}

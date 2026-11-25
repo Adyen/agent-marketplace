@@ -74,6 +74,14 @@ type Model struct {
 	discoveryLoading    bool
 	discoverySequence   uint64
 	discoveryErrs       []error
+	browseOutcomes      []marketplace.DiscoveryOutcome
+	browseCancel        context.CancelFunc
+	browseLoading       bool
+	browsePending       []config.MarketplaceEntry
+	browseSequence      uint64
+	browseKey           string
+	browseFinished      bool
+	browseErrs          []error
 	filteredRows        []row
 	filterScratch       []row
 	cursor              int

@@ -9,8 +9,11 @@ import (
 
 func (m *Model) beginRequest(kind requestKind) requestGeneration {
 	generation := m.requests.Begin(kind)
-	if kind == requestDiscovery {
+	switch kind {
+	case requestDiscovery:
 		m.discoverySequence = 0
+	case requestBrowse:
+		m.browseSequence = 0
 	}
 	slog.Debug("tui request created", "kind", kind, "generation", generation)
 	return generation

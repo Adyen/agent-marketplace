@@ -70,6 +70,7 @@ If the ownership records are deleted or damaged, sync treats every entry in the 
 | Path | Contents |
 |---|---|
 | `~/.agent-marketplace/backups/<harness>/` | Timestamped `.tar.gz` archives of machine harness folders, taken before `sync` changes them and by `backup create`. Restore them with `backup restore`. The [`backup` field](./configuration.md#root-fields) controls retention. |
+| `~/.agent-marketplace/backups/agents-config/` | Timestamped `.tar.gz` archives of the user configuration, written with each harness backup from `sync` and `backup create` (not when backups are disabled, with `sync --no-backup`, or by `sync --check`, `sync --locked`, or `lock --check`). Each archive holds `config.yaml`, `lock.yaml`, and the `include` fragments inside `~/.agents/`, named by their paths relative to `~/.agents/` with the bytes on disk when the command started; fragments outside `~/.agents/` are skipped. They follow the same `backup` retention. `backup restore` refuses this target; extract one by hand with `mkdir -p ~/.agents && tar -xzf <archive> -C ~/.agents`. |
 | `~/.agent-marketplace/logs/agent-marketplace.log` | Default structured log file. See the [logging reference](./logging.md). |
 | `~/.agent-marketplace/materialization-manifest.yaml` | Generated record of the regular files that `file` mode wrote into machine harness folders. |
 

@@ -558,44 +558,84 @@ func TestMergeQueueTriggers(t *testing.T) {
 	})
 }
 
-func TestBenchmarkCondition(t *testing.T) {
-	doc := loadCIWorkflow(t)
-
-	jobs := getMap(t, doc, "jobs")
-	benchmark := getMap(t, jobs, "benchmark")
-	cond := benchmark["if"].(string)
-
-	if !strings.Contains(cond, "github.event_name == 'pull_request'") {
-		t.Errorf("benchmark condition missing pull_request event guard: %s", cond)
+func findStep(t *testing.T, doc map[string]any, jobName, stepName string) map[string]any {
+	t.Helper()
+	steps := getSlice(t, getMap(t, getMap(t, doc, "jobs"), jobName), "steps")
+	index := slices.IndexFunc(steps, func(step any) bool { return stepMap(t, step)["name"] == stepName })
+	if index < 0 {
+		t.Fatalf("step %q not found in job %q", stepName, jobName)
 	}
-	if !strings.Contains(cond, "needs.changes.outputs.benchmark == 'true'") {
-		t.Errorf("benchmark condition missing path output: %s", cond)
-	}
-	if !strings.Contains(cond, "contains(github.event.pull_request.labels.*.name, 'run-benchmarks')") {
-		t.Errorf("benchmark condition missing run-benchmarks label: %s", cond)
-	}
-	if !strings.Contains(cond, " || ") {
-		t.Errorf("benchmark condition missing OR between path output and label: %s", cond)
-	}
+	return stepMap(t, steps[index])
 }
 
 func findStepRun(t *testing.T, doc map[string]any, jobName, stepName string) string {
 	t.Helper()
-	jobs := getMap(t, doc, "jobs")
-	job := getMap(t, jobs, jobName)
-	steps := getSlice(t, job, "steps")
-	for _, step := range steps {
-		m := stepMap(t, step)
-		if n, ok := m["name"].(string); ok && n == stepName {
-			run, ok := m["run"].(string)
-			if !ok {
-				t.Fatalf("step %q has no run string", stepName)
-			}
-			return run
+	return findStep(t, doc, jobName, stepName)["run"].(string)
+}
+
+// spec: benchmark-reporting/documentation-only-pr-skips-unless-opted-in
+func TestBenchmarkCondition(t *testing.T) {
+	benchmark := getMap(t, getMap(t, loadWorkflow(t, "benchmark.yml"), "jobs"), "benchmark")
+	if got, want := benchmark["if"], "github.event_name == 'pull_request' && (needs.changes.outputs.benchmark == 'true' || contains(github.event.pull_request.labels.*.name, 'run-benchmarks'))"; got != want {
+		t.Errorf("benchmark condition = %v, want %v", got, want)
+	}
+}
+
+// spec: benchmark-reporting/eligible-pr-starts-independent-benchmark-workflow
+// spec: benchmark-reporting/failed-required-ci-can-be-retried-while-benchmark-runs
+func TestBenchmarkWorkflowIndependence(t *testing.T) {
+	ci := loadCIWorkflow(t)
+	ciJobs := getMap(t, ci, "jobs")
+	if _, ok := ciJobs["benchmark"]; ok {
+		t.Fatal("CI still contains the benchmark job, coupling informational benchmarks to required CI")
+	}
+	for id, want := range map[string]string{
+		"build":              "Build",
+		"test":               "Test",
+		"lint":               "Lint",
+		"govulncheck":        "govulncheck",
+		"tui-qa-required":    "TUI QA Driver",
+		"e2e-gates-required": "E2E Gates",
+		"specs":              "Specs",
+	} {
+		if got := getMap(t, ciJobs, id)["name"]; got != want {
+			t.Errorf("required CI job %q reports %v, want %q", id, got, want)
 		}
 	}
-	t.Fatalf("step %q not found in job %q", stepName, jobName)
-	return ""
+
+	benchmark := loadWorkflow(t, "benchmark.yml")
+	if benchmark["name"] != "Benchmark" {
+		t.Fatal("workflow name is not Benchmark")
+	}
+	on := getMap(t, benchmark, "on")
+	if len(on) != 1 {
+		t.Fatalf("Benchmark has non-pull-request triggers: %v", on)
+	}
+	pr := getMap(t, on, "pull_request")
+	if !slices.Equal(toStringSlice(t, getSlice(t, pr, "types")), []string{"opened", "synchronize", "reopened", "labeled"}) {
+		t.Fatalf("Benchmark pull_request types = %v", pr["types"])
+	}
+	concurrency := getMap(t, benchmark, "concurrency")
+	if concurrency["group"] != "${{ github.workflow }}-pr-${{ github.event.pull_request.number }}" || concurrency["cancel-in-progress"] != true {
+		t.Fatalf("Benchmark concurrency = %v", concurrency)
+	}
+	if permissions, ok := benchmark["permissions"].(map[string]any); !ok || len(permissions) != 0 {
+		t.Fatalf("Benchmark workflow permissions must be empty; got %v", benchmark["permissions"])
+	}
+
+	jobs := getMap(t, benchmark, "jobs")
+	if len(jobs) != 2 || jobs["changes"] == nil || jobs["benchmark"] == nil {
+		t.Fatalf("Benchmark jobs = %v, want only changes and benchmark", jobs)
+	}
+	changes := getMap(t, jobs, "changes")
+	outputs := getMap(t, changes, "outputs")
+	if changes["name"] != "Benchmark Changes" || len(outputs) != 1 || outputs["benchmark"] != "${{ steps.changes.outputs.benchmark }}" {
+		t.Fatalf("Benchmark changes job name or outputs are invalid: %v, %v", changes["name"], outputs)
+	}
+	planner := findStep(t, benchmark, "changes", "Detect relevant changes")
+	if env := getMap(t, planner, "env"); env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" || env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" {
+		t.Fatalf("Benchmark planner SHA bindings = %v", env)
+	}
 }
 
 func TestPlannerInvocation(t *testing.T) {
@@ -607,6 +647,7 @@ func TestPlannerInvocation(t *testing.T) {
 	}{
 		{"ci.yml", "changes", "Detect relevant changes"},
 		{"harness-compatibility.yml", "plan", "Detect relevant changes"},
+		{"benchmark.yml", "changes", "Detect relevant changes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -614,6 +655,9 @@ func TestPlannerInvocation(t *testing.T) {
 			run := findStepRun(t, doc, tc.jobName, tc.stepName)
 			if !strings.Contains(run, want) {
 				t.Errorf("planner step in %s does not contain exact invocation %q:\n%s", tc.file, want, run)
+			}
+			if tc.file == "benchmark.yml" && !strings.Contains(run, `>> "$GITHUB_OUTPUT"`) {
+				t.Errorf("benchmark planner does not append the output to GITHUB_OUTPUT:\n%s", run)
 			}
 		})
 	}
@@ -786,8 +830,66 @@ func TestGUINativeEventsJobSelectedByLocalAPI(t *testing.T) {
 	}
 }
 
+// spec: benchmark-reporting/exact-base-and-head-are-benchmarked-serially
+func TestBenchmarkSerialComparison(t *testing.T) {
+	doc := loadWorkflow(t, "benchmark.yml")
+	benchmark := getMap(t, getMap(t, doc, "jobs"), "benchmark")
+	steps := getSlice(t, benchmark, "steps")
+	baseCheckout := findStep(t, doc, "benchmark", "Checkout base")
+	headCheckout := findStep(t, doc, "benchmark", "Checkout pull request")
+	if got := getMap(t, baseCheckout, "with")["ref"]; got != "${{ github.event.pull_request.base.sha }}" {
+		t.Fatalf("base checkout ref = %v", got)
+	}
+	if got := getMap(t, headCheckout, "with")["ref"]; got != "${{ github.event.pull_request.head.sha }}" {
+		t.Fatalf("head checkout ref = %v", got)
+	}
+	for _, name := range []string{"Benchmark base", "Benchmark pull request"} {
+		if run := findStepRun(t, doc, "benchmark", name); !strings.Contains(run, "-benchtime=200ms -count=6 -benchmem") {
+			t.Errorf("%s sample flags changed: %s", name, run)
+		}
+	}
+	report := findStep(t, doc, "benchmark", "Build benchmark report")
+	reportEnv := getMap(t, report, "env")
+	if reportEnv["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" || reportEnv["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" {
+		t.Errorf("report SHA bindings = %v", reportEnv)
+	}
+	reportRun := report["run"].(string)
+	if !strings.Contains(reportRun, "benchstat -table '' benchmark-base-clean.txt benchmark-head-clean.txt") || !strings.Contains(reportRun, "go run ./tools/benchmark-report ../benchmark-base-clean.txt ../benchmark-head-clean.txt") {
+		t.Errorf("report generation changed: %v", report["run"])
+	}
+	artifact := findStep(t, doc, "benchmark", "Upload benchmark evidence")
+	artifactWith := getMap(t, artifact, "with")
+	if artifactWith["name"] != "tui-performance-evidence" || artifactWith["path"] != "benchmark-*.txt\nbenchmark-comment.md\ntui-*.pprof\ntui-*.trace\n" {
+		t.Errorf("artifact changed: %v", artifactWith)
+	}
+	index := func(name string) int {
+		return slices.IndexFunc(steps, func(step any) bool { return stepMap(t, step)["name"] == name })
+	}
+	if index("Benchmark base") >= index("Benchmark pull request") || index("Benchmark pull request") >= index("Build benchmark report") || index("Build benchmark report") >= index("Upload benchmark evidence") {
+		t.Fatal("base/head comparison, report, and artifact are not serial in one job")
+	}
+}
+
+// spec: benchmark-reporting/fork-pr-does-not-attempt-a-privileged-comment
+func TestBenchmarkForkCommentBoundary(t *testing.T) {
+	doc := loadWorkflow(t, "benchmark.yml")
+	jobs := getMap(t, doc, "jobs")
+	changesPermissions := getMap(t, getMap(t, jobs, "changes"), "permissions")
+	if len(changesPermissions) != 1 || changesPermissions["contents"] != "read" {
+		t.Fatalf("planner permissions = %v, want contents: read", changesPermissions)
+	}
+	benchmarkPermissions := getMap(t, getMap(t, jobs, "benchmark"), "permissions")
+	if len(benchmarkPermissions) != 2 || benchmarkPermissions["contents"] != "read" || benchmarkPermissions["pull-requests"] != "write" {
+		t.Fatalf("benchmark permissions = %v, want contents: read and pull-requests: write", benchmarkPermissions)
+	}
+	comment := findStep(t, doc, "benchmark", "Update pull request comment")
+	if comment["if"] != "github.event.pull_request.head.repo.full_name == github.repository" {
+		t.Fatalf("comment guard = %v", comment["if"])
+	}
+}
+
 func TestBenchmarkPackagesParity(t *testing.T) {
-	doc := loadWorkflow(t, "ci.yml")
+	doc := loadWorkflow(t, "benchmark.yml")
 
 	jobs := getMap(t, doc, "jobs")
 	benchmark := getMap(t, jobs, "benchmark")

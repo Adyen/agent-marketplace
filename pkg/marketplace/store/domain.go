@@ -403,6 +403,36 @@ type ResourceAssessment struct {
 	InspectionManifestDigest RevisionDigest `json:"inspection_manifest_digest"`
 
 	AssessedAt time.Time `json:"assessed_at"`
+
+	AdvisoryReports []AdvisoryReport `json:"advisory_reports,omitempty"`
+}
+
+// AdvisoryStatus describes the coverage outcome of a supplementary analyzer.
+type AdvisoryStatus string
+
+const (
+	AdvisoryComplete            AdvisoryStatus = "complete"
+	AdvisoryCompleteWithCaveats AdvisoryStatus = "complete_with_caveats"
+	AdvisoryPartial             AdvisoryStatus = "partial"
+	AdvisoryFailed              AdvisoryStatus = "failed"
+	AdvisoryNotRun              AdvisoryStatus = "not_run"
+)
+
+// AdvisoryReport contains one supplementary analyzer's result for a skill revision.
+type AdvisoryReport struct {
+	Tool     string            `json:"tool"`
+	Version  string            `json:"version,omitempty"`
+	Status   AdvisoryStatus    `json:"status"`
+	Reason   string            `json:"reason,omitempty"`
+	Findings []AdvisoryFinding `json:"findings,omitempty"`
+}
+
+// AdvisoryFinding is a normalized, public supplementary analyzer finding.
+type AdvisoryFinding struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Summary  string `json:"summary"`
+	Path     string `json:"path,omitempty"`
 }
 
 // Provenance records registry identity metadata for a resource revision.

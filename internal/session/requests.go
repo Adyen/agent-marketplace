@@ -12,6 +12,7 @@ const (
 	RequestDetail         RequestKind = "detail"
 	RequestSnapshot       RequestKind = "snapshot"
 	RequestDiscovery      RequestKind = "marketplace-discovery"
+	RequestBrowse         RequestKind = "marketplace-browse"
 	RequestInstallPreview RequestKind = "install-source-preview"
 )
 
@@ -23,12 +24,13 @@ type RequestState struct {
 	Detail         RequestGeneration
 	Snapshot       RequestGeneration
 	Discovery      RequestGeneration
+	Browse         RequestGeneration
 	InstallPreview RequestGeneration
 }
 
 func (r *RequestState) Begin(kind RequestKind) RequestGeneration {
 	switch kind {
-	case RequestDetail, RequestSnapshot, RequestDiscovery, RequestInstallPreview:
+	case RequestDetail, RequestSnapshot, RequestDiscovery, RequestBrowse, RequestInstallPreview:
 	default:
 		return 0
 	}
@@ -41,6 +43,8 @@ func (r *RequestState) Begin(kind RequestKind) RequestGeneration {
 		r.Snapshot = r.Next
 	case RequestDiscovery:
 		r.Discovery = r.Next
+	case RequestBrowse:
+		r.Browse = r.Next
 	case RequestInstallPreview:
 		r.InstallPreview = r.Next
 	}
@@ -55,6 +59,8 @@ func (r RequestState) Active(kind RequestKind) RequestGeneration {
 		return r.Snapshot
 	case RequestDiscovery:
 		return r.Discovery
+	case RequestBrowse:
+		return r.Browse
 	case RequestInstallPreview:
 		return r.InstallPreview
 	default:
@@ -71,6 +77,8 @@ func (r *RequestState) Cancel(kind RequestKind) RequestGeneration {
 		r.Snapshot = 0
 	case RequestDiscovery:
 		r.Discovery = 0
+	case RequestBrowse:
+		r.Browse = 0
 	case RequestInstallPreview:
 		r.InstallPreview = 0
 	}

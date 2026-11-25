@@ -437,13 +437,16 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) != 1 {
 		t.Fatalf("config stage did not publish merged config: %#v", m.mergedCfg)
 	}
-	if !m.discoveryLoading || m.requests.Active(requestDiscovery) == 0 {
-		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.Active(requestDiscovery))
+
+	if !m.browseLoading || m.requests.Active(requestBrowse) == 0 {
+		t.Fatalf("config stage did not start Marketplace browse: loading=%t generation=%d", m.browseLoading, m.requests.Active(requestBrowse))
 	}
 
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
+
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestBrowse), sequence: 1, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}})
+
 	m = updated.(Model)
 	if m.requests.Active(requestSnapshot) != generation {
 		t.Fatalf("snapshot generation advanced before assessment: %d", m.requests.Active(requestSnapshot))
@@ -509,7 +512,9 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 		items = append(items, mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: fmt.Sprintf("remote-%02d", i), Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable})
 	}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: items, Total: len(items), CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestBrowse), sequence: 1, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
 	m = updated.(Model)
 	if m.cursor != 0 {
 		t.Fatalf("cursor = %d before installed rows, want 0", m.cursor)
@@ -699,8 +704,10 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 		stages:     stages,
 	})
 	m = updated.(Model)
+
 	if m.mergedCfg != nil || m.requests.Active(requestDiscovery) != 0 {
 		t.Fatalf("stale config stage changed config or started discovery: cfg=%#v discovery=%d", m.mergedCfg, m.requests.Active(requestDiscovery))
+
 	}
 
 	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: stale, mergedCfg: &config.Config{}, rows: []row{mkRow("stale")}, stages: stages})
@@ -1654,7 +1661,9 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestBrowse), sequence: 1, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
 	m = updated.(Model)
 
 	enabled := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}}, EnabledGlobal: true}
@@ -1723,7 +1732,9 @@ func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestBrowse), sequence: 1, browse: true, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+
 	m = updated.(Model)
 
 	target := -1

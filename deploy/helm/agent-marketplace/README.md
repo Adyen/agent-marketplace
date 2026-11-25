@@ -1,6 +1,11 @@
 # Deploy Agent Marketplace on Kubernetes
 
-This guide deploys the Agent Marketplace service with the reusable Helm chart in this directory. With an explicit image version, the default topology renders one all-in-one Deployment (`mode: all`), and it can add the web and documentation frontends. Use `mode: split` when you have external shared storage and want to scale the API and worker separately.
+This guide deploys the Agent Marketplace service with the reusable Helm chart in
+this directory. With the default values and the required image references, the
+chart renders one all-in-one Marketplace Deployment (`mode: all`) and the
+isolated SkillSpector runner Deployment. You can also enable the web and
+documentation frontends. Use `mode: split` when you have external shared storage
+and want to scale the API and worker separately.
 
 ## Prerequisites
 
@@ -10,6 +15,32 @@ Before starting, check that:
 - The cluster can pull the Marketplace image and the image for each frontend you enable. `Dockerfile.marketplace` builds two targets: `api`, and `worker`, which adds Git. The `all` and `worker` roles run acquisition and need an image built from the `worker` target. The top-level `image` applies to every Marketplace role; in split mode you can point `api.image` at an image built from the `api` target. Every release also publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag. Use those when your own release pipeline does not build images.
 - A Marketplace operator configuration is ready, or the default example configuration is enough for a local SQLite/filesystem deployment.
 - A private authentication and TLS boundary is available in front of the public routes. The public application routes have no authentication or authorization.
+
+The chart enables an isolated SkillSpector runner by default for indexing
+workers. Set `skillspector.image.repository` and either its immutable
+`skillspector.image.digest` or an explicit `skillspector.image.tag`; the runner
+tag falls back to the top-level `image.tag` only for local render/test use. No
+runner image is prepublished by this repository. See the offline image build
+instructions in [`deploy/skillspector`](../../skillspector/README.md).
+
+Before upgrading, set an independent runner image reference, even if you already
+pin `image.digest`, `api.image`, or `worker.image`. Those values identify
+Marketplace images, not the runner. If you cannot stage a runner image yet, set
+`skillspector.enabled: false` before upgrading.
+
+The runner has a private ClusterIP Service, no ingress route, no service-account
+token, no chart extra volumes or secrets, a non-root read-only container, and a
+bounded memory-backed `/tmp`. Its default NetworkPolicy allows ingress only
+from this release's `all` or `worker` pods on port 8081 and denies all egress.
+Use a cluster with an enforcing NetworkPolicy implementation. Before rollout,
+prove that an external connection from the runner is blocked and that a
+positive control from the Marketplace worker can still reach the runner; a
+rendered policy alone does not prove enforcement. A reindex through the existing
+`agent-marketplace serve reindex --config /etc/agent-marketplace/config.yaml`
+workflow creates reports for current revisions; history is not backfilled.
+Set `skillspector.enabled: false` only to opt out of supplementary analysis;
+this also removes the runner endpoint and its policy, while the built-in policy
+remains authoritative.
 
 ## 1. Choose the storage topology
 
@@ -244,6 +275,40 @@ kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-all` in the default `mode: all` (for example `marketplace-agent-marketplace-all`).
 
 The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring; split mode also creates a private worker Service for that port. The Ingress exposes only the intended public routes. Worker pods serve metrics, not readiness probes.
+
+## Prometheus worker alerts
+
+The chart can create a Prometheus Operator `PrometheusRule` for the Marketplace worker metrics. It is disabled by default. Enable it separately from scraping:
+
+```yaml
+serviceMonitor:
+  enabled: true
+
+prometheusRule:
+  enabled: true
+  runbookBaseUrl: https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor
+```
+
+The rule expressions scope metrics to the release namespace and the chart's API and worker Service names in both `mode: all` and `mode: split`. The API Service selects the all-in-one pod in all mode; split mode also creates a worker Service. Ensure your Prometheus Operator selects the `PrometheusRule` by its labels.
+
+`prometheusRule.labels` and `prometheusRule.additionalLabels` add labels to the resource in addition to the chart labels. `prometheusRule.ruleLabels` adds labels to each alert. Every alert also has `namespace` and `release` labels fixed to the Helm release identity; `ruleLabels` cannot override them. `prometheusRule.runbookBaseUrl` is optional; when set, each alert gets a `runbook_url` annotation formed from this base URL, `#`, and the lower-case alert name. An empty value omits the annotation.
+
+Every entry in `prometheusRule.alerts` accepts `enabled` (default `true`), `for`, and `severity`; set `enabled: false` to omit an alert. The defaults and additional threshold/window settings are:
+
+| Value path | Default `for` | Default severity | Additional value |
+|---|---:|---|---|
+| `prometheusRule.alerts.workerDown` | `10m` | `critical` | — |
+| `prometheusRule.alerts.workerObservationsStalled` | `15m` | `critical` | `window: 1h` |
+| `prometheusRule.alerts.registryProbeFailing` | `5m` | `warning` | `threshold: 3` consecutive probes |
+| `prometheusRule.alerts.registryObservationStale` | `10m` | `warning` | `staleAfterSeconds: 5400` |
+| `prometheusRule.alerts.registryIndexStale` | `30m` | `warning` | `staleAfterSeconds: 93600` |
+| `prometheusRule.alerts.registryNeverIndexed` | `2h` | `warning` | — |
+| `prometheusRule.alerts.refreshFailures` | `0m` | `warning` | `window: 1h` |
+| `prometheusRule.alerts.configCandidateRejected` | `0m` | `warning` | `window: 15m` |
+| `prometheusRule.alerts.configRestartRequired` | `30m` | `info` | — |
+| `prometheusRule.alerts.hostBudgetDelaysSustained` | `2h` | `info` | `window: 15m` |
+
+The observation-staleness default is three times the operator configuration's default `refresh.interval` of 30 minutes. The index-staleness default allows the 24-hour reconciliation plus two hours of margin. Adjust these values when changing the corresponding refresh cadence. Alert meanings and first response steps are in [Alert on metrics](../../../site/docs/how-to/operator/reindex-and-monitor.md#alert-on-metrics).
 
 ## Upgrade from the combined site profile
 

@@ -362,7 +362,7 @@ var catalog = map[string]hintFunc{
 	"dependency.recovery-required": staticHint("Run `agent-marketplace sync` or `agent-marketplace lock` while online (not with `--check`, `--locked`, or `--offline`) to finish the interrupted write."),
 
 	"git.auth-config-untrusted": staticHint("Move Git authentication settings to trusted system or global configuration, then rerun the command."),
-	"git.auth-transport-failed": staticHint("Check your SSH agent or Git credentials and repository access, then rerun the command."),
+	"git.auth-transport-failed": staticHint("Check the repository URL and credentials, or the SSH host key and access, then rerun the command."),
 
 	"lock.alias-forbidden":          lockHint("Replace YAML aliases in the acquisition lock with explicit values"),
 	"lock.change-required":          lockScopeHint("Run `agent-marketplace lock` for the affected scope to write the required acquisition-lock changes"),

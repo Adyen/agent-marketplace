@@ -851,6 +851,85 @@ sources:
 	assertSymlinkTarget(t, filepath.Join(repoRoot, ".agents", "skills", "vm-lifecycle"), filepath.Join(cache.RegistryCachePath(origin, "main"), "vm-lifecycle"))
 }
 
+func TestInstallReusesSourceRevisionAcrossDiscoveryAndReconcile(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "repeated-install.git")
+	writeSkill(t, working, "selected", "Selected", nil)
+	writeSkill(t, working, "unselected", "Unselected", nil)
+	commitAndPushAll(t, working, "Seed install registry")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  origin:
+    git: file://`+origin+`
+    ref: main
+resources:
+  origin:
+    include: [skill/selected]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed exact v4 lock: %v\n%s", err, output)
+	}
+
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "install.jsonl")
+	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
+	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
+	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeCommand("install", "--scope", "repo", "unselected")
+	if err != nil {
+		t.Fatalf("install unselected resource: %v\n%s", err, output)
+	}
+	logs, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if builds := strings.Count(string(logs), `"msg":"built direct-Git source revision"`); builds != 1 {
+		t.Fatalf("install built the same locked source %d times across discovery and reconciliation, want one\n%s", builds, logs)
+	}
+	if !strings.Contains(string(logs), `"msg":"lock layer reconciled"`) {
+		t.Fatalf("install did not reach lock reconciliation:\n%s", logs)
+	}
+
+	cfg, err := config.LoadRepoConfig()
+	if err != nil {
+		t.Fatalf("load repository config after install: %v", err)
+	}
+	found := false
+	for _, name := range cfg.Registries[0].Skills.Include {
+		found = found || name == "unselected"
+	}
+	if !found {
+		t.Fatalf("install did not select unselected skill: %#v", cfg.Registries[0].Skills.Include)
+	}
+	installed, err := os.ReadFile(filepath.Join(repoRoot, ".factory", "skills", "unselected", "SKILL.md"))
+	if err != nil || !strings.Contains(string(installed), "# unselected") {
+		t.Fatalf("install did not materialize unselected skill: %v\n%s", err, installed)
+	}
+
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil || !bytes.Equal(lockBefore, lockAfter) {
+		t.Fatalf("install changed exact lock bytes: %v\nbefore: %s\nafter:  %s", err, lockBefore, lockAfter)
+	}
+}
+
 func TestInstallCommandAddsSkillToExistingRegistrySpecificList(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -92,7 +93,7 @@ func (m Model) footerActionHints() []footerItem {
 	if r, ok := m.selectedRow(); ok && rowToggleDenial(r) != toggleEligible {
 		actions = slices.DeleteFunc(actions, func(a [2]string) bool { return a[0] == "space" })
 	}
-	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
+	if m.failuresOrDrift() || len(m.marketplaceDiscoveryErrors()) > 0 {
 		actions = append([][2]string{{"r", "reload"}}, actions...)
 	}
 	if m.hasDiagnostics() {
@@ -178,23 +179,62 @@ func (m Model) footerStatus() (string, []string) {
 		leftParts = append(leftParts, m.driftStatusSegment())
 	}
 
+	type endpointKey struct {
+		url        string
+		instanceID string
+	}
+	staleSeen := make(map[endpointKey]struct{})
 	var staleEndpoints, truncatedEndpoints int
-	for _, outcome := range m.discoveryOutcomes {
-		if outcome.CacheState == "stale" {
-			staleEndpoints++
+	countStale := func(outcome marketplace.DiscoveryOutcome) {
+		if outcome.CacheState != marketplace.DiscoveryCacheStale {
+			return
 		}
+		key := endpointKey{url: outcome.Endpoint.URL, instanceID: outcome.Endpoint.InstanceID}
+		if _, ok := staleSeen[key]; ok {
+			return
+		}
+		staleSeen[key] = struct{}{}
+		staleEndpoints++
+	}
+	for _, outcome := range m.discoveryOutcomes {
+		countStale(outcome)
 		if outcome.Truncated {
 			truncatedEndpoints++
+		}
+	}
+	for _, outcome := range m.browseOutcomes {
+		countStale(outcome)
+	}
+	loadingEndpoints := 0
+	if m.browseLoading {
+		loadingEndpoints = len(m.browsePending)
+		loadingSeen := make(map[endpointKey]struct{}, loadingEndpoints)
+		for _, endpoint := range m.browsePending {
+			loadingSeen[endpointKey{url: endpoint.URL, instanceID: endpoint.InstanceID}] = struct{}{}
+		}
+		for _, outcome := range m.browseOutcomes {
+			if !outcome.Truncated || outcome.Err != nil {
+				continue
+			}
+			key := endpointKey{url: outcome.Endpoint.URL, instanceID: outcome.Endpoint.InstanceID}
+			if _, ok := loadingSeen[key]; ok {
+				continue
+			}
+			loadingSeen[key] = struct{}{}
+			loadingEndpoints++
 		}
 	}
 	if staleEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d stale", staleEndpoints)))
 	}
+	if loadingEndpoints > 0 {
+		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d loading", loadingEndpoints)))
+	}
 	if truncatedEndpoints > 0 {
 		leftParts = append(leftParts, styleFooterPending.Render(fmt.Sprintf("Marketplace: %d limited", truncatedEndpoints)))
 	}
-	if len(m.discoveryErrs) > 0 {
-		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", len(m.discoveryErrs))))
+	if failures := m.marketplaceDiscoveryFailureCount(); failures > 0 {
+		leftParts = append(leftParts, styleFooterWarning.Render(fmt.Sprintf("Marketplace: %d failed", failures)))
 	}
 	if len(m.errs) > 0 {
 		leftParts = append(leftParts, styleFooterError.Render(fmt.Sprintf("! %d errors", len(m.errs))))
@@ -330,7 +370,7 @@ func (m Model) hasDiagnostics() bool {
 	if len(m.hookChanges) > 0 {
 		return true
 	}
-	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
+	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.marketplaceDiscoveryErrors()) > 0
 }
 
 func (m Model) failuresOrDrift() bool {

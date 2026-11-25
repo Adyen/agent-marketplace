@@ -33,6 +33,26 @@ func TestServeRequiresConfig(t *testing.T) {
 	}
 }
 
+func TestConfiguredSkillSpectorReadsOperatorEndpointSafely(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("MARKETPLACE_SKILLSPECTOR_ENDPOINT", "")
+	disabled, err := configuredSkillSpector()
+	if err != nil || disabled.Scanner != nil {
+		t.Fatalf("empty endpoint = %#v, %v", disabled, err)
+	}
+	t.Setenv("MARKETPLACE_SKILLSPECTOR_ENDPOINT", "http://127.0.0.1:8123")
+	enabled, err := configuredSkillSpector()
+	if err != nil || enabled.Scanner == nil {
+		t.Fatalf("configured endpoint = %#v, %v", enabled, err)
+	}
+	t.Setenv("MARKETPLACE_SKILLSPECTOR_ENDPOINT", "http://operator:secret@127.0.0.1:8123")
+	if _, err := configuredSkillSpector(); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("invalid endpoint error = %v", err)
+	}
+}
+
 func TestServeRejectsUnsupportedRole(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

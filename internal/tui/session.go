@@ -51,6 +51,7 @@ const (
 	requestDetail         = session.RequestDetail
 	requestSnapshot       = session.RequestSnapshot
 	requestDiscovery      = session.RequestDiscovery
+	requestBrowse         = session.RequestBrowse
 	requestInstallPreview = session.RequestInstallPreview
 
 	operationMutation                 = session.OperationMutation
@@ -96,6 +97,7 @@ var (
 	sanitizeReturnedError           = session.SanitizeReturnedError
 	searchTerms                     = session.SearchTerms
 	registryDisplayName             = session.RegistryDisplayName
+	marketplaceProtocolKind         = session.MarketplaceProtocolKind
 	registryIdentityKey             = session.RegistryIdentityKey
 	marketplaceEndpointDisplay      = session.MarketplaceEndpointDisplay
 	marketplaceCatalogKey           = session.MarketplaceCatalogKey
@@ -129,29 +131,30 @@ func discoveryInstallOptionsForScope(repoRoot string, r row, s scope) (pipeline.
 // stages carries the remainder of the session stage stream this message was
 // delivered on, already bridged to TUI message values.
 type snapshotLoadedMsg struct {
-	generation           requestGeneration
-	stage                snapshotStage
-	stages               <-chan snapshotLoadedMsg
-	rows                 []row
-	driftReport          materialize.DriftReport
-	driftAssessment      driftAssessment
-	catalogs             map[string][]catalog.Entry
-	resolved             []resolver.ResolvedArtifact
-	mergedCfg            *config.Config
-	provisionalCfg       *config.Config
-	provisionalRows      []row
-	configuredRegistries []config.RegistryEntry
-	inventoryResult      *pipeline.ResolveResult
-	materializationModes config.MaterializationModes
-	localExcludes        []string
-	globalHarnesses      []string
-	projectHarnesses     []string
-	targetHarnesses      []hcc.Target
-	targetHarnessSource  config.Source
-	errs                 []error
-	warnings             []error
-	diagnostics          []tuiDiagnostic
-	refreshAfterLoad     bool
+	generation             requestGeneration
+	stage                  snapshotStage
+	stages                 <-chan snapshotLoadedMsg
+	rows                   []row
+	driftReport            materialize.DriftReport
+	driftAssessment        driftAssessment
+	catalogs               map[string][]catalog.Entry
+	resolved               []resolver.ResolvedArtifact
+	mergedCfg              *config.Config
+	provisionalCfg         *config.Config
+	provisionalRows        []row
+	configuredRegistries   []config.RegistryEntry
+	inventoryResult        *pipeline.ResolveResult
+	materializationModes   config.MaterializationModes
+	localExcludes          []string
+	globalHarnesses        []string
+	projectHarnesses       []string
+	targetHarnesses        []hcc.Target
+	targetHarnessSource    config.Source
+	errs                   []error
+	warnings               []error
+	diagnostics            []tuiDiagnostic
+	refreshAfterLoad       bool
+	forceMarketplaceBrowse bool
 }
 
 // snapshotMsgFromCore converts one core snapshot delivery into the TUI
@@ -209,6 +212,14 @@ func loadSnapshot(ctx context.Context, workspace pipeline.Workspace, homeDir str
 		snapshot := session.ReadSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
 		snapshot.Generation = generation
 		return snapshotMsgFromCore(snapshot, nil)
+	}
+}
+
+func loadSnapshotForReload(ctx context.Context, workspace pipeline.Workspace, homeDir string, generation requestGeneration) tea.Cmd {
+	return func() tea.Msg {
+		snapshot := session.ReadSnapshotForWorkspace(ctx, workspace, homeDir, catalogLoadCached)
+		snapshot.Generation = generation
+		return reloadMsg(snapshotMsgFromCore(snapshot, nil))
 	}
 }
 

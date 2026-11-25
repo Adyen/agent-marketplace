@@ -42,6 +42,21 @@ type ownedJSONAggregateReport struct {
 	hookChanges []HookChange
 }
 
+// ownedJSONAggregatesHaveWork reports whether any entry is desired or any
+// aggregate file is present. Nothing desired and no file present means there is
+// no aggregate work at all; do not open a store or create empty files for it.
+func ownedJSONAggregatesHaveWork(outDir string, files []ownedJSONFileSpec, work *ownedJSONAggregateWork) bool {
+	if work != nil && len(work.entries) > 0 {
+		return true
+	}
+	for _, file := range files {
+		if _, err := os.Lstat(filepath.Join(outDir, file.rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // reconcileOwnedJSONAggregates reconciles every aggregate file for one output
 // key. Each file is independent: a malformed document blocks only that file.
 //
@@ -92,9 +107,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 			desiredByRel[entry.rel] = append(desiredByRel[entry.rel], entry)
 		}
 	}
-	// Nothing desired and no file present means there is no aggregate work at
-	// all; do not open a store or create empty files for it.
-	anyWork := len(desiredByRel) > 0
+	anyWork := ownedJSONAggregatesHaveWork(outDir, files, work)
 	hasNative := false
 	for _, file := range files {
 		if file.hookShape != "" {
@@ -102,9 +115,6 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 			if options.nativeHookFinalize != nil {
 				anyWork = true
 			}
-		}
-		if _, err := os.Lstat(filepath.Join(outDir, file.rel)); err == nil {
-			anyWork = true
 		}
 	}
 	needsRoot := anyWork
@@ -239,7 +249,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		// "On startup, incomplete generations are replayed or rolled back
 		// according to the recorded phase" — once, before any mutation, and
 		// INSIDE the section so exactly one process ever resolves a journal.
-		outcomes, recoverErr := store.Recover()
+		outcomes, recoverErr := recoverOwnedAggregate(store)
 		for _, outcome := range outcomes {
 			report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
 				fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",

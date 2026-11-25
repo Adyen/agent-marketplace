@@ -413,7 +413,7 @@ func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]sto
 const assessedResourceColumns = `rr.marketplace_id, rr.registry_id, rr.kind, rr.name,
 	rr.content_digest, rr.archive_digest, rr.license, rr.description,
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
-	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
+	ra.findings, ra.advisory_reports, ra.inspection_manifest_digest, ra.assessed_at,
 	ro.revision_commit, ro.manifest_digest, ro.source_path,
 	rv.kind, rv.target_id, rv.reason, rv.applied_at,
 	rc.kind, rc.target_id, rc.reason, rc.applied_at,
@@ -478,7 +478,7 @@ func (s *Store) GetResourceRevision(ctx context.Context, coord store.ResourceCoo
 func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedResourceRevision, error) {
 	var out store.AssessedResourceRevision
 	var archive, license, sourcePath sql.NullString
-	var findings string
+	var findings, advisoryReports string
 	var assessedAt int64
 	var revocationKind, targetID, reason sql.NullString
 	var appliedAt sql.NullInt64
@@ -490,7 +490,7 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 		&out.Coordinate.Marketplace, &out.Coordinate.Registry, &out.Coordinate.Kind, &out.Coordinate.Name,
 		&out.ContentDigest, &archive, &license, &out.Description,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
-		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
+		&out.Assessment.Decision, &findings, &advisoryReports, &out.Assessment.InspectionManifestDigest, &assessedAt,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath,
 		&revocationKind, &targetID, &reason, &appliedAt,
 		&coordinateKind, &coordinateTarget, &coordinateReason, &coordinateAt,
@@ -509,6 +509,9 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	out.Assessment.AssessedAt = microToTime(assessedAt)
 	if err := unmarshalJSON([]byte(findings), &out.Assessment.Findings); err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if out.Assessment.AdvisoryReports, err = store.DecodeAdvisoryReports(advisoryReports); err != nil {
+		return store.AssessedResourceRevision{}, err
 	}
 	out.Occurrence.Coordinate = out.Coordinate
 	out.Occurrence.ContentDigest = out.ContentDigest
@@ -688,29 +691,36 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 	if err != nil {
 		return err
 	}
+	advisoryReports := "[]"
+	if len(finalized.AdvisoryReports) > 0 {
+		advisoryReports, err = marshalJSON(finalized.AdvisoryReports)
+		if err != nil {
+			return err
+		}
+	}
 	_, err = s.q.ExecContext(ctx, `INSERT INTO resource_assessments
 		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest,
-		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 analyzer_version, policy_digest, decision, findings, advisory_reports, inspection_manifest_digest, assessed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest, assessment_digest) DO NOTHING`,
 		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind,
 		finalized.Coordinate.Name, finalized.ContentDigest, finalized.AssessmentDigest,
 		finalized.AnalyzerVersion, finalized.PolicyDigest, finalized.Decision, findings,
-		finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt))
+		advisoryReports, finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt))
 	return err
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
 	row := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		assessment_digest, analyzer_version, policy_digest, decision, findings,
+		assessment_digest, analyzer_version, policy_digest, decision, findings, advisory_reports,
 		inspection_manifest_digest, assessed_at FROM resource_assessments WHERE assessment_digest=$1`, digest)
 	var assessment store.ResourceAssessment
-	var findings string
+	var findings, advisoryReports string
 	var assessedAt int64
 	err := row.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 		&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 		&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
-		&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt)
+		&assessment.Decision, &findings, &advisoryReports, &assessment.InspectionManifestDigest, &assessedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceAssessment{}, store.ErrNotFound
 	}
@@ -720,6 +730,9 @@ func (s *Store) GetResourceAssessment(ctx context.Context, digest store.Assessme
 	assessment.AssessedAt = microToTime(assessedAt)
 	if err := unmarshalJSON([]byte(findings), &assessment.Findings); err != nil {
 		return store.ResourceAssessment{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if assessment.AdvisoryReports, err = store.DecodeAdvisoryReports(advisoryReports); err != nil {
+		return store.ResourceAssessment{}, err
 	}
 	return assessment, nil
 }
@@ -757,7 +770,7 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 
 func (s *Store) ListResourceAssessments(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) ([]store.ResourceAssessment, error) {
 	rows, err := s.q.QueryContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		assessment_digest, analyzer_version, policy_digest, decision, findings,
+		assessment_digest, analyzer_version, policy_digest, decision, findings, advisory_reports,
 		inspection_manifest_digest, assessed_at FROM resource_assessments
 		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5
 		ORDER BY assessed_at DESC, assessment_digest DESC`,
@@ -769,17 +782,20 @@ func (s *Store) ListResourceAssessments(ctx context.Context, coord store.Resourc
 	out := make([]store.ResourceAssessment, 0)
 	for rows.Next() {
 		var assessment store.ResourceAssessment
-		var findings string
+		var findings, advisoryReports string
 		var assessedAt int64
 		if err := rows.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 			&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 			&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
-			&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt); err != nil {
+			&assessment.Decision, &findings, &advisoryReports, &assessment.InspectionManifestDigest, &assessedAt); err != nil {
 			return nil, err
 		}
 		assessment.AssessedAt = microToTime(assessedAt)
 		if err := unmarshalJSON([]byte(findings), &assessment.Findings); err != nil {
 			return nil, fmt.Errorf("unmarshal assessment findings: %w", err)
+		}
+		if assessment.AdvisoryReports, err = store.DecodeAdvisoryReports(advisoryReports); err != nil {
+			return nil, err
 		}
 		out = append(out, assessment)
 	}

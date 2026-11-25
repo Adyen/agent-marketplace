@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/advisory"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
@@ -44,7 +45,13 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			var cfg mpconfig.Config
 			var runtimeSource *mpconfig.RuntimeSource
 			var err error
+			var skillSpector advisory.SkillSpector
 			if role == "worker" || role == "all" {
+				skillSpector, err = configuredSkillSpector()
+				if err != nil {
+					slog.Error("serve failed", "reason", "invalid SkillSpector endpoint")
+					return err
+				}
 				runtimeSource, err = mpconfig.LoadRuntimeSource(cfgPath)
 				if err == nil {
 					cfg = runtimeSource.Startup()
@@ -76,6 +83,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				MetadataStore: meta,
 				BlobStore:     blobs,
 				Metrics:       workerMetrics,
+				SkillSpector:  skillSpector,
 			}
 			if err := worker.EnsureMarketplace(ctx, &deps); err != nil {
 				slog.Error("serve failed", "reason", "ensure marketplace", "error", err)
@@ -233,6 +241,11 @@ registry is provided, all configured registries are reindexed.`,
 				slog.Error("reindex failed", "reason", "load operator config", "error", err)
 				return fmt.Errorf("load operator config: %w", err)
 			}
+			skillSpector, err := configuredSkillSpector()
+			if err != nil {
+				slog.Error("reindex failed", "reason", "invalid SkillSpector endpoint")
+				return err
+			}
 			if cfg.Management.Mode != "database" && len(args) == 1 && !hasRegistry(cfg, args[0]) {
 				err := fmt.Errorf("registry %q not found in config", args[0])
 				slog.Error("reindex failed", "registry", args[0], "error", err)
@@ -252,6 +265,7 @@ registry is provided, all configured registries are reindexed.`,
 				Config:        cfg,
 				MetadataStore: meta,
 				BlobStore:     blobs,
+				SkillSpector:  skillSpector,
 			}
 			// Reindex is a worker-role operation too: do not perform registry
 			// acquisition while the live revocation desired set is stale.
@@ -293,6 +307,14 @@ registry is provided, all configured registries are reindexed.`,
 	_ = cmd.MarkFlagRequired("config")
 
 	return cmd
+}
+
+func configuredSkillSpector() (advisory.SkillSpector, error) {
+	scanner, err := advisory.NewScanner(os.Getenv("MARKETPLACE_SKILLSPECTOR_ENDPOINT"))
+	if err != nil {
+		return advisory.SkillSpector{}, errors.New("invalid MARKETPLACE_SKILLSPECTOR_ENDPOINT")
+	}
+	return advisory.SkillSpector{Scanner: scanner}, nil
 }
 
 func hasRegistry(cfg mpconfig.Config, slugOrID string) bool {
