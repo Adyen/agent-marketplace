@@ -33,17 +33,19 @@ const (
 )
 
 type nativeHookJSONLayoutCase struct {
-	name         string
-	target       hcc.Target
-	machineScope bool
-	root         func(repoRoot, home, codexHome string) string
-	rel          string
-	container    string
-	shape        targetmeta.HookShape
-	event        string
-	otherEvent   string
-	matcher      string
-	envelope     map[string]any
+	name            string
+	target          hcc.Target
+	machineScope    bool
+	root            func(repoRoot, home, codexHome string) string
+	rel             string
+	container       string
+	legacyContainer string
+	legacySet       bool
+	shape           targetmeta.HookShape
+	event           string
+	otherEvent      string
+	matcher         string
+	envelope        map[string]any
 }
 
 func nativeHookJSONLayoutCases() []nativeHookJSONLayoutCase {
@@ -51,7 +53,7 @@ func nativeHookJSONLayoutCases() []nativeHookJSONLayoutCase {
 		{name: "claude_repo", target: hcc.TargetClaude, root: func(repo, _, _ string) string { return filepath.Join(repo, ".claude") }, rel: "settings.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Bash"},
 		{name: "claude_machine", target: hcc.TargetClaude, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".claude") }, rel: "settings.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Bash"},
 		{name: "factory_repo", target: hcc.TargetFactory, root: func(repo, _, _ string) string { return filepath.Join(repo, ".factory") }, rel: "hooks.json", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
-		{name: "factory_machine", target: hcc.TargetFactory, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".factory") }, rel: "hooks.json", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
+		{name: "factory_machine", target: hcc.TargetFactory, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".factory") }, rel: "settings.local.json", container: "hooks", legacyContainer: "", legacySet: true, shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "Execute"},
 		{name: "cursor_repo", target: hcc.TargetCursor, root: func(repo, _, _ string) string { return filepath.Join(repo, ".cursor") }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeEventHandlers, event: "preToolUse", otherEvent: "postToolUse", matcher: "^Shell$", envelope: map[string]any{"version": 1}},
 		{name: "cursor_machine", target: hcc.TargetCursor, machineScope: true, root: func(_, home, _ string) string { return filepath.Join(home, ".cursor") }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeEventHandlers, event: "preToolUse", otherEvent: "postToolUse", matcher: "^Shell$", envelope: map[string]any{"version": 1}},
 		{name: "gemini_repo", target: hcc.TargetGemini, root: func(repo, _, _ string) string { return filepath.Join(repo, ".gemini") }, rel: "settings.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "BeforeTool", otherEvent: "AfterTool", matcher: "^run_shell_command$"},
@@ -63,6 +65,13 @@ func nativeHookJSONLayoutCases() []nativeHookJSONLayoutCase {
 		{name: "codex_repo", target: hcc.TargetCodex, root: func(repo, _, _ string) string { return filepath.Join(repo, ".codex") }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "^Bash$"},
 		{name: "codex_machine", target: hcc.TargetCodex, machineScope: true, root: func(_, _, codexHome string) string { return codexHome }, rel: "hooks.json", container: "hooks", shape: targetmeta.HookShapeMatcherGroups, event: "PreToolUse", otherEvent: "PostToolUse", matcher: "^Bash$"},
 	}
+}
+
+func (tc nativeHookJSONLayoutCase) effectiveLegacyContainer() string {
+	if tc.legacySet {
+		return tc.legacyContainer
+	}
+	return tc.container
 }
 
 func nativeHookJSONCaseByName(t *testing.T, name string) nativeHookJSONLayoutCase {

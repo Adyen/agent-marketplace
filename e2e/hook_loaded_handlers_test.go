@@ -159,23 +159,37 @@ func TestHookInvariantEqualHooksFromDistinctProviders(t *testing.T) {
 // hookInvariantLoadedCommands reads for a single-file target.
 func hookInvariantLoadedFile(t *testing.T, target string) string {
 	t.Helper()
+	return hookInvariantLoadedFileForScope(t, target, false)
+}
+
+func hookInvariantLoadedFileForScope(t *testing.T, target string, machine bool) string {
+	t.Helper()
 	switch target {
 	case "claude":
 		return ".claude/settings.json"
 	case "factory":
+		if machine {
+			return ".factory/settings.local.json"
+		}
 		return ".factory/hooks.json"
 	case "cursor":
 		return ".cursor/hooks.json"
 	case "gemini":
 		return ".gemini/settings.json"
 	case "windsurf":
+		if machine {
+			return ".codeium/windsurf/hooks.json"
+		}
 		return ".devin/hooks.json"
 	case "devin":
+		if machine {
+			return ".config/devin/config.json"
+		}
 		return ".devin/hooks.v1.json"
 	case "codex":
 		return ".codex/hooks.json"
 	}
-	t.Fatalf("hookInvariantLoadedFile: %s has no single loaded file", target)
+	t.Fatalf("hookInvariantLoadedFileForScope: %s has no single loaded file", target)
 	return ""
 }
 

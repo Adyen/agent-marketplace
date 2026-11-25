@@ -23,7 +23,7 @@ func TestNativeHookOutputAllTargetsAndScopes(t *testing.T) {
 		wantType               bool
 	}{
 		{target: TargetClaude, projectPath: "settings.json", userPath: "settings.json", member: "hooks", event: "PreToolUse", matcher: "Bash", groups: true, wantType: true},
-		{target: TargetFactory, projectPath: "hooks.json", userPath: "hooks.json", event: "PreToolUse", matcher: "Execute", groups: true, wantType: true},
+		{target: TargetFactory, projectPath: "hooks.json", userPath: "settings.local.json", event: "PreToolUse", matcher: "Execute", groups: true, wantType: true},
 		{target: TargetCursor, projectPath: "hooks.json", userPath: "hooks.json", member: "hooks", event: "preToolUse", matcher: "^Shell$", version: 1, wantType: true},
 		{target: TargetGemini, projectPath: "settings.json", userPath: "settings.json", member: "hooks", event: "BeforeTool", matcher: "^run_shell_command$", groups: true, wantType: true},
 		{target: TargetWindsurf, projectPath: ".devin/hooks.json", userPath: "hooks.json", member: "hooks", event: "pre_run_command"},
@@ -74,7 +74,7 @@ func TestNativeHookOutputAllTargetsAndScopes(t *testing.T) {
 				}
 				entries := document
 				member := tc.member
-				if tc.target == TargetDevin && machine {
+				if (tc.target == TargetDevin || tc.target == TargetFactory) && machine {
 					member = "hooks"
 				}
 				if member != "" {

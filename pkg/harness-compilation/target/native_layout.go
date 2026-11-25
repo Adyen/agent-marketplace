@@ -108,6 +108,16 @@ const (
 	HookShapeEventHandlers HookShape = "event-handlers"
 )
 
+// NativeAggregateLocation names an auxiliary native hook file location and its
+// JSON envelope within the same partition and scope, used for retired native
+// files whose owned entries must be pruned on upgrade and for forward-compatible
+// native locations checked read-only for satisfaction.
+type NativeAggregateLocation struct {
+	Path     string
+	Member   string
+	Envelope map[string]any
+}
+
 // NativeAggregateFile locates the shared file that carries one resource
 // kind's compiled entries within a single scope.
 type NativeAggregateFile struct {
@@ -144,8 +154,28 @@ type NativeAggregateFile struct {
 	// Consumers reconcile owned entries out of them; the declaration never
 	// makes them write targets.
 	Legacy                    []string
+	LegacyMember              string
+	LegacyMemberSet           bool
 	PreserveLegacyHandwritten bool
 	LegacyMarkedFlatHooks     bool
+	// RetiredNative lists superseded native hook locations in the same scope
+	// that previously held ownership-tracked (unmarked) entries. Sync prunes
+	// only ownership-proven entries out of them atomically with active writes
+	// and preserves handwritten entries.
+	RetiredNative []NativeAggregateLocation
+	// ForwardNative lists planned successor native hook locations in the same
+	// scope checked read-only for complete satisfaction before emitting into
+	// Path, enabling reader-before-writer rollouts without duplicating hooks.
+	ForwardNative []NativeAggregateLocation
+}
+
+// EffectiveLegacyMember returns the JSON container member used when reading
+// marked legacy hook files declared in Legacy.
+func (f NativeAggregateFile) EffectiveLegacyMember() string {
+	if f.LegacyMemberSet {
+		return f.LegacyMember
+	}
+	return f.Member
 }
 
 // NativeAggregate identifies a shared target file produced for one resource
@@ -252,15 +282,29 @@ var nativeLayouts = map[Target]NativeLayout{
 				ir.KindRule:     "rules/%s.md",
 			},
 			Aggregates: []NativeAggregate{
-				// Factory's hooks.json carries the event map at its top
-				// level; the plugin-layout hooks/hooks.json older output
-				// wrote remains a loadable legacy location.
+				// Factory's repository-scope hooks stay in hooks.json while
+				// tolerating forward satisfaction in settings.local.json#hooks;
+				// machine-scope hooks merge into settings.local.json#hooks so
+				// managed hooks concatenate with settings.json instead of
+				// shadowing it, retiring earlier owned hooks.json entries and
+				// preserving plugin-layout hooks/hooks.json legacy cleanup.
 				{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeMatcherGroups,
 					SupportDir: "hook-support",
-					Project:    NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
-					User:       NativeAggregateFile{Path: "hooks.json", Legacy: []string{"hooks/hooks.json"}},
+					Project: NativeAggregateFile{
+						Path:          "hooks.json",
+						Legacy:        []string{"hooks/hooks.json"},
+						ForwardNative: []NativeAggregateLocation{{Path: "settings.local.json", Member: "hooks"}},
+					},
+					User: NativeAggregateFile{
+						Path:            "settings.local.json",
+						Member:          "hooks",
+						Legacy:          []string{"hooks/hooks.json"},
+						LegacyMember:    "",
+						LegacyMemberSet: true,
+						RetiredNative:   []NativeAggregateLocation{{Path: "hooks.json"}},
+					},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -445,6 +489,18 @@ func IsDirShapedPattern(pattern string) bool {
 	return slices.Contains(elements[:len(elements)-1], "%s")
 }
 
+func cloneNativeAggregateLocations(locations []NativeAggregateLocation) []NativeAggregateLocation {
+	if len(locations) == 0 {
+		return nil
+	}
+	cloned := make([]NativeAggregateLocation, len(locations))
+	for i, loc := range locations {
+		loc.Envelope = maps.Clone(loc.Envelope)
+		cloned[i] = loc
+	}
+	return cloned
+}
+
 // LookupNativeLayout returns a defensive copy of target's native layout.
 func LookupNativeLayout(target Target) (NativeLayout, bool) {
 	layout, ok := nativeLayouts[target]
@@ -462,8 +518,12 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 		for j := range partition.Aggregates {
 			partition.Aggregates[j].Project.Envelope = maps.Clone(partition.Aggregates[j].Project.Envelope)
 			partition.Aggregates[j].Project.Legacy = slices.Clone(partition.Aggregates[j].Project.Legacy)
+			partition.Aggregates[j].Project.RetiredNative = cloneNativeAggregateLocations(partition.Aggregates[j].Project.RetiredNative)
+			partition.Aggregates[j].Project.ForwardNative = cloneNativeAggregateLocations(partition.Aggregates[j].Project.ForwardNative)
 			partition.Aggregates[j].User.Envelope = maps.Clone(partition.Aggregates[j].User.Envelope)
 			partition.Aggregates[j].User.Legacy = slices.Clone(partition.Aggregates[j].User.Legacy)
+			partition.Aggregates[j].User.RetiredNative = cloneNativeAggregateLocations(partition.Aggregates[j].User.RetiredNative)
+			partition.Aggregates[j].User.ForwardNative = cloneNativeAggregateLocations(partition.Aggregates[j].User.ForwardNative)
 		}
 		cloned.Partitions[i] = partition
 	}
@@ -543,6 +603,10 @@ func NativeAggregateFileForScope(target Target, kind ir.ResourceKind, machineSco
 		file = aggregate.User
 	}
 	file.Path = path.Join(partition.Prefix, file.Path)
+	file.Envelope = maps.Clone(file.Envelope)
+	file.Legacy = slices.Clone(file.Legacy)
+	file.RetiredNative = cloneNativeAggregateLocations(file.RetiredNative)
+	file.ForwardNative = cloneNativeAggregateLocations(file.ForwardNative)
 	return file, true
 }
 
@@ -957,12 +1021,61 @@ func validatePartitionContent(t Target, partition NativePartition, resourceKinds
 					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares envelope member %q with unserializable value: %w", t, partition.ID, scope.name, aggregate.Kind, key, err))
 				}
 			}
+			if scope.file.LegacyMemberSet {
+				if len(scope.file.Legacy) == 0 {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s sets legacy member without legacy locations", t, partition.ID, scope.name, aggregate.Kind))
+				}
+				if member := scope.file.LegacyMember; member != "" && (strings.ContainsAny(member, `/\`) || member == "." || member == "..") {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid legacy member %q", t, partition.ID, scope.name, aggregate.Kind, member))
+				}
+			}
 			for _, legacy := range scope.file.Legacy {
 				switch {
 				case !fs.ValidPath(legacy) || legacy == ".":
 					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid legacy location %q", t, partition.ID, scope.name, aggregate.Kind, legacy))
 				case legacy == scope.file.Path:
 					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists legacy location %q identical to its native file", t, partition.ID, scope.name, aggregate.Kind, legacy))
+				}
+			}
+			seenAux := make(map[string]bool)
+			for _, auxGroup := range []struct {
+				label     string
+				locations []NativeAggregateLocation
+			}{
+				{"retired native", scope.file.RetiredNative},
+				{"forward native", scope.file.ForwardNative},
+			} {
+				if len(auxGroup.locations) > 0 && aggregate.Kind != ir.KindHook {
+					errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares %s locations; they apply to hooks only", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label))
+				}
+				for _, loc := range auxGroup.locations {
+					switch {
+					case !fs.ValidPath(loc.Path) || loc.Path == ".":
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid %s location %q", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, loc.Path))
+					case loc.Path == scope.file.Path:
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists %s location %q identical to its native file", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, loc.Path))
+					case slices.Contains(scope.file.Legacy, loc.Path):
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists %s location %q colliding with a legacy location", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, loc.Path))
+					case seenAux[loc.Path]:
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s lists duplicate auxiliary native location %q", t, partition.ID, scope.name, aggregate.Kind, loc.Path))
+					}
+					seenAux[loc.Path] = true
+					if loc.Member != "" && (strings.ContainsAny(loc.Member, `/\`) || loc.Member == "." || loc.Member == "..") {
+						errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s has invalid %s member %q", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, loc.Member))
+					}
+					for _, key := range slices.Sorted(maps.Keys(loc.Envelope)) {
+						if key == "" {
+							errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares %s envelope member with an empty name", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label))
+							continue
+						}
+						if key == loc.Member {
+							errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares %s envelope member %q colliding with its entry member", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, key))
+							continue
+						}
+						if _, err := json.Marshal(loc.Envelope[key]); err != nil {
+							errs = append(errs, fmt.Errorf("target %q partition %q %s-scope aggregate for %s declares %s envelope member %q with unserializable value: %w", t, partition.ID, scope.name, aggregate.Kind, auxGroup.label, key, err))
+						}
+					}
 				}
 			}
 		}

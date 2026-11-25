@@ -89,11 +89,13 @@ func TestHookBundleRootReferencesResolveFromDirectorySource(t *testing.T) {
 			base := repo
 			file := ".factory/hooks.json"
 			supportRoot := filepath.Join(repo, ".factory", "hook-support")
+			loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 			if machine {
 				base = home
+				file = ".factory/settings.local.json"
 				supportRoot = filepath.Join(home, ".factory", "hook-support")
+				loc.container = loc.userContainer
 			}
-			loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 			commands := nativeSupportCommands(t, loc, filepath.Join(base, file), 1)
 			installed, _ := loc.installedRef(t, commands[0], repo, home, machine)
 			if filepath.Base(installed) != "check.sh" || filepath.Base(filepath.Dir(installed)) != "scripts" ||

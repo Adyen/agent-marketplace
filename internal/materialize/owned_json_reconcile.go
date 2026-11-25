@@ -679,7 +679,66 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 		return out
 	}
 	var desired []dependencytxn.DesiredFile
-	if !changed && errors.Is(readErr, os.ErrNotExist) {
+	if len(extras.retiredMutations) > 0 && options.batch == nil {
+		stateSnapshot, snapErr := store.SnapshotState()
+		if snapErr != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, snapErr, options.writeCode))
+			return out
+		}
+		var batchMutations []ownership.Mutation
+		batchSatisfactions := make(map[string][]ownership.HookSatisfaction, len(extras.retiredSatisfactions)+1)
+		if !changed && errors.Is(readErr, os.ErrNotExist) {
+			if len(plan.owned) > 0 || len(plan.satisfactions) > 0 || proof.OwnedCount() > 0 || len(proof.HookSatisfactions()) > 0 {
+				batchMutations = append(batchMutations, ownership.Mutation{
+					Rel:                   rel,
+					AbsFile:               abs,
+					Entries:               append(append([]ownership.Entry(nil), plan.owned...), nativeRetainedNonHookEntries(plan.owned, proof, plan.reconciledKinds)...),
+					Reason:                ownership.ReasonSync,
+					ExpectPriorGeneration: proof.Generation(),
+				})
+				batchSatisfactions[rel] = append([]ownership.HookSatisfaction(nil), plan.satisfactions...)
+			}
+			desired = append(desired, dependencytxn.DesiredFile{Path: abs, Expected: dependencytxn.Generation{}, Delete: true})
+		} else {
+			live, liveGen, liveMode, snapFileErr := dependencytxn.ReadSnapshot(abs)
+			if snapFileErr != nil {
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, fmt.Errorf("snapshot aggregate %q for commit: %w", rel, snapFileErr), options.writeCode))
+				return out
+			}
+			if extras.originalNative != nil && !nativeHookAggregateSnapshotMatches(extras.originalNative, live, liveGen, liveMode) {
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, fmt.Errorf("%w: %s", dependencytxn.ErrGenerationConflict, abs), options.writeCode))
+				return out
+			}
+			primaryMutation := nativeOwnedJSONMutation(rel, abs, raw, readErr, next, plan, proof)
+			batchMutations = append(batchMutations, primaryMutation)
+			batchSatisfactions[rel] = append([]ownership.HookSatisfaction(nil), plan.satisfactions...)
+			mode := fs.FileMode(0o600)
+			var expectedMode fs.FileMode
+			if liveGen.Exists {
+				mode = liveMode
+				expectedMode = liveMode
+			}
+			desired = append(desired, dependencytxn.DesiredFile{
+				Path:         abs,
+				Expected:     liveGen,
+				ExpectedMode: expectedMode,
+				Bytes:        next,
+				Mode:         mode,
+			})
+		}
+		batchMutations = append(batchMutations, extras.retiredMutations...)
+		for retiredRel, sats := range extras.retiredSatisfactions {
+			batchSatisfactions[retiredRel] = sats
+		}
+		stateFile, batchErr := store.PrepareBatch(stateSnapshot, batchMutations, batchSatisfactions)
+		if batchErr != nil {
+			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, batchErr, options.writeCode))
+			return out
+		}
+		if stateFile.Path != "" {
+			desired = append(desired, stateFile)
+		}
+	} else if !changed && errors.Is(readErr, os.ErrNotExist) {
 		if len(plan.owned) > 0 || len(plan.satisfactions) > 0 || proof.OwnedCount() > 0 || len(proof.HookSatisfactions()) > 0 {
 			mutation := ownership.Mutation{
 				Rel:                   rel,
@@ -713,6 +772,14 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 		if err != nil {
 			out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
 			return out
+		}
+	}
+	if options.batch != nil && len(extras.retiredMutations) > 0 {
+		for _, retiredMutation := range extras.retiredMutations {
+			if err := options.batch.addMutation(ctx, store, retiredMutation, extras.retiredSatisfactions[retiredMutation.Rel]); err != nil {
+				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, retiredMutation.Rel, err, options.writeCode))
+				return out
+			}
 		}
 	}
 	if len(desired) == 0 && !extras.pending {

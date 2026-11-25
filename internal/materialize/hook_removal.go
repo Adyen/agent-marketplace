@@ -3,6 +3,7 @@ package materialize
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -25,6 +26,30 @@ type hookRemovalEntry struct {
 // hook aggregates. Without aggregate entries, ordinary resource removal need
 // not resolve additional sources. Unreadable files require the full check.
 func HasActiveNativeHooks(repoRoot string) bool {
+	hasEntries := func(root string, file ownedJSONFileSpec) bool {
+		raw, err := ownership.ReadAggregateFileAt(root, file.rel)
+		if errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		doc, err := jsonc.Parse(file.rel, raw)
+		if err != nil {
+			return true
+		}
+		container, _, err := ownedJSONContainerNode(doc, file)
+		if err != nil {
+			return true
+		}
+		if container != nil {
+			entries, err := ownedJSONExistingEntries(file, container)
+			if err != nil || len(entries) != 0 {
+				return true
+			}
+		}
+		return false
+	}
 	for _, target := range hcc.Targets() {
 		if _, ok := targetmeta.LookupHookProjection(targetmeta.Target(target)); !ok {
 			continue
@@ -34,24 +59,21 @@ func HasActiveNativeHooks(repoRoot string) bool {
 			if err != nil {
 				return true
 			}
-			raw, err := ownership.ReadAggregateFileAt(destination.Root, file.rel)
-			if errors.Is(err, os.ErrNotExist) {
+			if hasEntries(destination.Root, file) {
+				return true
+			}
+			declaration, declErr := nativeHookAggregateForScope(targetmeta.Target(target), machine)
+			if declErr != nil {
 				continue
 			}
-			if err != nil {
-				return true
-			}
-			doc, err := jsonc.Parse(file.rel, raw)
-			if err != nil {
-				return true
-			}
-			container, _, err := ownedJSONContainerNode(doc, file)
-			if err != nil {
-				return true
-			}
-			if container != nil {
-				entries, err := ownedJSONExistingEntries(file, container)
-				if err != nil || len(entries) != 0 {
+			for _, retired := range declaration.file.RetiredNative {
+				retiredSpec := ownedJSONFileSpec{
+					rel:       path.Join(declaration.partition.Prefix, retired.Path),
+					container: retired.Member,
+					envelope:  retired.Envelope,
+					hookShape: declaration.aggregate.Shape,
+				}
+				if hasEntries(destination.Root, retiredSpec) {
 					return true
 				}
 			}

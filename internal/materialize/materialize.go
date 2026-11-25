@@ -718,6 +718,7 @@ type compilePhaseResult struct {
 	nativeMCPConflicts      map[outputKey]map[string]bool
 	nativeMCPIncomplete     map[outputKey]bool
 	hookSupportPaths        map[outputKey]map[string]bool
+	forwardHookSupportPaths map[outputKey]map[string]bool
 	hookSupportOwners       map[outputKey]map[string][]hookSupportOwner
 	hookResources           map[outputKey][]BlockedResource
 	selectedHookNames       map[outputKey]map[string]bool
@@ -1350,10 +1351,13 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		return plan
 	}
 	nativeHooks := make(map[outputKey]*ownedJSONAggregateWork)
+	forwardHookCache := newForwardNativeHookCache()
+	forwardSatisfiedCounts := make(map[outputKey]int)
 	nativeMCPEntries := make(map[outputKey][]ownedJSONEntry)
 	nativeMCPConflicts := make(map[outputKey]map[string]bool)
 	nativeMCPIncomplete := make(map[outputKey]bool)
 	hookSupportPaths := make(map[outputKey]map[string]bool)
+	forwardHookSupportPaths := make(map[outputKey]map[string]bool)
 	hookSupportOwners := make(map[outputKey]map[string][]hookSupportOwner)
 	hookResources := make(map[outputKey][]BlockedResource)
 	selectedHookNames := make(map[outputKey]map[string]bool)
@@ -1814,6 +1818,42 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				})
 				continue
 			}
+			if !w.machineScope && w.skill.PluginPackage == nil {
+				forwardSatisfied, forwardErr := forwardNativeHookSatisfied(key, repoRoot, resourceName, plan, entries, forwardHookCache)
+				if forwardErr != nil {
+					unknownHookSelection[key] = true
+					blockResource(key, w)
+					markResourceIncomplete(key, w, aggregateHandler)
+					if coded, ok := diag.AsCodedError(forwardErr); ok {
+						d := coded.Diagnostic(resourceName)
+						d.Target = string(w.target)
+						allDiags = append(allDiags, d)
+					} else {
+						allDiags = append(allDiags, diag.Diagnostic{
+							Code:     diag.CodeHookNativeToleranceRefused,
+							Severity: diag.SeverityError,
+							Target:   string(w.target),
+							Resource: resourceName,
+							Message:  fmt.Sprintf("forward native hook check for target %s failed safely", w.target),
+							Source:   compilepkg.SourceOf(w.skill.Resource),
+						})
+					}
+					continue
+				}
+				if forwardSatisfied {
+					if len(plan.artifacts) > 0 {
+						if forwardHookSupportPaths[key] == nil {
+							forwardHookSupportPaths[key] = make(map[string]bool)
+						}
+						for _, support := range plan.artifacts {
+							forwardHookSupportPaths[key][support.Path] = true
+						}
+					}
+					forwardSatisfiedCounts[key]++
+					allDiags = append(allDiags, result.Diagnostics...)
+					continue
+				}
+			}
 			for _, entry := range entries {
 				if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
 					if pluginPlan.hooks == nil {
@@ -2041,29 +2081,43 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		tw.artifacts = append(tw.artifacts, result.Artifacts...)
 		tw.diags = append(tw.diags, result.Diagnostics...)
 	}
+	for key, count := range forwardSatisfiedCounts {
+		if count == 0 {
+			continue
+		}
+		work := nativeHooks[key]
+		if work == nil || len(work.entries) > 0 || len(work.incomplete) > 0 || len(nativeMCPEntries[key]) > 0 {
+			continue
+		}
+		if nativeHookOutputPresent(key, repoRoot) || nativeHookFilesExistOnDisk(key, repoRoot) {
+			continue
+		}
+		delete(nativeHooks, key)
+	}
 
 	return compilePhaseResult{
-		openCodeAggregateScope: openCodeAggregateScope(work, nil, allOutputs),
-		allDiags:               allDiags,
-		byTarget:               byTarget,
-		skillLinks:             skillLinks,
-		allOutputs:             allOutputs,
-		blocked:                blocked,
-		blockedResources:       blockedResources,
-		nativeHooks:            nativeHooks,
-		nativeMCPEntries:       nativeMCPEntries,
-		nativeMCPConflicts:     nativeMCPConflicts,
-		nativeMCPIncomplete:    nativeMCPIncomplete,
-		hookSupportPaths:       hookSupportPaths,
-		hookSupportOwners:      hookSupportOwners,
-		hookResources:          hookResources,
-		selectedHookNames:      selectedHookNames,
-		unknownHookSelection:   unknownHookSelection,
-		mcpResources:           mcpResources,
-		artifactMeta:           artifactMeta,
-		ownedState:             ownedState,
-		plugins:                pluginInstances,
-		pluginBlocked:          pluginBlocked,
+		openCodeAggregateScope:  openCodeAggregateScope(work, nil, allOutputs),
+		allDiags:                allDiags,
+		byTarget:                byTarget,
+		skillLinks:              skillLinks,
+		allOutputs:              allOutputs,
+		blocked:                 blocked,
+		blockedResources:        blockedResources,
+		nativeHooks:             nativeHooks,
+		nativeMCPEntries:        nativeMCPEntries,
+		nativeMCPConflicts:      nativeMCPConflicts,
+		nativeMCPIncomplete:     nativeMCPIncomplete,
+		hookSupportPaths:        hookSupportPaths,
+		forwardHookSupportPaths: forwardHookSupportPaths,
+		hookSupportOwners:       hookSupportOwners,
+		hookResources:           hookResources,
+		selectedHookNames:       selectedHookNames,
+		unknownHookSelection:    unknownHookSelection,
+		mcpResources:            mcpResources,
+		artifactMeta:            artifactMeta,
+		ownedState:              ownedState,
+		plugins:                 pluginInstances,
+		pluginBlocked:           pluginBlocked,
 	}
 }
 
@@ -2561,7 +2615,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 			if reviewHooks {
 				hooksBefore = installedResourceHookDeclarations(key, outDir, repoRoot)
 			}
-			report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, supportPublication, geminiCoalescence.supportPathsForKey(key, compileResult.hookSupportPaths), supportWriteFault, &boundary, geminiCoalescence, nativeProtectedPaths)
+			report = executeTargetPlans(report, key, outDir, destinations, artifacts, compileResult.skillLinks, compileResult.artifactMeta, compileResult.blocked.componentsFor(key), dryRun, mode, repoRoot, coalescedCodexPartitions, supportPublication, geminiCoalescence.supportPathsForKey(key, compileResult.hookSupportPaths), compileResult.forwardHookSupportPaths[key], supportWriteFault, &boundary, geminiCoalescence, nativeProtectedPaths)
 			if reviewHooks {
 				var hooksAfter map[string]resourceHookDeclaration
 				if dryRun {
@@ -3323,7 +3377,7 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 }
 
 // executeTargetPlans writes artifact plans and skill links for a single target.
-func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, supportPublication nativeHookSupportPublication, hookSupportPaths map[string]bool, beforeSupportWrite func(string, string) error, boundary *destinationBoundary, geminiCoalescence geminiAggregateCoalescence, protectedPathSets ...map[string]bool) *Report {
+func executeTargetPlans(report *Report, key outputKey, outDir string, destinations []harness.Destination, artifacts []artifact.Artifact, skillLinks map[outputKey]map[string]*skillLinkGroup, artifactMeta map[outputKey]map[string]skillLink, blocked map[string]bool, dryRun bool, mode config.MaterializationMode, repoRoot string, coalescedCodexPartitions map[string]bool, supportPublication nativeHookSupportPublication, hookSupportPaths map[string]bool, forwardSupportPaths map[string]bool, beforeSupportWrite func(string, string) error, boundary *destinationBoundary, geminiCoalescence geminiAggregateCoalescence, protectedPathSets ...map[string]bool) *Report {
 	protectedPaths := map[string]bool{}
 	if len(protectedPathSets) > 0 && protectedPathSets[0] != nil {
 		protectedPaths = protectedPathSets[0]
@@ -3339,8 +3393,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		return report
 	}
 	state.publicationHook = boundary.manifestPublicationHook
-	fileDesired := make(map[string]bool, len(hookSupportPaths))
+	fileDesired := make(map[string]bool, len(hookSupportPaths)+len(forwardSupportPaths))
 	for supportPath := range hookSupportPaths {
+		fileDesired[filepath.ToSlash(supportPath)] = true
+	}
+	for supportPath := range forwardSupportPaths {
 		fileDesired[filepath.ToSlash(supportPath)] = true
 	}
 	// Track which plan output directories had merge artifacts, so we can
