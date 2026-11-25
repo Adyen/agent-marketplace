@@ -124,8 +124,16 @@ func commitPlaceChanges(
 	for _, path := range prepared.ceded {
 		cededSet[path] = struct{}{}
 	}
+	retainedDirectories := make(map[string]bool)
+	for _, prune := range prepared.plan.Prunes {
+		if prune.Directory != nil {
+			retainedDirectories[prune.Path] = true
+		}
+	}
 	for _, path := range result.Retained {
-		cededSet[path] = struct{}{}
+		if !retainedDirectories[path] {
+			cededSet[path] = struct{}{}
+		}
 	}
 	ceded = make([]string, 0, len(cededSet))
 	for path := range cededSet {
@@ -359,6 +367,15 @@ func preparePlaceChanges(
 			return prepared, fmt.Errorf("place upsert plan lost package ownership %q", pkg.ID)
 		}
 		nextProjection.Packages = append(nextProjection.Packages, ownerPkg)
+	}
+	if pruneDeselected && (len(prunes) != 0 || len(ceded) != 0) {
+		directoryPrunes, err := planPlaceDeselectedDirectories(
+			root, current.Directories, nextProjection.Packages, prunes, ceded,
+		)
+		if err != nil {
+			return prepared, err
+		}
+		prunes = append(prunes, directoryPrunes...)
 	}
 	nextProjection = normalizePlaceProjection(nextProjection)
 	if len(plan.Writes) == 0 && reflect.DeepEqual(current, nextProjection) {

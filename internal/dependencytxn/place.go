@@ -1375,6 +1375,22 @@ func verifyPlaceCompletedPrefix(stateRoot, journalPath string, intent *placeInte
 		return placeStop(ErrRecoveryBlocked, journalPath, intent.Root, err)
 	}
 	defer func() { _ = root.Close() }()
+	prunedDirectories := make(map[string]struct{})
+	markPrunedDirectory := func(op placeOperation) {
+		if op.Kind != "prune" || op.Index < 0 || op.Index >= len(intent.Prunes) {
+			return
+		}
+		prune := intent.Prunes[op.Index]
+		if prune.Directory != nil && !placePathRetained(intent.Retained, prune.Path) {
+			prunedDirectories[prune.Path] = struct{}{}
+		}
+	}
+	for i := 0; i < intent.Completed && i < len(intent.Operations); i++ {
+		markPrunedDirectory(intent.Operations[i])
+	}
+	if intent.Pending != nil {
+		markPrunedDirectory(*intent.Pending)
+	}
 	for i := 0; i < intent.Completed; i++ {
 		op := intent.Operations[i]
 		switch op.Kind {
@@ -1415,6 +1431,27 @@ func verifyPlaceCompletedPrefix(stateRoot, journalPath string, intent *placeInte
 				continue
 			}
 			absent, err := placePruneAbsent(intent.Root, intent.RootIdentity, prune)
+			// A later marked directory prune can remove the completed file prune's parent.
+			if errors.Is(err, fs.ErrNotExist) && prune.Directory == nil {
+				for parent := path.Dir(prune.Path); parent != "."; parent = path.Dir(parent) {
+					if _, marked := prunedDirectories[parent]; !marked {
+						continue
+					}
+					parentDir, parentErr := root.OpenPath(filepath.FromSlash(parent))
+					if errors.Is(parentErr, fs.ErrNotExist) {
+						absent, err = true, nil
+						break
+					}
+					if parentErr != nil {
+						err = parentErr
+						break
+					}
+					if closeErr := parentDir.Close(); closeErr != nil {
+						err = closeErr
+						break
+					}
+				}
+			}
 			if err != nil || !absent {
 				if err == nil {
 					err = errors.New("completed prune is present again")

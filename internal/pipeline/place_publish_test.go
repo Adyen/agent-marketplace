@@ -1067,6 +1067,189 @@ func TestCommitPlaceKeepsInstalledPackageOnConflict(t *testing.T) {
 }
 
 // spec: target-profile-place/deselection-retires-owned-files-and-cedes-edits
+// spec: target-profile-place/created-directories-are-removed-only-when-empty-and-identical
+func TestCommitPlaceDeselectionPrunesOnlyEmptyRecordedDirectories(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		ceded    bool
+		replaced bool
+	}{
+		{name: "empty"},
+		{name: "ceded edit", ceded: true},
+		{name: "replaced directory", replaced: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, retiring, selected := installPlaceDeselectionPackages(t)
+			owner, snapshot := openPlacePublishOwnership(t, fixture)
+			projection, err := owner.PlaceFromSnapshot(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var recordedSampleDir dependencytxn.PlaceDirectory
+			for _, directory := range projection.Directories {
+				if directory.Path == "mods/sample" {
+					recordedSampleDir = directory
+					break
+				}
+			}
+			if recordedSampleDir.Path == "" {
+				t.Fatalf("installed ownership has no recorded mods/sample directory: %#v", projection.Directories)
+			}
+			sampleDir := filepath.Join(fixture.root, "mods", "sample")
+			sampleDirIdentity := func(path string) fsboundary.Identity {
+				t.Helper()
+				directory, err := fsboundary.OpenDir(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				identity := directory.Identity()
+				if err := directory.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return identity
+			}
+			if identity := sampleDirIdentity(sampleDir); !identity.SameObject(recordedSampleDir.Identity) {
+				t.Fatalf("installed mods/sample identity = %+v, want recorded %+v", identity, recordedSampleDir.Identity)
+			}
+			statePath := owner.StateFile()
+			stateBefore, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			editedBytes := []byte("edited by user\n")
+			if test.ceded {
+				if err := os.WriteFile(filepath.Join(sampleDir, "edit.md"), editedBytes, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			backupDir := filepath.Join(fixture.root, "mods", "sample-old")
+			if test.replaced {
+				if err := os.Rename(sampleDir, backupDir); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(sampleDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				for _, file := range retiring.Files {
+					if err := os.WriteFile(
+						filepath.Join(sampleDir, filepath.Base(filepath.FromSlash(file.DestinationPath))),
+						file.Bytes, file.Mode,
+					); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if replacementIdentity := sampleDirIdentity(sampleDir); replacementIdentity.SameObject(recordedSampleDir.Identity) {
+					t.Fatal("replacement mods/sample reused the recorded directory identity")
+				}
+			}
+
+			result, ceded, err := commitPlaceChanges(
+				context.Background(), fixture.binding, fixture.raw, fixture.env,
+				[]marketplace.ResolvedPlacePackage{selected}, true,
+			)
+			if test.replaced {
+				if err == nil || !strings.Contains(err.Error(), "target.place.retirement-unproven") {
+					t.Fatalf("deselection with replaced directory = %#v, %v; want unproven parent refusal", result, err)
+				}
+				for _, file := range retiring.Files {
+					name := filepath.Base(filepath.FromSlash(file.DestinationPath))
+					assertPlacePublishFile(t, filepath.Join(backupDir, name), file.Bytes, file.Mode)
+					assertPlacePublishFile(t, filepath.Join(sampleDir, name), file.Bytes, file.Mode)
+				}
+				if identity := sampleDirIdentity(sampleDir); identity.SameObject(recordedSampleDir.Identity) {
+					t.Fatal("refused replacement directory changed identity")
+				}
+				if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, stateBefore) {
+					t.Fatalf("unproven retirement changed ownership: %v", err)
+				}
+				assertPlacePublishFile(
+					t, filepath.Join(fixture.root, filepath.FromSlash(selected.Files[0].DestinationPath)),
+					selected.Files[0].Bytes, selected.Files[0].Mode,
+				)
+				return
+			}
+			if err != nil {
+				t.Fatalf("commit deselection: %v", err)
+			}
+			if test.ceded {
+				if !slices.Equal(ceded, []string{"mods/sample/edit.md"}) {
+					t.Fatalf("ceded paths = %v, want edited sample path", ceded)
+				}
+				if identity := sampleDirIdentity(sampleDir); !identity.SameObject(recordedSampleDir.Identity) {
+					t.Fatalf("ceded directory identity = %+v, want original %+v", identity, recordedSampleDir.Identity)
+				}
+				assertPlacePublishFile(t, filepath.Join(sampleDir, "edit.md"), editedBytes, 0o644)
+				if !slices.Contains(result.Retained, "mods/sample") {
+					t.Fatalf("nonempty recorded directory was not retained: %#v", result)
+				}
+			} else {
+				if _, err := os.Lstat(sampleDir); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("empty retiring directory remains: %v", err)
+				}
+				if len(ceded) != 0 {
+					t.Fatalf("empty-directory deselection ceded paths: %v", ceded)
+				}
+				directoryPrune := slices.Index(result.Changed, "mods/sample")
+				if directoryPrune < 0 {
+					t.Fatalf("empty directory absent from changed paths: %v", result.Changed)
+				}
+				for _, file := range retiring.Files {
+					filePrune := slices.Index(result.Changed, file.DestinationPath)
+					if filePrune < 0 || filePrune >= directoryPrune {
+						t.Fatalf("file prune %s did not precede directory prune: %v", file.DestinationPath, result.Changed)
+					}
+				}
+			}
+			assertPlacePublishFile(
+				t, filepath.Join(fixture.root, filepath.FromSlash(selected.Files[0].DestinationPath)),
+				selected.Files[0].Bytes, selected.Files[0].Mode,
+			)
+			afterSnapshot, err := owner.SnapshotState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterProjection, err := owner.PlaceFromSnapshot(afterSnapshot)
+			if err != nil || len(afterProjection.Packages) != 1 || afterProjection.Packages[0].Name != selected.Pin.Name {
+				t.Fatalf("post-deselection ownership = %#v, %v", afterProjection, err)
+			}
+			if test.ceded {
+				if identity := sampleDirIdentity(sampleDir); !identity.SameObject(recordedSampleDir.Identity) {
+					t.Fatalf("ownership-retained directory identity changed: %+v", identity)
+				}
+			} else {
+				retainedRecord := false
+				for _, directory := range afterProjection.Directories {
+					if directory.Path == recordedSampleDir.Path &&
+						directory.Identity.SameObject(recordedSampleDir.Identity) {
+						retainedRecord = true
+						break
+					}
+				}
+				if !retainedRecord {
+					t.Fatalf("ownership discarded historical directory record: %#v", afterProjection.Directories)
+				}
+				stateBeforeRepeat, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				repeated, cededAgain, err := commitPlaceChanges(
+					context.Background(), fixture.binding, fixture.raw, fixture.env,
+					[]marketplace.ResolvedPlacePackage{selected}, true,
+				)
+				stateAfterRepeat, readErr := os.ReadFile(statePath)
+				if err != nil || len(repeated.Changed) != 0 || len(cededAgain) != 0 ||
+					readErr != nil || !bytes.Equal(stateAfterRepeat, stateBeforeRepeat) {
+					t.Fatalf("repeat deselection = %#v ceded=%v err=%v stateRead=%v", repeated, cededAgain, err, readErr)
+				}
+				if _, err := os.Lstat(sampleDir); !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("repeat deselection recreated directory: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// spec: target-profile-place/deselection-retires-owned-files-and-cedes-edits
 func TestCommitPlaceDeselection(t *testing.T) {
 	t.Run("commits only deselected package files", func(t *testing.T) {
 		fixture, _, selected := installPlaceDeselectionPackages(t)

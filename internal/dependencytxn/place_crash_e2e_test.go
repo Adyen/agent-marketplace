@@ -242,6 +242,84 @@ func TestPlaceCrashCommitsOwnershipOnce(t *testing.T) {
 	}
 }
 
+func TestPlaceCrashAfterDirectoryPruneRecovers(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	layoutPath := filepath.Join(root, "layouts")
+	stalePath := filepath.Join(layoutPath, "stale.txt")
+	staleBytes := []byte("stale package bytes\n")
+	if err := os.Mkdir(layoutPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stalePath, staleBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootDir, err := fsboundary.OpenDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootIdentity := rootDir.Identity()
+	parent, err := rootDir.OpenPath("layouts")
+	if err != nil {
+		_ = rootDir.Close()
+		t.Fatal(err)
+	}
+	parentIdentity := parent.Identity()
+	if err := parent.Close(); err != nil {
+		_ = rootDir.Close()
+		t.Fatal(err)
+	}
+	if err := rootDir.Close(); err != nil {
+		t.Fatal(err)
+	}
+	plan.Prunes = []PlacePrune{
+		{
+			Path: "layouts/stale.txt", Parent: parentIdentity,
+			Expected: Generation{Exists: true, Digest: Digest(staleBytes)}, Mode: 0o644,
+		},
+		{Path: "layouts", Parent: rootIdentity, Directory: &parentIdentity},
+	}
+	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterPrune, 1)
+
+	journalsBeforeRecovery := journals(t, stateDir)
+	if len(journalsBeforeRecovery) != 1 {
+		t.Fatalf("crashed directory prune journals = %v, want one", journalsBeforeRecovery)
+	}
+	journalPath := journalsBeforeRecovery[0]
+	journal, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.Place.Pending == nil || journal.Place.Pending.Path != "layouts" {
+		t.Fatalf("crashed directory-prune operation = completed %d pending %+v", journal.Place.Completed, journal.Place.Pending)
+	}
+	if _, err := os.Lstat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("crash did not prune stale file: %v", err)
+	}
+	if _, err := os.Lstat(layoutPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("crash did not prune empty directory: %v", err)
+	}
+	assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+
+	pending := CheckPending(stateDir)
+	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
+		strings.Contains(pending.Error(), "layouts/stale.txt") {
+		t.Fatalf("CheckPending after directory prune = %v, want journal path without completed-file missing-parent failure", pending)
+	}
+	if err := Recover(context.Background(), stateDir); err != nil {
+		t.Fatalf("recover after directory prune: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 0 {
+		t.Fatalf("directory-prune recovery left journals: %v", got)
+	}
+	if err := Recover(context.Background(), stateDir); err != nil {
+		t.Fatalf("repeat recovery after directory prune: %v", err)
+	}
+	assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+	if got := journals(t, stateDir); len(got) != 0 {
+		t.Fatalf("repeat recovery left journals: %v", got)
+	}
+}
+
 func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {

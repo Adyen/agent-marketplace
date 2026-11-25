@@ -77,6 +77,86 @@ func planPlaceDeselection(
 	})
 }
 
+func planPlaceDeselectedDirectories(
+	root *fsboundary.Dir,
+	recorded []dependencytxn.PlaceDirectory,
+	live []ownership.PlacePackage,
+	removed []dependencytxn.PlacePrune,
+	ceded []string,
+) ([]dependencytxn.PlacePrune, error) {
+	if root == nil {
+		return nil, fmt.Errorf("target.place.retirement-root-invalid: target root is required")
+	}
+	candidates := make(map[string]bool)
+	protected := make(map[string]bool)
+	addParents := func(paths map[string]bool, file string) {
+		for parent := path.Dir(file); parent != "."; parent = path.Dir(parent) {
+			paths[parent] = true
+		}
+	}
+	for _, prune := range removed {
+		addParents(candidates, prune.Path)
+	}
+	for _, file := range ceded {
+		addParents(candidates, file)
+	}
+	for _, pkg := range live {
+		for _, file := range pkg.Files {
+			addParents(protected, file.Path)
+		}
+	}
+
+	directoryPrunes := make([]dependencytxn.PlacePrune, 0, len(recorded))
+	for _, directory := range recorded {
+		if !candidates[directory.Path] || protected[directory.Path] {
+			continue
+		}
+		actual, err := root.OpenPath(filepath.FromSlash(directory.Path))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect recorded place directory %s: %w", directory.Path, err)
+		}
+		actualIdentity := actual.Identity()
+		if err := actual.Close(); err != nil {
+			return nil, fmt.Errorf("close recorded place directory %s: %w", directory.Path, err)
+		}
+		if !actualIdentity.SameObject(directory.Identity) {
+			continue
+		}
+
+		parentPath := path.Dir(directory.Path)
+		parentIdentity := root.Identity()
+		if parentPath != "." {
+			parent, err := root.OpenPath(filepath.FromSlash(parentPath))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("inspect parent of recorded place directory %s: %w", directory.Path, err)
+			}
+			parentIdentity = parent.Identity()
+			if err := parent.Close(); err != nil {
+				return nil, fmt.Errorf("close parent of recorded place directory %s: %w", directory.Path, err)
+			}
+		}
+		directoryIdentity := directory.Identity
+		directoryPrunes = append(directoryPrunes, dependencytxn.PlacePrune{
+			Path: directory.Path, Parent: parentIdentity, Directory: &directoryIdentity,
+		})
+	}
+	sort.Slice(directoryPrunes, func(i, j int) bool {
+		depthI := strings.Count(directoryPrunes[i].Path, "/")
+		depthJ := strings.Count(directoryPrunes[j].Path, "/")
+		if depthI != depthJ {
+			return depthI > depthJ
+		}
+		return directoryPrunes[i].Path < directoryPrunes[j].Path
+	})
+	return directoryPrunes, nil
+}
+
 func planPlacePackageRemoval(
 	ctx context.Context,
 	root *fsboundary.Dir,
