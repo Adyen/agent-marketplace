@@ -21,6 +21,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/gitidentity"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -29,6 +30,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/internal/testutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -701,6 +703,108 @@ func TestTargetVerifyRunsOnlyNamedCheck(t *testing.T) {
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
+func TestPlaceCommandsRefuseCaseVariantRoot(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture, binding, marker, _, _, _ := newInstalledTargetVerificationFixture(t)
+	if output, err := executeCommand("target", "enable", fixture.identity.TargetID); err != nil {
+		t.Fatalf("enable installed target: %v\n%s", err, output)
+	}
+	baseline, err := executeCommand("status")
+	if err != nil {
+		t.Fatalf("baseline status: %v\n%s", err, baseline)
+	}
+	installationID := pipeline.PlaceInstallationID(binding)
+	for _, needle := range []string{
+		"PLACE PACKAGES", "verification-pending", "in-sync", "invented-app",
+		"invented-app/mod/sample", installationID,
+	} {
+		if !strings.Contains(baseline, needle) {
+			t.Fatalf("baseline status missing %q:\n%s", needle, baseline)
+		}
+	}
+
+	rootAlias := testutil.SameFileCaseVariant(t, fixture.targetRoot)
+	t.Setenv("HOME", filepath.Dir(filepath.Dir(rootAlias)))
+	t.Setenv("INVENTED_APP_HOME", rootAlias)
+	targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+	configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+	lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+	stateDir := filepath.Join(fixture.stateRoot, "dependencies")
+	assertUnchanged := func(stage string) {
+		t.Helper()
+		assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+		assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+		if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s ran host verification: %v", stage, err)
+		}
+		if err := dependencytxn.CheckPending(stateDir); err != nil {
+			t.Errorf("%s left pending place work: %v", stage, err)
+		}
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fixture unexpectedly ran host verification: %v", err)
+	}
+
+	stdout, stderr, approveErr := executeTargetApprovalAtTerminal(
+		t, "yes\n", nil, "target", "approve", fixture.identity.TargetID,
+	)
+	if approveErr == nil || !strings.Contains(approveErr.Error(), "target.approval.root-alias") ||
+		strings.Contains(stderr, "Type yes to approve:") {
+		t.Errorf("case-variant approval = %v\nstdout=%q\nstderr=%q", approveErr, stdout, stderr)
+	}
+	assertUnchanged("approval")
+
+	statusOutput, statusErr := executeCommand("status")
+	statusDiagnostics := statusOutput
+	if statusErr != nil {
+		statusDiagnostics += "\n" + statusErr.Error()
+	}
+	if !strings.Contains(statusDiagnostics, "target.place.ownership-unavailable") ||
+		!strings.Contains(statusDiagnostics, "target.approval.root-alias") {
+		t.Errorf("case-variant status = %v\n%s", statusErr, statusOutput)
+	}
+	if strings.Contains(statusOutput, installationID) || strings.Contains(statusOutput, "invented-app/mod/sample") {
+		t.Errorf("status claimed the canonical installation with an aliased root:\n%s", statusOutput)
+	}
+	assertUnchanged("status")
+
+	verifyOutput, verifyErr := executeCommand(
+		"target", "verify", "invented-app%2Fmod/sample", "--installation",
+		expectedTargetInstallationID(binding),
+	)
+	verifyDiagnostics := verifyOutput
+	if verifyErr != nil {
+		verifyDiagnostics += "\n" + verifyErr.Error()
+	}
+	if verifyErr == nil || !strings.Contains(verifyDiagnostics, "target.approval.root-alias") ||
+		strings.Contains(verifyOutput, "Verified") {
+		t.Errorf("case-variant verification = %v\n%s", verifyErr, verifyOutput)
+	}
+	assertUnchanged("verification")
+
+	stateHomeAlias := testutil.SameFileCaseVariant(t, filepath.Dir(fixture.stateRoot))
+	t.Setenv("XDG_STATE_HOME", stateHomeAlias)
+	stdout, stderr, retireErr := executeTargetApprovalAtTerminal(
+		t, "yes\n", nil, "target", "retire", installationID,
+	)
+	retireDiagnostics := stdout + stderr
+	if retireErr != nil {
+		retireDiagnostics += "\n" + retireErr.Error()
+	}
+	if retireErr == nil || !strings.Contains(retireDiagnostics, "target.place.installation-unavailable") ||
+		!strings.Contains(retireDiagnostics, "canonical spelling") ||
+		strings.Contains(stderr, "Type yes to retire:") {
+		t.Errorf("case-variant state retirement = %v\nstdout=%q\nstderr=%q", retireErr, stdout, stderr)
+	}
+	assertUnchanged("retirement")
 }
 
 // spec: target-profile-place/target-verify-runs-only-the-named-check

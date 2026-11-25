@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/testutil"
 )
 
 type placeStateFixture struct {
@@ -785,45 +786,7 @@ func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 // spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
 func TestPlaceRefusesCaseVariantRootWithoutWrites(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
-	rootInfo, err := os.Stat(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.Split(filepath.Clean(root), string(filepath.Separator))
-	variant := ""
-	for i, component := range parts {
-		if component == "" {
-			continue
-		}
-		for _, spelling := range []string{strings.ToUpper(component), strings.ToLower(component)} {
-			if spelling == component {
-				continue
-			}
-			candidateParts := append([]string(nil), parts...)
-			candidateParts[i] = spelling
-			candidate := strings.Join(candidateParts, string(filepath.Separator))
-			candidateInfo, err := os.Stat(candidate)
-			if err == nil && os.SameFile(rootInfo, candidateInfo) {
-				variant = candidate
-				break
-			}
-		}
-		if variant != "" {
-			break
-		}
-	}
-	if variant == "" {
-		t.Skip("filesystem has no case-variant spelling for the target root")
-	}
-	t.Logf("same-inode root alias: original=%q variant=%q", root, variant)
-	variantInfo, err := os.Stat(variant)
-	if err != nil {
-		t.Fatalf("stat case-variant root %q: %v", variant, err)
-	}
-	if !os.SameFile(rootInfo, variantInfo) {
-		t.Fatalf("case-variant root %q does not identify original root %q", variant, root)
-	}
-
+	variant := testutil.SameFileCaseVariant(t, root)
 	plan.Root = variant
 	key := testPlaceRootKey(variant)
 	plan.Ownership.Path = filepath.Join(filepath.Dir(stateDir), "ownership", key, "state.json")
