@@ -193,14 +193,14 @@ func preparePlaceChanges(
 	}
 	packages = cloneResolvedPlacePackages(packages)
 
-	root, err := fsboundary.OpenDir(binding.CanonicalRoot)
+	root, err := openCanonicalPlaceSyncRoot(binding.CanonicalRoot)
 	if err != nil {
+		if errors.Is(err, fsboundary.ErrNonCanonicalDir) {
+			return prepared, fmt.Errorf("target.approval.root-mismatch: approved root is no longer canonical: %w", err)
+		}
 		return prepared, fmt.Errorf("open approved place root: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, root.Close()) }()
-	if root.Path() != binding.CanonicalRoot {
-		return prepared, fmt.Errorf("target.approval.root-mismatch: approved root is no longer canonical")
-	}
 	ownerStore, err := ownership.Open(binding.CanonicalRoot, ownership.WithStateRoot(binding.CanonicalStateRoot))
 	if err != nil {
 		return prepared, fmt.Errorf("open place ownership state: %w", err)

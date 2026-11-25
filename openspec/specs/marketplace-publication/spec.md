@@ -127,7 +127,6 @@ archive and its placeholder are published instead.
 - **WHEN** a publication stages that resource
 - **THEN** the newly built archive digest MUST be used
 - **AND** the existing archive-digest repair scenario MUST apply
-
 ### Requirement: Publication indexes resource prerequisites
 
 Publication SHALL record, for every skill, command, and subagent revision, the prerequisites declared in its `metadata.requires` in declaration order, using the same prerequisite syntax and malformed-declaration handling as catalog discovery. A malformed declaration MUST NOT fail publication. Hook, MCP server, and collection revisions SHALL record no prerequisites. A revision published before prerequisite indexing SHALL remain unindexed until a later publication of the same content records its prerequisites, and an unindexed revision MUST NOT be reported as having no prerequisites. A later publication that records different prerequisites for an already indexed revision MUST be rejected as conflicting immutable metadata. Recorded `registry` and `path` hints MUST be credential-redacted before storage.
@@ -158,20 +157,3 @@ Publication SHALL record, for every skill, command, and subagent revision, the p
 
 - **WHEN** a published prerequisite has a credential-bearing registry or path hint
 - **THEN** the stored hint MUST be credential-redacted
-
-### Requirement: Place publication uses an explicit assessed profile
-
-A scoped package SHALL select an exact profile identity explicitly.
-Ingestion MUST recompute the payload and mapping digests and profile
-binding from admitted input, not trust sidecar digest claims or accept
-Marketplace assessment authority from Git or directory sources.
-Publication MUST verify agreement between the revision, assessment and
-artifact manifest before changing visible metadata.
-
-#### Scenario: Unbound or inconsistent place publication preserves the prior publication
-
-- **WHEN** a scoped package publication lacks an explicit profile selection,
-  the exact selected profile is unavailable, or the assessment, revision
-  and verified artifact disagree
-- **THEN** the server MUST refuse publication and leave the prior visible
-  publication unchanged

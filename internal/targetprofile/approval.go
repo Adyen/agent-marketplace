@@ -176,14 +176,14 @@ func approvalRoot(profileRoot UserRoot, env ApprovalEnvironment, bases map[strin
 	if !contained {
 		return "", false, fmt.Errorf("target.approval.root-outside-allowed-bases: requested root is not strictly within an allowed base")
 	}
-	captured, err := fsboundary.OpenDir(root)
+	captured, err := fsboundary.OpenCanonicalDir(root)
+	if errors.Is(err, fsboundary.ErrNonCanonicalDir) {
+		return "", false, fmt.Errorf("target.approval.root-alias: %w", err)
+	}
 	if err != nil {
 		return "", false, fmt.Errorf("target.approval.root-unavailable: %w: %w", err, ErrPlaceTargetUnavailable)
 	}
 	defer func() { _ = captured.Close() }()
-	if captured.Path() != root {
-		return "", false, fmt.Errorf("target.approval.root-alias: requested root is not its canonical spelling")
-	}
 	return root, usedOverride, nil
 }
 

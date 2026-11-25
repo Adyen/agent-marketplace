@@ -160,6 +160,13 @@ func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...O
 	if err := CheckPending(stateDir); err != nil {
 		return PlaceResult{}, err
 	}
+	preflightRoot, err := openPlaceRoot(plan.Root, plan.RootIdentity)
+	if err != nil {
+		return PlaceResult{}, err
+	}
+	if err := preflightRoot.Close(); err != nil {
+		return PlaceResult{}, err
+	}
 	if _, err := prepareStateDir(stateDir); err != nil {
 		return PlaceResult{}, err
 	}
@@ -558,11 +565,11 @@ func placeLockPaths(plan PlacePlan) []string {
 }
 
 func openPlaceRoot(rootPath string, expected fsboundary.Identity) (*fsboundary.Dir, error) {
-	root, err := fsboundary.OpenDir(rootPath)
+	root, err := fsboundary.OpenCanonicalDir(rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: open place root %s: %w", ErrGenerationConflict, rootPath, err)
 	}
-	if root.Path() != rootPath || !root.Identity().SameObject(expected) {
+	if !root.Identity().SameObject(expected) {
 		_ = root.Close()
 		return nil, fmt.Errorf("%w: place root identity changed: %s", ErrGenerationConflict, rootPath)
 	}

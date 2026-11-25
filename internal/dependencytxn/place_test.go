@@ -783,6 +783,76 @@ func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 }
 
 // spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
+func TestPlaceRefusesCaseVariantRootWithoutWrites(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(filepath.Clean(root), string(filepath.Separator))
+	variant := ""
+	for i, component := range parts {
+		if component == "" {
+			continue
+		}
+		for _, spelling := range []string{strings.ToUpper(component), strings.ToLower(component)} {
+			if spelling == component {
+				continue
+			}
+			candidateParts := append([]string(nil), parts...)
+			candidateParts[i] = spelling
+			candidate := strings.Join(candidateParts, string(filepath.Separator))
+			candidateInfo, err := os.Stat(candidate)
+			if err == nil && os.SameFile(rootInfo, candidateInfo) {
+				variant = candidate
+				break
+			}
+		}
+		if variant != "" {
+			break
+		}
+	}
+	if variant == "" {
+		t.Skip("filesystem has no case-variant spelling for the target root")
+	}
+	t.Logf("same-inode root alias: original=%q variant=%q", root, variant)
+	variantInfo, err := os.Stat(variant)
+	if err != nil {
+		t.Fatalf("stat case-variant root %q: %v", variant, err)
+	}
+	if !os.SameFile(rootInfo, variantInfo) {
+		t.Fatalf("case-variant root %q does not identify original root %q", variant, root)
+	}
+
+	plan.Root = variant
+	key := testPlaceRootKey(variant)
+	plan.Ownership.Path = filepath.Join(filepath.Dir(stateDir), "ownership", key, "state.json")
+	plan.Ownership.Bytes = mustPlaceState(t, placeStateFixture{
+		CanonicalRoot: variant, RootKey: key, PlaceDirectories: []any{},
+	})
+	_, commitErr := CommitPlace(context.Background(), stateDir, plan)
+	if !errors.Is(commitErr, ErrGenerationConflict) {
+		t.Errorf("case-variant root commit error = %v, want ErrGenerationConflict", commitErr)
+	}
+	if commitErr == nil || !strings.Contains(commitErr.Error(), "canonical spelling") {
+		t.Errorf("case-variant root commit error = %v, want canonical spelling diagnostic", commitErr)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "mods")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("case-variant root changed canonical target: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(stateDir), "place-stage")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("case-variant root created place stage: %v", err)
+	}
+	ownershipTree := filepath.Join(filepath.Dir(stateDir), "ownership")
+	if _, err := os.Lstat(ownershipTree); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("case-variant root created ownership tree: %v", err)
+	}
+	if got := journals(t, stateDir); len(got) != 0 {
+		t.Errorf("case-variant root created journals: %v", got)
+	}
+}
+
+// spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
 func TestPlaceRootAliasDoesNotOpenOwnership(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	alias := root + "-alias"

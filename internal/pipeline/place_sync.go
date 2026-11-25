@@ -467,14 +467,7 @@ func placeSyncRootsOverlap(left, right string) (overlap bool, retErr error) {
 }
 
 func openCanonicalPlaceSyncRoot(rootPath string) (*fsboundary.Dir, error) {
-	root, err := fsboundary.OpenDir(rootPath)
-	if err != nil {
-		return nil, err
-	}
-	if root.Path() != rootPath {
-		return nil, errors.Join(fmt.Errorf("root path %q is not canonical", rootPath), root.Close())
-	}
-	return root, nil
+	return fsboundary.OpenCanonicalDir(rootPath)
 }
 
 func placeSyncAncestorHasIdentity(candidate string, identity fsboundary.Identity) (bool, error) {
