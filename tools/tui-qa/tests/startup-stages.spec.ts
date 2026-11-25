@@ -165,7 +165,7 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   await select("org-review", async () => {
     await locate(terminal, /Name:\s+org-review/).unique().expect();
-    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, /Status:\s+required by org/).unique().expect();
     await locate(terminal, /\sR\s+skill\s+[^\n]*\/org-review/).unique().expect();
     await locate(terminal, /verification\s+pending/).expect({ not: true });
   });
