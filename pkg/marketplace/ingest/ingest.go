@@ -137,6 +137,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		supportFiles      map[string]string
 		inspectionBody    []byte
 		inspectionSupport analyze.FileSet
+		placeRequires     string
 	}
 	processedKindName := func(p processed) (string, string) {
 		kind, name := api.FromIR(p.entry.Kind), p.entry.Name
@@ -505,7 +506,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
-	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte, identity *targetprofile.Identity) error {
+	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte, identity *targetprofile.Identity, requires string) error {
 		kind, name := result.Kind, result.Name
 		coordinate := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: name}
 		var projection inspection.Projection
@@ -531,7 +532,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
 		}
 		processedResults = append(processedResults, processed{
-			sourcePath: sourcePath, result: result, inspectionBody: inspectionBody,
+			sourcePath: sourcePath, result: result, inspectionBody: inspectionBody, placeRequires: requires,
 		})
 		return nil
 	}
@@ -548,7 +549,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		if previous, ok := profilePins[identity.TargetID]; ok && previous != identity {
 			return rev, fmt.Errorf("marketplace.profile.selection-ambiguous: target %q has multiple profile identities", identity.TargetID)
 		}
-		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody, nil); err != nil {
+		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody, nil, place.requires); err != nil {
 			return rev, err
 		}
 		if _, exists := profilePins[identity.TargetID]; exists {
@@ -563,7 +564,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			Kind: nameutil.TargetProfileKind, Name: identity.TargetID,
 			ContentDigest: identity.RevisionDigest, License: registry.License,
 		}, registry.ID, limits, license, registry.Acquisition)
-		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes, &identity); err != nil {
+		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes, &identity, ""); err != nil {
 			return rev, err
 		}
 	}
@@ -629,13 +630,17 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			contentDigest = p.result.ManifestDigest
 			archiveDigest = ""
 		}
+		requires := p.placeRequires
+		if requires == "" {
+			requires = revisionRequires(p.entry)
+		}
 		rev := store.ResourceRevision{
 			Coordinate:    coord,
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			License:       p.result.License,
 			Description:   p.result.Description,
-			Requires:      revisionRequires(p.entry),
+			Requires:      requires,
 		}
 		var findings []store.Finding
 		if p.result.Artifact.Manifest.HostPackageIdentity != nil {

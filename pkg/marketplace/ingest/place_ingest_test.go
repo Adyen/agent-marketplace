@@ -16,7 +16,48 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
+	"gopkg.in/yaml.v3"
 )
+
+func TestIndexedPlaceRequires(t *testing.T) {
+	nodes := []yaml.Node{
+		placeRequirementNode(t, "invented-app/mod:other"),
+		placeRequirementNode(t, "{kind: invented-app/mod, name: second}"),
+	}
+	got, err := indexedPlaceRequires("invented-app/mod", "sample", nodes)
+	want := `[{"kind":"invented-app/mod","name":"other"},{"kind":"invented-app/mod","name":"second"}]`
+	if err != nil || got != want {
+		t.Fatalf("indexedPlaceRequires = %q, %v; want %q", got, err, want)
+	}
+	empty, err := indexedPlaceRequires("invented-app/mod", "sample", nil)
+	if err != nil || empty != "[]" {
+		t.Fatalf("empty indexedPlaceRequires = %q, %v; want []", empty, err)
+	}
+
+	for _, test := range []struct {
+		name string
+		node string
+		pkg  string
+	}{
+		{name: "unsupported scalar", node: "skill:other", pkg: "sample"},
+		{name: "cross-target", node: "other-app/mod:other", pkg: "sample"},
+		{name: "registry hint", node: "{kind: invented-app/mod, name: other, registry: tools}", pkg: "sample"},
+		{name: "path hint", node: "{kind: invented-app/mod, name: other, path: nested/mod}", pkg: "sample"},
+		{name: "non-string scalar", node: "{kind: 42, name: other}", pkg: "sample"},
+		{name: "duplicate key", node: "{kind: invented-app/mod, kind: invented-app/layout, name: other}", pkg: "sample"},
+		{name: "extra key", node: "{kind: invented-app/mod, name: other, alias: mod}", pkg: "sample"},
+		{name: "self edge", node: "invented-app/mod:sample", pkg: "sample"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := indexedPlaceRequires(
+				"invented-app/mod", test.pkg, []yaml.Node{placeRequirementNode(t, test.node)},
+			)
+			if err == nil || !strings.Contains(err.Error(), "marketplace.package.prerequisites-invalid") {
+				t.Fatalf("indexedPlaceRequires(%q) error = %v", test.node, err)
+			}
+		})
+	}
+}
 
 func TestBuildRegistryRevisionPublishesExactPlaceAssessment(t *testing.T) {
 	ctx := context.Background()
@@ -31,6 +72,10 @@ name: sample
 files:
   - source_path: source.txt
     destination_path: mods/sample.txt
+metadata:
+  requires:
+    - invented-app/mod:other
+    - {kind: invented-app/mod, name: second}
 `))
 	payloadPath := filepath.Join(packageRoot, "payload", "source.txt")
 	payload := []byte("plain text package\n")
@@ -89,6 +134,10 @@ files:
 	}
 	resource := revision.Resources[resourceIndex]
 	assessment := revision.Assessments[resourceIndex]
+	wantRequires := `[{"kind":"invented-app/mod","name":"other"},{"kind":"invented-app/mod","name":"second"}]`
+	if resource.Requires != wantRequires {
+		t.Fatalf("resource prerequisites = %q, want %q", resource.Requires, wantRequires)
+	}
 	if revision.ResourceOccurrences[resourceIndex].SourcePath != "packages/invented-app/mod/sample" {
 		t.Fatalf("resource source path = %q, want packages/invented-app/mod/sample", revision.ResourceOccurrences[resourceIndex].SourcePath)
 	}
@@ -160,6 +209,9 @@ files:
 	persisted, err := meta.GetLatestResourceRevision(ctx, coord)
 	if err != nil {
 		t.Fatalf("GetLatestResourceRevision: %v", err)
+	}
+	if persisted.Requires != wantRequires {
+		t.Fatalf("persisted prerequisites = %q, want %q", persisted.Requires, wantRequires)
 	}
 	if persisted.Assessment.HostPackageIdentity == nil || *persisted.Assessment.HostPackageIdentity != *verified.Manifest.HostPackageIdentity {
 		t.Fatal("persisted assessment binding differs from verified artifact binding")
@@ -244,6 +296,18 @@ files:
 	if got, err := os.ReadFile(payloadPath); err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("package payload changed: bytes=%q err=%v", got, err)
 	}
+}
+
+func placeRequirementNode(t *testing.T, raw string) yaml.Node {
+	t.Helper()
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &document); err != nil {
+		t.Fatalf("parse place requirement %q: %v", raw, err)
+	}
+	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
+		t.Fatalf("place requirement %q has invalid YAML node: %#v", raw, document)
+	}
+	return *document.Content[0]
 }
 
 func TestPlaceStoreFindingsOmitsPayloadLocations(t *testing.T) {
