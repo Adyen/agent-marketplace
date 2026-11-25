@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/analyze"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -189,6 +191,11 @@ claude_enterprise:
 	rejected, err := metadata.GetLatestResourceRevision(t.Context(), rejectedCoordinate)
 	if err != nil || rejected.Assessment.Decision != store.AssessmentDecisionReject {
 		t.Fatalf("rejected fixture assessment = %+v, %v", rejected.Assessment, err)
+	}
+	if !slices.ContainsFunc(rejected.Assessment.Findings, func(finding store.Finding) bool {
+		return finding.Code == analyze.PolicyLicenseNotAllowed
+	}) {
+		t.Fatalf("rejected fixture findings = %+v, want %s", rejected.Assessment.Findings, analyze.PolicyLicenseNotAllowed)
 	}
 	rejectedDesired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-rejected"})
 	if err != nil || len(rejectedDesired) != 0 {
