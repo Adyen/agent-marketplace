@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: marketplace-publication/unbound-or-inconsistent-place-publication-preserves-the-prior-publication
 func TestPlacePublicationPreservesPriorBinding(t *testing.T) {
 	ctx := context.Background()
 	meta, blobs := openAtomicStores(t)
@@ -138,18 +140,38 @@ func TestPlacePublicationPreservesPriorBinding(t *testing.T) {
 	if secondRevision.ContentDigest != firstRevision.ContentDigest || secondRevision.ArchiveDigest == firstRevision.ArchiveDigest {
 		t.Fatalf("second revision digests = %q/%q, want same content and different archive", secondRevision.ContentDigest, secondRevision.ArchiveDigest)
 	}
-	if err := store.PublishRegistryRevision(ctx, meta, blobs, second); err == nil {
-		t.Fatal("publication with a different package mapping and prior assessment succeeded")
-	}
-	if _, err := blobs.Get(ctx, secondRevision.ArchiveDigest); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("new final archive blob lookup error = %v, want ErrNotFound", err)
-	}
-	after, err := meta.GetLatestResourceRevision(ctx, coordinate)
-	if err != nil {
-		t.Fatalf("GetLatestResourceRevision after rejected publication: %v", err)
-	}
-	if !reflect.DeepEqual(after, before) {
-		t.Fatalf("rejected publication changed visible revision:\nbefore: %#v\nafter:  %#v", before, after)
+	missing := firstAssessment
+	missing.HostPackageIdentity = nil
+	for _, test := range []struct {
+		name        string
+		assessments []store.ResourceAssessment
+		want        string
+	}{
+		{name: "missing profile identity", assessments: []store.ResourceAssessment{missing}, want: "host package identity"},
+		{name: "assessment disagrees with verified archive", assessments: second.Assessments, want: "assessment binding does not match archive"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attempt := second
+			attempt.Assessments = append([]store.ResourceAssessment(nil), test.assessments...)
+			if err := store.PublishRegistryRevision(ctx, meta, blobs, attempt); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("rejected publication error = %v, want %q", err, test.want)
+			}
+			for _, digest := range []store.ArchiveDigest{
+				secondRevision.ArchiveDigest,
+				store.PlaceholderArchiveKey(secondRevision.ArchiveDigest),
+			} {
+				if _, err := blobs.Get(ctx, digest); !errors.Is(err, store.ErrNotFound) {
+					t.Fatalf("rejected publication blob %s lookup error = %v, want ErrNotFound", digest, err)
+				}
+			}
+			after, err := meta.GetLatestResourceRevision(ctx, coordinate)
+			if err != nil {
+				t.Fatalf("GetLatestResourceRevision after rejected publication: %v", err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected publication changed visible revision:\nbefore: %#v\nafter:  %#v", before, after)
+			}
+		})
 	}
 	priorArchive, err := blobs.Get(ctx, firstRevision.ArchiveDigest)
 	if err != nil {

@@ -932,6 +932,140 @@ func TestPlanPlaceDeselection(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/edited-file-keeps-the-whole-package-and-blocks-upgrade
+// spec: target-profile-place/deleted-file-is-treated-as-an-edit
+func TestCommitPlaceRefusesEditedUpgradeAndDeletedFile(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		deleted bool
+	}{
+		{name: "edited upgrade"},
+		{name: "deleted without upgrade", deleted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPlaceAdmissionFixture(t)
+			setPlacePublishEnvironment(t, fixture)
+			if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+				t.Fatal(err)
+			}
+			originalFiles := []targetprofile.PackageFile{
+				{
+					SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
+					Mode: 0o644, Bytes: []byte("original guide\n"),
+				},
+				{
+					SourcePath: "payload/second.md", DestinationPath: "mods/sample/second.md",
+					Mode: 0o644, Bytes: []byte("original second\n"),
+				},
+			}
+			original := resolvedPlacePackageForPublishWithFiles(t, fixture, originalFiles)
+			if _, err := CommitPlaceUpserts(
+				context.Background(), fixture.binding, fixture.raw, fixture.env,
+				[]marketplace.ResolvedPlacePackage{original},
+			); err != nil {
+				t.Fatalf("install original package: %v", err)
+			}
+			owner, _ := openPlacePublishOwnership(t, fixture)
+			stateBefore, err := os.ReadFile(owner.StateFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			guidePath := filepath.Join(fixture.root, "mods", "sample", "guide.md")
+			secondPath := filepath.Join(fixture.root, "mods", "sample", "second.md")
+			newPath := filepath.Join(fixture.root, "mods", "sample", "new.md")
+			expectedReason := "owned file drifted"
+			var candidate marketplace.ResolvedPlacePackage
+			var editedBytes []byte
+			if test.deleted {
+				expectedReason = "owned file is missing"
+				if err := os.Remove(guidePath); err != nil {
+					t.Fatal(err)
+				}
+				candidate = original
+			} else {
+				editedBytes = []byte("edited by user\n")
+				if err := os.WriteFile(guidePath, editedBytes, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				candidateFiles := slices.Clone(original.Files)
+				candidateFiles[0].Bytes = []byte("upgraded guide\n")
+				candidateFiles[1].Bytes = []byte("upgraded second\n")
+				candidateFiles = append(candidateFiles, targetprofile.PackageFile{
+					SourcePath: "payload/new.md", DestinationPath: "mods/sample/new.md",
+					Mode: 0o644, Bytes: []byte("new sibling\n"),
+				})
+				candidate = resolvedPlacePackageForPublishWithFiles(t, fixture, candidateFiles)
+			}
+
+			result, err := CommitPlaceUpserts(
+				context.Background(), fixture.binding, fixture.raw, fixture.env,
+				[]marketplace.ResolvedPlacePackage{candidate},
+			)
+			if err == nil || !strings.Contains(err.Error(), "mods/sample/guide.md") ||
+				!strings.Contains(err.Error(), expectedReason) || len(result.Changed) != 0 {
+				t.Fatalf("CommitPlaceUpserts after %s = %#v, %v", test.name, result, err)
+			}
+			if test.deleted {
+				if _, err := os.Lstat(guidePath); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("deleted guide was recreated: %v", err)
+				}
+			} else {
+				assertPlacePublishFile(t, guidePath, editedBytes, 0o644)
+			}
+			assertPlacePublishFile(t, secondPath, original.Files[1].Bytes, 0o644)
+			if _, err := os.Lstat(newPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("refused package published its new sibling: %v", err)
+			}
+			if stateAfter, err := os.ReadFile(owner.StateFile()); err != nil || !bytes.Equal(stateAfter, stateBefore) {
+				t.Fatalf("refused package changed ownership state: %v", err)
+			}
+		})
+	}
+}
+
+// spec: target-profile-place/an-installed-package-keeps-its-projection-on-conflict
+func TestCommitPlaceKeepsInstalledPackageOnConflict(t *testing.T) {
+	fixture, retiring, selected := installPlaceDeselectionPackages(t)
+	owner, _ := openPlacePublishOwnership(t, fixture)
+	stateBefore, err := os.ReadFile(owner.StateFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedSample := resolvedPlacePackageNamedForPublish(t, fixture, "sample", []targetprofile.PackageFile{
+		{
+			SourcePath: "payload/edit.md", DestinationPath: "mods/sample/edit.md",
+			Mode: 0o644, Bytes: []byte("updated edit\n"),
+		},
+		{
+			SourcePath: "payload/new.md", DestinationPath: "mods/sample/new.md",
+			Mode: 0o644, Bytes: []byte("new sibling\n"),
+		},
+		{
+			SourcePath: "payload/selected.md", DestinationPath: "mods/selected/selected.md",
+			Mode: 0o644, Bytes: []byte("conflicting selected path\n"),
+		},
+	})
+	result, err := CommitPlaceUpserts(
+		context.Background(), fixture.binding, fixture.raw, fixture.env,
+		[]marketplace.ResolvedPlacePackage{updatedSample, selected},
+	)
+	if err == nil || !strings.Contains(err.Error(), "mods/selected/selected.md") || len(result.Changed) != 0 {
+		t.Fatalf("conflicting package commit = %#v, %v", result, err)
+	}
+	for _, pkg := range []marketplace.ResolvedPlacePackage{retiring, selected} {
+		for _, file := range pkg.Files {
+			assertPlacePublishFile(t, filepath.Join(fixture.root, filepath.FromSlash(file.DestinationPath)), file.Bytes, file.Mode)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.root, "mods", "sample", "new.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("conflicting package published its new sibling: %v", err)
+	}
+	if stateAfter, err := os.ReadFile(owner.StateFile()); err != nil || !bytes.Equal(stateAfter, stateBefore) {
+		t.Fatalf("conflicting package changed ownership state: %v", err)
+	}
+}
+
 // spec: target-profile-place/deselection-retires-owned-files-and-cedes-edits
 func TestCommitPlaceDeselection(t *testing.T) {
 	t.Run("commits only deselected package files", func(t *testing.T) {
