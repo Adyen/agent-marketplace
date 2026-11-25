@@ -630,7 +630,7 @@ Manage local approval receipts for exact deployed target profiles.
 agent-marketplace target approve <target-id> [--json]
 ```
 
-Reads the selected profile and its already-deployed Git lock from the local cache, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
+Reads the selected profile from the local cache using its already-deployed acquisition lock, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
 
 The approval binding includes the future installation ID for that approved target root. It identifies the root and state location, not an installed package.
 
@@ -664,7 +664,7 @@ Runs only the named approved check for an already-installed package. It records 
 agent-marketplace target retire <installation-id>
 ```
 
-Retires the installation recorded in the current XDG state root, even if its target profile is no longer selected or its root override has changed. The command shows the recorded root, removable files, and ceded files on standard error and requires typing `yes` in a terminal; `--yes` is rejected. It removes only unchanged files whose recorded parent identity is still proven; edited or unproven files are preserved. Ownership is updated transactionally. Target selection, approval receipts, deployed locks, caches, and directories are left intact. A still-enabled target can be installed again by a later sync.
+Retires the installation recorded in the current XDG state root, even if its target profile is no longer selected or its root override has changed. The command shows the recorded root, removable files, and ceded files on standard error and requires typing `yes` in a terminal; `--yes` is rejected. It removes only unchanged files whose recorded parent identity is still proven; edited files are preserved, and retirement refuses if a recorded parent directory cannot be proven. Ownership is updated transactionally. Target selection, approval receipts, deployed locks, caches, and directories are left intact. A still-enabled target can be installed again by a later sync.
 
 ## `telemetry`
 

@@ -47,6 +47,7 @@ export function docsSidebar(docsPath: string): DefaultTheme.SidebarItem[] {
               items: [
                 { text: 'Browse and inspect Marketplace resources', link: `${docsPath}how-to/browse-marketplace-resources` },
                 { text: 'Install from a hosted Marketplace', link: `${docsPath}how-to/install-from-a-marketplace` },
+                { text: 'Approve and deploy a place target', link: `${docsPath}how-to/approve-and-deploy-a-place-target` },
                 { text: 'Install resource bundles', link: `${docsPath}how-to/install-resource-bundles` },
                 { text: 'Install a plugin', link: `${docsPath}how-to/install-plugins` },
                 { text: 'Use a local registry', link: `${docsPath}how-to/use-a-local-registry` },
