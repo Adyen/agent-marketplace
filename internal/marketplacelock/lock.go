@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // A normalized v2 Marketplace resource consumes at least 300 encoded bytes:
@@ -36,20 +37,27 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 		}
 		type requestResult struct {
-			plan *marketplace.PreparedInstall
-			err  error
+			plan    *marketplace.PreparedInstall
+			entry   config.MarketplaceEntry
+			profile *lockfile.MarketplaceResourceLock
+			err     error
 		}
 		budget := marketplace.NewPreparationBudget(remainingResources)
 		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
 			request := source.Requests[i]
-			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, marketplace.MarketplaceLocator{
+			locator := marketplace.MarketplaceLocator{
 				URL:      entry.URL,
 				Registry: request.Registry,
 				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
-			}, targets, budget, policy)
+			}
+			if locator.Kind == nameutil.TargetProfileKind {
+				acquired, record, err := marketplaceResolver.PrepareTargetProfileLock(ctx, entry, locator, budget)
+				return requestResult{entry: acquired, profile: &record, err: err}
+			}
+			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, locator, targets, budget, policy)
 			return requestResult{plan: plan, err: err}
 		})
 		for i, request := range source.Requests {
@@ -57,27 +65,40 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			if remainingResources < 1 {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 			}
-			plan, err := results[i].plan, results[i].err
-			if err != nil {
-				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, err)
+			result := results[i]
+			if result.err != nil {
+				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, result.err)
 			}
-			if i > 0 && plan.Entry.InstanceID != entry.InstanceID {
-				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, plan.Entry.InstanceID, entry.InstanceID)
+			acquired, work, count := result.entry, 1, 1
+			var pins []config.MarketplaceResourcePin
+			if result.plan != nil {
+				acquired, work = result.plan.Entry, result.plan.PreparationWork
+				pins = lockPins(result.plan)
+				count = len(pins)
 			}
-			if plan.PreparationWork < 1 || plan.PreparationWork > remainingResources {
+			if i > 0 && acquired.InstanceID != entry.InstanceID {
+				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, acquired.InstanceID, entry.InstanceID)
+			}
+			if work < 1 || work > remainingResources {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock preparation work exceeds processing limit %d", maxMarketplaceLockResources)
 			}
-			preparationWork += plan.PreparationWork
-			entry = plan.Entry
-			pins := lockPins(plan)
-			if len(pins) > maxMarketplaceLockResources-processedPins {
+			preparationWork += work
+			entry = acquired
+			if count > maxMarketplaceLockResources-processedPins {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock records exceed processing limit %d", maxMarketplaceLockResources)
 			}
-			processedPins += len(pins)
-			for _, pin := range pins {
-				record, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)
-				if err != nil {
-					return lockfile.Document{}, fmt.Errorf("verify %s/%s/%s lock evidence: %w", pin.RegistryID, pin.Kind, pin.Name, err)
+			processedPins += count
+			for j := 0; j < count; j++ {
+				var record lockfile.MarketplaceResourceLock
+				if result.profile != nil {
+					record = *result.profile
+				} else {
+					pin := pins[j]
+					verified, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)
+					if err != nil {
+						return lockfile.Document{}, fmt.Errorf("verify %s/%s/%s lock evidence: %w", pin.RegistryID, pin.Kind, pin.Name, err)
+					}
+					record = verified
 				}
 				before := len(resources)
 				if err := mergeLockResource(resources, record); err != nil {
