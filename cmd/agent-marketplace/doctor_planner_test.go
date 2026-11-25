@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -270,6 +271,224 @@ func TestDoctorRepairDriftKeepsAcquisitionLockUnchanged(t *testing.T) {
 	}
 	if lockAfter, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, lockAfter) {
 		t.Fatalf("drift repair changed acquisition lock: %v\n%s", err, lockAfter)
+	}
+}
+
+// spec: doctor-repair-planning/drift-repair-leaves-acquisition-locks-byte-identical
+// spec: doctor-repair-planning/drift-repair-uses-verified-transient-organization-evidence
+func TestDoctorRepairDriftWithTransientOrganizationMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupDoctorTransientOrganizationMarketplaceRepair(t)
+	output, err := executeCommand("doctor", "--repair", "--yes")
+	if err != nil {
+		if strings.Contains(output+err.Error(), "v4.marketplace-lock-required") {
+			t.Fatalf("doctor refused drift repair because the organization lock is absent: %v\n%s", err, output)
+		}
+		t.Fatalf("doctor --repair --yes: %v\n%s", err, output)
+	}
+	driftStep := strings.Index(output, "reconcile harness drift")
+	adoptionStep := strings.Index(output, `adopt mcp-server "adoptable"`)
+	if driftStep < 0 || adoptionStep < driftStep || !strings.Contains(output, "adopted 1 entr(y/ies) in mcp_config.json") {
+		t.Fatalf("doctor did not reconcile drift and continue to adoption:\n%s", output)
+	}
+	if after, err := os.ReadFile(fixture.driftPath); err != nil || bytes.Contains(after, []byte("local drift")) {
+		t.Fatalf("drift repair did not restore the selected artifact: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(fixture.aggregatePath); err != nil || !bytes.Equal(fixture.aggregateBefore, after) {
+		t.Fatalf("adoption changed the exact handwritten aggregate: %v\n%s", err, after)
+	}
+	if state, err := os.ReadFile(fixture.ownershipPath); err != nil || len(state) == 0 {
+		t.Fatalf("adoption did not record ownership: %v", err)
+	}
+	if check, err := executeCommand("sync", "--check"); err != nil || strings.Contains(check, "out of sync") {
+		t.Fatalf("sync --check after repair: %v\n%s", err, check)
+	}
+	if locked, err := executeCommand("sync", "--locked"); err == nil ||
+		!strings.Contains(locked, "v4.marketplace-lock-required") {
+		t.Fatalf("standalone sync --locked did not refuse the missing organization lock: %v\n%s", err, locked)
+	}
+	assertDoctorTransientMarketplaceConfigAndLockBytes(t, fixture)
+	if _, err := os.Lstat(fixture.organizationLockPath); !os.IsNotExist(err) {
+		t.Fatalf("doctor created organization acquisition lock: %v", err)
+	}
+}
+
+// spec: doctor-repair-planning/drift-repair-refuses-invalid-organization-evidence
+func TestDoctorRepairDriftRefusesUnverifiedOrganizationMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name    string
+		refusal string
+		invalid bool
+	}{
+		{name: "present invalid", refusal: "organization.trust.lock.malformed", invalid: true},
+		{name: "absent and unverifiable", refusal: "acquire transient organization Marketplace lock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := setupDoctorTransientOrganizationMarketplaceRepair(t)
+			var organizationLock []byte
+			if tc.invalid {
+				organizationLock = []byte("not: [valid\n")
+				if err := os.WriteFile(fixture.organizationLockPath, organizationLock, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				fixture.server.Close()
+			}
+			fixture.requests.Store(0)
+			output, err := executeCommand("doctor", "--repair", "--yes")
+			if err == nil || !strings.Contains(output+err.Error(), tc.refusal) {
+				t.Fatalf("repair did not report %q: %v\n%s", tc.refusal, err, output)
+			}
+			if tc.invalid && fixture.requests.Load() != 0 {
+				t.Fatalf("invalid deployed organization lock triggered %d Marketplace requests", fixture.requests.Load())
+			}
+			if !strings.Contains(output, "sync harness drift") ||
+				!strings.Contains(output, "reconcile shared-aggregate ownership") ||
+				strings.Count(output, "blocked by") < 2 {
+				t.Fatalf("selection-dependent drift and adoption steps were not blocked:\n%s", output)
+			}
+			if after, err := os.ReadFile(fixture.driftPath); err != nil || !bytes.Contains(after, []byte("local drift")) {
+				t.Fatalf("refused repair changed the drifted artifact: %v\n%s", err, after)
+			}
+			if after, err := os.ReadFile(fixture.aggregatePath); err != nil || !bytes.Equal(fixture.aggregateBefore, after) {
+				t.Fatalf("refused repair changed the handwritten aggregate: %v\n%s", err, after)
+			}
+			if _, err := os.Lstat(fixture.ownershipPath); !os.IsNotExist(err) {
+				t.Fatalf("refused repair adopted the aggregate: %v", err)
+			}
+			assertDoctorTransientMarketplaceConfigAndLockBytes(t, fixture)
+			if tc.invalid {
+				if after, err := os.ReadFile(fixture.organizationLockPath); err != nil || !bytes.Equal(organizationLock, after) {
+					t.Fatalf("refused repair changed the invalid organization lock: %v\n%s", err, after)
+				}
+			} else if _, err := os.Lstat(fixture.organizationLockPath); !os.IsNotExist(err) {
+				t.Fatalf("refused repair created organization lock: %v", err)
+			}
+		})
+	}
+}
+
+type doctorTransientMarketplaceRepairFixture struct {
+	server               *httptest.Server
+	requests             *atomic.Int32
+	repoConfigPath       string
+	repoConfig           []byte
+	repoLockPath         string
+	repoLock             []byte
+	organizationPath     string
+	organizationConfig   []byte
+	organizationLockPath string
+	aggregatePath        string
+	aggregateBefore      []byte
+	ownershipPath        string
+	driftPath            string
+}
+
+func setupDoctorTransientOrganizationMarketplaceRepair(t *testing.T) doctorTransientMarketplaceRepairFixture {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	t.Cleanup(server.Close)
+
+	origin, working := createBareRepoWithWorkingClone(t, "doctor-transient-org-authority.git")
+	writeSkill(t, working, "locked-skill", "Locked", nil)
+	commitAndPushAll(t, working, "locked")
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	localSource := filepath.Join(repoRoot, "extra")
+	writeFile(t, filepath.Join(localSource, "mcp.json"), `{"mcpServers":{"adoptable":{"command":"adoptable-binary"}}}`)
+	repoConfigPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, repoConfigPath, `apiVersion: agent-marketplace/v4
+harnesses: [devin, factory]
+sources:
+  locked: {git: file://`+origin+`, ref: main}
+  local: {directory: `+filepath.ToSlash(localSource)+`}
+resources:
+  locked: {include: [skill/locked-skill]}
+  local: {include: [mcp/adoptable]}
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("create writable Git acquisition lock: %v\n%s", err, output)
+	}
+	repoConfig, err := os.ReadFile(repoConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoLockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	repoLock, err := os.ReadFile(repoLockPath)
+	if err != nil || len(repoLock) == 0 {
+		t.Fatalf("read writable Git acquisition lock: %v", err)
+	}
+
+	organizationPath := filepath.Join(t.TempDir(), "config.yaml")
+	organizationConfig := []byte(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: ` + server.URL + `}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	if err := os.WriteFile(organizationPath, organizationConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, organizationPath)
+	seedOutput, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("seed synced harness outputs and transient organization evidence: %v\n%s", err, seedOutput)
+	}
+	if requests.Load() == 0 {
+		t.Fatal("seed sync did not acquire organization Marketplace evidence")
+	}
+
+	aggregatePath := filepath.Join(repoRoot, ".devin", harness.DevinMcpConfigFile)
+	aggregateBefore := []byte(`{"mcpServers":{"adoptable":{"command":"adoptable-binary"}}}`)
+	if err := os.WriteFile(aggregatePath, aggregateBefore, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(store.StateFile()); err != nil {
+		t.Fatal(err)
+	}
+	driftPath := filepath.Join(repoRoot, ".factory", "skills", "locked-skill", "SKILL.md")
+	drift, err := os.ReadFile(driftPath)
+	if err != nil {
+		t.Fatalf("read materialized Marketplace skill: %v\n%s", err, seedOutput)
+	}
+	if err := os.WriteFile(driftPath, append(drift, []byte("\nlocal drift\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return doctorTransientMarketplaceRepairFixture{
+		server: server, requests: &requests, repoConfigPath: repoConfigPath, repoConfig: repoConfig,
+		repoLockPath: repoLockPath, repoLock: repoLock, organizationPath: organizationPath,
+		organizationConfig: organizationConfig, organizationLockPath: filepath.Join(filepath.Dir(organizationPath), "lock.yaml"),
+		aggregatePath: aggregatePath, aggregateBefore: aggregateBefore, ownershipPath: store.StateFile(), driftPath: driftPath,
+	}
+}
+
+func assertDoctorTransientMarketplaceConfigAndLockBytes(t *testing.T, fixture doctorTransientMarketplaceRepairFixture) {
+	t.Helper()
+	for _, file := range []struct {
+		path string
+		want []byte
+	}{
+		{path: fixture.repoConfigPath, want: fixture.repoConfig},
+		{path: fixture.repoLockPath, want: fixture.repoLock},
+		{path: fixture.organizationPath, want: fixture.organizationConfig},
+	} {
+		if after, err := os.ReadFile(file.path); err != nil || !bytes.Equal(file.want, after) {
+			t.Errorf("repair changed %s: %v\n%s", file.path, err, after)
+		}
 	}
 }
 

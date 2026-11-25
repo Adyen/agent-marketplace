@@ -409,12 +409,19 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				issue := fmt.Errorf("sync drift diagnosis: %w", checkErr)
 				addHuman(repairplanner.StageDrift, repairDiagnosticCode(issue), issue)
 			} else if hasDrift && len(files) > 0 {
+				driftAction := "sync --locked harness drift"
+				hasDeployedOrganizationLock := slices.ContainsFunc(current.Organization.Reads, func(read config.ConfigRead) bool {
+					return read.AcquisitionLock
+				})
+				if current.Organization.Config != nil && len(current.Organization.Config.Marketplaces) > 0 && !hasDeployedOrganizationLock {
+					driftAction = "reconcile harness drift"
+				}
 				diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 					Stage: repairplanner.StageDrift, Class: repairplanner.Safe,
-					Action: "sync --locked harness drift", Code: diag.CodeOwnershipEntryDrift,
+					Action: driftAction, Code: diag.CodeOwnershipEntryDrift,
 					Files: files, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 					Apply: func(ctx context.Context) (bool, error) {
-						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true, beforeMaterialize: revalidate})
+						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true, reuseTransientOrganization: true, beforeMaterialize: revalidate})
 						if err == nil || errors.Is(err, dependencytxn.ErrGenerationConflict) || len(collisionFiles) == 0 {
 							return true, err
 						}

@@ -98,8 +98,9 @@ declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
 mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
 mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
 Off a terminal, --repair is preview-only unless --yes
-is set; --yes runs only safe steps. Drift repair uses the acquisition locks
-already on disk. Safe lock steps can create a missing writable lock or
+is set; --yes runs only safe steps. Drift repair keeps acquisition locks unchanged.
+If no organization Marketplace lock is deployed, it can reuse verified evidence
+from this doctor run. Safe lock steps can create a missing writable lock or
 reconcile a stale one without upgrading pins; destructive lock recovery needs
 a terminal confirmation and a backup. Repair never rewrites configuration
 automatically, edits harness lists, or edits organization files.
