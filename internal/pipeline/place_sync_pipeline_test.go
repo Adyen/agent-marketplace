@@ -33,6 +33,7 @@ import (
 )
 
 // spec: target-profile-place/headless-sync-skips-pending-consent-and-continues
+// spec: target-profile-place/failed-verification-keeps-files-and-retries
 func TestSyncUsesDeployedPlaceTargets(t *testing.T) {
 	ctx := context.Background()
 	gitFixture := newDeployedGitPlaceProfileFixture(t)
@@ -453,6 +454,24 @@ resources:
 		failedProjection.Packages[0].Verification.Outcome != "fail" ||
 		failedProjection.Packages[0].Verification.EvidenceSource != "initial-load" {
 		t.Fatalf("failed initial-load result = %#v, %v", failedProjection, err)
+	}
+	failedState, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, statusWarnings := InspectDeployedPlaceStatus(ctx, approved.ResolveResult)
+	if len(statusWarnings) != 0 {
+		t.Fatalf("status warnings after failed verification = %v", statusWarnings)
+	}
+	if len(rows) != 1 || rows[0].Name != "sample" || rows[0].Verification != "failed" || len(rows[0].Drift) != 0 {
+		t.Fatalf("place status after failed verification = %#v, want one failed, drift-free sample row", rows)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\n" {
+		t.Fatalf("status reran host check after failed verification: %q, %v", data, err)
+	}
+	stateAfterStatus, err := os.ReadFile(ownershipPath)
+	if err != nil || !bytes.Equal(stateAfterStatus, failedState) {
+		t.Fatalf("status changed failed-verification ownership: read=%v", err)
 	}
 	if err := os.WriteFile(sentinel, []byte("retry check\n"), 0o600); err != nil {
 		t.Fatal(err)

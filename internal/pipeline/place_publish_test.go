@@ -21,6 +21,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: target-profile-place/identical-unowned-file-refuses-the-package
 func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 	t.Run("approval is required before writes", func(t *testing.T) {
 		fixture := newPlaceAdmissionFixture(t)
@@ -49,17 +50,30 @@ func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 			t.Fatal(err)
 		}
 		userBytes := []byte("user-owned bytes\n")
-		if err := os.WriteFile(targetPath, userBytes, 0o600); err != nil {
+		if err := os.WriteFile(targetPath, userBytes, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		pkg := resolvedPlacePackageForPublish(t, fixture)
-		if result, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err == nil {
-			t.Fatalf("CommitPlaceUpserts over user file = %#v, want refusal", result)
+		pkg := resolvedPlacePackageForPublishWithFiles(t, fixture, []targetprofile.PackageFile{
+			{
+				SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
+				Mode: 0o644, Bytes: userBytes,
+			},
+			{
+				SourcePath: "payload/second.md", DestinationPath: "mods/sample/second.md",
+				Mode: 0o644, Bytes: []byte("second fixture file\n"),
+			},
+		})
+		if result, err := CommitPlaceUpserts(context.Background(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err == nil ||
+			!strings.Contains(err.Error(), "mods/sample/guide.md") {
+			t.Fatalf("CommitPlaceUpserts over identical user file = %#v, %v; want refusal naming mods/sample/guide.md", result, err)
 		}
 		got, err := os.ReadFile(targetPath)
 		info, statErr := os.Stat(targetPath)
-		if err != nil || statErr != nil || !bytes.Equal(got, userBytes) || info.Mode().Perm() != 0o600 {
+		if err != nil || statErr != nil || !bytes.Equal(got, userBytes) || info.Mode().Perm() != 0o644 {
 			t.Fatalf("user file changed: bytes=%q stat=%v read=%v statErr=%v", got, info, err, statErr)
+		}
+		if _, err := os.Lstat(filepath.Join(fixture.root, "mods", "sample", "second.md")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("package sibling was published after collision: %v", err)
 		}
 		assertPlacePublishPathAbsent(t, filepath.Join(fixture.state, "ownership"))
 		assertPlacePublishPathAbsent(t, filepath.Join(fixture.state, "packages"))
