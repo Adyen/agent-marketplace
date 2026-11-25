@@ -41,7 +41,11 @@ type placeAdmissionFixture struct {
 
 func newPlaceAdmissionFixture(t *testing.T) placeAdmissionFixture {
 	t.Helper()
-	raw := []byte(placeAdmissionProfileYAML)
+	return newPlaceAdmissionFixtureWithProfile(t, []byte(placeAdmissionProfileYAML))
+}
+
+func newPlaceAdmissionFixtureWithProfile(t *testing.T, raw []byte) placeAdmissionFixture {
+	t.Helper()
 	digest := sha256.Sum256(raw)
 	identity := targetprofile.Identity{
 		TargetID: "invented-app", SourceID: "builtin:agent-marketplace",

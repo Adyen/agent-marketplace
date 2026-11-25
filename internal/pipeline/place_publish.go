@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -557,8 +559,9 @@ func planPlaceUpsert(
 	if revision.Assessment.Decision == store.AssessmentDecisionReject {
 		return placeUpsert{}, fmt.Errorf("place package %s assessment is rejected", pin.Name)
 	}
-	if revision.Requires != "" && revision.Requires != "[]" {
-		return placeUpsert{}, fmt.Errorf("place package %s has unsupported indexed prerequisites", pin.Name)
+	requires, err := placeIndexedPrerequisiteIDs(endpoint, expected, revision.Requires)
+	if err != nil {
+		return placeUpsert{}, fmt.Errorf("place package %s/%s: %w", pin.Kind, pin.Name, err)
 	}
 	if revision.Assessment.HostPackageIdentity == nil ||
 		*revision.Assessment.HostPackageIdentity != pin.LockHostPackageIdentity {
@@ -583,13 +586,10 @@ func planPlaceUpsert(
 	if filepath.Dir(generation.Path) != filepath.Join(stateRoot, "packages") {
 		return placeUpsert{}, fmt.Errorf("place package generation is outside the approved state root")
 	}
-	id := dependencytxn.Digest([]byte(strings.Join([]string{
-		"agent-marketplace/place-package/v1", endpoint, string(expected.Marketplace),
-		string(expected.Registry), expected.Kind, expected.Name,
-	}, "\x00")))
+	id := placePackageID(endpoint, expected)
 	owner := ownership.PlacePackage{
 		ID: id, Kind: pin.Kind, Name: pin.Name, Binding: pin.LockHostPackageIdentity,
-		GenerationKey: generation.Key,
+		GenerationKey: generation.Key, Requires: requires,
 	}
 	sourceFiles := make(map[string]targetprofile.PackageFile, len(resolved.Files))
 	for _, file := range resolved.Files {
@@ -602,6 +602,66 @@ func planPlaceUpsert(
 		owner: owner, input: input,
 		generation: generation, sourceFiles: sourceFiles,
 	}, nil
+}
+
+func placePackageID(endpoint string, coordinate store.ResourceCoordinate) string {
+	return dependencytxn.Digest([]byte(strings.Join([]string{
+		"agent-marketplace/place-package/v1", endpoint, string(coordinate.Marketplace),
+		string(coordinate.Registry), coordinate.Kind, coordinate.Name,
+	}, "\x00")))
+}
+
+func placeIndexedPrerequisiteIDs(endpoint string, coordinate store.ResourceCoordinate, raw string) ([]string, error) {
+	if raw == "" || raw == "[]" {
+		return nil, nil
+	}
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("marketplace.package.prerequisites-invalid: "+format, args...)
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var requirements []store.ResourceRequirement
+	if err := decoder.Decode(&requirements); err != nil {
+		return nil, invalid("%v", err)
+	}
+	if requirements == nil {
+		return nil, invalid("expected an array")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, invalid("unexpected trailing JSON value")
+		}
+		return nil, invalid("%v", err)
+	}
+	targetID, _, scoped := nameutil.SplitPlaceKind(coordinate.Kind)
+	if !scoped || !nameutil.IsPlacePackageName(coordinate.Name) {
+		return nil, invalid("package coordinate is not a valid scoped package")
+	}
+	selfID := placePackageID(endpoint, coordinate)
+	seen := make(map[string]struct{}, len(requirements))
+	ids := make([]string, 0, len(requirements))
+	for i, requirement := range requirements {
+		requiredTargetID, _, requiredScoped := nameutil.SplitPlaceKind(requirement.Kind)
+		if !requiredScoped || requiredTargetID == "" || requiredTargetID != targetID ||
+			!nameutil.IsPlacePackageName(requirement.Name) || requirement.Registry != "" || requirement.Path != "" {
+			return nil, invalid("requirement %d must be a same-target scoped package without registry or path hints", i)
+		}
+		requiredCoordinate := coordinate
+		requiredCoordinate.Kind = requirement.Kind
+		requiredCoordinate.Name = requirement.Name
+		id := placePackageID(endpoint, requiredCoordinate)
+		if id == selfID {
+			return nil, invalid("requirement %d depends on itself", i)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func projectionPlacePackage(pkg ownership.PlacePackage) place.Package {

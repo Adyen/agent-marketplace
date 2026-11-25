@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -20,6 +19,134 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
+
+func TestCommitPlacePackagesOrdersIndexedPrerequisites(t *testing.T) {
+	profileBytes := []byte(strings.Replace(
+		placeAdmissionProfileYAML,
+		"kinds: {mod: {deliver: place, into: [mods/]}}",
+		"kinds: {mod: {deliver: place, into: [mods/]}, layout: {deliver: place, into: [layouts/]}}",
+		1,
+	))
+	if bytes.Equal(profileBytes, []byte(placeAdmissionProfileYAML)) {
+		t.Fatal("could not extend fixture profile with layout delivery")
+	}
+	fixture := newPlaceAdmissionFixtureWithProfile(t, profileBytes)
+	setPlacePublishEnvironment(t, fixture)
+	if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+		t.Fatal(err)
+	}
+	layout := resolvedPlacePackageKindForPublish(t, fixture, "invented-app/layout", "layout", []targetprofile.PackageFile{{
+		SourcePath: "payload/layout.yaml", DestinationPath: "layouts/layout.yaml",
+		Mode: 0o644, Bytes: []byte("layout fixture\n"),
+	}})
+	mod := resolvedPlacePackageKindForPublish(t, fixture, "invented-app/mod", "mod", []targetprofile.PackageFile{{
+		SourcePath: "payload/mod.md", DestinationPath: "mods/mod/guide.md",
+		Mode: 0o644, Bytes: []byte("mod fixture\n"),
+	}})
+	layoutID := placePackageID(layout.Entry.URL, layout.Revision.Coordinate)
+	modID := placePackageID(mod.Entry.URL, mod.Revision.Coordinate)
+	if layoutID >= modID {
+		t.Fatalf("test package IDs are not ordered to expose dependency ordering: layout=%s mod=%s", layoutID, modID)
+	}
+	layout.Revision.Requires = `[{"kind":"invented-app/mod","name":"mod"}]`
+
+	result, err := CommitPlaceUpserts(
+		context.Background(), fixture.binding, fixture.raw, fixture.env,
+		[]marketplace.ResolvedPlacePackage{layout, mod},
+	)
+	if err != nil {
+		t.Fatalf("commit dependent layout and mod: %v", err)
+	}
+	modWrite := slices.Index(result.Changed, "mods/mod/guide.md")
+	layoutWrite := slices.Index(result.Changed, "layouts/layout.yaml")
+	if modWrite < 0 || layoutWrite < 0 || modWrite >= layoutWrite {
+		t.Fatalf("upsert changes = %v; want mod before layout", result.Changed)
+	}
+
+	owner, snapshot := openPlacePublishOwnership(t, fixture)
+	projection, err := owner.PlaceFromSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var layoutOwner, modOwner *ownership.PlacePackage
+	for i := range projection.Packages {
+		switch projection.Packages[i].Kind {
+		case "invented-app/layout":
+			layoutOwner = &projection.Packages[i]
+		case "invented-app/mod":
+			modOwner = &projection.Packages[i]
+		}
+	}
+	if layoutOwner == nil || modOwner == nil || modOwner.ID != modID ||
+		len(layoutOwner.Requires) != 1 || layoutOwner.Requires[0] != modID {
+		t.Fatalf("owner projection lost indexed prerequisite edge: %#v; layout id=%s mod id=%s", projection, layoutID, modID)
+	}
+
+	pruned, _, err := commitPlaceChanges(
+		context.Background(), fixture.binding, fixture.raw, fixture.env, nil, true,
+	)
+	if err != nil {
+		t.Fatalf("prune dependent packages: %v", err)
+	}
+	layoutPrune := slices.Index(pruned.Changed, "layouts/layout.yaml")
+	modPrune := slices.Index(pruned.Changed, "mods/mod/guide.md")
+	if layoutPrune < 0 || modPrune < 0 || layoutPrune >= modPrune {
+		t.Fatalf("prune changes = %v; want layout before mod", pruned.Changed)
+	}
+	for _, path := range []string{
+		filepath.Join(fixture.root, "layouts", "layout.yaml"),
+		filepath.Join(fixture.root, "mods", "mod", "guide.md"),
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pruned package path %s remains: %v", path, err)
+		}
+	}
+	owner, snapshot = openPlacePublishOwnership(t, fixture)
+	projection, err = owner.PlaceFromSnapshot(snapshot)
+	if err != nil || len(projection.Packages) != 0 {
+		t.Fatalf("ownership after dependent prune = %#v, %v; want empty", projection, err)
+	}
+}
+
+func TestPlaceIndexedPrerequisiteIDs(t *testing.T) {
+	endpoint := "https://market.example"
+	coordinate := store.ResourceCoordinate{
+		Marketplace: store.MarketplaceID("market-id"), Registry: store.RegistryID("tools-id"),
+		Kind: "invented-app/layout", Name: "layout",
+	}
+	missing := coordinate
+	missing.Kind, missing.Name = "invented-app/mod", "not-installed"
+	raw := `[{"kind":"invented-app/mod","name":"not-installed"},{"kind":"invented-app/mod","name":"not-installed"}]`
+	got, err := placeIndexedPrerequisiteIDs(endpoint, coordinate, raw)
+	want := placePackageID(endpoint, missing)
+	if err != nil || len(got) != 1 || got[0] != want {
+		t.Fatalf("indexed prerequisites = %v, %v; want deduplicated missing package ID %s", got, err, want)
+	}
+	for _, empty := range []string{"", "[]", " \n [] \n"} {
+		if got, err := placeIndexedPrerequisiteIDs(endpoint, coordinate, empty); err != nil || len(got) != 0 {
+			t.Fatalf("empty requirements %q = %v, %v", empty, got, err)
+		}
+	}
+	for _, test := range []struct {
+		name, raw string
+	}{
+		{name: "null", raw: "null"},
+		{name: "unknown field", raw: `[{"kind":"invented-app/mod","name":"mod","unexpected":true}]`},
+		{name: "trailing value", raw: `[{"kind":"invented-app/mod","name":"mod"}] []`},
+		{name: "cross-target", raw: `[{"kind":"other-app/mod","name":"mod"}]`},
+		{name: "registry hint", raw: `[{"kind":"invented-app/mod","name":"mod","registry":"other"}]`},
+		{name: "path hint", raw: `[{"kind":"invented-app/mod","name":"mod","path":"nested/mod"}]`},
+		{name: "unknown kind", raw: `[{"kind":"skill","name":"mod"}]`},
+		{name: "self dependency", raw: `[{"kind":"invented-app/layout","name":"layout"}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := placeIndexedPrerequisiteIDs(endpoint, coordinate, test.raw); err == nil ||
+				!strings.Contains(err.Error(), "marketplace.package.prerequisites-invalid") {
+				t.Fatalf("invalid prerequisites %q error = %v", test.raw, err)
+			}
+		})
+	}
+}
 
 // spec: target-profile-place/identical-unowned-file-refuses-the-package
 func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
@@ -1519,13 +1646,7 @@ func resolvedPlacePackageNamedForPublish(
 	files []targetprofile.PackageFile,
 ) marketplace.ResolvedPlacePackage {
 	t.Helper()
-	copyFixture := fixture
-	cfg := *fixture.config
-	cfg.Marketplaces = append([]config.MarketplaceEntry(nil), fixture.config.Marketplaces...)
-	cfg.Marketplaces[0].Resources = append([]config.MarketplaceResourcePin(nil), fixture.config.Marketplaces[0].Resources...)
-	cfg.Marketplaces[0].Resources[1].Name = name
-	copyFixture.config = &cfg
-	return resolvedPlacePackageForPublishWithFiles(t, copyFixture, files)
+	return resolvedPlacePackageKindForPublish(t, fixture, "invented-app/mod", name, files)
 }
 
 func resolvedPlacePackageForPublish(t *testing.T, fixture placeAdmissionFixture) marketplace.ResolvedPlacePackage {
@@ -1538,11 +1659,22 @@ func resolvedPlacePackageForPublish(t *testing.T, fixture placeAdmissionFixture)
 
 func resolvedPlacePackageForPublishWithFiles(t *testing.T, fixture placeAdmissionFixture, files []targetprofile.PackageFile) marketplace.ResolvedPlacePackage {
 	t.Helper()
+	return resolvedPlacePackageKindForPublish(t, fixture, "invented-app/mod", "sample", files)
+}
+
+func resolvedPlacePackageKindForPublish(
+	t *testing.T,
+	fixture placeAdmissionFixture,
+	kind, name string,
+	files []targetprofile.PackageFile,
+) marketplace.ResolvedPlacePackage {
+	t.Helper()
 	entry := fixture.config.Marketplaces[0]
-	var pin = entry.Resources[1]
+	pin := entry.Resources[1]
 	if pin.Kind != "invented-app/mod" {
 		t.Fatalf("fixture package pin = %+v", pin)
 	}
+	pin.Kind, pin.Name = kind, name
 	hostBinding, err := targetprofile.BuildBinding(fixture.identity, files)
 	if err != nil {
 		t.Fatal(err)
