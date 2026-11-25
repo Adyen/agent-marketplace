@@ -150,11 +150,11 @@ resources:
 	// its rewritten support command path — byte-distinct from anything the
 	// legacy fragment compiler emits.
 	nativeRule := `{"hooks":[{"command":"./run.sh","type":"command"}],"matcher":"Bash"}`
-	nativeBody := `{"PreToolUse":[` + nativeRule + `]}` + "\n"
+	nativeBody := `{"hooks":{"PreToolUse":[` + nativeRule + `]}}` + "\n"
 	nativeRoot := filepath.Join(repoRoot, ".factory")
-	seedNativeHookProof(t, nativeRoot, "hooks.json", nativeBody,
+	seedNativeHookProof(t, nativeRoot, "settings.local.json", nativeBody,
 		nativeHookProofEntry(t, "PreToolUse", nativeRule, hookName, fingerprint))
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
 	nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
@@ -304,11 +304,11 @@ resources:
 	}
 
 	nativeRule := `{"hooks":[{"Extra":null,"command":"./run.sh","type":"command"}],"matcher":"Execute"}`
-	nativeBody := `{"PreToolUse":[` + nativeRule + `]}` + "\n"
+	nativeBody := `{"hooks":{"PreToolUse":[` + nativeRule + `]}}` + "\n"
 	nativeRoot := filepath.Join(repoRoot, ".factory")
-	seedNativeHookProof(t, nativeRoot, "hooks.json", nativeBody,
+	seedNativeHookProof(t, nativeRoot, "settings.local.json", nativeBody,
 		nativeHookProofEntry(t, "PreToolUse", nativeRule, "deploy-hook", fingerprint))
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
 	nativeBefore, nativeInfo := statSnapshot(t, nativePath)
 

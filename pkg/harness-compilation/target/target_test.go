@@ -121,7 +121,7 @@ func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 			HookProjection: &NativeHookProjection{
 				Shape:      HookShapeMatcherGroups,
 				SupportDir: "hook-support",
-				Project:    NativeHookProjectionFile{Path: "hooks.json"},
+				Project:    NativeHookProjectionFile{Path: "settings.local.json", Member: "hooks"},
 				User:       NativeHookProjectionFile{Path: "settings.local.json", Member: "hooks"},
 			}},
 		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2,

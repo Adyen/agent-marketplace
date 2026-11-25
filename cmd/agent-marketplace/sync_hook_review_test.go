@@ -36,7 +36,7 @@ resources:
   hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
-	return repoRoot, filepath.Join(repoRoot, ".factory", "hooks.json")
+	return repoRoot, filepath.Join(repoRoot, ".factory", "settings.local.json")
 }
 
 func hookReviewFileCommand(t *testing.T, nativeFile string) string {
@@ -45,15 +45,18 @@ func hookReviewFileCommand(t *testing.T, nativeFile string) string {
 	if err != nil {
 		t.Fatalf("read native hooks: %v", err)
 	}
-	var document map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Command string `json:"command"`
+	var envelope struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(data, &document); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		t.Fatalf("decode native hooks: %v\n%s", err, data)
 	}
+	document := envelope.Hooks
 	groups := document["PreToolUse"]
 	if len(document) != 1 || len(groups) != 1 || len(groups[0].Hooks) != 1 {
 		t.Fatalf("native hooks = %#v, want one PreToolUse group with one handler", document)
@@ -288,7 +291,7 @@ resources:
   hooks: {include: [hook/PreToolUse-command]}
 `)
 	withWorkingDir(t, repoRoot)
-	nativeFile := filepath.Join(repoRoot, ".factory", "hooks.json")
+	nativeFile := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	legacyFile := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
 
 	output, err := executeCommand("sync")
@@ -572,7 +575,7 @@ resources:
 		return fmt.Sprintf("  %s (machine) %s ~/%s: PreToolUse matcher %q", target, action, rel, matcher)
 	}
 	const (
-		factoryRepo  = ".factory/hooks.json"
+		factoryRepo  = ".factory/settings.local.json"
 		factoryHome  = ".factory/settings.local.json"
 		opencodeRepo = ".opencode/hooks/agent-marketplace/PreToolUse-command.json"
 		opencodeHome = ".config/opencode/hooks/agent-marketplace/PreToolUse-command.json"

@@ -23,15 +23,15 @@ func init() {
 			ok("install", "--scope", "repo", "--all", "--kind", "hook").
 				out("PreToolUse-command").
 				notOut("multiple registries").
-				regular("./.factory/hooks.json").
-				has("./.factory/hooks.json", "echo first"),
-			ok("list", "--kind", "hook").out("PreToolUse-command").has("./.factory/hooks.json", "echo second"),
-			ok("sync", "--check").unchanged("./.factory/hooks.json", "./.agents/lock.yaml"),
-			ok("sync").unchanged("./.factory/hooks.json"),
+				regular("./.factory/settings.local.json").
+				has("./.factory/settings.local.json", "echo first"),
+			ok("list", "--kind", "hook").out("PreToolUse-command").has("./.factory/settings.local.json", "echo second"),
+			ok("sync", "--check").unchanged("./.factory/settings.local.json", "./.agents/lock.yaml"),
+			ok("sync").unchanged("./.factory/settings.local.json"),
 			ok("remove", "PreToolUse-command", "--kind", "hook", "--from", "{{REG:first}}").
-				has("./.factory/hooks.json", "echo second").
-				lacks("./.factory/hooks.json", "echo first"),
-			ok("sync", "--check").unchanged("./.factory/hooks.json", "./.agents/lock.yaml"),
+				has("./.factory/settings.local.json", "echo second").
+				lacks("./.factory/settings.local.json", "echo first"),
+			ok("sync", "--check").unchanged("./.factory/settings.local.json", "./.agents/lock.yaml"),
 		},
 	})
 
@@ -45,9 +45,9 @@ func init() {
 			"resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-command-2]}}",
 		),
 		Steps: []Step{
-			ok("sync").has("./.factory/hooks.json", "echo first"),
-			ok("sync", "--check").unchanged("./.factory/hooks.json", "./.agents/lock.yaml").has("./.factory/hooks.json", "echo second"),
-			ok("sync").unchanged("./.factory/hooks.json"),
+			ok("sync").has("./.factory/settings.local.json", "echo first"),
+			ok("sync", "--check").unchanged("./.factory/settings.local.json", "./.agents/lock.yaml").has("./.factory/settings.local.json", "echo second"),
+			ok("sync").unchanged("./.factory/settings.local.json"),
 		},
 	})
 

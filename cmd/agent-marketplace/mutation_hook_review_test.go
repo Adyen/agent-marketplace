@@ -221,7 +221,7 @@ func TestMutationFailuresPrintPublishedHookReview(t *testing.T) {
 					t.Fatalf("failed %s lost completed review %q:\n%s", command, want, output)
 				}
 			}
-			native := filepath.Join(repo, ".factory", "hooks.json")
+			native := filepath.Join(repo, ".factory", "settings.local.json")
 			if hookReviewFileCommand(t, native) != "echo partial-review" {
 				t.Fatal("review did not describe a published hook")
 			}

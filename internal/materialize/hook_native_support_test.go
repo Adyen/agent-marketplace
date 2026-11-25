@@ -111,7 +111,7 @@ type nativeSupportLocation struct {
 func nativeSupportLocations() []nativeSupportLocation {
 	return []nativeSupportLocation{
 		{target: hcc.TargetClaude, repoFile: ".claude/settings.json", userFile: ".claude/settings.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$CLAUDE_PROJECT_DIR"/`, repoSupportRoot: ".claude/hook-support", userSupportRoot: ".claude/hook-support", matcher: "Bash", handlerType: "command", grouped: true, hasMatcher: true},
-		{target: hcc.TargetFactory, repoFile: ".factory/hooks.json", userFile: ".factory/settings.local.json", event: "PreToolUse", userContainer: "hooks", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
+		{target: hcc.TargetFactory, repoFile: ".factory/settings.local.json", userFile: ".factory/settings.local.json", container: "hooks", event: "PreToolUse", userContainer: "hooks", repoBase: `"$FACTORY_PROJECT_DIR"/`, repoSupportRoot: ".factory/hook-support", userSupportRoot: ".factory/hook-support", matcher: "Execute", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.TargetCursor, repoFile: ".cursor/hooks.json", userFile: ".cursor/hooks.json", container: "hooks", event: "preToolUse", userContainer: "hooks", repoBase: `"$CURSOR_PROJECT_DIR"/`, repoSupportRoot: ".cursor/hook-support", userSupportRoot: ".cursor/hook-support", matcher: "^Shell$", handlerType: "command", hasMatcher: true},
 		{target: hcc.TargetGemini, repoFile: ".gemini/settings.json", userFile: ".gemini/settings.json", container: "hooks", event: "BeforeTool", userContainer: "hooks", repoBase: `"$GEMINI_PROJECT_DIR"/`, repoSupportRoot: ".gemini/hook-support", userSupportRoot: ".gemini/hook-support", matcher: "^run_shell_command$", handlerType: "command", grouped: true, hasMatcher: true},
 		{target: hcc.TargetDevin, repoFile: ".devin/hooks.v1.json", userFile: ".config/devin/config.json", event: "PreToolUse", userContainer: "hooks", repoBase: `"$DEVIN_PROJECT_DIR"/`, repoSupportRoot: ".devin/hook-support", userSupportRoot: ".config/devin/hook-support", matcher: "^exec$", handlerType: "command", grouped: true, hasMatcher: true},
@@ -971,7 +971,7 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 				t.Fatalf("seed prior installation: %v", err)
 			}
 			factoryRoot := filepath.Join(repo, ".factory")
-			hookFile := filepath.Join(factoryRoot, "hooks.json")
+			hookFile := filepath.Join(factoryRoot, "settings.local.json")
 			supportRoot := filepath.Join(factoryRoot, "hook-support")
 			matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "guard", "hooks", "check.sh"))
 			if err != nil || len(matches) != 1 {
@@ -1782,7 +1782,7 @@ func runNativeHookSupportDestinationPreflightCase(t *testing.T, mode config.Mate
 	t.Helper()
 	repo, factoryHook, sibling, plan, supportPath := nativeHookSupportCollisionInputs(t)
 	factoryRoot := filepath.Join(repo, ".factory")
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	legacyPath := filepath.Join(factoryRoot, "hooks", "hooks.json")
 	legacyBytes := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}],"_managed_by":"agent-marketplace"}]}` + "\n")
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
@@ -1909,7 +1909,7 @@ func newNativeHookSupportPublicationFixture(t *testing.T, mode config.Materializ
 	t.Helper()
 	repo, hook, _, supportPlan, supportPath := nativeHookSupportCollisionInputs(t)
 	factoryRoot := filepath.Join(repo, ".factory")
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	legacyPath := filepath.Join(factoryRoot, "hooks", "hooks.json")
 	oldSupportPath := filepath.Join(factoryRoot, "hooks", "scripts", "old.sh")
 	oldCachePath := filepath.Join(cache.CacheDir(), "native-hook-manifest-fixture", "old.sh")
@@ -1996,7 +1996,7 @@ func seedNativeRepositorySupportLink(t *testing.T, mode config.MaterializationMo
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 || len(proof.OwnedIDs()) != 1 {
 		t.Fatalf("seed native source proof = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -2105,7 +2105,7 @@ func replaceNativeRepositorySupportProofWithForeignSource(t *testing.T, fixture 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileState := record.Files["hooks.json"]
+	fileState := record.Files["settings.local.json"]
 	if len(fileState.Entries) != 1 {
 		t.Fatalf("Factory proof entries = %d, want one", len(fileState.Entries))
 	}
@@ -2118,13 +2118,13 @@ func replaceNativeRepositorySupportProofWithForeignSource(t *testing.T, fixture 
 		t.Fatal(err)
 	}
 	if _, err := store.Apply(ownership.Mutation{
-		Rel: "hooks.json", AbsFile: fixture.nativePath, NextBytes: nativeBytes,
+		Rel: "settings.local.json", AbsFile: fixture.nativePath, NextBytes: nativeBytes,
 		Entries: []ownership.Entry{entry}, Reason: ownership.ReasonSync,
 		ExpectPriorGeneration: record.Generation, ExpectPriorDigest: ownership.Digest(nativeBytes),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 {
 		t.Fatalf("foreign-source proof = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -3309,12 +3309,12 @@ func seedNativeRepositorySupportMultiLinkFixture(t *testing.T, mode config.Mater
 	if err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed multi-source native proof: %v / %v", err, report)
 	}
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	store, err := ownership.Open(factoryRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 || len(proof.OwnedIDs()) != 1 {
 		t.Fatalf("multi-source Native proof = %v / %+v", err, proof.OwnedIDs())
 	}
@@ -3389,7 +3389,7 @@ func TestNativeRepositoryHookSupportPartialSourceProofPreservesLinks(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileState := record.Files["hooks.json"]
+	fileState := record.Files["settings.local.json"]
 	if len(fileState.Entries) != 1 {
 		t.Fatalf("Factory proof entries = %d, want one collapsed entry", len(fileState.Entries))
 	}
@@ -3415,7 +3415,7 @@ func TestNativeRepositoryHookSupportPartialSourceProofPreservesLinks(t *testing.
 		t.Fatal(err)
 	}
 	if _, err := store.Apply(ownership.Mutation{
-		Rel: "hooks.json", AbsFile: fixture.nativePath, NextBytes: nativeBytes,
+		Rel: "settings.local.json", AbsFile: fixture.nativePath, NextBytes: nativeBytes,
 		Entries: []ownership.Entry{entry}, Reason: ownership.ReasonSync,
 		ExpectPriorGeneration: record.Generation, ExpectPriorDigest: ownership.Digest(nativeBytes),
 	}); err != nil {
@@ -3449,7 +3449,7 @@ func TestNativeRepositoryHookSupportPartialSourceProofPreservesLinks(t *testing.
 	alphaCacheBytes, alphaCacheMode, alphaCacheMtime := fileSnapshot(t, alphaCachePath)
 	betaCacheBytes, betaCacheMode, betaCacheMtime := fileSnapshot(t, betaCachePath)
 	beforeNative, nativeMode, nativeMtime := fileSnapshot(t, fixture.nativePath)
-	proof, err := store.Proof("hooks.json")
+	proof, err := store.Proof("settings.local.json")
 	if err != nil || proof.OwnedCount() != 1 || !proof.HasHookSource(proof.OwnedIDs()[0], fixture.hooks[0].Name, fixture.plans[0].sourceDigest) ||
 		proof.HasHookSource(proof.OwnedIDs()[0], fixture.hooks[1].Name, fixture.plans[1].sourceDigest) {
 		t.Fatalf("partial Native proof does not isolate the selected sources: %v / %+v", err, proof.OwnedIDs())
@@ -3563,7 +3563,7 @@ func TestNativeRepositoryHookSupportUnprovenLinkDoesNotBlockValidSibling(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			proof, err := store.Proof("hooks.json")
+			proof, err := store.Proof("settings.local.json")
 			if err != nil || proof.OwnedCount() != 1 {
 				t.Fatalf("Factory source proof = %v / %+v", err, proof.OwnedIDs())
 			}
@@ -3925,7 +3925,7 @@ func TestNativeHookSupportPublicationFailurePreventsNativeCommit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			proof, err := store.Proof("hooks.json")
+			proof, err := store.Proof("settings.local.json")
 			if err != nil || proof.OwnedCount() != 1 {
 				t.Fatalf("published Native proof = %v / %+v", err, proof.OwnedIDs())
 			}
@@ -4182,7 +4182,7 @@ func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 		if _, err := Run(context.Background(), repo, resolved); err != nil {
 			t.Fatalf("seed installed hook: %v", err)
 		}
-		hookFile := filepath.Join(repo, ".factory", "hooks.json")
+		hookFile := filepath.Join(repo, ".factory", "settings.local.json")
 		beforeCommands := nativeSupportCommands(t, nativeSupportLocationFor(t, hcc.TargetFactory), hookFile, 1)
 		if !strings.HasSuffix(beforeCommands[0], "/scripts/check.sh") {
 			t.Fatalf("installed command = %q, want check.sh path", beforeCommands[0])

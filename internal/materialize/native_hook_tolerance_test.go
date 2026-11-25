@@ -204,7 +204,7 @@ func TestRunIndexOnlyHookDefinitionMismatchIsNotSupportAdmissionRefusal(t *testi
 	if hasDiagCode(report.Diags, diag.CodeMaterializeHookSupportRefused) {
 		t.Fatalf("index-only definition-binding refusal was mislabeled as source admission: %+v", report.Diags)
 	}
-	if _, err := os.Lstat(filepath.Join(repo, ".factory", "hooks.json")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(repo, ".factory", "settings.local.json")); !os.IsNotExist(err) {
 		t.Fatalf("index-only definition-binding refusal published a native hook: %v", err)
 	}
 }
@@ -615,12 +615,8 @@ func nativeSeedFor(t *testing.T, target hcc.Target, machine bool) nativeSeed {
 			doc: `{"version":1,"hooks":{"preToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetFactory:
 		rule := `{"hooks":[{"command":".factory/am-hooks/deploy/run.sh","type":"command"}],"matcher":"Bash"}`
-		if machine {
-			return nativeSeed{event: "PreToolUse", rule: rule,
-				doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
-		}
 		return nativeSeed{event: "PreToolUse", rule: rule,
-			doc: `{"PreToolUse":[` + rule + `]}` + "\n"}
+			doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
 	case hcc.TargetWindsurf:
 		if machine {
 			t.Fatal("windsurf machine scope is the shared-file case")
@@ -654,7 +650,7 @@ func mirrorHookNativeProof(t *testing.T, repoRoot, rule, resourceName, sourceDig
 		t.Fatal("Factory native hook layout is unavailable")
 	}
 	nativeRoot := filepath.Join(repoRoot, ".factory")
-	body := []byte(`{"PreToolUse":[` + rule + `]}` + "\n")
+	body := []byte(`{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n")
 	seedNativeProof(t, nativeRoot, layout, body,
 		nativeHookProofEntry(t, "PreToolUse", rule, resourceName, sourceDigest))
 	return filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
@@ -820,7 +816,7 @@ func TestPartialNativeProofRetainsLegacyOutput(t *testing.T) {
 		// longer the recorded identity — partial proof again.
 		"drifted_recorded_rule": func(t *testing.T, nativeRoot string, layout nativeHookLayout, seed nativeSeed, digest string) {
 			drifted := `{"hooks":[{"command":".factory/am-hooks/deploy/changed.sh","type":"command"}],"matcher":"Write"}`
-			body := `{"PostToolUse":[` + drifted + `],"PreToolUse":[` + seed.rule + `]}` + "\n"
+			body := `{"hooks":{"PostToolUse":[` + drifted + `],"PreToolUse":[` + seed.rule + `]}}` + "\n"
 			seedNativeProof(t, nativeRoot, layout, []byte(body),
 				nativeHookProofEntry(t, seed.event, seed.rule, "deploy", digest),
 				nativeHookProofEntry(t, "PostToolUse", secondRule, "deploy", digest))
@@ -872,7 +868,7 @@ func TestNativeOwnedHookKeepsUnprovenSiblings(t *testing.T) {
 	seed := nativeSeedFor(t, hcc.TargetFactory, false)
 	// The native file also carries a handwritten rule for another event.
 	handwritten := `{"hooks":[{"command":"./hand.sh","type":"command"}],"matcher":"Write"}`
-	body := `{"PreToolUse":[` + seed.rule + `],"SessionStart":[` + handwritten + `]}` + "\n"
+	body := `{"hooks":{"PreToolUse":[` + seed.rule + `],"SessionStart":[` + handwritten + `]}}` + "\n"
 	seedNativeProof(t, nativeRoot, layout, []byte(body),
 		nativeHookProofEntry(t, seed.event, seed.rule, "deploy",
 			toleranceFingerprint(t, src, "factory", HookScopeRepository)))
@@ -892,7 +888,7 @@ func TestNativeOwnedHookKeepsUnprovenSiblings(t *testing.T) {
 	if strings.Contains(content, "run.sh") {
 		t.Fatalf("proven hook re-emitted into legacy output: %s", content)
 	}
-	nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, "hooks.json"))
+	nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, "settings.local.json"))
 	if err != nil || string(nativeAfter) != body {
 		t.Fatalf("native file changed: %v", err)
 	}
@@ -914,8 +910,8 @@ func TestMalformedNativeHookFilePreservesBothLocations(t *testing.T) {
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	malformed := []byte(`{"PreToolUse":"not-an-array"}`)
-	nativePath := filepath.Join(nativeRoot, "hooks.json")
+	malformed := []byte(`{"hooks":{"PreToolUse":"not-an-array"}}`)
+	nativePath := filepath.Join(nativeRoot, "settings.local.json")
 	if err := os.WriteFile(nativePath, malformed, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1002,12 +998,12 @@ func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	nativeFile := filepath.Join(nativeRoot, "hooks.json")
+	nativeFile := filepath.Join(nativeRoot, "settings.local.json")
 	legacyFile := filepath.Join(nativeRoot, "hooks", "hooks.json")
 	if _, err := os.Lstat(legacyFile); !os.IsNotExist(err) {
 		t.Fatalf("legacy aggregate already exists: %v", err)
 	}
-	if err := os.WriteFile(nativeFile, []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
+	if err := os.WriteFile(nativeFile, []byte(`{"hooks":{"PreToolUse":"not-an-array"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativeFile)
@@ -1049,7 +1045,7 @@ func TestMalformedNativeHookFileDoesNotBlockOtherTargets(t *testing.T) {
 	if err := os.MkdirAll(factoryRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(factoryRoot, "hooks.json"), []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(factoryRoot, "settings.local.json"), []byte(`{"hooks":{"PreToolUse":"not-an-array"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1147,7 +1143,7 @@ func TestMismatchedNativeProofRetainsLegacyOutput(t *testing.T) {
 			layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 			seed := nativeSeedFor(t, hcc.TargetFactory, false)
 			seedNativeProof(t, nativeRoot, layout, []byte(seed.doc), entries(t, src, seed)...)
-			nativeBefore, err := os.ReadFile(filepath.Join(nativeRoot, "hooks.json"))
+			nativeBefore, err := os.ReadFile(filepath.Join(nativeRoot, "settings.local.json"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1162,7 +1158,7 @@ func TestMismatchedNativeProofRetainsLegacyOutput(t *testing.T) {
 			if !strings.Contains(string(data), "run.sh") {
 				t.Fatalf("mismatched proof suppressed legacy output: %s", data)
 			}
-			nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, "hooks.json"))
+			nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, "settings.local.json"))
 			if err != nil || string(nativeAfter) != string(nativeBefore) {
 				t.Fatalf("native file changed under mismatched proof: %v", err)
 			}
@@ -1445,7 +1441,7 @@ func TestSuppressNativeSatisfiedHookRulesErrorLeavesInputUnchanged(t *testing.T)
 	}
 
 	firstBytes := []byte(`{"PreToolUse": [` + rule + `]}`)
-	secondBytes := []byte(`{"PreToolUse":[` + rule + `]}`)
+	secondBytes := []byte(`{"hooks":{"PreToolUse":[` + rule + `]}}`)
 	artifacts := []artifact.Artifact{
 		{Path: firstPath, Bytes: firstBytes, Fragment: true},
 		{Path: secondPath, Bytes: secondBytes, Fragment: true},

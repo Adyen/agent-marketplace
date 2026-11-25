@@ -267,13 +267,13 @@ func nativeHookMigrationSourceDigest(t *testing.T, data []byte) string {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("decode ownership state: %v", err)
 	}
-	file, ok := state.Files["hooks.json"]
+	file, ok := state.Files["settings.local.json"]
 	if len(state.Files) != 1 || !ok || len(file.Entries) != 1 || len(file.HookSatisfactions) != 0 {
-		t.Fatalf("ownership hooks.json entries = %+v, files = %v", file.Entries, state.Files)
+		t.Fatalf("ownership settings.local.json entries = %+v, files = %v", file.Entries, state.Files)
 	}
 	entry := file.Entries[0]
 	if entry.Kind != "hook" || entry.Container != "PreToolUse" || entry.Resource != "PreToolUse-command" || entry.SourceDigest == "" {
-		t.Fatalf("hooks.json owned Hook entry = %+v", entry)
+		t.Fatalf("settings.local.json owned Hook entry = %+v", entry)
 	}
 	return entry.SourceDigest
 }
@@ -281,16 +281,19 @@ func nativeHookMigrationSourceDigest(t *testing.T, data []byte) string {
 func assertNativeHookMigrationFactoryFile(t *testing.T, path, command string) nativeHookMigrationFileSnapshot {
 	t.Helper()
 	snapshot := snapshotNativeHookMigrationFile(t, path)
-	var document map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+	var envelope struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(snapshot.data, &document); err != nil {
+	if err := json.Unmarshal(snapshot.data, &envelope); err != nil {
 		t.Fatalf("decode Factory Native hooks: %v", err)
 	}
+	document := envelope.Hooks
 	groups, ok := document["PreToolUse"]
 	if len(document) != 1 || !ok || len(groups) != 1 || groups[0].Matcher != "Execute" || len(groups[0].Hooks) != 1 ||
 		groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != command {
@@ -532,7 +535,7 @@ func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
 				configBefore := snapshotNativeHookMigrationFile(t, configPath)
 
 				env.MustRunAM("sync")
-				nativePath := filepath.Join(env.workspace, ".factory", "hooks.json")
+				nativePath := filepath.Join(env.workspace, ".factory", "settings.local.json")
 				legacyPath := filepath.Join(env.workspace, ".factory", "hooks", "hooks.json")
 				nativeBefore := assertNativeHookMigrationFactoryFile(t, nativePath, "echo native-v1")
 				if nativeBefore.mode.Perm() != 0o600 {
@@ -591,7 +594,7 @@ func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
 					t.Fatalf("injected sync crash at %s exited %d:\n%s", tc.fault, crash.ExitCode, crash.Combined)
 				}
 				backups := nativeHookMigrationBackups(t, stateRoot)
-				assertNativeHookMigrationBackup(t, backups, "hooks.json", nativeBefore.data)
+				assertNativeHookMigrationBackup(t, backups, "settings.local.json", nativeBefore.data)
 				assertNativeHookMigrationBackup(t, backups, "hooks/hooks.json", legacyBefore.data)
 
 				interrupted := map[string]nativeHookMigrationFileSnapshot{configPath: configBefore, handwrittenPath: handwrittenBefore}

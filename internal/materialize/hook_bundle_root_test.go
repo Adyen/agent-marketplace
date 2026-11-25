@@ -87,12 +87,11 @@ func TestHookBundleRootReferencesResolveFromDirectorySource(t *testing.T) {
 				}
 			}
 			base := repo
-			file := ".factory/hooks.json"
+			file := ".factory/settings.local.json"
 			supportRoot := filepath.Join(repo, ".factory", "hook-support")
 			loc := nativeSupportLocationFor(t, hcc.TargetFactory)
 			if machine {
 				base = home
-				file = ".factory/settings.local.json"
 				supportRoot = filepath.Join(home, ".factory", "hook-support")
 				loc.container = loc.userContainer
 			}
@@ -164,7 +163,7 @@ func TestHookBundleRootGitAndMirrorProduceSameSupportLayout(t *testing.T) {
 		if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 			t.Fatalf("run: %v / %v", err, report)
 		}
-		got := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "hooks.json"), 1)
+		got := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "settings.local.json"), 1)
 		commands = append(commands, got[0])
 		installed, _ := loc.installedRef(t, got[0], repo, home, false)
 		data, err := os.ReadFile(installed)
@@ -254,19 +253,21 @@ func TestHookBundleRootMissingReferenceRefusesHook(t *testing.T) {
 			t.Fatalf("diagnostic leaks a command or path value %q: %+v", protected, *missing)
 		}
 	}
-	nativePath := filepath.Join(repo, ".factory", "hooks.json")
+	nativePath := filepath.Join(repo, ".factory", "settings.local.json")
 	data, err := os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatalf("sibling hook did not install: %v", err)
 	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(data, &document); err != nil {
+	var envelope struct {
+		Hooks map[string]json.RawMessage `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := document["PostToolUse"]; !ok {
+	if _, ok := envelope.Hooks["PostToolUse"]; !ok {
 		t.Fatalf("sibling event missing from %s: %s", nativePath, data)
 	}
-	if _, ok := document["PreToolUse"]; ok {
+	if _, ok := envelope.Hooks["PreToolUse"]; ok {
 		t.Fatalf("refused hook event present in %s: %s", nativePath, data)
 	}
 }
@@ -289,7 +290,7 @@ func TestHookBundleRootBareAndDynamicReferencesUnchecked(t *testing.T) {
 		t.Fatalf("bare or dynamic references were checked: %+v", report.Diags)
 	}
 	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
-	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "hooks.json"), 1)
+	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "settings.local.json"), 1)
 	command := commands[0]
 	if strings.Contains(command, "PLUGIN_ROOT") {
 		t.Fatalf("plugin-root token survived in %q", command)
@@ -324,7 +325,7 @@ func TestHookBundleRootLegacyReferenceRewrittenWithWarning(t *testing.T) {
 		}
 	}
 	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
-	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "hooks.json"), 1)
+	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "settings.local.json"), 1)
 	installed, _ := loc.installedRef(t, commands[0], repo, home, false)
 	if filepath.Base(installed) != "check.sh" || filepath.Base(filepath.Dir(installed)) != "scripts" ||
 		filepath.Base(filepath.Dir(filepath.Dir(installed))) != "hooks" {
@@ -387,19 +388,22 @@ func TestHookBundleRootQuotedTokenKeepsReferenceChecked(t *testing.T) {
 	if !reportHasDiagCode(report, "hook.support-reference-legacy", diag.SeverityWarning) {
 		t.Fatalf("quoted legacy reference not warned: %+v", report.Diags)
 	}
-	nativePath := filepath.Join(repo, ".factory", "hooks.json")
+	nativePath := filepath.Join(repo, ".factory", "settings.local.json")
 	data, err := os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document map[string][]struct {
-		Hooks []struct {
-			Command string `json:"command"`
+	var envelope struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(data, &document); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		t.Fatal(err)
 	}
+	document := envelope.Hooks
 	if _, ok := document["Stop"]; ok {
 		t.Fatalf("refused sibling hook present in %s: %s", nativePath, data)
 	}
@@ -437,7 +441,7 @@ func TestHookBundleRootBothMeaningsUseBundleRoot(t *testing.T) {
 		t.Fatalf("bundle-resolving reference reported legacy: %+v", report.Diags)
 	}
 	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
-	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "hooks.json"), 1)
+	commands := nativeSupportCommands(t, loc, filepath.Join(repo, ".factory", "settings.local.json"), 1)
 	installed, _ := loc.installedRef(t, commands[0], repo, home, false)
 	data, err := os.ReadFile(installed)
 	if err != nil || string(data) != "echo bundle\n" {
@@ -495,7 +499,7 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 		t.Fatalf("seed run: %v / %v", err, report)
 	}
 	factoryRoot := filepath.Join(repo, ".factory")
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	supportDirs := hookSupportGlob(t, factoryRoot, "hook-support", "*", "*")
 	if len(supportDirs) != 1 {
 		t.Fatalf("support dirs = %v, want one", supportDirs)
@@ -518,13 +522,15 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 	if bytes.Equal(oldBytes, nativeBytes) {
 		t.Fatal("native command did not contain the bundle-relative support path")
 	}
-	var document struct {
-		PreToolUse []json.RawMessage `json:"PreToolUse"`
+	var envelope struct {
+		Hooks struct {
+			PreToolUse []json.RawMessage `json:"PreToolUse"`
+		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(oldBytes, &document); err != nil || len(document.PreToolUse) != 1 {
-		t.Fatalf("decode native file: %v / %d", err, len(document.PreToolUse))
+	if err := json.Unmarshal(oldBytes, &envelope); err != nil || len(envelope.Hooks.PreToolUse) != 1 {
+		t.Fatalf("decode native file: %v / %d", err, len(envelope.Hooks.PreToolUse))
 	}
-	rule, err := canonicalOwnedJSON(document.PreToolUse[0])
+	rule, err := canonicalOwnedJSON(envelope.Hooks.PreToolUse[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +544,7 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.Apply(ownership.Mutation{
-		Rel: "hooks.json", AbsFile: nativePath, NextBytes: oldBytes,
+		Rel: "settings.local.json", AbsFile: nativePath, NextBytes: oldBytes,
 		Entries:               []ownership.Entry{nativeHookProofEntry(t, "PreToolUse", string(rule), resolved[0].Name, plans[0].sourceDigest)},
 		Reason:                ownership.ReasonSync,
 		ExpectPriorGeneration: record.Generation, ExpectPriorDigest: ownership.Digest(nativeBytes),

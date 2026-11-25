@@ -38,7 +38,7 @@ sources:
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
-	nativePath := filepath.Join(repoRoot, ".factory", "hooks.json")
+	nativePath := filepath.Join(repoRoot, ".factory", "settings.local.json")
 	legacyPath := filepath.Join(repoRoot, ".factory", "hooks", "hooks.json")
 	assertNativeOutput := func(phase string, data []byte) {
 		t.Helper()
@@ -59,16 +59,19 @@ sources:
 		t.Fatalf("read named-install hooks: %v", err)
 	}
 	assertNativeOutput("named install", namedData)
-	var namedDocument map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+	var namedEnvelope struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(namedData, &namedDocument); err != nil {
+	if err := json.Unmarshal(namedData, &namedEnvelope); err != nil {
 		t.Fatalf("decode named-install hooks: %v\n%s", err, namedData)
 	}
+	namedDocument := namedEnvelope.Hooks
 	namedGroups := namedDocument["PreToolUse"]
 	if len(namedDocument) != 1 || len(namedGroups) != 1 || namedGroups[0].Matcher != "Bash" || len(namedGroups[0].Hooks) != 1 || namedGroups[0].Hooks[0].Type != "command" || namedGroups[0].Hooks[0].Command != "echo first" {
 		t.Fatalf("named-install hooks = %#v, want one Bash command hook from first provider", namedDocument)
@@ -100,10 +103,13 @@ sources:
 		t.Fatalf("read materialized hooks: %v", err)
 	}
 	assertNativeOutput("install --all", data)
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
+	var envelope struct {
+		Hooks map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		t.Fatalf("decode materialized hooks: %v\n%s", err, data)
 	}
+	document := envelope.Hooks
 	groups, ok := document["PreToolUse"].([]any)
 	if !ok || len(groups) != 2 {
 		t.Fatalf("PreToolUse groups = %#v, want two registry-specific groups", document["PreToolUse"])
@@ -153,16 +159,19 @@ sources:
 		t.Fatalf("read materialized hooks after remove: %v", err)
 	}
 	assertNativeOutput("remove first provider", data)
-	var remaining map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+	var remainingEnvelope struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal(data, &remaining); err != nil {
+	if err := json.Unmarshal(data, &remainingEnvelope); err != nil {
 		t.Fatalf("decode materialized hooks after remove: %v\n%s", err, data)
 	}
+	remaining := remainingEnvelope.Hooks
 	remainingGroups := remaining["PreToolUse"]
 	if len(remaining) != 1 || len(remainingGroups) != 1 || remainingGroups[0].Matcher != "Bash" || len(remainingGroups[0].Hooks) != 1 || remainingGroups[0].Hooks[0].Command != "echo second" {
 		t.Fatalf("remaining hooks = %#v, want only second Bash provider", remainingGroups)

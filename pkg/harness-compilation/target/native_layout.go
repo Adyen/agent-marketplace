@@ -282,20 +282,22 @@ var nativeLayouts = map[Target]NativeLayout{
 				ir.KindRule:     "rules/%s.md",
 			},
 			Aggregates: []NativeAggregate{
-				// Factory's repository-scope hooks stay in hooks.json while
-				// tolerating forward satisfaction in settings.local.json#hooks;
-				// machine-scope hooks merge into settings.local.json#hooks so
-				// managed hooks concatenate with settings.json instead of
-				// shadowing it, retiring earlier owned hooks.json entries and
-				// preserving plugin-layout hooks/hooks.json legacy cleanup.
+				// Factory's hooks merge into settings.local.json#hooks in both
+				// scopes so managed hooks concatenate with settings.json and
+				// hooks.json instead of shadowing settings.json, retiring
+				// earlier owned hooks.json entries and preserving plugin-layout
+				// hooks/hooks.json legacy cleanup.
 				{
 					Kind:       ir.KindHook,
 					Shape:      HookShapeMatcherGroups,
 					SupportDir: "hook-support",
 					Project: NativeAggregateFile{
-						Path:          "hooks.json",
-						Legacy:        []string{"hooks/hooks.json"},
-						ForwardNative: []NativeAggregateLocation{{Path: "settings.local.json", Member: "hooks"}},
+						Path:            "settings.local.json",
+						Member:          "hooks",
+						Legacy:          []string{"hooks/hooks.json"},
+						LegacyMember:    "",
+						LegacyMemberSet: true,
+						RetiredNative:   []NativeAggregateLocation{{Path: "hooks.json"}},
 					},
 					User: NativeAggregateFile{
 						Path:            "settings.local.json",

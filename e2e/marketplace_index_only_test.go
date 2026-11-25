@@ -134,7 +134,7 @@ resources:
 	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
-	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/settings.local.json", "Read", "echo hook")
 	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 
 	// Remove the old origin before the next online sync. Success proves the
@@ -162,7 +162,7 @@ resources:
 	for _, path := range []string{"/workspace/.factory/skills/skill-one/SKILL.md", "/workspace/.factory/commands/command-one.md", "/workspace/.factory/droids/agent-one.md", "/workspace/.factory/mcp.json"} {
 		env.AssertFileExists(path)
 	}
-	assertFactoryNativeHookFile(t, env, "/workspace/.factory/hooks.json", "Read", "echo hook")
+	assertFactoryNativeHookFile(t, env, "/workspace/.factory/settings.local.json", "Read", "echo hook")
 	env.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 }
 

@@ -94,14 +94,18 @@ func TestIndependentNativeHookProjectionUsesCatalogs(t *testing.T) {
 		if res.HasErrors() {
 			t.Fatalf("unexpected error diagnostics: %+v", res.Diagnostics)
 		}
-		art := wantProjectionArtifact(t, res, "hooks.json")
+		art := wantProjectionArtifact(t, res, "settings.local.json")
 		document := decodeObject(t, art.Bytes)
 		if len(document) != 1 {
-			t.Fatalf("document keys = %v, want only PreToolUse", document)
+			t.Fatalf("document keys = %v, want only hooks", document)
 		}
-		groups, ok := document["PreToolUse"].([]any)
+		hooks, ok := document["hooks"].(map[string]any)
+		if !ok || len(hooks) != 1 {
+			t.Fatalf("hooks = %v, want only PreToolUse", document["hooks"])
+		}
+		groups, ok := hooks["PreToolUse"].([]any)
 		if !ok || len(groups) != 1 {
-			t.Fatalf("PreToolUse = %v, want exactly one rule group", document["PreToolUse"])
+			t.Fatalf("PreToolUse = %v, want exactly one rule group", hooks["PreToolUse"])
 		}
 		group, ok := groups[0].(map[string]any)
 		if !ok {
@@ -237,9 +241,10 @@ func TestIndependentNativeHookProjectionUsesCatalogs(t *testing.T) {
 		if res.HasErrors() {
 			t.Fatalf("unexpected error diagnostics: %+v", res.Diagnostics)
 		}
-		art := wantProjectionArtifact(t, res, "hooks.json")
+		art := wantProjectionArtifact(t, res, "settings.local.json")
 		document := decodeObject(t, art.Bytes)
-		groups := document["PreToolUse"].([]any)
+		hooks := document["hooks"].(map[string]any)
+		groups := hooks["PreToolUse"].([]any)
 		group := groups[0].(map[string]any)
 		if group["matcher"] != "Execute" {
 			t.Fatalf("group matcher = %v, want native Execute retained", group["matcher"])
@@ -552,7 +557,7 @@ func TestNativeHookProjectionPreservesSurroundingShellQuotes(t *testing.T) {
 			}
 			document := decodeObject(t, res.Artifacts[0].Bytes)
 			var handler map[string]any
-			if tc.target == TargetCodex || (tc.target == TargetFactory && tc.machineScope) {
+			if tc.target == TargetCodex || tc.target == TargetFactory {
 				hooks, ok := document["hooks"].(map[string]any)
 				if !ok {
 					t.Fatalf("hooks = %T, want object", document["hooks"])

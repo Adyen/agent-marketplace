@@ -195,7 +195,7 @@ func cliTwinAndSiblingDoc(d cliNativeDoc) string {
 	case "factory":
 		sibling = `{"hooks":[{"command":"./handwritten.sh","type":"command"}],"matcher":"Bash"}`
 		twin = `{"_managed_by":"agent-marketplace","hooks":[{"command":"` + cliSharedHookCommand + `","type":"command"}],"matcher":"Bash"}`
-		return `{"PreToolUse":[` + sibling + `,` + twin + `]}` + "\n"
+		return `{"hooks":{"PreToolUse":[` + sibling + `,` + twin + `]}}` + "\n"
 	default:
 		return `{"hooks":{"pre_run_command":[{"command":"./handwritten.sh"},{"_managed_by":"agent-marketplace","command":"` + cliSharedHookCommand + `"}]}}` + "\n"
 	}

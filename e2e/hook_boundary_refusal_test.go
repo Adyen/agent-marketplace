@@ -19,7 +19,7 @@ func TestHookInvariantMalformedNativeEnvelopeRefusesOnlyItsTarget(t *testing.T) 
 	// legacy location, refuse through their aggregate writers' own codes.
 	for _, tc := range []struct{ target, sibling, envelope, code string }{
 		{"claude", "factory", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
-		{"factory", "claude", `{"PreToolUse": {"not": "a group list"}}`, "hook.native-tolerance-refused"},
+		{"factory", "claude", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
 		{"cursor", "claude", `{"version": 1, "hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
 		{"gemini", "claude", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
 		{"windsurf", "claude", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},

@@ -168,10 +168,7 @@ func hookInvariantLoadedFileForScope(t *testing.T, target string, machine bool) 
 	case "claude":
 		return ".claude/settings.json"
 	case "factory":
-		if machine {
-			return ".factory/settings.local.json"
-		}
-		return ".factory/hooks.json"
+		return ".factory/settings.local.json"
 	case "cursor":
 		return ".cursor/hooks.json"
 	case "gemini":

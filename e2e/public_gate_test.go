@@ -595,7 +595,7 @@ resources:
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "A hostile-safe skill")
 	consumer.AssertFileContains("/workspace/.factory/commands/command-one.md", "echo command-one")
 	consumer.AssertFileExists("/workspace/.factory/droids/agent-one.md")
-	consumer.AssertFileContains("/workspace/.factory/hooks.json", "run.sh")
+	consumer.AssertFileContains("/workspace/.factory/settings.local.json", "run.sh")
 	assertPublicGateHookScript(t, consumer)
 	consumer.AssertFileAbsent("/workspace/.factory/hooks/hooks.json")
 	consumer.AssertFileContains("/workspace/.factory/mcp.json", "server-one")
@@ -619,14 +619,17 @@ resources:
 
 func assertPublicGateHookScript(t *testing.T, consumer *Env) {
 	t.Helper()
-	var hooks map[string][]struct {
-		Hooks []struct {
-			Command string `json:"command"`
+	var envelope struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if err := json.Unmarshal([]byte(consumer.ReadFile("/workspace/.factory/hooks.json")), &hooks); err != nil {
+	if err := json.Unmarshal([]byte(consumer.ReadFile("/workspace/.factory/settings.local.json")), &envelope); err != nil {
 		t.Fatal(err)
 	}
+	hooks := envelope.Hooks
 	if len(hooks["PreToolUse"]) != 1 || len(hooks["PreToolUse"][0].Hooks) != 1 {
 		t.Fatalf("expected the published hook: %v", hooks)
 	}

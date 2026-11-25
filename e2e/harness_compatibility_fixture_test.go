@@ -164,17 +164,20 @@ func assertCompatibilityHookSource(t *testing.T, f compatibilityFixture) {
 
 func assertFactoryNativeHookFile(t *testing.T, e *Env, path, matcher, command string) {
 	t.Helper()
-	var document map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+	var envelope struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
 	text := e.ReadFile(path)
-	if err := json.Unmarshal([]byte(text), &document); err != nil {
+	if err := json.Unmarshal([]byte(text), &envelope); err != nil {
 		t.Fatalf("decode Factory native hook file %s: %v", path, err)
 	}
+	document := envelope.Hooks
 	groups, ok := document["PreToolUse"]
 	if len(document) != 1 || !ok || len(groups) != 1 || groups[0].Matcher != matcher || len(groups[0].Hooks) != 1 ||
 		groups[0].Hooks[0].Type != "command" || groups[0].Hooks[0].Command != command {
@@ -220,7 +223,7 @@ func compatibilityPaths(e *Env, target, scope string, f compatibilityFixture) ma
 			paths["mcp"] = []string{".claude.json"}
 		}
 	case "factory":
-		paths["hook"] = []string{root + "/hooks.json"}
+		paths["hook"] = []string{root + "/settings.local.json"}
 		paths["subagent"] = []string{root + "/droids/" + f.name("subagent") + ".md"}
 	case "cursor":
 		paths["hook"] = []string{root + "/hooks.json"}

@@ -65,7 +65,7 @@ func selectivePruneFixture(t *testing.T, owned []ownership.Entry, rules []string
 	if err != nil {
 		t.Fatal("expected root could not be canonicalized")
 	}
-	doc := []byte(`{` + nativeHookJSONJSONString("PreToolUse") + `:[` + strings.Join(rules, ",") + `]}` + "\n")
+	doc := []byte(`{"hooks":{` + nativeHookJSONJSONString("PreToolUse") + `:[` + strings.Join(rules, ",") + `]}}` + "\n")
 	path := filepath.Join(root, filepath.FromSlash(spec.rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal("create aggregate parent")

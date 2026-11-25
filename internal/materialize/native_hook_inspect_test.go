@@ -547,7 +547,7 @@ func TestInspectNativeHooksIndependentTargets(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	badRoot := t.TempDir()
 	badLayout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
-	writeNativeFile(t, badRoot, badLayout, []byte(`{"PreToolUse":"not-an-array"}`))
+	writeNativeFile(t, badRoot, badLayout, []byte(`{"hooks":{"PreToolUse":"not-an-array"}}`))
 	if _, err := InspectNativeHooks(openNativeStore(t, badRoot), badRoot, hcc.TargetFactory, false); err == nil {
 		t.Fatal("malformed factory file must refuse")
 	}

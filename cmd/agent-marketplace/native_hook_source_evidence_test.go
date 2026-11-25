@@ -49,8 +49,8 @@ func cliNativeDocs() []cliNativeDoc {
 			doc: `{"version":1,"hooks":{"preToolUse":[` + cursorRule + `]}}` + "\n"},
 		{target: "cursor", machineScope: true, rootDir: ".cursor", rel: "hooks.json", event: "preToolUse", rule: cursorRule,
 			doc: `{"version":1,"hooks":{"preToolUse":[` + cursorRule + `]}}` + "\n"},
-		{target: "factory", machineScope: false, rootDir: ".factory", rel: "hooks.json", event: "PreToolUse", rule: factoryRule,
-			doc: `{"PreToolUse":[` + factoryRule + `]}` + "\n"},
+		{target: "factory", machineScope: false, rootDir: ".factory", rel: "settings.local.json", event: "PreToolUse", rule: factoryRule,
+			doc: `{"hooks":{"PreToolUse":[` + factoryRule + `]}}` + "\n"},
 		{target: "factory", machineScope: true, rootDir: ".factory", rel: "settings.local.json", event: "PreToolUse", rule: factoryRule,
 			doc: `{"hooks":{"PreToolUse":[` + factoryRule + `]}}` + "\n"},
 		{target: "windsurf", machineScope: false, rootDir: ".", rel: ".devin/hooks.json", event: "pre_run_command", rule: windsurfRule,
@@ -357,12 +357,14 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var document map[string][]json.RawMessage
-		if err := json.Unmarshal(data, &document); err != nil {
+		var envelope struct {
+			Hooks map[string][]json.RawMessage `json:"hooks"`
+		}
+		if err := json.Unmarshal(data, &envelope); err != nil {
 			t.Fatalf("Native document: %v", err)
 		}
-		if len(document) != 1 || len(document[doc.event]) != 1 {
-			t.Fatalf("Native document = %#v, want exactly one current hook group", document)
+		if len(envelope.Hooks) != 1 || len(envelope.Hooks[doc.event]) != 1 {
+			t.Fatalf("Native document = %#v, want exactly one current hook group", envelope.Hooks)
 		}
 	}
 
@@ -474,7 +476,7 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 	t.Run("native_value_absent_reports_pending_and_repairs", func(t *testing.T) {
 		home, repoRoot, nativePath, legacyPath, statePath, lockPath, configPath, fps := newFixture(t)
 		nativeRoot := filepath.Join(repoRoot, doc.rootDir)
-		if err := os.WriteFile(nativePath, []byte("{\"PreToolUse\":[]}\n"), 0o644); err != nil {
+		if err := os.WriteFile(nativePath, []byte("{\"hooks\":{\"PreToolUse\":[]}}\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		nativeBefore, nativeInfo := statSnapshot(t, nativePath)
@@ -507,7 +509,17 @@ func TestSyncSharedNativeProofRefusesPartialOrInvalidEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sync Native repair: %v\n%s", err, out)
 		}
-		rules := parseLegacyHooks(t, nativePath)
+		data, err := os.ReadFile(nativePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var repairedEnvelope struct {
+			Hooks map[string][]map[string]any `json:"hooks"`
+		}
+		if err := json.Unmarshal(data, &repairedEnvelope); err != nil {
+			t.Fatalf("decode repaired Native hooks: %v\n%s", err, data)
+		}
+		rules := repairedEnvelope.Hooks[doc.event]
 		if len(rules) != 1 {
 			t.Fatalf("repaired Native rules = %#v, want exactly one current rule", rules)
 		}

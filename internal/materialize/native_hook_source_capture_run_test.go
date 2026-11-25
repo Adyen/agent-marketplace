@@ -55,7 +55,7 @@ func TestRunRejectsStaleIngestedFactoryHookDefinition(t *testing.T) {
 	if _, err := Run(context.Background(), repo, resolved); err != nil {
 		t.Fatalf("initial Run: %v", err)
 	}
-	factoryOutput := filepath.Join(repo, ".factory", "hooks.json")
+	factoryOutput := filepath.Join(repo, ".factory", "settings.local.json")
 	initialOutput, err := os.ReadFile(factoryOutput)
 	if err != nil || !strings.Contains(string(initialOutput), "stale.sh") || !strings.Contains(string(initialOutput), "sibling.sh") {
 		t.Fatalf("initial Factory output does not contain both hooks: %v %s", err, initialOutput)

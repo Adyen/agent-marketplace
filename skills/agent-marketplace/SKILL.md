@@ -158,10 +158,9 @@ Unknown fields, YAML aliases/merge keys, and duplicate keys are rejected with
 Devin and Codex commands are skill directories whose `SKILL.md` carries
 `x-agent-marketplace-kind: command`. Shared aggregate files hold hooks and MCP
 servers: Claude MCP goes to `<repo>/.mcp.json` or `~/.claude.json`; Factory
-machine-scope hooks go to `~/.factory/settings.local.json#hooks` (repository
-scope: `.factory/hooks.json`); Gemini uses `settings.json`; Devin uses
-`hooks.v1.json` (machine: `config.json#hooks`) and `mcp_config.json`; Codex
-uses `.codex/hooks.json` and `.codex/config.toml`.
+hooks go to `settings.local.json#hooks` in both scopes; Gemini uses
+`settings.json`; Devin uses `hooks.v1.json` (machine: `config.json#hooks`) and
+`mcp_config.json`; Codex uses `.codex/hooks.json` and `.codex/config.toml`.
 Windsurf has no subagents. The
 [output paths reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/harnesses-and-output-paths.md)
 lists every kind per harness.

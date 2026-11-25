@@ -610,10 +610,10 @@ func TestNativeSatisfactionPartialMixedEvidenceSuppressesNothing(t *testing.T) {
 	fingerprint := namedFingerprint(t, sourceRoot, "beta", string(hcc.TargetFactory), HookScopeRepository)
 	seed := sharedNativeSeed(t, hcc.TargetFactory, false)
 	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
-	fullNative := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + seed.rule + `]}` + "\n")
-	preOnly := []byte(`{"PreToolUse":[` + seed.rule + `]}` + "\n")
+	fullNative := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + seed.rule + `]}}` + "\n")
+	preOnly := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `]}}` + "\n")
 	postDrift := `{"hooks":[{"command":"echo drifted","type":"command"}],"matcher":"Execute"}`
-	preAndDriftedPost := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postDrift + `]}` + "\n")
+	preAndDriftedPost := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postDrift + `]}}` + "\n")
 	preEntry := nativeHookProofEntry(t, seed.event, seed.rule, "beta", fingerprint)
 	postEntry := nativeHookProofEntry(t, "PostToolUse", seed.rule, "beta", fingerprint)
 	preSatisfaction := nativeHookSatisfaction(t, seed.event, seed.rule, []ownership.HookSourceEvidence{{Resource: "beta", SourceDigest: fingerprint}})
@@ -811,7 +811,7 @@ func TestNativeSatisfactionMirrorFingerprint(t *testing.T) {
 			nativeRoot := filepath.Join(repoRoot, ".factory")
 			layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 			rule := `{"matcher":"Execute","hooks":[{"type":"command","command":"./run.sh"}]}`
-			seed := nativeSeed{event: "PreToolUse", rule: rule, doc: `{"PreToolUse":[` + rule + `]}` + "\n"}
+			seed := nativeSeed{event: "PreToolUse", rule: rule, doc: `{"hooks":{"PreToolUse":[` + rule + `]}}` + "\n"}
 			nativeBytes := []byte(seed.doc)
 			nativePath := writeNativeFile(t, nativeRoot, layout, nativeBytes)
 			fingerprint := mirrorFingerprint(t, resolved, string(hcc.TargetFactory), HookScopeRepository)
@@ -851,9 +851,9 @@ func TestNativeSatisfactionSurvivesOwnedMutation(t *testing.T) {
 	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 	postBefore := `{"hooks":[{"command":"echo post-before","type":"command"}],"matcher":"Execute"}`
 	postAfter := `{"hooks":[{"command":"echo post-after","type":"command"}],"matcher":"Execute"}`
-	baseDoc := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postBefore + `]}` + "\n")
-	updatedDoc := []byte(`{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postAfter + `]}` + "\n")
-	removedDoc := []byte(`{"PreToolUse":[` + seed.rule + `]}` + "\n")
+	baseDoc := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postBefore + `]}}` + "\n")
+	updatedDoc := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `],"PostToolUse":[` + postAfter + `]}}` + "\n")
+	removedDoc := []byte(`{"hooks":{"PreToolUse":[` + seed.rule + `]}}` + "\n")
 
 	for _, tc := range []struct {
 		name    string

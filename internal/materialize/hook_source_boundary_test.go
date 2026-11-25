@@ -74,7 +74,7 @@ func TestRunHookSupportSourceRefusalPreservesNativeContent(t *testing.T) {
 	if err != nil || diag.HasErrors(initial.Diags) {
 		t.Fatalf("native initial control failed: %+v %v", initial, err)
 	}
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
 	nativeIdentity, err := os.Stat(nativePath)
 	if err != nil || !bytes.Contains(nativeBefore, []byte("inert original command")) || !bytes.Contains(nativeBefore, []byte("^(Create|Edit|ApplyPatch)$")) {
@@ -250,7 +250,7 @@ func TestRunContainedHookSupportAliasKeepsNativeContentAndMode(t *testing.T) {
 	if err != nil || !aliasInfo.Mode().IsRegular() {
 		t.Fatalf("installed alias is not a regular copy: %v / %v", aliasInfo, err)
 	}
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	nativePath := filepath.Join(factoryRoot, "settings.local.json")
 	if data, err := os.ReadFile(nativePath); err != nil || !bytes.Contains(data, []byte("inert hook command")) || !bytes.Contains(data, []byte("^(Create|Edit|ApplyPatch)$")) {
 		t.Fatalf("native Factory hook control missing at %s: %q %v", nativePath, data, err)
 	}
@@ -322,7 +322,7 @@ func TestRunFactoryEditOnlyHookRefusalDoesNotPublish(t *testing.T) {
 			t.Fatalf("Edit-only Factory hook was not blocked: %+v", report.BlockedResources)
 		}
 		factoryRoot := filepath.Join(repo, ".factory")
-		assertPathAbsent(t, filepath.Join(factoryRoot, "hooks.json"))
+		assertPathAbsent(t, filepath.Join(factoryRoot, "settings.local.json"))
 		assertPathAbsent(t, filepath.Join(factoryRoot, "hook-support"))
 		manifestPath, err := portableManifestPath(repo, false)
 		if err != nil {
@@ -405,7 +405,7 @@ func TestRunHookSourceRefusalKeepsIndependentNativeWork(t *testing.T) {
 	if !badBlocked || goodBlocked {
 		t.Fatalf("source refusal blocked invalid/valid controls incorrectly: %+v", report.BlockedResources)
 	}
-	nativePath := filepath.Join(repo, ".factory", "hooks.json")
+	nativePath := filepath.Join(repo, ".factory", "settings.local.json")
 	if data, err := os.ReadFile(nativePath); err != nil || !bytes.Contains(data, []byte("inert good command")) || bytes.Contains(data, []byte("inert bad command")) {
 		t.Fatalf("valid native sibling was suppressed or bad hook emitted: %q %v", data, err)
 	}
