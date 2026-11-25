@@ -11,9 +11,9 @@
 
 ## 3. Integration Validation
 
-- [ ] 3.1 Run `make validate` and verify selected tests, CI lint, and build succeed.
-- [ ] 3.2 Run `make spec-check` and verify strict OpenSpec validation and scenario trace succeed.
-- [ ] 3.3 Run `make validate-e2e` and verify the Marketplace E2E and configuration-compatibility witnesses pass.
+- [x] 3.1 Run `make validate` and verify selected tests, CI lint, and build succeed.
+- [x] 3.2 Run `make spec-check` and verify strict OpenSpec validation and scenario trace succeed.
+- [x] 3.3 Run `make validate-e2e` and verify the Marketplace E2E and configuration-compatibility witnesses pass.
 
 ## Workflow follow-up
 
