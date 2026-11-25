@@ -545,7 +545,6 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 	}
 	expectedCommandA := `"$FACTORY_PROJECT_DIR"/` + commandBaseA + "/hooks/scripts/check-a.sh"
 	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, resolved[0], expectedCommandA, "", nil, 0)
-	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
 
 	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{
 		Project: config.MaterializationModeFile,
@@ -555,10 +554,12 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 		t.Fatalf("mixed forward + published hook Run failed: %v / %+v", err, report)
 	}
 
-	hooksPath := filepath.Join(factoryRoot, "hooks.json")
-	commands := additiveSafetyCommands(t, hooksPath, "", "PreToolUse")
-	if len(commands) != 1 || !strings.HasSuffix(commands[0], "/hooks/scripts/check-b.sh") {
-		t.Fatalf(".factory/hooks.json commands = %v, want only hook B", commands)
+	commands := additiveSafetyCommands(t, settingsLocalPath, "hooks", "PreToolUse")
+	if len(commands) != 2 || !strings.HasSuffix(commands[0], "/hooks/scripts/check-a.sh") || !strings.HasSuffix(commands[1], "/hooks/scripts/check-b.sh") {
+		t.Fatalf(".factory/settings.local.json commands = %v, want hook A + hook B", commands)
+	}
+	if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf(".factory/hooks.json should not be created: %v", err)
 	}
 	planB, supportPathB := nativeHookActivationSupportPath(t, resolved[1], hcc.TargetFactory, false, factoryRoot)
 	if len(planB.artifacts) == 0 {
@@ -567,7 +568,6 @@ func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
 	if _, err := os.Stat(supportPathB); err != nil {
 		t.Fatalf("published hook B support script missing at %s: %v", supportPathB, err)
 	}
-	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
 	assertFileUnchanged(t, supportPathA, supportABefore, supportAMode, supportAMtime)
 }
 
