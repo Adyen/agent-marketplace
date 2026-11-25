@@ -129,6 +129,80 @@ func TestDocumentSourceReportsStatus(t *testing.T) {
 	}
 }
 
+func TestPluginFormatDocumentSources(t *testing.T) {
+	for _, tt := range []struct {
+		name, harness, url, marker string
+	}{
+		{name: "plugin-claude-manifest", harness: "claude", url: "https://code.claude.com/docs/en/plugins/manifest-reference", marker: "Fields"},
+		{name: "plugin-factory-internal", harness: "factory", url: "https://docs.factory.ai/enterprise/internal-plugin-marketplaces", marker: "Internal Plugin Marketplaces"},
+	} {
+		var src source
+		for _, candidate := range sources {
+			if candidate.Name == tt.name {
+				src = candidate
+				break
+			}
+		}
+		if src.Name == "" {
+			t.Fatalf("source %q not found", tt.name)
+		}
+		if src.Harness != tt.harness || src.URL != tt.url || !slices.Contains(src.Sections, tt.marker) {
+			t.Fatalf("source = %#v, want harness %q, URL %q, and marker %q", src, tt.harness, tt.url, tt.marker)
+		}
+		matched := "# " + tt.marker + "\n\nplugin metadata"
+		for _, tc := range []struct {
+			name, body, status, code string
+			uncited                  bool
+		}{
+			{name: "matched", body: matched, status: "no-drift"},
+			{name: "changed", body: matched + " changed", status: "drift", code: "source.evidence-changed"},
+			{name: "missing-marker", body: "# Unrelated\n\nplugin metadata", status: "unknown", code: "source.parse-failed"},
+			{name: "uncited", status: "unknown", code: "catalog.invalid", uncited: true},
+		} {
+			t.Run(tt.name+"/"+tc.name, func(t *testing.T) {
+				selected := src
+				if tc.uncited {
+					selected.URL += "?uncited=1"
+				}
+				fetchCalled, fetchURL := false, ""
+				result := audit(context.Background(), os.DirFS("../.."), []source{selected},
+					map[string]baseline{tt.name: {SHA256: digest([]byte("# " + tt.marker + " plugin metadata"))}},
+					func(_ context.Context, url string) (fetched, error) {
+						if tc.uncited {
+							t.Fatal("uncited source was fetched")
+						}
+						fetchCalled, fetchURL = true, url
+						return fetched{Body: []byte(tc.body), URL: url}, nil
+					}, time.Now(), nil)
+				if len(result.Sources) != 1 {
+					t.Fatalf("sources = %#v", result.Sources)
+				}
+				got := result.Sources[0]
+				if got.Name != tt.name || got.Harness != tt.harness || got.URL != selected.URL || got.CatalogDomain != "pluginpolicy" {
+					t.Errorf("reported identity = %#v", got)
+				}
+				if got.Status != tc.status {
+					t.Errorf("status = %q, want %q", got.Status, tc.status)
+				}
+				var codes []string
+				for _, finding := range got.Findings {
+					codes = append(codes, finding.Code)
+				}
+				wantCodes := []string(nil)
+				if tc.code != "" {
+					wantCodes = []string{tc.code}
+				}
+				if !slices.Equal(codes, wantCodes) {
+					t.Errorf("finding codes = %v, want %v", codes, wantCodes)
+				}
+				if !tc.uncited && (!fetchCalled || fetchURL != tt.url || got.ResolvedURL != tt.url || got.CatalogSHA256 == "" || got.BodySHA256 == "") {
+					t.Errorf("document checking = fetched %t URL %q resolved %q catalog %q body %q", fetchCalled, fetchURL, got.ResolvedURL, got.CatalogSHA256, got.BodySHA256)
+				}
+			})
+		}
+	}
+}
+
 func TestDocumentSourceRejectsMismatchedCatalogs(t *testing.T) {
 	fetch := func(context.Context, string) (fetched, error) {
 		t.Fatal("must not fetch before catalog validation")
