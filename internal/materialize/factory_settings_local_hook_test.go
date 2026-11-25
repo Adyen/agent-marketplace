@@ -485,6 +485,92 @@ func TestFactoryRepoForwardSettingsLocalPreservesManifestTrackedSupportFiles(t *
 	assertFileUnchanged(t, supportPath, supportBefore, supportMode, supportMtime)
 }
 
+func TestFactoryRepoForwardSettingsLocalMixedWithPublishedHook(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	providerA := nativeSupportSource(t, "claude", "hooks/hooks.json", map[string]string{
+		"hooks/hooks.json":         `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check-a.sh"}]}]}`,
+		"hooks/scripts/check-a.sh": "#!/bin/sh\necho hook-a\n",
+	})
+	if err := os.Chmod(filepath.Join(providerA.RegistryURL, "hooks", "scripts", "check-a.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	providerB := nativeSupportSource(t, "claude", "hooks/hooks.json", map[string]string{
+		"hooks/hooks.json":         `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check-b.sh"}]}]}`,
+		"hooks/scripts/check-b.sh": "#!/bin/sh\necho hook-b\n",
+	})
+	if err := os.Chmod(filepath.Join(providerB.RegistryURL, "hooks", "scripts", "check-b.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{providerA, providerB})
+	if len(resolved) != 2 {
+		t.Fatalf("resolved = %d, want 2", len(resolved))
+	}
+
+	factoryRoot := filepath.Join(repo, ".factory")
+	planA, _ := nativeHookActivationSupportPath(t, resolved[0], hcc.TargetFactory, false, factoryRoot)
+	if len(planA.artifacts) == 0 {
+		t.Fatal("expected support artifacts for forward-satisfied hook A")
+	}
+	portableState, err := loadPortableState(repo, false)
+	if err != nil {
+		t.Fatalf("loadPortableState: %v", err)
+	}
+	var supportPathA string
+	for _, art := range planA.artifacts {
+		full := filepath.Join(factoryRoot, filepath.FromSlash(art.Path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, art.Bytes, art.Mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(full, art.Mode); err != nil {
+			t.Fatal(err)
+		}
+		digest, err := portablePathDigest(full)
+		if err != nil {
+			t.Fatalf("portablePathDigest(%s): %v", full, err)
+		}
+		portableState.add(hcc.TargetFactory, filepath.ToSlash(art.Path), digest)
+		supportPathA = full
+	}
+	if err := portableState.save(false); err != nil {
+		t.Fatalf("save portable manifest: %v", err)
+	}
+	supportABefore, supportAMode, supportAMtime := fileSnapshot(t, supportPathA)
+
+	commandBaseA, err := hookSupportCommandBase(skillTarget{skill: resolved[0], target: hcc.TargetFactory}, repo, planA.relBase)
+	if err != nil {
+		t.Fatalf("hookSupportCommandBase: %v", err)
+	}
+	expectedCommandA := `"$FACTORY_PROJECT_DIR"/` + commandBaseA + "/hooks/scripts/check-a.sh"
+	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, resolved[0], expectedCommandA, "", nil, 0)
+	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
+
+	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{
+		Project: config.MaterializationModeFile,
+		Machine: config.MaterializationModeFile,
+	}))
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("mixed forward + published hook Run failed: %v / %+v", err, report)
+	}
+
+	hooksPath := filepath.Join(factoryRoot, "hooks.json")
+	commands := additiveSafetyCommands(t, hooksPath, "", "PreToolUse")
+	if len(commands) != 1 || !strings.HasSuffix(commands[0], "/hooks/scripts/check-b.sh") {
+		t.Fatalf(".factory/hooks.json commands = %v, want only hook B", commands)
+	}
+	planB, supportPathB := nativeHookActivationSupportPath(t, resolved[1], hcc.TargetFactory, false, factoryRoot)
+	if len(planB.artifacts) == 0 {
+		t.Fatal("expected support artifacts for published hook B")
+	}
+	if _, err := os.Stat(supportPathB); err != nil {
+		t.Fatalf("published hook B support script missing at %s: %v", supportPathB, err)
+	}
+	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
+	assertFileUnchanged(t, supportPathA, supportABefore, supportAMode, supportAMtime)
+}
+
 // spec: hook-resources/mismatched-factory-settings-local-json-hooks-do-not-suppress-repository-hooks-json
 func TestFactoryRepoForwardSettingsLocalMismatchFallsBackToHooksJSON(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
