@@ -98,6 +98,88 @@ func newPlaceFixture(t *testing.T, oldState bool) (string, string, PlacePlan) {
 	return root, stateDir, plan
 }
 
+// spec: target-profile-place/cross-filesystem-targets-refuse-before-writes
+func TestPlaceRefusesDifferentStageDeviceBeforeWrites(t *testing.T) {
+	for _, existingParent := range []bool{false, true} {
+		name := "missing parent"
+		if existingParent {
+			name = "existing parent"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, stateDir, plan := newPlaceFixture(t, false)
+			tempRoot, err := os.MkdirTemp("/dev/shm", "agent-marketplace-place-device-")
+			if err != nil {
+				t.Skipf("cross-device temporary root unavailable under /dev/shm: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(tempRoot) })
+			root, err := filepath.EvalSymlinks(tempRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetRoot, err := fsboundary.OpenDir(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rootIdentity := targetRoot.Identity()
+			targetDevice := rootIdentity.Device
+			if err := targetRoot.Close(); err != nil {
+				t.Fatal(err)
+			}
+			stageParent, err := fsboundary.OpenDir(filepath.Dir(stateDir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stageDevice := stageParent.Identity().Device
+			if err := stageParent.Close(); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("target root %s device %d; stage parent %s device %d", root, targetDevice, filepath.Dir(stateDir), stageDevice)
+			if targetDevice == stageDevice {
+				t.Skipf("cross-device preflight unavailable: target and stage parent both use device %d", targetDevice)
+			}
+
+			plan.Root = root
+			plan.RootIdentity = rootIdentity
+			plan.Ownership.Path = filepath.Join(
+				filepath.Dir(stateDir), "ownership", testPlaceRootKey(root), "state.json",
+			)
+			plan.Ownership.Bytes = mustPlaceState(t, placeStateFixture{
+				CanonicalRoot: root, RootKey: testPlaceRootKey(root), PlaceDirectories: []any{},
+			})
+			if existingParent {
+				if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				plan.Directories = nil
+			}
+
+			_, err = CommitPlace(context.Background(), stateDir, plan)
+			if !errors.Is(err, ErrUnsafePath) || errors.Is(err, ErrRecoveryRequired) ||
+				!strings.Contains(err.Error(), "place stage device") ||
+				!strings.Contains(err.Error(), "mods/new.txt") {
+				t.Fatalf("cross-device place commit = %v, want preflight ErrUnsafePath naming stage device and mods/new.txt", err)
+			}
+			if existingParent {
+				entries, err := os.ReadDir(filepath.Join(root, "mods"))
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("existing target parent changed before refusal: %v, %v", entries, err)
+				}
+			} else if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+				t.Fatalf("target root changed before refusal: %v, %v", entries, err)
+			}
+			if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cross-device refusal created ownership state: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(filepath.Dir(stateDir), "place-stage")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cross-device refusal created place stage: %v", err)
+			}
+			if got, err := filepath.Glob(filepath.Join(stateDir, ".dependencytxn-*.json")); err != nil || len(got) != 0 {
+				t.Fatalf("cross-device refusal created journals: %v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestPlaceCommitRefusesChangedSelectionBeforeJournal(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, true)
 	inputPath := filepath.Join(filepath.Dir(root), "deployed-config.yaml")
