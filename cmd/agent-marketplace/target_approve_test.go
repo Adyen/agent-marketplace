@@ -517,6 +517,84 @@ func TestTargetDisablePreservesSelectionAndOwnedFiles(t *testing.T) {
 	})
 }
 
+// spec: target-profile-place/a-changed-root-needs-new-approval-and-never-relocates
+func TestTargetApprovalForChangedRootKeepsOldInstallation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	ctx := context.Background()
+	fixture, oldBinding, marker, _, oldStatePath, _ := newInstalledTargetVerificationFixture(t)
+	files, pkg := resolvedTargetApprovalPackage(t, fixture)
+	oldRootBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+	oldOwnershipBefore := snapshotTargetStateTree(t, oldStatePath)
+	newRoot := filepath.Join(fixture.home, ".config", "new-invented-app")
+	if err := os.Mkdir(newRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INVENTED_APP_HOME", newRoot)
+	newRootBefore := snapshotTargetStateTree(t, newRoot)
+	stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+
+	newBinding, err := pipeline.PrepareDeployedPlaceApproval(
+		ctx, mustTargetWorkspace(t, fixture), fixture.identity.TargetID,
+	)
+	if err != nil {
+		t.Fatalf("prepare approval for changed root: %v", err)
+	}
+	if newBinding.CanonicalRoot == oldBinding.CanonicalRoot ||
+		pipeline.PlaceInstallationID(newBinding) == pipeline.PlaceInstallationID(oldBinding) {
+		t.Fatalf("changed root binding did not identify a new installation: old=%#v new=%#v", oldBinding, newBinding)
+	}
+	if _, err := pipeline.CommitPlaceUpserts(
+		ctx, newBinding, fixture.profileBytes, targetApprovalEnvironment(t, fixture),
+		[]marketplace.ResolvedPlacePackage{pkg},
+	); !errors.Is(err, targetprofile.ErrApprovalRequired) {
+		t.Fatalf("commit at changed root without approval = %v, want ErrApprovalRequired", err)
+	}
+	assertTargetStateTreeUnchanged(t, oldRootBefore, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, oldOwnershipBefore, oldStatePath)
+	assertTargetStateTreeUnchanged(t, newRootBefore, newRoot)
+	assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("unapproved changed-root commit ran host verification: %v", err)
+	}
+
+	stdout, stderr, err := executeTargetApprovalAtTerminal(
+		t, "yes\n", nil, "target", "approve", fixture.identity.TargetID,
+	)
+	if err != nil {
+		t.Fatalf("approve changed root: %v\n%s%s", err, stdout, stderr)
+	}
+	if !strings.Contains(stderr, newBinding.CanonicalRoot) {
+		t.Fatalf("approval prompt omitted changed root %q:\n%s", newBinding.CanonicalRoot, stderr)
+	}
+	assertTargetStateTreeUnchanged(t, oldRootBefore, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, oldOwnershipBefore, oldStatePath)
+	assertTargetStateTreeUnchanged(t, newRootBefore, newRoot)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("approval ran host verification: %v", err)
+	}
+
+	if _, err := pipeline.CommitPlaceUpserts(
+		ctx, newBinding, fixture.profileBytes, targetApprovalEnvironment(t, fixture),
+		[]marketplace.ResolvedPlacePackage{pkg},
+	); err != nil {
+		t.Fatalf("commit approved package at changed root: %v", err)
+	}
+	newTargetPath := filepath.Join(newBinding.CanonicalRoot, filepath.FromSlash(files[0].DestinationPath))
+	targetBytes, err := os.ReadFile(newTargetPath)
+	targetInfo, statErr := os.Stat(newTargetPath)
+	if err != nil || statErr != nil || !bytes.Equal(targetBytes, files[0].Bytes) ||
+		targetInfo.Mode().Perm() != files[0].Mode {
+		t.Fatalf("changed-root package = %q mode=%v read=%v stat=%v", targetBytes, targetInfo, err, statErr)
+	}
+	assertTargetStateTreeUnchanged(t, oldRootBefore, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, oldOwnershipBefore, oldStatePath)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("package commit ran host verification: %v", err)
+	}
+}
+
 // spec: target-profile-place/target-verify-runs-only-the-named-check
 func TestTargetVerifyRunsOnlyNamedCheck(t *testing.T) {
 	if isolateCommandTest(t) {

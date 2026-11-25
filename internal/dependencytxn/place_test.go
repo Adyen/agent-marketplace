@@ -700,6 +700,7 @@ func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
 func TestPlaceRootAliasDoesNotOpenOwnership(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	alias := root + "-alias"
@@ -716,8 +717,12 @@ func TestPlaceRootAliasDoesNotOpenOwnership(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "mods")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("root alias changed the target: %v", err)
 	}
+	if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("root alias created ownership state: %v", err)
+	}
 }
 
+// spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
 func TestPlaceUsesOnlyTheCapturedContainedLink(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		t.Run(fmt.Sprintf("replace=%t", replace), func(t *testing.T) {
@@ -773,6 +778,12 @@ func TestPlaceUsesOnlyTheCapturedContainedLink(t *testing.T) {
 				}
 				assertFile(t, actual, "prior\n", 0o644)
 				assertFile(t, other, "prior\n", 0o644)
+				if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("link replacement created ownership state: %v", err)
+				}
+				if target, err := os.Readlink(link); err != nil || target != "other.txt" {
+					t.Fatalf("replacement link = %q, %v; want other.txt", target, err)
+				}
 				if got := journals(t, stateDir); len(got) != 1 {
 					t.Fatalf("link replacement discarded journal: %v", got)
 				}
