@@ -73,13 +73,14 @@ func organizationConfigPath(override string) string {
 // LayerResult carries one Configuration Layer's provenance, parsed config, and
 // any validation errors encountered while loading it.
 type LayerResult struct {
-	Source  Source
-	Path    string
-	Config  *Config
-	Local   *LocalConfig
-	Errors  []error
-	Reads   []ConfigRead
-	Sources []SourceDecl
+	Source                      Source
+	Path                        string
+	Config                      *Config
+	Local                       *LocalConfig
+	Errors                      []error
+	Reads                       []ConfigRead
+	Sources                     []SourceDecl
+	MarketplaceEvidenceRequired bool
 }
 
 type ConfigRead struct {

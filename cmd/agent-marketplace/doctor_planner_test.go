@@ -274,6 +274,27 @@ func TestDoctorRepairDriftKeepsAcquisitionLockUnchanged(t *testing.T) {
 	}
 }
 
+func TestDoctorRepairDriftKeepsLockedLabelForOrganizationRegistration(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := setupDoctorTransientOrganizationMarketplaceRepair(t)
+	org := "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: " + fixture.server.URL + "}\n"
+	if err := os.WriteFile(fixture.organizationPath, []byte(org), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor", "--repair", "--yes")
+	if err != nil || !strings.Contains(output, "[safe] sync --locked harness drift (ownership.entry-drift;") {
+		t.Fatalf("doctor must keep the locked drift label for a registration without selected resources: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync", "--locked"); err != nil {
+		t.Fatalf("registration without selected resources must not need an organization lock: %v\n%s", err, output)
+	}
+	if _, err := os.Lstat(fixture.organizationLockPath); !os.IsNotExist(err) {
+		t.Fatalf("repair created an organization lock: %v", err)
+	}
+}
+
 // spec: doctor-repair-planning/drift-repair-leaves-acquisition-locks-byte-identical
 // spec: doctor-repair-planning/drift-repair-uses-verified-transient-organization-evidence
 func TestDoctorRepairDriftWithTransientOrganizationMarketplace(t *testing.T) {

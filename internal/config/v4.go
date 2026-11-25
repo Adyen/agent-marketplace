@@ -2370,6 +2370,10 @@ const (
 	v4RootProjectionBinding
 )
 
+func (c *V4Config) requiresMarketplaceEvidence(name string, mode v4BindingMode) bool {
+	return c.AcquiresMarketplace(name) && (mode == v4ExactBinding || !c.marketplaceRegistrationOnly(name))
+}
+
 func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, modes ...v4BindingMode) (result *Config, resultErr error) {
 	defer func() {
 		attachV4ValidationContext(resultErr, firstV4File(c), kind)
@@ -2432,7 +2436,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 	}
 	for _, name := range names {
 		src := c.Sources[name]
-		if !c.AcquiresMarketplace(name) || mode != v4ExactBinding && c.marketplaceRegistrationOnly(name) {
+		if !c.requiresMarketplaceEvidence(name, mode) {
 			continue
 		}
 		if lockDoc == nil {

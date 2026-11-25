@@ -413,7 +413,8 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				hasDeployedOrganizationLock := slices.ContainsFunc(current.Organization.Reads, func(read config.ConfigRead) bool {
 					return read.AcquisitionLock
 				})
-				if current.Organization.Config != nil && len(current.Organization.Config.Marketplaces) > 0 && !hasDeployedOrganizationLock {
+				useTransientOrganization := current.Organization.MarketplaceEvidenceRequired && !hasDeployedOrganizationLock
+				if useTransientOrganization {
 					driftAction = "reconcile harness drift"
 				}
 				diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
@@ -421,7 +422,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 					Action: driftAction, Code: diag.CodeOwnershipEntryDrift,
 					Files: files, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 					Apply: func(ctx context.Context) (bool, error) {
-						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true, reuseTransientOrganization: true, beforeMaterialize: revalidate})
+						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true, reuseTransientOrganization: useTransientOrganization, beforeMaterialize: revalidate})
 						if err == nil || errors.Is(err, dependencytxn.ErrGenerationConflict) || len(collisionFiles) == 0 {
 							return true, err
 						}
