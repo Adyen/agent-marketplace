@@ -113,7 +113,12 @@ func canonicalFindingsFromRevision(revision store.AssessedResourceRevision) []hc
 // MissingResourceError marks an HTTP 404 from a pin's latest-revision lookup.
 // It wraps the original error so errors.As still finds the underlying *APIError.
 type MissingResourceError struct {
-	Err error
+	URL      string
+	Registry string
+	Kind     string
+	Name     string
+	Revision string
+	Err      error
 }
 
 func (e *MissingResourceError) Error() string { return e.Err.Error() }
@@ -259,7 +264,9 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 		resolveErr := fmt.Errorf("resolve latest resource revision: %w", err)
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			return store.Registry{}, store.AssessedResourceRevision{}, &MissingResourceError{Err: resolveErr}
+			return store.Registry{}, store.AssessedResourceRevision{}, &MissingResourceError{
+				URL: canonical.URL, Registry: resourceRegistry, Kind: pin.Kind, Name: pin.Name, Revision: pin.Revision, Err: resolveErr,
+			}
 		}
 		return store.Registry{}, store.AssessedResourceRevision{}, resolveErr
 	}
@@ -450,7 +457,14 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 		revision, err = client.GetLatestResourceRevisionForRegistry(ctx, resourceRegistry, string(registry.ID), locator.Kind, locator.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("resolve resource revision: %w", err)
+		resolveErr := fmt.Errorf("resolve resource revision: %w", err)
+		var apiErr *APIError
+		if exactRevision == "" && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return nil, &MissingResourceError{
+				URL: canonical.URL, Registry: locator.Registry, Kind: locator.Kind, Name: locator.Name, Err: resolveErr,
+			}
+		}
+		return nil, resolveErr
 	}
 	if exactRevision != "" {
 		if err := validateLocatorRevision(locator, revision); err != nil {

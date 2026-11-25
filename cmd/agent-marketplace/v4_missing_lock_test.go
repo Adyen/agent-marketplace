@@ -165,13 +165,36 @@ func TestSyncRecordsMissingResourceAfterUnrecordedResourceFreeMarketplace(t *tes
 	if isolateCommandTest(t) {
 		return
 	}
+	document, _, selectedURL := syncRecordsMissingResourceAfterResourceFreeMarketplace(t)
+	marketplaceLockResourceByURL(t, document, selectedURL, "second")
+}
+
+func TestSyncRecordsResourceFreeMarketplaceIdentityAlongsideMissingResource(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	document, resourceFreeURL, selectedURL := syncRecordsMissingResourceAfterResourceFreeMarketplace(t)
+	marketplaceLockResourceByURL(t, document, selectedURL, "second")
+	for _, endpoint := range document.Marketplaces {
+		if endpoint.URL == resourceFreeURL {
+			if endpoint.InstanceID != "resource-free" || len(endpoint.Resources) != 0 {
+				t.Fatalf("resource-free endpoint identity = %#v", endpoint)
+			}
+			return
+		}
+	}
+	t.Fatalf("lock omitted resource-free endpoint identity for %s: %#v", resourceFreeURL, document.Marketplaces)
+}
+
+func syncRecordsMissingResourceAfterResourceFreeMarketplace(t *testing.T) (lockfile.Document, string, string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 
-	resourceFree := newV4MarketplaceLockServer(t)
+	resourceFree := newV4MarketplaceLockServerWithIdentity(t, "resource-free", "unused")
 	defer resourceFree.Close()
+
 	selected := newV4MarketplaceServerWithResources(t, "selected", []string{"review", "second"}, false, nil, nil)
 	defer selected.Close()
 
@@ -188,8 +211,7 @@ func TestSyncRecordsMissingResourceAfterUnrecordedResourceFreeMarketplace(t *tes
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("sync after adding an unrecorded registration: %v\n%s", err, output)
 	}
-	document := readLockDocument(t, lockPath)
-	marketplaceLockResourceByURL(t, document, selected.URL, "second")
+	return readLockDocument(t, lockPath), resourceFree.URL, selected.URL
 }
 
 // spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins

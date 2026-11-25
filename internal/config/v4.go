@@ -2656,6 +2656,67 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 	return out
 }
 
+func withoutMarketplaceSelections(v4 *V4Config, source Source, skipped []MarketplaceSelectionToSkip) *V4Config {
+	if v4 == nil || len(skipped) == 0 {
+		return v4
+	}
+	skip := func(request V4ResourceRequest) bool {
+		if request.Required || request.Options.Revision != "" {
+			return false
+		}
+		sourceConfig, ok := v4.Sources[request.SourceName]
+		if !ok {
+			return false
+		}
+		installedName := request.Name
+		if request.Options.HasAs {
+			installedName = request.Options.As
+		}
+		for _, selection := range skipped {
+			if selection.Source == source &&
+				selection.SourceName == request.SourceName &&
+				selection.Locator == request.Locator &&
+				selection.URL == sourceConfig.CanonicalURL &&
+				selection.Registry == request.Registry &&
+				selection.Kind == request.MarketplaceKind() &&
+				selection.Name == request.Name &&
+				selection.InstalledName == installedName {
+				return true
+			}
+		}
+		return false
+	}
+	filterRequests := func(requests []V4ResourceRequest) []V4ResourceRequest {
+		filtered := make([]V4ResourceRequest, 0, len(requests))
+		for _, request := range requests {
+			if !skip(request) {
+				filtered = append(filtered, request)
+			}
+		}
+		return filtered
+	}
+	filterDecisions := func(decisions []V4SelectionDecision) []V4SelectionDecision {
+		filtered := make([]V4SelectionDecision, 0, len(decisions))
+		for _, decision := range decisions {
+			if decision.Request == nil || !skip(*decision.Request) {
+				filtered = append(filtered, decision)
+			}
+		}
+		return filtered
+	}
+
+	filtered := *v4
+	filtered.Requests = filterRequests(v4.Requests)
+	filtered.Decisions = filterDecisions(v4.Decisions)
+	filtered.Groups = make(map[string]V4ResourceGroup, len(v4.Groups))
+	for name, group := range v4.Groups {
+		group.Include = filterRequests(group.Include)
+		group.Decisions = filterDecisions(group.Decisions)
+		filtered.Groups[name] = group
+	}
+	return &filtered
+}
+
 // effectiveV4Exclusions preserves first-exclusion order. A non-nil requests
 // slice must be the effective requests for this group; nil computes it lazily.
 func effectiveV4Exclusions(group V4ResourceGroup, requests []V4ResourceRequest) []string {

@@ -144,7 +144,12 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	var lockMetadata []pipeline.LockMetadata
-	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata})
+	var skippedMarketplaceSelections []config.MarketplaceSelectionToSkip
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{
+		Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata,
+		AllowOptionalRemovedMarketplaceSelections: !locked && !offline,
+		SkippedMarketplaceSelections:              &skippedMarketplaceSelections,
+	})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -171,6 +176,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		CatalogOption:                         []pkgcatalog.LoadOption{exactOption},
 		ExactLockLease:                        exactLease,
 		LockMetadata:                          lockMetadata,
+		EffectiveOpts:                         config.LoadEffectiveOptions{SkipMarketplaceSelections: skippedMarketplaceSelections},
 		SkipInventory:                         pruneStale,
 		MarketplaceRevocationPolicy:           marketplacePolicy,
 		MarketplaceLockEvidenceStrict:         locked,

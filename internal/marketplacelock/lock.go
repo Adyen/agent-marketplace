@@ -2,6 +2,7 @@ package marketplacelock
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -22,12 +23,29 @@ const maxMarketplaceLockResources = lockfile.MaxMarketplaceLockResources
 // Resolve acquires and verifies every requested Marketplace resource and
 // returns the exact lock evidence for the layer.
 func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, layer config.LayerIntent, harnesses []string, policy resolver.MarketplaceRevocationPolicy) (lockfile.Document, error) {
+	return ResolveWithRemovedSelections(ctx, marketplaceResolver, layer, nil, harnesses, policy, false, nil)
+}
+
+func ResolveWithRemovedSelections(ctx context.Context, marketplaceResolver *marketplace.Resolver, layer config.LayerIntent, existing *lockfile.Document, harnesses []string, policy resolver.MarketplaceRevocationPolicy, skipOptionalRemoved bool, skipped *[]config.MarketplaceSelectionToSkip) (lockfile.Document, error) {
 	doc := lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.Scope(layer.Source.LockScope())}
 	targets := lockTargets(harnesses)
 	resourceCount := 0
 	processedPins := 0
 	preparationWork := 0
 	for _, source := range layer.MarketplaceSources() {
+		if skipOptionalRemoved && existing != nil {
+			requests := make([]config.V4ResourceRequest, 0, len(source.Requests))
+			for _, request := range source.Requests {
+				record, found := MarketplaceRequestRecord(existing, source.URL, request)
+				if !found || request.Options.Revision != "" && request.Options.Revision != record.Revision {
+					requests = append(requests, request)
+				}
+			}
+			if len(requests) == 0 {
+				continue
+			}
+			source.Requests = requests
+		}
 		entry := config.MarketplaceEntry{URL: source.URL, Alias: source.Name, Source: layer.Source}
 		resources := make(map[string]lockfile.MarketplaceResourceLock, len(source.Requests))
 		bindings := make(map[string]string, len(source.Requests))
@@ -59,9 +77,28 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			}
 			plan, err := results[i].plan, results[i].err
 			if err != nil {
+				if skipOptionalRemoved && isMissingDirectSelection(source.URL, request, err) {
+					if request.Required {
+						return lockfile.Document{}, fmt.Errorf("required selection %s (resources.%s.required): %w", request.Locator, source.Name, err)
+					}
+					if request.Options.Revision == "" {
+						if skipped != nil {
+							installedName := request.Name
+							if request.Options.HasAs {
+								installedName = request.Options.As
+							}
+							*skipped = append(*skipped, config.MarketplaceSelectionToSkip{
+								Source: layer.Source, SourceName: source.Name, Locator: request.Locator,
+								URL: source.URL, Registry: request.Registry, Kind: request.MarketplaceKind(), Name: request.Name,
+								InstalledName: installedName,
+							})
+						}
+						continue
+					}
+				}
 				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, err)
 			}
-			if i > 0 && plan.Entry.InstanceID != entry.InstanceID {
+			if entry.InstanceID != "" && plan.Entry.InstanceID != entry.InstanceID {
 				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, plan.Entry.InstanceID, entry.InstanceID)
 			}
 			if plan.PreparationWork < 1 || plan.PreparationWork > remainingResources {
@@ -112,6 +149,40 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		doc.Marketplaces = append(doc.Marketplaces, locked)
 	}
 	return lockfile.Normalize(doc)
+}
+
+func MarketplaceRequestRecord(doc *lockfile.Document, url string, request config.V4ResourceRequest) (lockfile.MarketplaceResourceLock, bool) {
+	if doc == nil || doc.APIVersion != lockfile.APIVersionV2 {
+		return lockfile.MarketplaceResourceLock{}, false
+	}
+	for _, endpoint := range doc.Marketplaces {
+		if endpoint.URL != url {
+			continue
+		}
+		for _, binding := range endpoint.RegistryBindings {
+			if binding.Name != request.Registry {
+				continue
+			}
+			for _, resource := range endpoint.Resources {
+				if resource.RegistryID == binding.RegistryID && resource.Kind == request.MarketplaceKind() && resource.Name == request.Name {
+					return resource, true
+				}
+			}
+			return lockfile.MarketplaceResourceLock{}, false
+		}
+		return lockfile.MarketplaceResourceLock{}, false
+	}
+	return lockfile.MarketplaceResourceLock{}, false
+}
+
+func isMissingDirectSelection(url string, request config.V4ResourceRequest, err error) bool {
+	var missing *marketplace.MissingResourceError
+	return errors.As(err, &missing) &&
+		missing.URL == url &&
+		missing.Registry == request.Registry &&
+		missing.Kind == request.MarketplaceKind() &&
+		missing.Name == request.Name &&
+		missing.Revision == request.Options.Revision
 }
 
 // EndpointInstanceID returns the instance identity that the Marketplace at url
