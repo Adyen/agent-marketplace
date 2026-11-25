@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -117,5 +120,140 @@ func TestProspectiveMarketplacePlaceLocksRefuseMismatchedProfile(t *testing.T) {
 	}
 	if after, err := os.ReadFile(lockPaths.CanonicalLock); err != nil || !bytes.Equal(after, originalLock) {
 		t.Fatalf("deployed lock changed during prospective validation: %v", err)
+	}
+}
+
+// spec: target-profile-place/ambiguous-or-unsupported-profiles-refuse-before-writes
+func TestSyncRefusesAmbiguousOrUnsupportedPlaceProfiles(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, test := range []struct {
+		name string
+		want []string
+	}{
+		{
+			name: "ambiguous",
+			want: []string{
+				"marketplace.profile.selection-ambiguous",
+				"invented-app",
+				"builtin:agent-marketplace",
+			},
+		},
+		{
+			name: "unsupported",
+			want: []string{"v4.harness", "unknown-app"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newTargetApprovalFixture(t)
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.NotFound(w, r)
+			}))
+			defer server.Close()
+
+			configBytes := bytes.Replace(
+				fixture.userConfigBytes, []byte("https://market.example"), []byte(server.URL), 1,
+			)
+			configBytes = bytes.Replace(
+				configBytes,
+				[]byte("apiVersion: agent-marketplace/v4\n"),
+				[]byte("apiVersion: agent-marketplace/v4\ntargets: [invented-app]\n"),
+				1,
+			)
+			if test.name == "ambiguous" {
+				configBytes = bytes.Replace(
+					configBytes,
+					[]byte("hosted: [tools/target-profile/invented-app]"),
+					[]byte("hosted: [tools/target-profile/invented-app, bundled/target-profile/invented-app]"),
+					1,
+				)
+			} else {
+				configBytes = bytes.Replace(
+					configBytes, []byte("targets: [invented-app]"), []byte("targets: [unknown-app]"), 1,
+				)
+			}
+			if bytes.Equal(configBytes, fixture.userConfigBytes) {
+				t.Fatal("test config transformations did not change the authored fixture")
+			}
+
+			doc, err := lockfile.Decode(fixture.userLockBytes)
+			if err != nil {
+				t.Fatalf("decode fixture lock: %v", err)
+			}
+			if len(doc.Marketplaces) != 1 {
+				t.Fatalf("fixture Marketplace locks = %#v, want one", doc.Marketplaces)
+			}
+			market := doc.Marketplaces[0]
+			market.URL = server.URL
+			if test.name == "ambiguous" {
+				profileIndex := -1
+				for i := range market.Resources {
+					if market.Resources[i].Kind == "target-profile" &&
+						market.Resources[i].Name == fixture.identity.TargetID {
+						profileIndex = i
+						break
+					}
+				}
+				if profileIndex < 0 {
+					t.Fatalf("fixture lock has no external target profile: %#v", market.Resources)
+				}
+				builtinIdentity := fixture.identity
+				builtinIdentity.SourceID = "builtin:agent-marketplace"
+				builtinProfile := market.Resources[profileIndex]
+				builtinProfile.RegistryName = "bundled"
+				builtinProfile.RegistryID = "bundled-id"
+				builtinProfile.ProfileIdentity = &builtinIdentity
+				market.RegistryBindings = append(
+					append([]lockfile.MarketplaceRegistryBinding(nil), market.RegistryBindings...),
+					lockfile.MarketplaceRegistryBinding{Name: "bundled", RegistryID: "bundled-id"},
+				)
+				market.Resources = append(
+					append([]lockfile.MarketplaceResourceLock(nil), market.Resources...),
+					builtinProfile,
+				)
+			}
+			doc.Marketplaces[0] = market
+			lockBytes, err := lockfile.Encode(doc)
+			if err != nil {
+				t.Fatalf("encode fixture lock: %v", err)
+			}
+			if err := os.WriteFile(fixture.userConfig, configBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fixture.userLock, lockBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+			lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+			targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+			stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+			output, err := executeCommand("sync")
+			diagnostic := output
+			if err != nil {
+				diagnostic += "\n" + err.Error()
+			}
+			if err == nil {
+				t.Fatalf("sync accepted %s profile selection:\n%s", test.name, output)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(diagnostic, want) {
+					t.Fatalf("sync %s diagnostic = %q, want %q", test.name, diagnostic, want)
+				}
+			}
+			if test.name == "ambiguous" && !strings.Contains(diagnostic, fixture.identity.SourceID) {
+				t.Fatalf("ambiguous profile diagnostic omitted external source %q: %s", fixture.identity.SourceID, diagnostic)
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("sync %s made %d hosted requests before refusal", test.name, got)
+			}
+			assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+			assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+			assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+			assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+		})
 	}
 }
