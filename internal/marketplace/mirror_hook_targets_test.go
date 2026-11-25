@@ -27,7 +27,7 @@ func TestMirrorHookNativeTargets(t *testing.T) {
 		projectScript, userScript       string
 	}{
 		{hcc.TargetClaude, ".claude/settings.json", ".claude/settings.json", ".claude/hook-support", ".claude/hook-support"},
-		{hcc.TargetFactory, ".factory/hooks.json", ".factory/hooks.json", ".factory/hook-support", ".factory/hook-support"},
+		{hcc.TargetFactory, ".factory/settings.local.json", ".factory/settings.local.json", ".factory/hook-support", ".factory/hook-support"},
 		{hcc.TargetCursor, ".cursor/hooks.json", ".cursor/hooks.json", ".cursor/hook-support", ".cursor/hook-support"},
 		{hcc.TargetWindsurf, ".devin/hooks.json", ".codeium/windsurf/hooks.json", "hook-support", ".codeium/windsurf/hook-support"},
 		{hcc.TargetGemini, ".gemini/settings.json", ".gemini/settings.json", ".gemini/hook-support", ".gemini/hook-support"},

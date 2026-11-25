@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -420,6 +421,68 @@ func TestFactoryRepoForwardSettingsLocalSatisfiesWithoutWritingHooksJSON(t *test
 		t.Fatalf("created .factory/hooks.json: %v", err)
 	}
 	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
+}
+
+func TestFactoryRepoForwardSettingsLocalPreservesManifestTrackedSupportFiles(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", nativeSupportClaudeFiles("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"))
+	if err := os.Chmod(filepath.Join(provider.RegistryURL, "hooks", "scripts", "check.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
+	plan, _ := nativeHookActivationSupportPath(t, resolved[0], hcc.TargetFactory, false, filepath.Join(repo, ".factory"))
+	if len(plan.artifacts) == 0 {
+		t.Fatal("expected support artifacts for source-backed hook")
+	}
+	factoryRoot := filepath.Join(repo, ".factory")
+	portableState, err := loadPortableState(repo, false)
+	if err != nil {
+		t.Fatalf("loadPortableState: %v", err)
+	}
+	var supportPath string
+	for _, art := range plan.artifacts {
+		full := filepath.Join(factoryRoot, filepath.FromSlash(art.Path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, art.Bytes, art.Mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(full, art.Mode); err != nil {
+			t.Fatal(err)
+		}
+		digest, err := portablePathDigest(full)
+		if err != nil {
+			t.Fatalf("portablePathDigest(%s): %v", full, err)
+		}
+		portableState.add(hcc.TargetFactory, filepath.ToSlash(art.Path), digest)
+		supportPath = full
+	}
+	if err := portableState.save(false); err != nil {
+		t.Fatalf("save portable manifest: %v", err)
+	}
+	supportBefore, supportMode, supportMtime := fileSnapshot(t, supportPath)
+
+	commandBase, err := hookSupportCommandBase(skillTarget{skill: resolved[0], target: hcc.TargetFactory}, repo, plan.relBase)
+	if err != nil {
+		t.Fatalf("hookSupportCommandBase: %v", err)
+	}
+	expectedCommand := `"$FACTORY_PROJECT_DIR"/` + commandBase + "/hooks/scripts/check.sh"
+	settingsLocalPath := seedForwardFactoryRepoHook(t, repo, resolved[0], expectedCommand, "", nil, 0)
+	localBefore, localMode, localMtime := fileSnapshot(t, settingsLocalPath)
+
+	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(config.MaterializationModes{
+		Project: config.MaterializationModeFile,
+		Machine: config.MaterializationModeFile,
+	}))
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("Run: %v / %v", err, report)
+	}
+	if _, err := os.Lstat(filepath.Join(factoryRoot, "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("created .factory/hooks.json despite forward satisfaction: %v", err)
+	}
+	assertFileUnchanged(t, settingsLocalPath, localBefore, localMode, localMtime)
+	assertFileUnchanged(t, supportPath, supportBefore, supportMode, supportMtime)
 }
 
 // spec: hook-resources/mismatched-factory-settings-local-json-hooks-do-not-suppress-repository-hooks-json

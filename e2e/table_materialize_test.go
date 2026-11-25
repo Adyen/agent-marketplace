@@ -515,6 +515,9 @@ func bundleRootNative(harness, scope string) (native, root string) {
 	if harness == "claude" {
 		file = "settings.json"
 	}
+	if harness == "factory" {
+		file = "settings.local.json"
+	}
 	return root + "/." + harness + "/" + file, root
 }
 

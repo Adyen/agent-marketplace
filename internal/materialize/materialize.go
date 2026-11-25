@@ -1839,6 +1839,14 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					continue
 				}
 				if forwardSatisfied {
+					if len(plan.artifacts) > 0 {
+						if hookSupportPaths[key] == nil {
+							hookSupportPaths[key] = make(map[string]bool)
+						}
+						for _, support := range plan.artifacts {
+							hookSupportPaths[key][support.Path] = true
+						}
+					}
 					forwardSatisfiedCounts[key]++
 					allDiags = append(allDiags, result.Diagnostics...)
 					continue

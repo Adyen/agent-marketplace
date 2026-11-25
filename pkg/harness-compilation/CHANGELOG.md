@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Factory Droid machine-scope hooks target `settings.local.json#hooks`
+
+Factory Droid's user-scope (`ScopeUser`) hook aggregate now targets `settings.local.json` under the `hooks` member instead of top-level `hooks.json`, while project scope (`ScopeProject`) stays at `hooks.json` with `settings.local.json#hooks` declared as a forward read location ahead of the repository-scope switch (#1098). Because the repository and machine paths now differ, `target.NativeAggregatePath(target.TargetFactory, ir.KindHook)` returns `"", false` under its documented scope-variant refusal contract; callers that need the hook aggregate path should use `target.NativeAggregateFileForScope(target.TargetFactory, ir.KindHook, machineScope)`. `target.NativeAggregateFile` also adds `LegacyMember`, `LegacyMemberSet`, `RetiredNative`, and `ForwardNative` fields for data-driven migration and forward-read layout metadata.
+
 ### External catalog plugin entries deliver from their locked commit
 
 A plugin selected from a native catalog entry whose source is an external
