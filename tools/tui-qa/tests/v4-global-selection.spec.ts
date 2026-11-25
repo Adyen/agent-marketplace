@@ -39,7 +39,7 @@ journey.test("v4 startup keeps global selection editing and repository bytes", a
   });
   await step("select globally in the v4 user root", () => terminal.write("g"), async () => {
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
   });
   const v4User = fs.readFileSync(userConfig, "utf8");
   assert.match(v4User, /skill\/alpha-skill/);

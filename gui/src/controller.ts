@@ -874,7 +874,7 @@ export class WorkspaceController {
       }
       const missingMarketplaceAssociation = [...(this.state.configuration?.userSources ?? []), ...(this.state.configuration?.organizationSources ?? [])]
         .some((source) => source.kind === 'marketplace' && source.rowSourceId === '')
-      if (firstAcceptedSnapshot && missingMarketplaceAssociation) {
+      if (firstAcceptedSnapshot && (missingMarketplaceAssociation || (this.state.discoveryEnabled && this.state.configuration == null))) {
         void this.loadConfiguration()
       }
     }

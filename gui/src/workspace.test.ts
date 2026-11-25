@@ -2256,6 +2256,26 @@ describe('Event stream reconnect', () => {
     expect(controller.state.configuration?.organizationSources[0]?.rowSourceId).toBe('marketplace:verified')
   })
 
+  it('refreshes verified source associations when the final snapshot arrives before startup settings', async () => {
+    const { client, push } = fakeClient()
+    const stale = deferred<ReturnType<typeof configuration>>()
+    const unverified = configuration({
+      organizationSources: [source({ id: 'market', kind: 'marketplace', rowSourceId: '' })],
+    })
+    const verified = configuration({
+      organizationSources: [source({ id: 'market', kind: 'marketplace', rowSourceId: 'marketplace:verified' })],
+    })
+    vi.mocked(client.configuration).mockReturnValueOnce(stale.promise).mockResolvedValueOnce(verified)
+    const { controller } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'final', discoveryEnabled: true }) }))
+    await tick()
+    expect(client.configuration).toHaveBeenCalledTimes(2)
+    expect(controller.state.configuration?.organizationSources[0]?.rowSourceId).toBe('marketplace:verified')
+    stale.resolve(unverified)
+    await tick()
+    expect(controller.state.configuration?.organizationSources[0]?.rowSourceId).toBe('marketplace:verified')
+  })
+
   // spec: gui-shell/discovery-health-uses-plain-wording
   it('describes discovery health in plain language without cache jargon', async () => {
     const { client, push } = fakeClient()

@@ -40,7 +40,7 @@ journey.test("toggles a v4 directory source globally and syncs native harnesses"
   });
   await step("enable global selection", () => terminal.write("g"), async () => {
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
     await locate(terminal, /~ \d+ out of sync/).unique().expect();
   });
   const pendingConfig = fs.readFileSync(globalConfig, "utf8");
@@ -68,7 +68,7 @@ journey.test("toggles a v4 directory source globally and syncs native harnesses"
   await step("disable global selection", () => terminal.write("g"), async () => {
     await locate(terminal, "alpha-skill").expect();
     await locate(terminal, /Status:\s+available/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).expect({ not: true });
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).expect({ not: true });
     await locate(terminal, /~ \d+ out of sync/).unique().expect();
   });
   const disabledConfig = fs.readFileSync(globalConfig, "utf8");

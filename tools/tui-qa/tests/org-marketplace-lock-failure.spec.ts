@@ -88,7 +88,7 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
     await locate(terminal, /Pending sync\s+\(2\)/).unique().expect();
     await locate(terminal, "~ 3 out of sync").unique().expect();
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
-    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();
   });
   const toggleMs = performance.now() - toggleStarted;
   assert.equal(
