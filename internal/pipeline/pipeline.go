@@ -600,7 +600,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			return result, releaseExactLease
 		}
 		result.placeTargets = append([]string(nil), ec.PlaceTargets...)
-		result.placeProfileReader = DeployedGitPlaceProfileReader(deployedIntent, deployedEvidence)
+		result.placeProfileReader = deployedPlaceProfileReader(deployedIntent, deployedEvidence, ec.Merged, marketplace.DefaultCache())
 		if opts.MarketplaceSourceFilter == nil &&
 			effectiveOpts.FileOverlays == nil &&
 			transientOrganizationMarketplaceLock == transientOrganizationMarketplaceLockUnused {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -17,7 +18,7 @@ import (
 )
 
 // PrepareDeployedPlaceApproval resolves approval for an already selected,
-// deployed Git profile using cached bytes only. The target and state roots must
+// deployed profile using cached bytes only. The target and state roots must
 // already exist; this function does not fetch locks or profile artifacts.
 func PrepareDeployedPlaceApproval(ctx context.Context, ws Workspace, targetID string) (targetprofile.ApprovalBinding, error) {
 	prepared, err := loadDeployedPlaceApproval(ctx, ws, targetID)
@@ -105,7 +106,9 @@ func readSelectedDeployedPlaceProfile(
 	if !ok {
 		return targetprofile.Profile{}, targetprofile.Identity{}, nil, fmt.Errorf("marketplace.profile.selection-invalid: target %q has no selected Marketplace profile", targetID)
 	}
-	raw, err := DeployedGitPlaceProfileReader(intent, evidence)(ctx, identity, resolver.MarketplaceResolveModeCachedNoFetch)
+	raw, err := deployedPlaceProfileReader(intent, evidence, merged, marketplace.DefaultCache())(
+		ctx, identity, resolver.MarketplaceResolveModeCachedNoFetch,
+	)
 	if err != nil {
 		return targetprofile.Profile{}, targetprofile.Identity{}, nil, err
 	}
