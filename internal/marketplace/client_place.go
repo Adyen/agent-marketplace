@@ -51,6 +51,18 @@ func (c *Client) AcquirePlacePackage(ctx context.Context, coordinate store.Resou
 }
 
 func fetchPlaceRevision(ctx context.Context, c *Client, coordinate store.ResourceCoordinate, revision store.RevisionDigest, profileIdentity targetprofile.Identity) (store.AssessedResourceRevision, error) {
+	rev, err := fetchPlaceRevisionMetadata(ctx, c, coordinate, revision)
+	if err != nil {
+		return store.AssessedResourceRevision{}, err
+	}
+	binding := rev.Assessment.HostPackageIdentity
+	if err := binding.MatchProfile(profileIdentity); err != nil {
+		return store.AssessedResourceRevision{}, fmt.Errorf("marketplace.profile.revision-mismatch: package %s profile %s: %w", coordinate.Name, profileIdentity.TargetID, err)
+	}
+	return rev, nil
+}
+
+func fetchPlaceRevisionMetadata(ctx context.Context, c *Client, coordinate store.ResourceCoordinate, revision store.RevisionDigest) (store.AssessedResourceRevision, error) {
 	var response resourceRevisionResponse
 	requestURL := c.requestURL([]string{"api", "v1", "resources", string(coordinate.Registry), coordinate.Kind, coordinate.Name, "revisions", string(revision)}, nil)
 	if err := c.getJSONMode(ctx, requestURL, &response, false, mpapi.TargetProfilePlaceFeature); err != nil {
@@ -75,9 +87,6 @@ func fetchPlaceRevision(ctx context.Context, c *Client, coordinate store.Resourc
 	binding := rev.Assessment.HostPackageIdentity
 	if binding == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("place revision has no package identity")
-	}
-	if err := binding.MatchProfile(profileIdentity); err != nil {
-		return store.AssessedResourceRevision{}, fmt.Errorf("marketplace.profile.revision-mismatch: package %s profile %s: %w", coordinate.Name, profileIdentity.TargetID, err)
 	}
 	return rev, nil
 }

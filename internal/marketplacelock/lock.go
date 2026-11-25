@@ -37,10 +37,10 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 		}
 		type requestResult struct {
-			plan    *marketplace.PreparedInstall
-			entry   config.MarketplaceEntry
-			profile *lockfile.MarketplaceResourceLock
-			err     error
+			plan   *marketplace.PreparedInstall
+			entry  config.MarketplaceEntry
+			record *lockfile.MarketplaceResourceLock
+			err    error
 		}
 		budget := marketplace.NewPreparationBudget(remainingResources)
 		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
@@ -55,7 +55,11 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			}
 			if locator.Kind == nameutil.TargetProfileKind {
 				acquired, record, err := marketplaceResolver.PrepareTargetProfileLock(ctx, entry, locator, budget)
-				return requestResult{entry: acquired, profile: &record, err: err}
+				return requestResult{entry: acquired, record: &record, err: err}
+			}
+			if _, _, scoped := nameutil.SplitPlaceKind(locator.Kind); scoped {
+				acquired, record, err := marketplaceResolver.PreparePlacePackageLock(ctx, entry, locator, budget)
+				return requestResult{entry: acquired, record: &record, err: err}
 			}
 			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, locator, targets, budget, policy)
 			return requestResult{plan: plan, err: err}
@@ -90,8 +94,8 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			processedPins += count
 			for j := 0; j < count; j++ {
 				var record lockfile.MarketplaceResourceLock
-				if result.profile != nil {
-					record = *result.profile
+				if result.record != nil {
+					record = *result.record
 				} else {
 					pin := pins[j]
 					verified, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)

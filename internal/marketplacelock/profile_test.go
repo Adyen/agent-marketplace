@@ -24,7 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-func TestResolveLocksExplicitTargetProfile(t *testing.T) {
+func TestResolveLocksExplicitTargetProfileAndPlaceMetadata(t *testing.T) {
 	profileBytes := []byte(`apiVersion: agent-marketplace.io/target-profile/v1
 id: invented-app
 label: Invented App
@@ -72,13 +72,44 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
 	}
 	profileContent := projection.Bodies[projection.Manifest.Files[0].ContentDigest]
 
-	var requests atomic.Int32
+	packageDigest := "sha256:" + strings.Repeat("b", 64)
+	archiveDigest := "sha256:" + strings.Repeat("f", 64)
+	binding := targetprofile.Binding{
+		PackageContentDigest: packageDigest, DeliveryMappingDigest: "sha256:" + strings.Repeat("c", 64),
+		ProfileDigest: profileDigest, ProfileIdentity: identity,
+	}
+	packageCoordinate := store.ResourceCoordinate{
+		Marketplace: "mp", Registry: "src", Kind: "invented-app/mod", Name: "sample",
+	}
+	packageAssessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
+		Coordinate: packageCoordinate, ContentDigest: store.RevisionDigest(packageDigest),
+		AnalyzerVersion: "test/v1", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("a", 64)),
+		Decision:                 store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("d", 64)),
+		AssessedAt:               time.Unix(1, 0).UTC(), HostPackageIdentity: &binding,
+	})
+	if err != nil {
+		t.Fatalf("finalize package assessment: %v", err)
+	}
+	packageRevision := store.AssessedResourceRevision{
+		ResourceRevision: store.ResourceRevision{
+			Coordinate: packageCoordinate, ContentDigest: store.RevisionDigest(packageDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		},
+		Assessment: packageAssessment,
+		Occurrence: store.ResourceOccurrence{
+			Coordinate: packageCoordinate, ContentDigest: store.RevisionDigest(packageDigest),
+			Commit: strings.Repeat("e", 40), ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("9", 64)),
+		},
+	}
+
+	var profileContentRequests, profileRevisionRequests, packageRevisionRequests, archiveRequests, unknownRequests atomic.Int32
 	revisionPath := "/api/v1/resources/src/target-profile/" + identity.TargetID + "/revisions/" + profileDigest
 	inspectionPath := revisionPath + "/inspection"
 	contentPath := inspectionPath + "/content"
+	packageRevisionPath := "/api/v1/resources/src/invented-app%2Fmod/sample/revisions/" + packageDigest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		switch r.URL.Path {
+		switch r.URL.EscapedPath() {
 		case "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "https://example.com"))
 		case "/api/v1/registries/tools":
@@ -88,25 +119,24 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
 				Acquisition: store.AcquisitionMirror, Listed: true,
 			})
 		case revisionPath:
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(struct {
-				store.AssessedResourceRevision
-				CurrentAvailability struct {
-					Availability string `json:"availability"`
-				} `json:"current_availability"`
-			}{
-				AssessedResourceRevision: revision,
-				CurrentAvailability: struct {
-					Availability string `json:"availability"`
-				}{Availability: "available"},
-			})
+			profileRevisionRequests.Add(1)
+			writeResourceRevisionResponse(w, revision)
 		case inspectionPath:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(projection.Payload)
 		case contentPath:
+			profileContentRequests.Add(1)
 			w.Header().Set("Content-Type", inspection.MediaYAML)
 			_, _ = w.Write(profileContent)
+		case packageRevisionPath:
+			packageRevisionRequests.Add(1)
+			writeResourceRevisionResponse(w, packageRevision)
 		default:
+			if strings.HasPrefix(r.URL.EscapedPath(), "/api/v1/archives/") {
+				archiveRequests.Add(1)
+			} else {
+				unknownRequests.Add(1)
+			}
 			http.NotFound(w, r)
 		}
 	}))
@@ -126,7 +156,8 @@ resources:
   hosted:
     include:
       - tools/target-profile/invented-app: {revision: %s}
-`, server.URL, profileDigest)
+      - tools/invented-app%%2Fmod/sample: {revision: %s}
+`, server.URL, profileDigest, packageDigest)
 	if err := os.WriteFile(userConfigPath, []byte(userConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -142,12 +173,20 @@ resources:
 		t.Fatalf("load v4 user intent: %v", err)
 	}
 	sources := layer.MarketplaceSources()
-	if len(sources) != 1 || len(sources[0].Requests) != 1 ||
-		sources[0].Requests[0].Kind != "target-profile" ||
-		sources[0].Requests[0].Registry != "tools" ||
-		sources[0].Requests[0].Name != identity.TargetID ||
-		sources[0].Requests[0].Options.Revision != profileDigest {
+	if len(sources) != 1 || len(sources[0].Requests) != 2 {
 		t.Fatalf("user Marketplace requests = %#v", sources)
+	}
+	var sawProfile, sawPackage bool
+	for _, request := range sources[0].Requests {
+		switch request.Kind {
+		case "target-profile":
+			sawProfile = request.Registry == "tools" && request.Name == identity.TargetID && request.Options.Revision == profileDigest
+		case "invented-app/mod":
+			sawPackage = request.Registry == "tools" && request.Name == "sample" && request.Options.Revision == packageDigest
+		}
+	}
+	if !sawProfile || !sawPackage {
+		t.Fatalf("user Marketplace requests = %#v", sources[0].Requests)
 	}
 
 	cache := marketplace.NewCache(t.TempDir())
@@ -164,27 +203,75 @@ resources:
 		!reflect.DeepEqual(market.RegistryBindings, []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}}) {
 		t.Fatalf("Marketplace endpoint lock = %+v", market)
 	}
-	if len(market.Resources) != 1 {
-		t.Fatalf("locked resources = %#v, want one virtual profile", market.Resources)
+	if len(market.Resources) != 2 {
+		t.Fatalf("locked resources = %#v, want one virtual profile and one scoped package", market.Resources)
 	}
-	want := lockfile.MarketplaceResourceLock{
+	wantProfile := lockfile.MarketplaceResourceLock{
 		RegistryName: "tools", RegistryID: "src", Kind: "target-profile", Name: identity.TargetID,
 		Revision: profileDigest, ContentDigest: lockfile.Digest(profileDigest),
 		ProfileIdentity: &identity, Acquisition: lockfile.MarketplaceAcquisitionMirror,
 	}
-	if !reflect.DeepEqual(market.Resources[0], want) {
-		t.Fatalf("target-profile lock = %+v, want %+v", market.Resources[0], want)
+	var profileRecord, packageRecord *lockfile.MarketplaceResourceLock
+	for i := range market.Resources {
+		switch market.Resources[i].Kind {
+		case "target-profile":
+			profileRecord = &market.Resources[i]
+		case "invented-app/mod":
+			packageRecord = &market.Resources[i]
+		}
+	}
+	if profileRecord == nil || !reflect.DeepEqual(*profileRecord, wantProfile) {
+		t.Fatalf("target-profile lock = %+v, want %+v", profileRecord, wantProfile)
+	}
+	wantPackage := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "src", Kind: "invented-app/mod", Name: "sample",
+		Revision: packageDigest, ContentDigest: lockfile.Digest(packageDigest),
+		ArchiveDigest: lockfile.Digest(archiveDigest), AssessmentDigest: lockfile.Digest(packageAssessment.AssessmentDigest),
+		HostPackageIdentity: &binding, Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}
+	if packageRecord == nil || !reflect.DeepEqual(*packageRecord, wantPackage) {
+		t.Fatalf("scoped package lock = %+v, want %+v", packageRecord, wantPackage)
 	}
 
 	server.Close()
-	got, err := cache.ReadLockedTargetProfile(market.URL, market.InstanceID, market.Resources[0])
+	got, err := cache.ReadLockedTargetProfile(market.URL, market.InstanceID, *profileRecord)
 	if err != nil {
 		t.Fatalf("read exact profile bytes offline: %v", err)
 	}
 	if !bytes.Equal(got, profileBytes) {
 		t.Fatalf("offline profile bytes = %q, want %q", got, profileBytes)
 	}
-	if got := requests.Load(); got != 5 {
-		t.Fatalf("Marketplace requests = %d, want one each for identity, registry, revision, inspection, and content", got)
+	if got := profileRevisionRequests.Load(); got != 1 {
+		t.Fatalf("profile revision requests = %d, want 1", got)
 	}
+	if got := profileContentRequests.Load(); got != 1 {
+		t.Fatalf("profile content requests = %d, want 1", got)
+	}
+	if got := packageRevisionRequests.Load(); got != 1 {
+		t.Fatalf("scoped revision requests = %d, want 1", got)
+	}
+	if got := archiveRequests.Load(); got != 0 {
+		t.Fatalf("package archive requests = %d, want 0", got)
+	}
+	if got := unknownRequests.Load(); got != 0 {
+		t.Fatalf("unknown Marketplace requests = %d, want 0", got)
+	}
+	if _, err := os.Stat(cache.PlaceholderArchivePath(archiveDigest)); !os.IsNotExist(err) {
+		t.Fatalf("place package archive cache stat error = %v, want not-exist", err)
+	}
+}
+
+func writeResourceRevisionResponse(w http.ResponseWriter, revision store.AssessedResourceRevision) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		store.AssessedResourceRevision
+		CurrentAvailability struct {
+			Availability string `json:"availability"`
+		} `json:"current_availability"`
+	}{
+		AssessedResourceRevision: revision,
+		CurrentAvailability: struct {
+			Availability string `json:"availability"`
+		}{Availability: "available"},
+	})
 }
