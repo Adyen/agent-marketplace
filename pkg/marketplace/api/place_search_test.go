@@ -28,6 +28,7 @@ func (s *placeSearchStore) SearchResourceRevisions(_ context.Context, filter sto
 	return rows, nil
 }
 
+// spec: marketplace-api/place-discovery-does-not-change-legacy-discovery
 func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 	server, meta, _, _, _ := managedRouteFixture(t)
 	server.cfg.Management.Mode = "file"
@@ -119,6 +120,25 @@ func TestOptedInSearchIncludesBoundPlaceRows(t *testing.T) {
 			}
 			assertVary(response)
 		}
+	}
+
+	response = search("/api/v1/search?limit=1")
+	if response.Code != http.StatusOK {
+		t.Fatalf("legacy first-page search status = %d: %s", response.Code, response.Body.String())
+	}
+	assertVary(response)
+	total, items = decode(response)
+	if total != 1 || len(items) != 1 || items[0].Kind != "mcpserver" || items[0].Name != "example" {
+		t.Fatalf("legacy first page total/items = %d/%+v, want 1 mcpserver/example", total, items)
+	}
+	response = search("/api/v1/search?limit=1&offset=1")
+	if response.Code != http.StatusOK {
+		t.Fatalf("legacy second-page search status = %d: %s", response.Code, response.Body.String())
+	}
+	assertVary(response)
+	total, items = decode(response)
+	if total != 1 || len(items) != 0 {
+		t.Fatalf("legacy second page total/items = %d/%+v, want 1/empty", total, items)
 	}
 
 	malformed := scoped

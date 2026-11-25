@@ -28,6 +28,7 @@ checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], s
 kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
 `
 
+// spec: marketplace-api/place-manifests-and-assessments-agree-on-the-exact-binding
 func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 	profileBytes := []byte(placeAcquireProfileYAML)
 	profileIdentity := placeAcquireProfileIdentity(profileBytes)
@@ -129,6 +130,19 @@ func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 		t.Fatalf("profile mismatch requests: revision=%d archive=%d, want 1/0", revisionRequests.Load()-beforeRevisionRequests, archiveRequests.Load()-beforeArchiveRequests)
 	}
 
+	missingBinding := revision
+	missingBindingAssessment := missingBinding.Assessment
+	missingBindingAssessment.HostPackageIdentity = nil
+	missingBinding.Assessment = missingBindingAssessment
+	responseRevision.Store(&missingBinding)
+	beforeRevisionRequests = revisionRequests.Load()
+	beforeArchiveRequests = archiveRequests.Load()
+	failedRevision, failedFiles, err = client.AcquirePlacePackage(context.Background(), coordinate, revision.ContentDigest, profileIdentity, profileBytes)
+	assertPlaceAcquisitionFailure(t, failedRevision, failedFiles, err, "host package identity is required for scoped resource kind")
+	if revisionRequests.Load() != beforeRevisionRequests+1 || archiveRequests.Load() != beforeArchiveRequests {
+		t.Fatalf("missing binding requests: revision=%d archive=%d, want 1/0", revisionRequests.Load()-beforeRevisionRequests, archiveRequests.Load()-beforeArchiveRequests)
+	}
+
 	mismatchedMapping := revision
 	mismatchedAssessment := mismatchedMapping.Assessment
 	mismatchedBinding := *mismatchedAssessment.HostPackageIdentity
@@ -139,10 +153,13 @@ func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finalize changed mapping assessment: %v", err)
 	}
+	if mismatchedMapping.Assessment.AssessmentDigest == revision.Assessment.AssessmentDigest {
+		t.Fatal("mapping-only change retained the prior canonical assessment digest")
+	}
 	responseRevision.Store(&mismatchedMapping)
 	beforeArchiveRequests = archiveRequests.Load()
 	failedRevision, failedFiles, err = client.AcquirePlacePackage(context.Background(), coordinate, revision.ContentDigest, profileIdentity, profileBytes)
-	assertPlaceAcquisitionFailure(t, failedRevision, failedFiles, err, "")
+	assertPlaceAcquisitionFailure(t, failedRevision, failedFiles, err, "place package archive binding does not match assessed revision")
 	if archiveRequests.Load() != beforeArchiveRequests+1 {
 		t.Fatalf("mapping mismatch archive requests = %d, want 1", archiveRequests.Load()-beforeArchiveRequests)
 	}
