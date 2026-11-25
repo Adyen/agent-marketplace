@@ -143,6 +143,7 @@ func newTargetApproveCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("yes", false, "Skip confirmation (not supported)")
+	_ = cmd.Flags().MarkHidden("yes")
 	cmd.Flags().Bool("json", false, "Print the approval result as JSON")
 	return cmd
 }
@@ -180,6 +181,7 @@ func newTargetRetireCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("yes", false, "Skip confirmation (not supported)")
+	_ = cmd.Flags().MarkHidden("yes")
 	return cmd
 }
 
