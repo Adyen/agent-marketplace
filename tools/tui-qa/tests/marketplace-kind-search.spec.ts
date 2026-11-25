@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, step } from "./helpers.js";
 
 // spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 // spec: tui-navigation/other-kinds-retain-additive-text-matching
@@ -27,7 +27,7 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
   };
   const openSearch = async (): Promise<void> => {
     await step("open search", () => terminal.write("/"), async () => {
-      await locate(terminal, /\/\s{20,}/).unique().expect();
+      await expectSearchOpen(terminal);
     });
   };
   const clearSearch = async (): Promise<void> => {

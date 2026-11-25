@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("opencode-select-and-install", ["tui"], 80, 24, { directorySource: true });
 before(journey.setup);
@@ -26,7 +26,7 @@ journey.test("selects OpenCode and installs a skill through the harness modal", 
   });
   assert.match(fs.readFileSync(path.join(fixture.home, ".agents", "config.yaml"), "utf8"), /harnesses:.*\bopencode\b/);
   await step("open search", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/\s{20,}/).unique().expect();
+    await expectSearchOpen(terminal);
   });
   await step("filter alpha", () => terminal.write("alpha"), async () => {
     await locate(terminal, "alpha-skill").expect();

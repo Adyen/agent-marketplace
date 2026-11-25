@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("v4-directory-error-visibility", ["tui"], 80, 24, { directorySource: true });
 before(journey.setup);
@@ -18,7 +18,7 @@ journey.test("keeps the v4 mutation error visible at narrow widths", async (term
     await locate(terminal, "~ in sync").unique().expect();
   });
   await step("open search", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/\s{20,}/).unique().expect();
+    await expectSearchOpen(terminal);
   });
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
     await locate(terminal, "alpha-skill").expect();

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, lockedGitCommit, step, waitForExit } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, lockedGitCommit, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/discovered-marketplace-skill-installs-at-the-chosen-scope
@@ -29,7 +29,7 @@ journey.test("installs a discovered Marketplace skill while locked Git sources s
   );
 
   await step("open search", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/\s{20,}/).unique().expect();
+    await expectSearchOpen(terminal);
   });
   await step("the Marketplace answers with the uninstalled skill", () => terminal.write("org-review"), async () => {
     await locate(terminal, "market/tools/org-review").expect({ timeout: 10_000 });
