@@ -147,6 +147,9 @@ export const locate = (terminal: TestTerminal, pattern: string | RegExp): Locato
   return terminal.getByText(pattern.source, { regex: true });
 };
 
+export const expectSearchOpen = (terminal: TestTerminal): Promise<void> =>
+  locate(terminal, "enter apply · esc cancel").unique().expect();
+
 // modalText returns the text inside the bordered modal with whitespace removed,
 // so assertions survive wrapping that depends on temporary path lengths.
 export const modalText = async (terminal: TestTerminal): Promise<string> =>

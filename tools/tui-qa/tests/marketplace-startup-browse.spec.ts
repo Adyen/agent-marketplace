@@ -5,7 +5,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, seedStartupBrowseCache, step, waitForExit, waitForSignal } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, seedStartupBrowseCache, step, waitForExit, waitForSignal } from "./helpers.js";
 import { targetPID } from "./process-helpers.js";
 
 // spec: tui-startup/cold-startup-browses-beyond-the-first-page
@@ -199,7 +199,7 @@ searchJourney.test("search and clear preserve browse inventory while a later pag
     await locate(terminal, /~ in sync/).unique().expect();
   });
   await step("open search without cancelling the held browse", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/\s{20,}/).unique().expect();
+    await expectSearchOpen(terminal);
   });
   await step("type a query that exceeds the per-endpoint search limit", () => terminal.write("browse-resource"), async () => {
     await locate(terminal, "browse-resource").expect();

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { defineFixture, expectSearchOpen, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("v4-directory-global-toggle", ["tui"], 80, 24, { directorySource: true });
@@ -25,7 +25,7 @@ journey.test("toggles a v4 directory source globally and syncs native harnesses"
     await locate(terminal, "~ in sync").unique().expect();
   });
   await step("search for available alpha", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/\s{20,}/).unique().expect();
+    await expectSearchOpen(terminal);
   });
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
     await locate(terminal, "alpha-skill").expect();
