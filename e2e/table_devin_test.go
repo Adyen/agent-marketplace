@@ -78,9 +78,9 @@ func init() {
 		},
 	})
 
+	// spec: hook-resources/factory-droid-machine-scope-hooks-materialize-into-settings-local-json
 	testTable = append(testTable, TestCase{
 		Name: "codex/machine_lifecycle_multi_harness",
-		Desc: "Given machine-scoped Codex resources selected with Factory, When sync, check, prune, restore, and deinit run, Then both Codex root partitions and Factory follow the same lifecycle without check-mode mutation",
 		Registries: []RegistryDef{
 			{Name: "codex-machine", Skills: []Skill{
 				{Name: "machine-skill", Description: "Codex machine skill"},

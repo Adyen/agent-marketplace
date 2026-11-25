@@ -1,7 +1,6 @@
 # Untagged testTable identifiers at introduction; this list can only shrink.
 # A new untagged case needs a // spec: line bound to an existing OpenSpec scenario.
 cli/help_and_completion
-codex/machine_lifecycle_multi_harness
 codex/repo_all_kinds_deterministic
 codex/repo_shared_file_collisions_fail_closed
 collection/cross_kind_same_name_no_collision
