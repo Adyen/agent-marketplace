@@ -115,6 +115,14 @@ func (l LayerIntent) Err() error {
 	return errors.Join(l.errors...)
 }
 
+// PlacePreapprovals returns the valid organization layer's exact target grants.
+func (l LayerIntent) PlacePreapprovals() []PlacePreapproval {
+	if l.Source != Organization || l.v4 == nil || l.Err() != nil {
+		return nil
+	}
+	return clonePlacePreapprovals(l.v4.PlacePreapprovals)
+}
+
 func (l LayerIntent) Settings() Settings {
 	if l.v4 != nil {
 		settings := Settings{

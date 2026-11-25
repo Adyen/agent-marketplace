@@ -156,6 +156,8 @@ type V4Config struct {
 	Requests   []V4ResourceRequest
 	Decisions  []V4SelectionDecision
 	Files      []string
+	// PlacePreapprovals are available only from a valid organization root.
+	PlacePreapprovals []PlacePreapproval
 
 	reads []ConfigRead
 
@@ -375,7 +377,7 @@ var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "targets": {}, "allowed_registries": {}, "allowed_marketplaces": {},
 	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
-	"requires": {},
+	"requires": {}, "target_preapprovals": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -517,6 +519,7 @@ type v4Document struct {
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
 	requires            *RequiresConfig
+	placePreapprovals   []PlacePreapproval
 	telemetryFields     v4TelemetryFields
 }
 
@@ -582,6 +585,21 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	doc := &v4Document{path: file, sources: map[string]V4Source{}, groups: map[string]V4ResourceGroup{}}
+	if n := mappingValue(raw, "target_preapprovals"); n != nil {
+		if !root || len(kinds) == 0 || kinds[0] != organizationLayer {
+			return nil, v4DocumentError(file, raw, v4err(
+				"v4.target-preapprovals-scope", "target_preapprovals", n.Line,
+				"target_preapprovals is allowed only in the organization root",
+			), !root)
+		}
+		entries, err := decodeV4PlacePreapprovals(n)
+		if err != nil {
+			return nil, v4DocumentError(file, raw, v4err(
+				"v4.target-preapprovals", "target_preapprovals", n.Line, "%v", err,
+			), !root)
+		}
+		doc.placePreapprovals = entries
+	}
 	allowPlaceIDs := len(kinds) > 0 && (kinds[0] == userLayer || kinds[0] == organizationLayer)
 	if err := decodeV4AuxiliaryFields(raw, doc, allowPlaceIDs); err != nil {
 		return nil, v4DocumentError(file, raw, err, !root)
@@ -2056,6 +2074,9 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
+	if doc.placePreapprovals != nil {
+		dst.PlacePreapprovals = clonePlacePreapprovals(doc.placePreapprovals)
+	}
 	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, Requires: doc.requires, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
