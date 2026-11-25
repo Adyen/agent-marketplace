@@ -932,6 +932,7 @@ func TestPlanPlaceDeselection(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/deselection-retires-owned-files-and-cedes-edits
 func TestCommitPlaceDeselection(t *testing.T) {
 	t.Run("commits only deselected package files", func(t *testing.T) {
 		fixture, _, selected := installPlaceDeselectionPackages(t)
@@ -973,6 +974,46 @@ func TestCommitPlaceDeselection(t *testing.T) {
 		projection, err := owner.PlaceFromSnapshot(snapshot)
 		if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Name != selected.Pin.Name {
 			t.Fatalf("post-deselection ownership = %#v, %v", projection, err)
+		}
+		repeated, cededAgain, err := commitPlaceChanges(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{selected}, true,
+		)
+		if err != nil || len(repeated.Changed) != 0 || len(cededAgain) != 0 {
+			t.Fatalf("repeat deselection commit = %#v ceded=%v err=%v", repeated, cededAgain, err)
+		}
+		if _, err := os.Lstat(missingPath); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("missing ceded file reappeared on repeat selection: %v", err)
+		}
+		statePath := owner.StateFile()
+		stateBefore, err := os.ReadFile(statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		claimant := resolvedPlacePackageNamedForPublish(t, fixture, "claimant", []targetprofile.PackageFile{
+			{
+				SourcePath: "payload/edit.md", DestinationPath: "mods/sample/edit.md",
+				Mode: 0o644, Bytes: editedBytes,
+			},
+			{
+				SourcePath: "payload/missing.md", DestinationPath: "mods/sample/missing.md",
+				Mode: 0o644, Bytes: []byte("missing\n"),
+			},
+		})
+		if _, err := CommitPlaceUpserts(
+			context.Background(), fixture.binding, fixture.raw, fixture.env,
+			[]marketplace.ResolvedPlacePackage{selected, claimant},
+		); err == nil || !strings.Contains(err.Error(), "mods/sample/edit.md") {
+			t.Fatalf("claim of ceded user file = %v, want refusal naming mods/sample/edit.md", err)
+		}
+		if got, err := os.ReadFile(editedPath); err != nil || !bytes.Equal(got, editedBytes) {
+			t.Fatalf("failed claimant changed edited file: %q, %v", got, err)
+		}
+		if _, err := os.Lstat(missingPath); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("failed claimant created previously missing file: %v", err)
+		}
+		if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, stateBefore) {
+			t.Fatalf("failed claimant changed ownership generation: %v", err)
 		}
 	})
 

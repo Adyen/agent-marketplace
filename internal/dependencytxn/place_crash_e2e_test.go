@@ -138,6 +138,92 @@ func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/ownership-commits-once-after-full-publication
+func TestPlaceCrashCommitsOwnershipOnce(t *testing.T) {
+	for _, test := range []struct {
+		point     FaultStage
+		committed bool
+	}{
+		{point: FaultPlaceAfterPublish},
+		{point: FaultPlaceAfterOwnership, committed: true},
+	} {
+		t.Run(string(test.point), func(t *testing.T) {
+			root, stateDir, plan := newPlaceFixture(t, true)
+			if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			plan.Directories = nil
+			oldOwnership, err := os.ReadFile(plan.Ownership.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intendedOwnership, err := json.Marshal(map[string]any{
+				"canonical_root": root, "root_key": testPlaceRootKey(root),
+				"place_directories": []any{}, "fixture_marker": "committed",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan.Ownership.Bytes = intendedOwnership
+			if reflect.DeepEqual(oldOwnership, intendedOwnership) {
+				t.Fatal("fixture old and intended ownership records must differ")
+			}
+
+			runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, test.point, 0)
+			assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+			if pending := journals(t, stateDir); len(pending) != 1 {
+				t.Fatalf("crashed ownership publication journals = %v, want one", pending)
+			}
+			crashedBytes, err := os.ReadFile(plan.Ownership.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			crashedInfo, err := os.Lstat(plan.Ownership.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCrashed := oldOwnership
+			if test.committed {
+				wantCrashed = intendedOwnership
+			}
+			if !reflect.DeepEqual(crashedBytes, wantCrashed) {
+				t.Fatalf("crashed ownership bytes = %q, want %q", crashedBytes, wantCrashed)
+			}
+
+			if err := Recover(context.Background(), stateDir); err != nil {
+				t.Fatal(err)
+			}
+			assertFile(t, filepath.Join(root, "mods", "new.txt"), "new package bytes\n", 0o644)
+			assertFile(t, plan.Ownership.Path, string(intendedOwnership), 0o600)
+			recoveredInfo, err := os.Lstat(plan.Ownership.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.committed && (!os.SameFile(crashedInfo, recoveredInfo) ||
+				!crashedInfo.ModTime().Equal(recoveredInfo.ModTime())) {
+				t.Fatalf("recovery rewrote committed ownership: before=%v after=%v", crashedInfo, recoveredInfo)
+			}
+			if pending := journals(t, stateDir); len(pending) != 0 {
+				t.Fatalf("ownership recovery left journals: %v", pending)
+			}
+
+			if err := Recover(context.Background(), stateDir); err != nil {
+				t.Fatalf("repeat recovery: %v", err)
+			}
+			assertFile(t, plan.Ownership.Path, string(intendedOwnership), 0o600)
+			repeatedInfo, err := os.Lstat(plan.Ownership.Path)
+			if err != nil ||
+				!os.SameFile(recoveredInfo, repeatedInfo) ||
+				!recoveredInfo.ModTime().Equal(repeatedInfo.ModTime()) {
+				t.Fatalf("repeat recovery changed ownership: before=%v after=%v err=%v", recoveredInfo, repeatedInfo, err)
+			}
+			if pending := journals(t, stateDir); len(pending) != 0 {
+				t.Fatalf("repeat recovery left journals: %v", pending)
+			}
+		})
+	}
+}
+
 func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
@@ -377,31 +463,93 @@ func TestPlaceCrashPruneRefusesUnmarkedAbsence(t *testing.T) {
 	}
 }
 
-func TestPlaceCrashChangedStageIsRetainedAndNamed(t *testing.T) {
-	_, stateDir, plan := newPlaceFixture(t, false)
-	runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, FaultPlaceAfterStage, 0)
-	journalPath := journals(t, stateDir)[0]
-	j, err := readJournal(journalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stagePath := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage))
-	stageFile := filepath.Join(stagePath, j.Place.Writes[0].StageName)
-	if err := os.WriteFile(stageFile, []byte("foreign bytes"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pending := CheckPending(stateDir)
-	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
-		!strings.Contains(pending.Error(), j.Place.Stage) {
-		t.Fatalf("CheckPending failed to name changed stage: %v", pending)
-	}
-	err = Recover(context.Background(), stateDir)
-	if err == nil || !strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), j.Place.Stage) {
-		t.Fatalf("recovery failed to name changed stage: %v", err)
-	}
-	assertFile(t, stageFile, "foreign bytes", 0o644)
-	if got := journals(t, stateDir); len(got) != 1 || got[0] != journalPath {
-		t.Fatalf("recovery discarded stage evidence: %v", got)
+// spec: target-profile-place/incomplete-staging-is-cleared-never-resumed
+func TestPlaceCrashBeforeFirstWriteClearsOnlyExactStages(t *testing.T) {
+	for _, point := range []FaultStage{FaultPlaceAfterStage, FaultPlaceBeforePublish} {
+		for _, changed := range []bool{false, true} {
+			phase := "exact"
+			if changed {
+				phase = "changed"
+			}
+			t.Run(string(point)+"/"+phase, func(t *testing.T) {
+				root, stateDir, plan := newPlaceFixture(t, false)
+				if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				plan.Directories = nil
+				second := plan.Writes[0]
+				second.Path = "mods/second.txt"
+				plan.Writes = append(plan.Writes, second)
+				runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, point, 0)
+
+				pending := journals(t, stateDir)
+				if len(pending) != 1 {
+					t.Fatalf("crash journals = %v, want one", pending)
+				}
+				journalPath := pending[0]
+				j, err := readJournal(journalPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stagePath := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage))
+				firstStage := filepath.Join(stagePath, j.Place.Writes[0].StageName)
+				secondStage := filepath.Join(stagePath, j.Place.Writes[1].StageName)
+				assertFile(t, firstStage, "new package bytes\n", 0o644)
+				if point == FaultPlaceAfterStage {
+					if _, err := os.Lstat(secondStage); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("after-stage crash staged the second write: %v", err)
+					}
+				} else {
+					assertFile(t, secondStage, "new package bytes\n", 0o644)
+				}
+				if changed {
+					if err := os.WriteFile(firstStage, []byte("foreign bytes"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				pendingErr := CheckPending(stateDir)
+				if !errors.Is(pendingErr, ErrRecoveryRequired) {
+					t.Fatalf("CheckPending = %v, want ErrRecoveryRequired", pendingErr)
+				}
+				if changed && (!strings.Contains(pendingErr.Error(), journalPath) ||
+					!strings.Contains(pendingErr.Error(), j.Place.Stage)) {
+					t.Fatalf("CheckPending failed to name changed stage: %v", pendingErr)
+				}
+				recoveryErr := Recover(context.Background(), stateDir)
+				if changed {
+					if recoveryErr == nil || !strings.Contains(recoveryErr.Error(), journalPath) ||
+						!strings.Contains(recoveryErr.Error(), j.Place.Stage) {
+						t.Fatalf("recovery failed to name changed stage: %v", recoveryErr)
+					}
+					assertFile(t, firstStage, "foreign bytes", 0o644)
+					if got := journals(t, stateDir); len(got) != 1 || got[0] != journalPath {
+						t.Fatalf("recovery discarded changed-stage evidence: %v", got)
+					}
+				} else {
+					if recoveryErr != nil {
+						t.Fatalf("recovery of exact stage: %v", recoveryErr)
+					}
+					if _, err := os.Lstat(stagePath); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("recovery retained exact stage: %v", err)
+					}
+					if got := journals(t, stateDir); len(got) != 0 {
+						t.Fatalf("recovery retained exact-stage journal: %v", got)
+					}
+					if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("exact incomplete staging wrote ownership: %v", err)
+					}
+				}
+				for _, destination := range []string{
+					filepath.Join(root, "mods", "new.txt"),
+					filepath.Join(root, "mods", "second.txt"),
+				} {
+					if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("incomplete staging published %s: %v", destination, err)
+					}
+				}
+			})
+		}
 	}
 }
 
