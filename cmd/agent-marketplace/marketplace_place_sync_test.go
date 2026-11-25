@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: target-profile-place/assessment-binds-the-exact-profile-online-and-offline
 func TestHostedTargetProfileBootstrapApprovalAndOfflineSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -234,14 +235,22 @@ resources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	onlineLockInfo, err := os.Stat(fixture.userLock)
-	if err != nil {
-		t.Fatal(err)
-	}
 	onlineRequests := requests.snapshot()
 	if onlineRequests.unknown != 0 {
 		t.Fatalf("unexpected Marketplace routes after online sync: %v", requests.unexpectedPaths())
 	}
+	assertHostedSyncRefusesProfileMismatch(t, fixture, onlineConfig, onlineLock, &requests)
+	assertTargetStateTreeUnchanged(t, targetTree, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, stateTree, fixture.stateRoot)
+	if got, err := os.ReadFile(fixture.userConfig); err != nil || !bytes.Equal(got, onlineConfig) {
+		t.Fatalf("user config not restored after mismatch checks: %v", err)
+	}
+	if got, err := os.ReadFile(fixture.userLock); err != nil || !bytes.Equal(got, onlineLock) {
+		t.Fatalf("deployed lock not restored after mismatch checks: %v", err)
+	}
+	offlineConfig := snapshotTargetStateTree(t, fixture.userConfig)
+	offlineLock := snapshotTargetStateTree(t, fixture.userLock)
+	onlineRequests = requests.snapshot()
 
 	server.Close()
 	output, err = executeCommand("sync", "--offline")
@@ -250,18 +259,116 @@ resources:
 	}
 	assertTargetStateTreeUnchanged(t, targetTree, fixture.targetRoot)
 	assertTargetStateTreeUnchanged(t, stateTree, fixture.stateRoot)
-	if got, err := os.ReadFile(fixture.userConfig); err != nil || !bytes.Equal(got, onlineConfig) {
-		t.Fatalf("user config changed during offline sync: %v", err)
-	}
-	if got, err := os.ReadFile(fixture.userLock); err != nil || !bytes.Equal(got, onlineLock) {
-		t.Fatalf("deployed user lock changed during offline sync: %v", err)
-	}
-	lockInfo, err := os.Stat(fixture.userLock)
-	if err != nil || !onlineLockInfo.ModTime().Equal(lockInfo.ModTime()) {
-		t.Fatalf("deployed lock stamp changed during offline sync: before=%v after=%v err=%v", onlineLockInfo, lockInfo, err)
-	}
+	assertTargetStateTreeUnchanged(t, offlineConfig, fixture.userConfig)
+	assertTargetStateTreeUnchanged(t, offlineLock, fixture.userLock)
 	if offlineRequests := requests.snapshot(); offlineRequests != onlineRequests {
 		t.Fatalf("offline sync changed Marketplace counters: before=%+v after=%+v", onlineRequests, offlineRequests)
+	}
+}
+
+func assertHostedSyncRefusesProfileMismatch(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	onlineConfig, onlineLock []byte,
+	requests *hostedLifecycleRequestCounters,
+) {
+	t.Helper()
+	alternateBytes := bytes.Replace(fixture.profileBytes, []byte("label: Invented App"), []byte("label: Altered App"), 1)
+	if bytes.Equal(alternateBytes, fixture.profileBytes) {
+		t.Fatal("could not alter target-profile fixture label")
+	}
+	alternate := fixture.identity
+	alternate.RevisionDigest = inspection.Digest(alternateBytes)
+	if err := alternate.Validate(); err != nil {
+		t.Fatalf("validate alternate profile identity: %v", err)
+	}
+	if _, err := targetprofile.Parse(alternateBytes, alternate); err != nil {
+		t.Fatalf("parse alternate profile: %v", err)
+	}
+
+	document, err := lockfile.Decode(onlineLock)
+	if err != nil {
+		t.Fatalf("decode online lock for profile mismatch: %v", err)
+	}
+	if len(document.Marketplaces) != 1 {
+		t.Fatalf("online lock has %d Marketplace endpoints, want one", len(document.Marketplaces))
+	}
+	if _, ok := marketplaceLockResource(document, "sample"); !ok {
+		t.Fatal("online lock lacks the scoped sample package")
+	}
+	var profileRecord *lockfile.MarketplaceResourceLock
+	for i := range document.Marketplaces[0].Resources {
+		record := &document.Marketplaces[0].Resources[i]
+		if record.Kind == "target-profile" && record.Name == fixture.identity.TargetID {
+			profileRecord = record
+			break
+		}
+	}
+	if profileRecord == nil {
+		t.Fatalf("online lock lacks selected profile: %+v", document.Marketplaces[0].Resources)
+	}
+	profileRecord.Revision = alternate.RevisionDigest
+	profileRecord.ContentDigest = lockfile.Digest(alternate.RevisionDigest)
+	profileRecord.ProfileIdentity = &alternate
+	alteredLock, err := lockfile.Encode(document)
+	if err != nil {
+		t.Fatalf("encode mismatched hosted profile lock: %v", err)
+	}
+
+	if count := bytes.Count(onlineConfig, []byte(fixture.identity.RevisionDigest)); count != 1 {
+		t.Fatalf("authored profile revision appears %d times in user config, want one", count)
+	}
+	alteredConfig := bytes.Replace(onlineConfig, []byte(fixture.identity.RevisionDigest), []byte(alternate.RevisionDigest), 1)
+	if bytes.Contains(alteredConfig, []byte(fixture.identity.RevisionDigest)) ||
+		bytes.Count(alteredConfig, []byte(alternate.RevisionDigest)) != 1 {
+		t.Fatal("failed to replace only the authored profile revision pin")
+	}
+
+	configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+	lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+	if !bytes.Equal(configBefore["."].bytes, onlineConfig) || !bytes.Equal(lockBefore["."].bytes, onlineLock) {
+		t.Fatal("online config or lock changed before mismatch check")
+	}
+	defer func() {
+		if err := os.WriteFile(fixture.userConfig, onlineConfig, configBefore["."].mode.Perm()); err != nil {
+			t.Errorf("restore online config after mismatch check: %v", err)
+		}
+		if err := os.WriteFile(fixture.userLock, onlineLock, lockBefore["."].mode.Perm()); err != nil {
+			t.Errorf("restore online lock after mismatch check: %v", err)
+		}
+	}()
+	if err := os.WriteFile(fixture.userConfig, alteredConfig, configBefore["."].mode.Perm()); err != nil {
+		t.Fatalf("stage mismatched profile config: %v", err)
+	}
+	if err := os.WriteFile(fixture.userLock, alteredLock, lockBefore["."].mode.Perm()); err != nil {
+		t.Fatalf("stage mismatched profile lock: %v", err)
+	}
+
+	stagedConfig := snapshotTargetStateTree(t, fixture.userConfig)
+	stagedLock := snapshotTargetStateTree(t, fixture.userLock)
+	if !bytes.Equal(stagedConfig["."].bytes, alteredConfig) || !bytes.Equal(stagedLock["."].bytes, alteredLock) {
+		t.Fatal("mismatched config or lock candidate was not staged exactly")
+	}
+	targetTree := snapshotTargetStateTree(t, fixture.targetRoot)
+	stateTree := snapshotTargetStateTree(t, fixture.stateRoot)
+	requestSnapshot := requests.snapshot()
+	for _, args := range [][]string{{"sync"}, {"sync", "--offline"}} {
+		output, commandErr := executeCommand(args...)
+		message := output
+		if commandErr != nil {
+			message += commandErr.Error()
+		}
+		if commandErr == nil || !strings.Contains(message, "marketplace.profile.revision-mismatch") ||
+			!strings.Contains(message, "sample") || !strings.Contains(message, "invented-app") {
+			t.Fatalf("%v with mismatched profile candidate error = %v\n%s", args, commandErr, output)
+		}
+		if current := requests.snapshot(); current != requestSnapshot {
+			t.Fatalf("%v with mismatched profile made Marketplace requests: before=%+v after=%+v", args, requestSnapshot, current)
+		}
+		assertTargetStateTreeUnchanged(t, targetTree, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, stateTree, fixture.stateRoot)
+		assertTargetStateTreeUnchanged(t, stagedConfig, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, stagedLock, fixture.userLock)
 	}
 }
 

@@ -16,6 +16,7 @@ resources:
       - tools/invented-app%2Fmod/sample
 `
 
+// spec: target-profile-place/malformed-and-repository-scope-selections-remain-errors
 func TestV4PlaceMarketplaceLockHydration(t *testing.T) {
 	cfg, err := ParseV4([]byte(v4PlaceMarketplaceYAML))
 	if err != nil {

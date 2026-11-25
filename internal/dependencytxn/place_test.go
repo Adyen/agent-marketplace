@@ -366,6 +366,7 @@ func TestPlaceRefusesChangedStageModeBeforePublishing(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/oversized-journal-refuses-before-staging
 func TestPlaceOversizedJournalRefusesBeforeStage(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	write := plan.Writes[0]
@@ -375,8 +376,8 @@ func TestPlaceOversizedJournalRefusesBeforeStage(t *testing.T) {
 		plan.Writes[i].Path = fmt.Sprintf("mods/file-%05d.txt", i)
 	}
 
-	if _, err := CommitPlace(context.Background(), stateDir, plan); err == nil {
-		t.Fatal("CommitPlace accepted a fully marked oversized journal")
+	if _, err := CommitPlace(context.Background(), stateDir, plan); !errors.Is(err, ErrRecoveryBlocked) || !strings.Contains(err.Error(), "fully marked place journal requires") {
+		t.Fatalf("oversized place commit = %v, want fully marked journal size refusal", err)
 	}
 	if _, err := os.Lstat(filepath.Join(filepath.Dir(stateDir), "place-stage")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("oversized plan created stage: %v", err)
@@ -501,6 +502,7 @@ func TestPlaceParentCreatedRejectsDirectoryAppearingAfterPlanning(t *testing.T) 
 	}
 }
 
+// spec: target-profile-place/a-missing-approved-root-refuses
 func TestPlaceMissingRootRefusesBeforeStage(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	if err := os.Rename(root, root+".moved"); err != nil {

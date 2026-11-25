@@ -50,6 +50,7 @@ func TestTargetRetireRequiresTerminal(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/retirement-keeps-edited-and-unowned-files
 func TestTargetRetirePreservesEditedAndUnownedFiles(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -129,8 +130,9 @@ func TestTargetRetirePreservesEditedAndUnownedFiles(t *testing.T) {
 		!strings.Contains(stderr, "mods/sample/keep.md") || !strings.Contains(stderr, "mods/sample/edit.md") {
 		t.Fatalf("retirement preview omitted recorded context: %s", stderr)
 	}
-	if !strings.Contains(stdout, "mods/sample/keep.md") || !strings.Contains(stdout, "mods/sample/edit.md") {
-		t.Fatalf("retirement result omitted removed or ceded paths: %s", stdout)
+	if !strings.Contains(stdout, "Removed: mods/sample/keep.md") ||
+		!strings.Contains(stdout, "Ceded: mods/sample/edit.md") {
+		t.Fatalf("retirement result omitted removed or ceded status: %s", stdout)
 	}
 	if _, err := os.Stat(filepath.Join(fixture.targetRoot, "mods", "sample", "keep.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unchanged owned file remains after retirement: %v", err)

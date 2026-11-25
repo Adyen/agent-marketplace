@@ -32,6 +32,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: target-profile-place/headless-sync-skips-pending-consent-and-continues
 func TestSyncUsesDeployedPlaceTargets(t *testing.T) {
 	ctx := context.Background()
 	gitFixture := newDeployedGitPlaceProfileFixture(t)
