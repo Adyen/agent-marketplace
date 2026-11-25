@@ -663,7 +663,7 @@ resources:
 	deselectionAdmission, err := preparePlaceAdmission(
 		ctx, deselectionResolve.placeConfig, deselectionResolve.placeTargets, deselectionEnvironment,
 		deselectionResolve.placeProfileReader, marketplace.NewResolver(),
-		resolver.MarketplaceResolveModeCachedNoFetch, true,
+		resolver.MarketplaceResolveModeCachedNoFetch, true, nil,
 	)
 	if err != nil || len(deselectionAdmission.Approvals) != 1 || len(deselectionAdmission.Packages) != 0 {
 		t.Fatalf("final-pin admission = approvals %v packages %d err=%v",

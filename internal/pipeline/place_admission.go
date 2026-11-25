@@ -40,7 +40,7 @@ func PreparePlaceAdmission(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 ) (PlaceAdmission, error) {
-	return preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, false)
+	return preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, false, nil)
 }
 
 func preparePlaceAdmission(
@@ -52,6 +52,7 @@ func preparePlaceAdmission(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 	includeEmpty bool,
+	preapproval func(targetprofile.ApprovalBinding) error,
 ) (PlaceAdmission, error) {
 	if err := ctx.Err(); err != nil {
 		return PlaceAdmission{}, err
@@ -115,11 +116,15 @@ func preparePlaceAdmission(
 		if err != nil {
 			return PlaceAdmission{}, fmt.Errorf("target %s approval binding: %w", targetID, err)
 		}
-		if err := targetprofile.RequireApproval(binding); errors.Is(err, targetprofile.ErrApprovalRequired) {
+		approvalErr := targetprofile.RequireApproval(binding)
+		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) && preapproval != nil {
+			approvalErr = preapproval(binding)
+		}
+		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) {
 			admission.Pending = append(admission.Pending, identity)
 			continue
-		} else if err != nil {
-			return PlaceAdmission{}, fmt.Errorf("target %s approval: %w", targetID, err)
+		} else if approvalErr != nil {
+			return PlaceAdmission{}, fmt.Errorf("target %s approval: %w", targetID, approvalErr)
 		}
 		admission.Approvals[identity] = binding
 		approvedProfiles[identity] = append([]byte(nil), raw...)

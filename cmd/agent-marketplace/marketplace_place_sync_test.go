@@ -17,7 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -29,6 +31,7 @@ import (
 // spec: target-profile-place/assessment-binds-the-exact-profile-online-and-offline
 // spec: target-profile-place/changed-xdg-state-root-reports-ownership-unavailable
 // spec: target-profile-place/direct-selection-of-a-disabled-target-refuses-without-writes
+// spec: target-profile-place/a-mismatched-state-root-produces-no-receipt
 func TestHostedTargetProfileBootstrapApprovalAndOfflineSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -185,6 +188,7 @@ resources:
 		t.Fatalf("pre-approval receipts = %v, %v; want none", receipts, err)
 	}
 	assertHostedDirectInstallRefusals(t, fixture, server.URL, &requests)
+	assertHostedOrganizationPreapprovalMismatch(t, fixture, &requests)
 
 	_, stderr, err := executeTargetApprovalAtTerminal(t, "yes\n", nil, "target", "approve", fixture.identity.TargetID)
 	if err != nil {
@@ -267,9 +271,172 @@ resources:
 	if offlineRequests := requests.snapshot(); offlineRequests != onlineRequests {
 		t.Fatalf("offline sync changed Marketplace counters: before=%+v after=%+v", onlineRequests, offlineRequests)
 	}
+	assertHostedOrganizationPreapprovalCreatesReceipt(t, fixture, &requests)
 	assertHostedInstallationUnavailableAtChangedStateRoot(
 		t, fixture, pipeline.PlaceInstallationID(approvalBinding),
 	)
+}
+
+func writeHostedOrganizationPreapproval(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	binding targetprofile.ApprovalBinding,
+	canonicalStateRoot string,
+) string {
+	t.Helper()
+	if len(binding.CommandRoles) != 0 || binding.Executable != (targetprofile.ExecutableBinding{}) {
+		t.Fatalf("hosted fixture unexpectedly authorizes execution: roles=%v executable=%+v", binding.CommandRoles, binding.Executable)
+	}
+	path := filepath.Join(fixture.home, "organization.yaml")
+	data := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+target_preapprovals:
+  - os: %q
+    target_id: %q
+    profile_digest: %q
+    canonical_root: %q
+    canonical_state_root: %q
+    executable: no-execution
+    command_roles: []
+`, binding.OS, binding.Profile.TargetID, binding.Profile.RevisionDigest, binding.CanonicalRoot, canonicalStateRoot)
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, path)
+	return path
+}
+
+func assertHostedOrganizationPreapprovalMismatch(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	requests *hostedLifecycleRequestCounters,
+) {
+	t.Helper()
+	t.Run("organization preapproval state-root mismatch", func(t *testing.T) {
+		binding, err := pipeline.PrepareDeployedPlaceApproval(
+			context.Background(), mustTargetWorkspace(t, fixture), fixture.identity.TargetID,
+		)
+		if err != nil {
+			t.Fatalf("prepare deployed binding for preapproval: %v", err)
+		}
+		otherStateRoot := filepath.Join(filepath.Dir(fixture.stateRoot), "other-agent-marketplace")
+		if err := os.MkdirAll(otherStateRoot, 0o700); err != nil {
+			t.Fatalf("create alternate canonical state root: %v", err)
+		}
+		orgPath := writeHostedOrganizationPreapproval(t, fixture, binding, otherStateRoot)
+
+		targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+		stateBefore := snapshotTargetStateTree(t, fixture.stateRoot)
+		otherStateBefore := snapshotTargetStateTree(t, otherStateRoot)
+		configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+		lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+		orgBefore := snapshotTargetStateTree(t, orgPath)
+		archivesBefore := requests.archive.Load()
+
+		output, err := executeCommand("sync")
+		diagnostics := output
+		if err != nil {
+			diagnostics += "\n" + err.Error()
+		}
+		if err != nil || !strings.Contains(diagnostics, "target.approval.required") {
+			t.Fatalf("sync with mismatched organization preapproval = %v\n%s; want target.approval.required", err, output)
+		}
+		if got := requests.archive.Load(); got != archivesBefore {
+			t.Fatalf("mismatched preapproval fetched package archive: before=%d after=%d", archivesBefore, got)
+		}
+		if receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json")); err != nil || len(receipts) != 0 {
+			t.Fatalf("mismatched preapproval receipts = %v, %v; want none", receipts, err)
+		}
+		if receipts, err := filepath.Glob(filepath.Join(otherStateRoot, "target-approval-*.json")); err != nil || len(receipts) != 0 {
+			t.Fatalf("alternate state-root receipts = %v, %v; want none", receipts, err)
+		}
+		assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+		assertTargetStateTreeUnchanged(t, otherStateBefore, otherStateRoot)
+		assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+		assertTargetStateTreeUnchanged(t, orgBefore, orgPath)
+	})
+}
+
+func assertHostedOrganizationPreapprovalCreatesReceipt(
+	t *testing.T,
+	fixture targetApprovalFixture,
+	requests *hostedLifecycleRequestCounters,
+) {
+	t.Helper()
+	t.Run("exact organization preapproval", func(t *testing.T) {
+		binding, err := pipeline.PrepareDeployedPlaceApproval(
+			context.Background(), mustTargetWorkspace(t, fixture), fixture.identity.TargetID,
+		)
+		if err != nil {
+			t.Fatalf("prepare deployed binding for preapproval: %v", err)
+		}
+		orgPath := writeHostedOrganizationPreapproval(t, fixture, binding, binding.CanonicalStateRoot)
+		receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json"))
+		if err != nil || len(receipts) != 1 {
+			t.Fatalf("interactive approval receipts = %v, %v; want one fixture-owned receipt", receipts, err)
+		}
+		if err := os.Remove(receipts[0]); err != nil {
+			t.Fatalf("remove fixture-owned interactive receipt: %v", err)
+		}
+
+		targetBefore := snapshotTargetStateTree(t, fixture.targetRoot)
+		stateBeforeCheck := snapshotTargetStateTree(t, fixture.stateRoot)
+		configBefore := snapshotTargetStateTree(t, fixture.userConfig)
+		lockBefore := snapshotTargetStateTree(t, fixture.userLock)
+		orgBefore := snapshotTargetStateTree(t, orgPath)
+		ownershipPath := filepath.Join(
+			fixture.stateRoot, "ownership", ownership.RootKey(binding.CanonicalRoot), "state.json",
+		)
+		ownershipBefore := snapshotTargetStateTree(t, ownershipPath)
+		requestsBefore := requests.snapshot()
+
+		checkOutput, checkErr := executeCommand("sync", "--check", "--offline")
+		checkDiagnostics := checkOutput
+		if checkErr != nil {
+			checkDiagnostics += "\n" + checkErr.Error()
+		}
+		if !strings.Contains(checkDiagnostics, "target.approval.required") {
+			t.Fatalf("offline check with organization preapproval = %v\n%s; want pending approval diagnostic", checkErr, checkOutput)
+		}
+		if receipts, err := filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json")); err != nil || len(receipts) != 0 {
+			t.Fatalf("check created organization approval receipt: %v, %v; output=%s err=%v", receipts, err, checkOutput, checkErr)
+		}
+		assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, stateBeforeCheck, fixture.stateRoot)
+		assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+		assertTargetStateTreeUnchanged(t, orgBefore, orgPath)
+		assertTargetStateTreeUnchanged(t, ownershipBefore, ownershipPath)
+
+		output, err := executeCommand("sync", "--offline")
+		if err != nil {
+			t.Fatalf("offline sync with exact organization preapproval: %v\n%s", err, output)
+		}
+		receipts, err = filepath.Glob(filepath.Join(fixture.stateRoot, "target-approval-*.json"))
+		if err != nil || len(receipts) != 1 {
+			t.Fatalf("organization approval receipts = %v, %v; want one", receipts, err)
+		}
+		receiptBytes, err := os.ReadFile(receipts[0])
+		if err != nil {
+			t.Fatalf("read organization approval receipt: %v", err)
+		}
+		var receipt map[string]any
+		if err := json.Unmarshal(receiptBytes, &receipt); err != nil || receipt["authority"] != "organization" {
+			t.Fatalf("organization approval receipt authority = %v, %v; want organization", receipt, err)
+		}
+		if err := targetprofile.RequireApproval(binding); err != nil {
+			t.Fatalf("recorded organization approval is not usable: %v", err)
+		}
+		if after := requests.snapshot(); after != requestsBefore {
+			t.Fatalf("offline organization preapproval sync changed Marketplace requests: before=%+v after=%+v", requestsBefore, after)
+		}
+		assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+		assertTargetStateTreeUnchanged(t, configBefore, fixture.userConfig)
+		assertTargetStateTreeUnchanged(t, lockBefore, fixture.userLock)
+		assertTargetStateTreeUnchanged(t, orgBefore, orgPath)
+		assertTargetStateTreeUnchanged(t, ownershipBefore, ownershipPath)
+	})
 }
 
 func assertHostedDirectInstallRefusals(

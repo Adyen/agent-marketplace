@@ -37,7 +37,26 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 		cfg = resolved.MergedCfg
 	}
 	reads := deployedPlacePruneReads(resolved, cfg)
-	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot, reads)
+	preapproval := deployedPlacePreapproval(resolved.placePreapprovals, resolved.placeSelectionReads)
+	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot, reads, preapproval)
+}
+
+func deployedPlacePreapproval(grants []config.PlacePreapproval, reads []dependencytxn.ReadAssertion) func(targetprofile.ApprovalBinding) error {
+	if len(grants) == 0 || len(reads) == 0 {
+		return nil
+	}
+	return func(binding targetprofile.ApprovalBinding) error {
+		for _, grant := range grants {
+			if !grant.Matches(binding) {
+				continue
+			}
+			if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+				return err
+			}
+			return targetprofile.RecordOrganizationApproval(binding)
+		}
+		return targetprofile.ErrApprovalRequired
+	}
 }
 
 func deployedPlacePruneReads(resolved ResolveResult, cfg *config.Config) []dependencytxn.ReadAssertion {
@@ -109,7 +128,7 @@ func SyncPlaceUpserts(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 ) (result PlaceSyncResult, retErr error) {
-	return syncPlaceUpserts(ctx, cfg, enabled, environment, readProfile, packages, mode, "", nil)
+	return syncPlaceUpserts(ctx, cfg, enabled, environment, readProfile, packages, mode, "", nil, nil)
 }
 
 func syncPlaceUpserts(
@@ -122,6 +141,7 @@ func syncPlaceUpserts(
 	mode resolver.MarketplaceResolveMode,
 	repoRoot string,
 	reads []dependencytxn.ReadAssertion,
+	preapproval func(targetprofile.ApprovalBinding) error,
 ) (result PlaceSyncResult, retErr error) {
 	slog.Debug("place sync started", "enabled_targets", len(enabled))
 	defer func() {
@@ -130,7 +150,7 @@ func syncPlaceUpserts(
 		}
 	}()
 	pruneDeselected := len(reads) > 0
-	admission, err := preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, pruneDeselected)
+	admission, err := preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, pruneDeselected, preapproval)
 	if err != nil {
 		return PlaceSyncResult{}, err
 	}
@@ -373,7 +393,7 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 	}
 	admission, err := preparePlaceAdmission(
 		ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader,
-		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch, pruneDeselected,
+		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch, pruneDeselected, nil,
 	)
 	if err != nil {
 		return result, fmt.Errorf("prepare deployed place check: %w", err)

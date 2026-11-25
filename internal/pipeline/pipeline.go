@@ -161,6 +161,7 @@ type ResolveResult struct {
 	placeProfileReader  PlaceProfileReader
 	placeConfig         *config.Config
 	placeSelectionReads []dependencytxn.ReadAssertion
+	placePreapprovals   []config.PlacePreapproval
 }
 
 // DisplayArtifacts returns the materializable artifacts followed by the
@@ -609,6 +610,9 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 				slog.Debug("could not capture deployed place selection reads", "error", err)
 			} else {
 				result.placeSelectionReads = reads
+				if len(reads) > 0 {
+					result.placePreapprovals = deployedIntent.Layers[config.Organization].PlacePreapprovals()
+				}
 			}
 		}
 	}

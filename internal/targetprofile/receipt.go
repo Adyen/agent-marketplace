@@ -19,6 +19,7 @@ import (
 )
 
 const approvalReceiptLimit = 16 << 10
+const organizationApprovalAuthority = "organization"
 
 // ErrApprovalRequired reports a missing receipt, not an invalid one.
 var ErrApprovalRequired = errors.New("target.approval.required: no local approval receipt exists")
@@ -47,16 +48,27 @@ type approvalReceipt struct {
 	StateStore      approvalReceiptState `json:"state_store"`
 	CommandRoles    []string             `json:"command_roles"`
 	Executable      json.RawMessage      `json:"executable"`
+	Authority       string               `json:"authority,omitempty"`
 }
 
-// RecordApproval stores a previously resolved binding after interactive consent
-// or exact preapproval. It is a storage primitive and does not verify that a
-// TTY was used or that consent occurred.
+// RecordApproval stores a previously resolved binding after interactive consent.
+// It does not verify that a TTY was used or that consent occurred.
 func RecordApproval(binding ApprovalBinding) error {
+	return recordApproval(binding, "")
+}
+
+// RecordOrganizationApproval stores a binding authorized by an exact
+// organization preapproval.
+func RecordOrganizationApproval(binding ApprovalBinding) error {
+	return recordApproval(binding, organizationApprovalAuthority)
+}
+
+func recordApproval(binding ApprovalBinding, authority string) error {
 	want, err := approvalReceiptFor(binding)
 	if err != nil {
 		return err
 	}
+	want.Authority = authority
 	raw, err := marshalApprovalReceipt(want)
 	if err != nil {
 		return err
@@ -77,6 +89,9 @@ func RecordApproval(binding ApprovalBinding) error {
 		return err
 	}
 	if destination.Exists() {
+		if authority == organizationApprovalAuthority {
+			return RequireApproval(binding)
+		}
 		existingRaw, _, err := destination.ReadTarget(approvalReceiptLimit)
 		if err != nil {
 			return fmt.Errorf("target.approval.receipt-invalid: read receipt: %w", err)
@@ -89,6 +104,7 @@ func RecordApproval(binding ApprovalBinding) error {
 			return nil
 		}
 		existing.Executable = want.Executable
+		existing.Authority = want.Authority
 		contextRaw, err := marshalApprovalReceipt(existing)
 		if err != nil {
 			return err
@@ -104,10 +120,6 @@ func RecordApproval(binding ApprovalBinding) error {
 // binding and rechecks any authorized executable on every call.
 func RequireApproval(binding ApprovalBinding) error {
 	want, err := approvalReceiptFor(binding)
-	if err != nil {
-		return err
-	}
-	wantRaw, err := marshalApprovalReceipt(want)
 	if err != nil {
 		return err
 	}
@@ -134,6 +146,11 @@ func RequireApproval(binding ApprovalBinding) error {
 		return fmt.Errorf("target.approval.receipt-invalid: read receipt: %w", err)
 	}
 	got, err := decodeApprovalReceipt(raw)
+	if err != nil {
+		return err
+	}
+	want.Authority = got.Authority
+	wantRaw, err := marshalApprovalReceipt(want)
 	if err != nil {
 		return err
 	}
@@ -290,6 +307,9 @@ func decodeApprovalReceipt(raw []byte) (approvalReceipt, error) {
 	var receipt approvalReceipt
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return receipt, fmt.Errorf("target.approval.receipt-invalid: decode receipt: %w", err)
+	}
+	if receipt.Authority != "" && receipt.Authority != organizationApprovalAuthority {
+		return receipt, fmt.Errorf("target.approval.receipt-invalid: unsupported receipt authority")
 	}
 	canonical, err := marshalApprovalReceipt(receipt)
 	if err != nil || !bytes.Equal(canonical, raw) || receipt.SchemaVersion != 1 || receipt.CommandRoles == nil {
