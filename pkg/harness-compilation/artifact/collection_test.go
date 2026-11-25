@@ -10,6 +10,68 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func TestCollectionManifestScopedLeafRoundTrip(t *testing.T) {
+	member := CollectionMemberEntry{
+		Kind: "test-host/mod", Name: "sample", RegistryID: "registry",
+		Revision: "sha256:" + strings.Repeat("a", 64),
+	}
+	leaf := member
+	leaf.InclusionPaths = [][]string{{"bundle"}}
+	manifest := CollectionManifest{
+		SchemaVersion: CollectionSchemaV1, Name: "bundle",
+		Members: []CollectionMemberEntry{member}, Leaves: []CollectionMemberEntry{leaf},
+	}
+	payload, _, err := EncodeCollectionManifest(manifest)
+	if err != nil {
+		t.Fatalf("encode scoped collection manifest: %v", err)
+	}
+	decoded, canonical, err := DecodeCollectionManifest(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("decode scoped collection manifest: %v", err)
+	}
+	if err := VerifyCollectionManifest(decoded, canonical); err != nil {
+		t.Fatalf("verify scoped collection manifest: %v", err)
+	}
+	leaves, err := ValidateAndExpandCollectionManifestGraph(decoded, nil)
+	if err != nil {
+		t.Fatalf("expand scoped collection manifest: %v", err)
+	}
+	if len(leaves) != 1 || leaves[0].Kind != member.Kind || leaves[0].Name != member.Name ||
+		leaves[0].RegistryID != member.RegistryID || leaves[0].Revision != member.Revision ||
+		len(leaves[0].InclusionPaths) != 1 || len(leaves[0].InclusionPaths[0]) != 1 ||
+		leaves[0].InclusionPaths[0][0] != manifest.Name {
+		t.Fatalf("expanded scoped collection leaves = %#v; want exact member and direct inclusion path", leaves)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*CollectionManifest)
+	}{
+		{name: "malformed scoped kind", mutate: func(m *CollectionManifest) {
+			m.Members[0].Kind = "test-host%2Fmod"
+		}},
+		{name: "virtual target profile", mutate: func(m *CollectionManifest) {
+			m.Members[0].Kind = "target-profile"
+		}},
+		{name: "bad scoped member name", mutate: func(m *CollectionManifest) {
+			m.Members[0].Name = "Sample"
+		}},
+		{name: "bad scoped leaf name", mutate: func(m *CollectionManifest) {
+			m.Leaves[0].Name = "Sample"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := manifest
+			invalid.Members = append([]CollectionMemberEntry(nil), manifest.Members...)
+			invalid.Leaves = append([]CollectionMemberEntry(nil), manifest.Leaves...)
+			test.mutate(&invalid)
+			if _, _, err := EncodeCollectionManifest(invalid); err == nil {
+				t.Fatal("EncodeCollectionManifest accepted invalid scoped member")
+			}
+		})
+	}
+}
+
 // spec: marketplace-api/collection-manifest-round-trip
 func TestCollectionManifestRoundTrip(t *testing.T) {
 	col := ir.NewCollection("defaults", "1.0.0", "Default collection", []ir.CollectionMember{
