@@ -53,6 +53,7 @@ type LockMode struct {
 	MarketplacePolicy          resolver.MarketplaceRevocationPolicy
 	SelectionGuard             bool
 	AllowTransientOrganization bool
+	ReuseTransientOrganization bool
 	// UpdatePreview, when set, receives the prepared prior/candidate view
 	// before any new publication. Its error aborts preparation and nothing
 	// is committed.
@@ -683,7 +684,9 @@ func PrepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode Lo
 		RelockOrganization: mode.ExplicitOrganization && !mode.Check && !mode.Locked && !mode.Offline,
 	}
 	loadMode := pipeline.ConfigLoadStrict
-	if mode.AllowTransientOrganization && !mode.Offline {
+	if mode.Locked && !mode.Offline && mode.ReuseTransientOrganization {
+		loadMode = pipeline.ConfigLoadTransientOnly
+	} else if mode.AllowTransientOrganization && !mode.Offline {
 		loadMode = pipeline.ConfigLoadOnline
 	} else if !mode.Check && mode.ReuseInstall != nil {
 		loadMode = pipeline.ConfigLoadCached

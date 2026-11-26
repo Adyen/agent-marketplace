@@ -21,10 +21,12 @@ const (
 	ConfigLoadOnline ConfigLoadMode = iota
 	ConfigLoadStrict
 	ConfigLoadCached
+	ConfigLoadTransientOnly
 )
 
 // LoadEffective loads configuration with explicit organization-lock semantics:
-// online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
+// online acquisition, strict on-disk evidence, cached artifact evidence, or
+// command-context transient evidence.
 func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
 	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil, nil)
 	return ec
@@ -34,7 +36,7 @@ func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
 func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig), intentReady func(config.Intent)) (effective config.EffectiveConfig, lockUse transientOrganizationMarketplaceLockUse) {
-	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
+	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached && mode != ConfigLoadTransientOnly {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
 	intent := readIntent(ctx, opts)
@@ -83,6 +85,9 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 				return cachedEC, transientOrganizationMarketplaceLockReused
 			}
 		}
+	}
+	if mode == ConfigLoadTransientOnly {
+		return config.Bind(intent, evidence), transientOrganizationMarketplaceLockUnused
 	}
 	cacheReads, err := transientMarketplaceReadAssertions(intent, lockPath)
 	if err != nil {
