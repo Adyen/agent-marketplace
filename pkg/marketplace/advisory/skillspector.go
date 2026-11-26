@@ -150,7 +150,7 @@ func NewScanner(endpoint string) (Scanner, error) {
 	if err != nil || u.User != nil || strings.ContainsAny(endpoint, "?#") || u.Fragment != "" {
 		return nil, errors.New("invalid SkillSpector endpoint")
 	}
-	transport := &http.Transport{}
+	transport := &http.Transport{MaxConnsPerHost: 1}
 	baseURL := "http://unix"
 	switch u.Scheme {
 	case "http":

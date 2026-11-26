@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,6 +102,82 @@ func TestHTTPScannerPostsBoundedDetachedFilesWithoutProxy(t *testing.T) {
 	if calls != 1 || got.Version != wantResult.Version || got.Status != wantResult.Status || len(got.Findings) != 1 ||
 		got.Findings[0] != wantResult.Findings[0] {
 		t.Fatalf("Scan result = %#v, calls = %d", got, calls)
+	}
+}
+
+// spec: marketplace-analysis/overlapping-indexes-share-one-worker-scanner
+func TestSkillSpectorConcurrentReportsQueueForSingleWorker(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	firstResult := Result{Version: skillSpectorVersion, Status: store.AdvisoryComplete, Findings: []Finding{{Code: "SC4"}}}
+	waitingResult := Result{Version: skillSpectorVersion, Status: store.AdvisoryPartial, Findings: []Finding{{Code: "AE1"}}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			entered <- struct{}{}
+			<-release
+			_ = json.NewEncoder(w).Encode(firstResult)
+			return
+		}
+		select {
+		case <-release:
+			_ = json.NewEncoder(w).Encode(waitingResult)
+		default:
+			http.Error(w, "worker busy", http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		server.Close()
+	})
+	scanner, err := NewScanner(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstReport := make(chan store.AdvisoryReport, 1)
+	go func() {
+		firstReport <- (SkillSpector{Scanner: scanner, Timeout: time.Second}).Report(t.Context(), map[string][]byte{"SKILL.md": []byte("first")}, nil)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first request did not enter worker")
+	}
+	expired := (SkillSpector{Scanner: scanner, Timeout: 100 * time.Millisecond}).Report(
+		t.Context(), map[string][]byte{"SKILL.md": []byte("expired")}, nil)
+	if expired.Status != store.AdvisoryFailed || expired.Reason != "timeout" || calls.Load() != 1 {
+		t.Fatalf("expired report = %#v, runner calls = %d", expired, calls.Load())
+	}
+	getConn := make(chan struct{}, 1)
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GetConn: func(string) {
+		select {
+		case getConn <- struct{}{}:
+		default:
+		}
+	}})
+	waitingReport := make(chan store.AdvisoryReport, 1)
+	go func() {
+		waitingReport <- (SkillSpector{Scanner: scanner, Timeout: time.Second}).Report(ctx, map[string][]byte{"SKILL.md": []byte("waiting")}, nil)
+	}()
+	select {
+	case <-getConn:
+	case <-time.After(time.Second):
+		t.Fatal("waiting request did not reach the HTTP transport")
+	}
+	close(release)
+	first, waiting := <-firstReport, <-waitingReport
+	if first.Status != store.AdvisoryComplete || len(first.Findings) != 1 || first.Findings[0].Code != "SC4" {
+		t.Fatalf("first report = %#v", first)
+	}
+	if waiting.Status != store.AdvisoryPartial || len(waiting.Findings) != 1 || waiting.Findings[0].Code != "AE1" {
+		t.Fatalf("waiting report = %#v", waiting)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("runner calls = %d, want 2", calls.Load())
 	}
 }
 
