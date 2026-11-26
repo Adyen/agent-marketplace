@@ -438,6 +438,44 @@ func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
 }
 
 // spec: target-profile-place/marked-file-mutation-retries-parent-sync
+func TestPlaceCommitGenuineNoOpsDoNotSync(t *testing.T) {
+	root, stateDir, plan := newPlaceFixture(t, false)
+	if err := os.MkdirAll(filepath.Join(root, "mods"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(root, "mods", "new.txt")
+	want := []byte("new package bytes\n")
+	if err := os.WriteFile(payload, want, plan.Writes[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	plan.Writes[0].Expected, plan.Writes[0].ExpectedMode = Generation{Exists: true, Digest: Digest(want)}, plan.Writes[0].Mode
+	if err := os.MkdirAll(filepath.Dir(plan.Ownership.Path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plan.Ownership.Path, plan.Ownership.Bytes, plan.Ownership.Mode); err != nil {
+		t.Fatal(err)
+	}
+	plan.Ownership.Expected, plan.Ownership.ExpectedMode = Generation{Exists: true, Digest: Digest(plan.Ownership.Bytes)}, plan.Ownership.Mode
+	before, err := os.Lstat(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CommitPlace(context.Background(), stateDir, plan, func(o *options) {
+		o.syncPruneParent = func(*fsboundary.Dir) error {
+			t.Fatal("genuine no-op requested a parent sync")
+			return nil
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Lstat(payload)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("no-op regular file identity changed: after=%v err=%v", after, err)
+	}
+}
+
+// spec: target-profile-place/marked-file-mutation-retries-parent-sync
 func TestPlaceCrashMarkedVisibleMutationSyncFailureRetries(t *testing.T) {
 	for _, kind := range []string{"write", "ownership", "prune"} {
 		t.Run(kind, func(t *testing.T) {
@@ -561,7 +599,8 @@ func TestPlaceCrashMarkedVisibleMutationSyncFailureRetries(t *testing.T) {
 			}
 			configureSync := func(o *options) { o.syncPruneParent = syncParent }
 			err = Recover(context.Background(), stateDir, configureSync)
-			if !errors.Is(err, syncErr) || syncCalls != 1 {
+			if !errors.Is(err, syncErr) || !errors.Is(err, ErrRecoveryBlocked) ||
+				!strings.Contains(err.Error(), journalPath) || !strings.Contains(err.Error(), crashed.Place.Pending.Path) || syncCalls != 1 {
 				t.Fatalf("recovery with failed parent sync = %v after %d sync calls", err, syncCalls)
 			}
 			retryState, err := readJournal(journalPath)
