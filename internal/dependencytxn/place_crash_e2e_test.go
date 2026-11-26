@@ -424,8 +424,9 @@ func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
 	if got := journals(t, stateDir); len(got) != 1 {
 		t.Fatalf("crash discarded ownership journal: %v", got)
 	}
-	if err := Recover(context.Background(), stateDir); err != nil {
-		t.Fatal(err)
+	noSync := func(*fsboundary.Dir) error { return ErrRecoveryBlocked }
+	if err := Recover(context.Background(), stateDir, func(o *options) { o.syncPruneParent = noSync }); err != nil {
+		t.Fatalf("recover no-op ownership: %v", err)
 	}
 	assertFile(t, payload, "new package bytes\n", 0o644)
 	if got, err := os.ReadFile(plan.Ownership.Path); err != nil || !reflect.DeepEqual(got, ownershipBytes) {
@@ -433,6 +434,157 @@ func TestPlaceCrashNoOpOwnershipGenerationRecovers(t *testing.T) {
 	}
 	if got := journals(t, stateDir); len(got) != 0 {
 		t.Fatalf("recovery left ownership journal: %v", got)
+	}
+}
+
+// spec: target-profile-place/marked-file-mutation-retries-parent-sync
+func TestPlaceCrashMarkedVisibleMutationSyncFailureRetries(t *testing.T) {
+	for _, kind := range []string{"write", "ownership", "prune"} {
+		t.Run(kind, func(t *testing.T) {
+			root, stateDir, plan := newPlaceFixture(t, kind == "ownership")
+			var crashStage FaultStage
+			var targetPath, parentPath string
+			var wantBytes []byte
+			var wantMode os.FileMode
+			var err error
+			switch kind {
+			case "write":
+				crashStage = FaultPlaceAfterPublish
+				targetPath = filepath.Join(root, "mods", "new.txt")
+				parentPath = filepath.Dir(targetPath)
+				wantBytes, wantMode = []byte("new package bytes\n"), 0o644
+			case "ownership":
+				crashStage = FaultPlaceAfterOwnership
+				targetPath = plan.Ownership.Path
+				parentPath = filepath.Dir(targetPath)
+				if err := os.Mkdir(filepath.Join(root, "mods"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				plan.Directories = nil
+				plan.Ownership.Bytes = []byte(fmt.Sprintf(`{"canonical_root":%q,"fixture_marker":"committed","place_directories":[],"root_key":%q}`, root, testPlaceRootKey(root)))
+				wantBytes, wantMode = plan.Ownership.Bytes, 0o600
+			case "prune":
+				crashStage = FaultPlaceAfterPrune
+				targetPath = filepath.Join(root, "layouts", "stale.txt")
+				parentPath = filepath.Dir(targetPath)
+				if err := os.MkdirAll(parentPath, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				stale := []byte("stale package bytes\n")
+				if err := os.WriteFile(targetPath, stale, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				parent, err := fsboundary.OpenDir(parentPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan.Prunes = []PlacePrune{{
+					Path: "layouts/stale.txt", Parent: parent.Identity(),
+					Expected: Generation{Exists: true, Digest: Digest(stale)}, Mode: 0o644,
+				}}
+				if err := parent.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			runPlaceCrashChild(t, filepath.Join(t.TempDir(), "place-plan.json"), plan, crashStage, 0)
+			crashedJournals := journals(t, stateDir)
+			if len(crashedJournals) != 1 {
+				t.Fatalf("crashed journals = %v, want one", crashedJournals)
+			}
+			journalPath := crashedJournals[0]
+			crashed, err := readJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if crashed.Place.Pending == nil || crashed.Place.Pending.Kind != kind {
+				t.Fatalf("crashed journal has no pending operation: %+v", crashed.Place)
+			}
+			expectedParent, err := fsboundary.OpenDir(parentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedParentIdentity := expectedParent.Identity()
+			if err := expectedParent.Close(); err != nil {
+				t.Fatal(err)
+			}
+			beforeJournal, err := os.ReadFile(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var beforeInfo os.FileInfo
+			if kind != "prune" {
+				beforeInfo, err = os.Lstat(targetPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertVisible := func() {
+				t.Helper()
+				if kind == "prune" {
+					if _, err := os.Lstat(targetPath); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("marked prune result changed: %v", err)
+					}
+					return
+				}
+				info, err := os.Lstat(targetPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !os.SameFile(beforeInfo, info) {
+					t.Fatalf("visible mutation replaced file: before=%v after=%v", beforeInfo, info)
+				}
+				assertFile(t, targetPath, string(wantBytes), wantMode)
+			}
+
+			if pending := CheckPending(stateDir); !errors.Is(pending, ErrRecoveryRequired) {
+				t.Fatal(pending)
+			}
+			afterCheck, err := os.ReadFile(journalPath)
+			if err != nil || !reflect.DeepEqual(afterCheck, beforeJournal) {
+				t.Fatalf("CheckPending changed journal bytes: err=%v", err)
+			}
+			assertVisible()
+
+			syncErr := errors.New("parent sync failed")
+			syncCalls := 0
+			failSync := true
+			syncParent := func(dir *fsboundary.Dir) error {
+				syncCalls++
+				if !dir.Identity().SameObject(expectedParentIdentity) {
+					return errors.New("recovery synced the wrong parent")
+				}
+				if failSync {
+					return syncErr
+				}
+				return dir.Sync()
+			}
+			configureSync := func(o *options) { o.syncPruneParent = syncParent }
+			err = Recover(context.Background(), stateDir, configureSync)
+			if !errors.Is(err, syncErr) || syncCalls != 1 {
+				t.Fatalf("recovery with failed parent sync = %v after %d sync calls", err, syncCalls)
+			}
+			retryState, err := readJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retryState.Place.Completed != crashed.Place.Completed ||
+				!reflect.DeepEqual(retryState.Place.Pending, crashed.Place.Pending) {
+				t.Fatalf("sync failure advanced recovery: before=%+v after=%+v", crashed.Place, retryState.Place)
+			}
+			assertVisible()
+
+			syncCalls = 0
+			failSync = false
+			err = Recover(context.Background(), stateDir, configureSync)
+			if err != nil || syncCalls != 1 {
+				t.Fatalf("recovery retry = %v after %d sync calls", err, syncCalls)
+			}
+			assertVisible()
+			if got := journals(t, stateDir); len(got) != 0 {
+				t.Fatalf("journal remains after retry: %v", got)
+			}
+		})
 	}
 }
 
