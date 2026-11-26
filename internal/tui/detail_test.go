@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // These tests pin down the right-pane rendering contract:
@@ -624,5 +625,74 @@ func TestRenderDetailShowsPathForMalformedSkill(t *testing.T) {
 	}
 	if !contains(out, "/cache/broken-skill") {
 		t.Fatalf("malformed skill detail should contain the skill path:\n%s", out)
+	}
+}
+
+// spec: tui-rendering/summary-pane-abbreviates-sha-256-digests-and-deduplicates-identical-revision
+func TestRenderDetailAbbreviatesAndDeduplicatesMarketplaceDigest(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	r := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
+	r.MarketplaceDiscovery.Item.Revision = digest
+	r.MarketplaceDiscovery.Item.ContentDigest = digest
+	before := r.MarketplaceDiscovery.Item
+
+	m := modelWithSelectedRow(t, r)
+	m.width = 100
+	out := ansi.Strip(renderDetail(m))
+
+	if strings.Contains(out, "Revision:") {
+		t.Fatalf("identical revision should be omitted from the summary:\n%s", out)
+	}
+	if got := strings.Count(out, "sha256:aaaaaaaaaaaa…"); got != 1 {
+		t.Fatalf("summary digest count = %d, want one abbreviated digest:\n%s", got, out)
+	}
+	if strings.Contains(out, digest) {
+		t.Fatalf("summary contains the complete digest:\n%s", out)
+	}
+	after := m.rows[0].MarketplaceDiscovery.Item
+	if after.Revision != before.Revision || after.ContentDigest != before.ContentDigest {
+		t.Fatalf("summary rendering changed Marketplace data: before=%+v after=%+v", before, after)
+	}
+}
+
+// spec: tui-rendering/distinct-non-digest-revision-stays-visible
+func TestRenderDetailPreservesHumanRevisionAndMalformedDigest(t *testing.T) {
+	tests := []struct {
+		name     string
+		revision string
+		digest   string
+		display  string
+	}{
+		{
+			name:     "human-readable revision",
+			revision: "v1.2.0",
+			digest:   "sha256:" + strings.Repeat("b", 64),
+			display:  "sha256:bbbbbbbbbbbb…",
+		},
+		{
+			name:     "malformed digest",
+			revision: "release/2026.11",
+			digest:   "sha256:" + strings.Repeat("c", 13),
+			display:  "sha256:" + strings.Repeat("c", 13),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
+			r.MarketplaceDiscovery.Item.Revision = tc.revision
+			r.MarketplaceDiscovery.Item.ContentDigest = tc.digest
+
+			m := modelWithSelectedRow(t, r)
+			m.width = 100
+			out := ansi.Strip(renderDetail(m))
+
+			if !strings.Contains(out, "Revision:") || !strings.Contains(out, tc.revision) {
+				t.Fatalf("summary omitted distinct revision %q:\n%s", tc.revision, out)
+			}
+			if !strings.Contains(out, tc.display) {
+				t.Fatalf("summary digest display missing %q:\n%s", tc.display, out)
+			}
+		})
 	}
 }

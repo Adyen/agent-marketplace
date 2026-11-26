@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -165,6 +166,16 @@ func keyValueTable(t theme, pairs [][2]string) string {
 		String()
 }
 
+var sha256DigestPattern = regexp.MustCompile(`^sha256:([0-9a-fA-F]{64})$`)
+
+func abbreviateDigest(value string) string {
+	match := sha256DigestPattern.FindStringSubmatch(value)
+	if match == nil {
+		return value
+	}
+	return "sha256:" + match[1][:12] + "…"
+}
+
 func renderDetail(m Model) string {
 	r, ok := m.selectedRow()
 	if !ok {
@@ -226,8 +237,14 @@ func renderDetail(m Model) string {
 		fields = append(fields,
 			[2]string{"Marketplace:", safe(marketplaceEndpointDisplay(discovery.Endpoint))},
 			[2]string{"Registry:", safe(discovery.Item.RegistrySlug + " (" + discovery.Item.RegistryID + ")")},
-			[2]string{"Revision:", safe(discovery.Item.Revision)},
-			[2]string{"Digest:", safe(discovery.Item.ContentDigest)},
+		)
+		revision := discovery.Item.Revision
+		digest := discovery.Item.ContentDigest
+		if revision != digest {
+			fields = append(fields, [2]string{"Revision:", safe(abbreviateDigest(revision))})
+		}
+		fields = append(fields,
+			[2]string{"Digest:", safe(abbreviateDigest(digest))},
 			[2]string{"Metadata:", "discovery only; verified during install"},
 		)
 	}
