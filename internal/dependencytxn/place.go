@@ -1850,6 +1850,12 @@ func appendUniquePath(paths []string, value string) []string {
 
 func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, stage *fsboundary.Dir, op placeOperation, cfg options, recovering, resumeMarked bool) (bool, bool, error) {
 	intent := j.Place
+	stopAfterParentSync := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
+	}
 	mark := func() error {
 		if intent.Pending != nil {
 			return nil
@@ -1958,7 +1964,7 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 					return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
 				}
 				if absent {
-					return false, false, nil
+					return false, false, stopAfterParentSync(syncPlaceDestinationParent(destination, cfg.syncPruneParent))
 				}
 			}
 			return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, errors.New("destination is neither old nor intended generation"))
@@ -2051,7 +2057,7 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 					return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, err)
 				}
 				if absent {
-					return false, false, nil
+					return false, false, stopAfterParentSync(syncPlaceDestinationParent(destination, cfg.syncPruneParent))
 				}
 			}
 			return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, errors.New("ownership is neither old nor intended generation"))
@@ -2162,7 +2168,7 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 		}
 		if !generation.Exists {
 			if resumeMarked {
-				return false, false, nil
+				return false, false, stopAfterParentSync(cfg.syncPruneParent(parent))
 			}
 			if recovering {
 				return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, errors.New("unmarked stale destination is absent"))
@@ -2195,6 +2201,14 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 		return true, false, nil
 	}
 	return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, errors.New("unknown place operation"))
+}
+
+func syncPlaceDestinationParent(destination *fsboundary.Destination, syncParent func(*fsboundary.Dir) error) error {
+	parent, err := destination.StagingDir()
+	if err != nil {
+		return err
+	}
+	return errors.Join(syncParent(parent), parent.Close())
 }
 
 func placeStageFileAbsent(stage *fsboundary.Dir, name string) (bool, error) {
