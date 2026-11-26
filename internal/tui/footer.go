@@ -54,15 +54,15 @@ const (
 // the footer re-renders the same hints on every frame.
 var renderedHints sync.Map
 
-func hintItem(key, desc string, rank int, floor bool) footerItem {
+func hintItem(key, desc string, rank int, emphasized bool) footerItem {
 	cacheKey := key + "\x00" + desc
-	if floor {
-		cacheKey += "\x00floor"
+	if emphasized {
+		cacheKey += "\x00emphasized"
 	}
 	text, ok := renderedHints.Load(cacheKey)
 	if !ok {
 		keyStyle := shortcutKeyStyle
-		if floor {
+		if emphasized {
 			keyStyle = styleSearchPrompt
 		}
 		text, _ = renderedHints.LoadOrStore(cacheKey, keyStyle.Render(key)+" "+shortcutDescStyle.Render(desc))
@@ -101,7 +101,7 @@ func (m Model) footerActionHints() []footerItem {
 	}
 	hints := make([]footerItem, len(actions))
 	for i, a := range actions {
-		hints[i] = hintItem(a[0], a[1], rankAction+i, false)
+		hints[i] = hintItem(a[0], a[1], rankAction+i, true)
 		if a[0] == "s" {
 			for _, warning := range m.warnings {
 				if errors.Is(warning, cache.ErrExactGitSnapshotUnavailable) {
@@ -259,7 +259,7 @@ func renderErrorFooter(m Model) string {
 	}
 	items := []footerItem{{text: status, rank: rankCritical}}
 	if !m.filterActive {
-		items = append(items, hintItem("e", "errors", rankRecovery, false), hintItem("r", "reload", rankRecovery, false))
+		items = append(items, hintItem("e", "errors", rankRecovery, true), hintItem("r", "reload", rankRecovery, true))
 	}
 	items = append(items, m.footerFloor()...)
 	footer := layoutFooter(m.width, items)
