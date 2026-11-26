@@ -11,5 +11,5 @@ Local reproduction (2026-11-18): a repository configuration selecting `team/skil
 ## Decisions
 
 - **Removal is a configuration edit.** Removing a selection needs no acquisition evidence for that selection, so the lock-required refusal does not apply to it. Unsupported or invalid configuration roots still refuse.
-- **Missing optional selections warn, required ones fail.** This matches Git selection misses in `resource-selection` and the TUI's optional-miss rule in `tui-startup`.
-- **Only a 404 on the latest-revision lookup counts as removed.** Other Marketplace failures (network, 5xx, registry-level 404, instance mismatch) still fail the run without writing a lock.
+- **Unrecorded optional direct selections warn; missing required selections fail.** This matches Git selection misses in `resource-selection` and the TUI's optional-miss rule in `tui-startup`.
+- **Only resource-not-found on the latest-revision lookup for an unrecorded optional direct selection without an explicit revision counts as removed.** Skipping MUST NOT discard an existing pin. An unavailable explicit revision, missing registry, endpoint-level 404, network error, 5xx, or instance mismatch still fails the run without writing a new lock.

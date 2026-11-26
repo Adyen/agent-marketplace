@@ -2333,7 +2333,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			return nil, v4err(v4MarketplaceLockRequiredCode, "sources."+name, src.Line, "Marketplace resources require an acquisition lock")
 		}
 		if _, ok := lockByEndpoint[src.CanonicalURL]; !ok {
-			return nil, v4err(v4MarketplaceLockMismatchCode, "sources."+name, 0, "Marketplace source %q has no lock record for endpoint %q", name, src.CanonicalURL)
+			return nil, v4errVariant(v4MarketplaceLockMismatchCode, "sources."+name, 0, "endpoint-missing", "Marketplace source %q has no lock record for endpoint %q", name, src.CanonicalURL)
 		}
 	}
 

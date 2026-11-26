@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 
@@ -32,13 +31,7 @@ func preflightHookRemoval(ctx context.Context, ws Workspace, edits []StagedConfi
 	if len(before.Errors) != 0 {
 		return errors.Join(before.Errors...)
 	}
-	overlays := make(map[string][]byte, len(edits)*2)
-	maps.Copy(overlays, extraOverlays)
-	for _, edit := range edits {
-		overlays[edit.Path] = edit.Bytes
-		overlays[edit.RequestedPath] = edit.Bytes
-	}
-	options.EffectiveOpts.FileOverlays = overlays
+	options.EffectiveOpts.FileOverlays = stagedConfigOverlays(edits, extraOverlays)
 	after := Resolve(ctx, options)
 	if len(after.Errors) != 0 {
 		return errors.Join(after.Errors...)

@@ -31,6 +31,15 @@ var (
 
 type LockLifecycleError = pipeline.LockViewError
 
+type RemovedMarketplaceSelectionWarning config.MarketplaceSelectionToSkip
+
+func (s RemovedMarketplaceSelectionWarning) Error() string {
+	return fmt.Sprintf(
+		"marketplace resource %s/%s/%s was removed from %s; run `agent-marketplace remove %s`",
+		s.Registry, s.Kind, s.Name, s.URL, s.InstalledName,
+	)
+}
+
 type LockMode struct {
 	Locked                                    bool
 	Offline                                   bool
@@ -699,10 +708,7 @@ func PrepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode Lo
 			}
 			if mode.WarningSink != nil {
 				for _, selection := range skipped {
-					*mode.WarningSink = append(*mode.WarningSink, fmt.Errorf(
-						"marketplace resource %s/%s/%s was removed from %s; run `agent-marketplace remove %s`",
-						selection.Registry, selection.Kind, selection.Name, selection.URL, selection.InstalledName,
-					))
+					*mode.WarningSink = append(*mode.WarningSink, RemovedMarketplaceSelectionWarning(selection))
 				}
 			}
 		}

@@ -17,6 +17,7 @@ import (
 )
 
 // spec: deployed-acquisition-locks/optional-removed-selection-is-skipped-while-the-rest-is-locked
+// spec: deployed-acquisition-locks/strict-sync-reports-optional-removed-selection-after-installing-remaining
 // spec: deployed-acquisition-locks/required-removed-selection-fails-without-writing-the-lock
 // spec: deployed-acquisition-locks/other-lookup-failures-still-fail-without-writing-the-lock
 // spec: resource-removal/remove-a-marketplace-selection-when-the-layer-has-no-lock
@@ -89,9 +90,43 @@ func TestRecoverMissingMarketplaceSelectionWithoutLock(t *testing.T) {
 						if _, err := os.Stat(filepath.Join(fixture.repoRoot, ".factory", "skills", "gone")); !os.IsNotExist(err) {
 							t.Fatalf("removed skill was materialized: %v", err)
 						}
+					} else if !existingLock {
+						for _, name := range []string{"gone", "keep"} {
+							if _, err := os.Lstat(filepath.Join(fixture.repoRoot, ".factory", "skills", name)); !os.IsNotExist(err) {
+								t.Fatalf("lock installed %s: %v", name, err)
+							}
+						}
 					}
 				})
 			}
+		}
+	})
+
+	t.Run("strict sync reports optional 404 after installing remaining resources", func(t *testing.T) {
+		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone", "keep"}, false)
+		beforeConfig, err := os.ReadFile(fixture.configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		output, err := executeCommand("sync", "--strict")
+		if err == nil {
+			t.Fatalf("strict sync succeeded after skipping an optional removed selection:\n%s", output)
+		}
+		wantWarning := "marketplace resource tools/skill/gone was removed from " + fixture.endpoint + "; run `agent-marketplace remove gone`"
+		if !strings.Contains(output+"\n"+err.Error(), wantWarning) {
+			t.Fatalf("strict sync error lacks the removal remedy %q:\n%v\n%s", wantWarning, err, output)
+		}
+		if after, err := os.ReadFile(fixture.configPath); err != nil || !reflect.DeepEqual(beforeConfig, after) {
+			t.Fatalf("strict sync changed authored config: %v", err)
+		}
+		assertRemainingMarketplaceLock(t, fixture)
+		assertFileExists(t, filepath.Join(fixture.repoRoot, ".factory", "skills", "keep", "SKILL.md"))
+		if _, err := os.Lstat(filepath.Join(fixture.repoRoot, ".factory", "skills", "gone")); !os.IsNotExist(err) {
+			t.Fatalf("strict sync materialized removed skill: %v", err)
+		}
+		if got := fixture.goneLookups.Load(); got != 1 {
+			t.Fatalf("strict sync latest lookup count = %d, want 1", got)
 		}
 	})
 
@@ -486,6 +521,7 @@ resources:
 			t.Fatalf("remove or following sync queried the removed selection %d times", got)
 		}
 	})
+
 	t.Run("remove refuses unsupported Marketplace qualifiers", func(t *testing.T) {
 		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone"}, false)
 		before, err := os.ReadFile(fixture.configPath)
@@ -564,6 +600,146 @@ resources:
 			t.Fatalf("remove queried the removed selection %d times", got)
 		}
 	})
+}
+
+// spec: resource-removal/organization-member-opt-out-disambiguates-kind-and-scope
+func TestRemoveUnrecordedRepositoryMarketplaceSelectionDisambiguatesOrganizationMember(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	server, _, _ := newRevisionedV4MarketplaceServer(t, "mp", "team", "review", "repo-only")
+	t.Cleanup(server.Close)
+
+	orgDir := t.TempDir()
+	orgConfigPath := filepath.Join(orgDir, "config.yaml")
+	orgLockPath := filepath.Join(orgDir, "lock.yaml")
+	collectionConfig := `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  hosted: {marketplace: ` + server.URL + `}
+resources:
+  hosted: {include: [tools/collection/team]}
+`
+	userConfigPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, userConfigPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+
+	repoConfigPath := filepath.Join(repo, ".agents", "config.yaml")
+	repoLockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, repoConfigPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed repository selection: %v\n%s", err, output)
+	}
+
+	seedRepo := t.TempDir()
+	seedConfigPath := filepath.Join(seedRepo, ".agents", "config.yaml")
+	seedLockPath := filepath.Join(seedRepo, ".agents", "lock.yaml")
+	writeConfig(t, seedConfigPath, collectionConfig)
+	withWorkingDir(t, seedRepo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("seed organization collection lock: %v\n%s", err, output)
+	}
+	orgLock := readLockDocument(t, seedLockPath)
+	orgLock.Scope = lockfile.ScopeOrganization
+	orgLockBytes, err := lockfile.Encode(orgLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, orgConfigPath, collectionConfig)
+	config.SetTestOrganizationConfigPath(t, orgConfigPath)
+	if err := os.Chmod(orgConfigPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orgLockPath, orgLockBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync lock-backed organization member: %v\n%s", err, output)
+	}
+
+	orgSkillPath := filepath.Join(home, ".factory", "skills", "review", "SKILL.md")
+	repoSkillPath := filepath.Join(repo, ".factory", "skills", "review", "SKILL.md")
+	assertFileExists(t, orgSkillPath)
+	assertFileExists(t, repoSkillPath)
+	before := make(map[string][]byte, 6)
+	for _, path := range []string{orgConfigPath, orgLockPath, repoConfigPath, repoLockPath, orgSkillPath, repoSkillPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = data
+	}
+
+	repoLock := readLockDocument(t, repoLockPath)
+	if len(repoLock.Marketplaces) != 1 {
+		t.Fatalf("repository Marketplace lock = %#v", repoLock.Marketplaces)
+	}
+	resources := repoLock.Marketplaces[0].Resources[:0]
+	for _, resource := range repoLock.Marketplaces[0].Resources {
+		if resource.Name != "review" {
+			resources = append(resources, resource)
+		}
+	}
+	repoLock.Marketplaces[0].Resources = resources
+	repoLockBytes, err := lockfile.Encode(repoLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoLockPath, repoLockBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before[repoLockPath] = repoLockBytes
+
+	output, err := executeCommand("remove", "review")
+	if err == nil || !strings.Contains(err.Error()+"\n"+output, "--scope") {
+		t.Fatalf("unscoped removal did not report the organization/repository ambiguity: %v\n%s", err, output)
+	}
+	for path, data := range before {
+		after, readErr := os.ReadFile(path)
+		if readErr != nil || !reflect.DeepEqual(data, after) {
+			t.Fatalf("ambiguous removal changed %s: %v", path, readErr)
+		}
+	}
+
+	output, err = executeCommand("remove", "review", "--scope", "repo")
+	if err != nil {
+		t.Fatalf("remove repository selection: %v\n%s", err, output)
+	}
+	repoConfigAfter, err := os.ReadFile(repoConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(repoConfigAfter), "tools/skill/review") {
+		t.Fatalf("repository selection remains after removal:\n%s", repoConfigAfter)
+	}
+	if after, err := os.ReadFile(orgConfigPath); err != nil || !reflect.DeepEqual(before[orgConfigPath], after) {
+		t.Fatalf("repository removal changed organization config: %v", err)
+	}
+	if after, err := os.ReadFile(orgLockPath); err != nil || !reflect.DeepEqual(before[orgLockPath], after) {
+		t.Fatalf("repository removal changed organization lock: %v", err)
+	}
+	if _, err := os.Lstat(repoSkillPath); !os.IsNotExist(err) {
+		t.Fatalf("repository resource remains installed: %v", err)
+	}
+	if after, err := os.ReadFile(orgSkillPath); err != nil || !reflect.DeepEqual(before[orgSkillPath], after) {
+		t.Fatalf("repository removal changed organization member: %v", err)
+	}
 }
 
 func newRecoverRecordedMarketplaceFixture(t *testing.T) (recoverMissingMarketplaceFixture, *atomic.Bool, *atomic.Int32) {

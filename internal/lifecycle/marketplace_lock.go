@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -399,8 +398,7 @@ func marketplaceLockHasOnlyMissingSelections(err error) bool {
 	if !errors.As(err, &validation) || validation.Code != "v4.marketplace-lock-mismatch" {
 		return false
 	}
-	return validation.Variant == "resource-missing" ||
-		validation.Variant == "" && strings.HasPrefix(validation.Path, "sources.") && strings.Contains(validation.Msg, "has no lock record for endpoint")
+	return validation.Variant == "resource-missing" || validation.Variant == "endpoint-missing"
 }
 
 // appendRegistrationIdentities adds one identity-only record per endpoint,

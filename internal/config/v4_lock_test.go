@@ -444,6 +444,9 @@ sources:
 	if v4err.Code != "v4.marketplace-lock-mismatch" || v4err.Path != "sources.a" {
 		t.Fatalf("error = %q %q, want v4.marketplace-lock-mismatch at sources.a", v4err.Code, v4err.Path)
 	}
+	if v4err.Variant != "endpoint-missing" {
+		t.Fatalf("variant = %q, want endpoint-missing", v4err.Variant)
+	}
 }
 
 func TestV4MarketplaceLockHydrationNormalizesLock(t *testing.T) {

@@ -643,11 +643,22 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 	if len(missing) == 0 {
 		return nil, false, nil
 	}
+	from := ""
 	if strings.TrimSpace(opts.FromURL) != "" {
-		from, err := config.NormalizeMarketplaceURL(opts.FromURL)
+		from, err = config.NormalizeMarketplaceURL(opts.FromURL)
 		if err != nil {
 			return nil, false, nil
 		}
+	}
+	effective := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), SkipMarketplaceSelections: skipped,
+	}, nil)
+	for _, candidate := range marketplaceRemovalCandidates(effective.Merged, name) {
+		if candidate.Source == config.Organization {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if from != "" {
 		candidates = slices.DeleteFunc(candidates, func(candidate resolver.ResolvedArtifact) bool {
 			if !candidate.IsMarketplace {
 				return true
@@ -671,9 +682,6 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 	if match.request.Required {
 		return nil, true, fmt.Errorf("marketplace %s %q is required and cannot be removed", match.request.MarketplaceKind(), name)
 	}
-	effective := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
-		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), SkipMarketplaceSelections: skipped,
-	}, nil)
 	if strings.TrimSpace(opts.FromURL) != "" {
 		_, isMarketplaceEndpoint, err := marketplaceRemovalSource(effective.Merged, opts)
 		if err != nil {
@@ -724,13 +732,7 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 	if err != nil {
 		return nil, true, err
 	}
-	overlays, err := opts.configStaging.Overlays()
-	if err != nil {
-		return nil, true, err
-	}
-	for _, edit := range edits {
-		overlays[edit.RequestedPath] = edit.Bytes
-	}
+	overlays := stagedConfigOverlays(edits, nil)
 	stagedIntent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
 		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: overlays,
 	})
@@ -852,7 +854,7 @@ func removalCanBootstrapLockEvidence(err error) bool {
 	var validation *config.V4ValidationError
 	if errors.As(err, &validation) {
 		return validation.Code == "v4.marketplace-lock-required" && validation.Variant == "lock-absent" ||
-			validation.Code == "v4.marketplace-lock-mismatch" && (validation.Variant == "" || validation.Variant == "resource-missing")
+			validation.Code == "v4.marketplace-lock-mismatch" && (validation.Variant == "" || validation.Variant == "resource-missing" || validation.Variant == "endpoint-missing")
 	}
 	return config.IsRegistryURLBlockedError(err)
 }
@@ -1213,6 +1215,25 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 			}
 		}
 	}
+	marketplaceCandidates := marketplaceRemovalCandidates(cfg, name)
+	candidates = append(candidates, marketplaceCandidates...)
+	for _, candidate := range marketplaceCandidates {
+		hasEarly = true
+		hasOrganizationResource = hasOrganizationResource || candidate.Source == config.Organization && candidate.Kind != ir.KindCollection
+	}
+	// Identify organization resources so their opt-out can be deferred until
+	// catalog-selected resources also participate in ambiguity resolution.
+	if (!hasResource || !hasEarly) && !hasOrganizationResource {
+		return nil
+	}
+	return candidates
+}
+
+func marketplaceRemovalCandidates(cfg *config.Config, name string) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var candidates []resolver.ResolvedArtifact
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
 			member := !pin.Direct && len(pin.SelectedBy.List()) > 0
@@ -1227,14 +1248,7 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 				Entry: catalog.Entry{Kind: kind, Name: name}, Source: entry.Source,
 				RegistryURL: entry.URL, RegistryPath: pin.RegistryID, IsMarketplace: true,
 			})
-			hasEarly = true
-			hasOrganizationResource = hasOrganizationResource || entry.Source == config.Organization && kind != ir.KindCollection
 		}
-	}
-	// Identify organization resources so their opt-out can be deferred until
-	// catalog-selected resources also participate in ambiguity resolution.
-	if (!hasResource || !hasEarly) && !hasOrganizationResource {
-		return nil
 	}
 	return candidates
 }

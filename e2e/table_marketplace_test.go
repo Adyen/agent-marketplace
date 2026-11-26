@@ -126,6 +126,64 @@ func init() {
 		},
 	})
 
+	// spec: deployed-acquisition-locks/strict-sync-reports-optional-removed-selection-after-installing-remaining
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/strict_sync_after_optional_unrecorded_404",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: tableMarketplaceRegistry(
+			Skill{Name: "keep", Description: "Available Marketplace skill"},
+		)}},
+		RepoCfg: v4(
+			"harnesses: [factory]",
+			"sources: {hub: {marketplace: '{{MKT:hub}}'}}",
+			"resources: {hub: {include: [hub/skill/gone, hub/skill/keep]}}",
+		),
+		Steps: []Step{
+			ok("sync").
+				has("./.agents/lock.yaml", "name: keep").
+				lacks("./.agents/lock.yaml", "name: gone").
+				has("./.factory/skills/keep/SKILL.md", "Available Marketplace skill").
+				absent("./.factory/skills/gone/SKILL.md"),
+			exits(1, "sync", "--strict").
+				out("marketplace resource hub/skill/gone", "agent-marketplace remove gone").
+				unchanged("./.agents/config.yaml", "./.agents/lock.yaml").
+				has("./.factory/skills/keep/SKILL.md", "Available Marketplace skill").
+				absent("./.factory/skills/gone/SKILL.md"),
+		},
+	})
+
+	// spec: resource-removal/organization-member-opt-out-disambiguates-kind-and-scope
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/remove_repo_selection_ambiguous_with_org_collection_member",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: RegistryDef{Files: map[string]string{
+			"skills/review/SKILL.md":           "---\nname: review\ndescription: Review skill\nlicense: MIT\n---\nReview skill body\n",
+			"collections/team/COLLECTION.yaml": "name: team\nversion: \"1.0\"\ndescription: Organization team\nresources:\n  - name: review\n    kind: skill\n",
+		}}}},
+		OrgCfg: v4(
+			"harnesses: [factory]",
+			"sources: {org: {marketplace: '{{MKT:hub}}'}}",
+			"resources: {org: {include: [hub/collection/team]}}",
+		),
+		RepoCfg: v4("harnesses: [factory]"),
+		Steps: []Step{
+			ok("sync").
+				has("~/.factory/skills/review/SKILL.md", "Review skill body").
+				absent("./.agents/lock.yaml", "./.factory/skills/review/SKILL.md", "/etc/agent-marketplace/lock.yaml"),
+			writeRepoCfg(v4(
+				"harnesses: [factory]",
+				"sources: {repo: {marketplace: '{{MKT:hub}}'}}",
+				"resources: {repo: {include: [hub/skill/review]}}",
+			)).absent("./.agents/lock.yaml"),
+			exits(1, "remove", "review").
+				out("--scope").
+				unchanged("./.agents/config.yaml", "/etc/agent-marketplace/config.yaml", "~/.factory/skills/review/SKILL.md").
+				absent("./.agents/lock.yaml", "/etc/agent-marketplace/lock.yaml", "./.factory/skills/review/SKILL.md"),
+			ok("remove", "review", "--scope", "repo").
+				lacks("./.agents/config.yaml", "hub/skill/review").
+				absent("./.factory/skills/review/SKILL.md", "/etc/agent-marketplace/lock.yaml").
+				unchanged("/etc/agent-marketplace/config.yaml", "~/.agents/config.yaml", "~/.factory/skills/review/SKILL.md"),
+		},
+	})
+
 	// spec: marketplace-analysis/rejected-non-utf-8-support-cannot-be-installed
 	testTable = append(testTable, TestCase{
 		Name: "marketplace/reject_non_utf8_support",

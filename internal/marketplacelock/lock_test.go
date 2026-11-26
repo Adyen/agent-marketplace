@@ -6,8 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,11 +17,6 @@ import (
 )
 
 func TestResolveWithRemovedSelectionsUsesSkipOnlyForWritingPath(t *testing.T) {
-	repo := t.TempDir()
-	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			_ = json.NewEncoder(w).Encode(api.DefaultWellKnown("mp", "https://example.com"))
@@ -32,11 +25,7 @@ func TestResolveWithRemovedSelectionsUsesSkipOnlyForWritingPath(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer server.Close()
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted: {include: [tools/skill/gone]}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{RepoRoot: repo})
-	layer := intent.Layers[config.RepoCommitted]
+	layer := repoLayerWithRequests(t, server.URL, []string{"tools/skill/gone"})
 	existing := &lockfile.Document{
 		APIVersion: lockfile.APIVersionV2,
 		Scope:      lockfile.ScopeRepo,

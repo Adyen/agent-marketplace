@@ -231,7 +231,8 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 			if resolver.IsUnmetRequirement(w) {
 				unmetRequirements = true
 			}
-			if resolver.IsSoftSelectedNotFound(w) || resolver.IsSoftSelectedMalformed(w) {
+			_, removedMarketplaceSelection := errors.AsType[lifecycle.RemovedMarketplaceSelectionWarning](w)
+			if resolver.IsSoftSelectedNotFound(w) || resolver.IsSoftSelectedMalformed(w) || removedMarketplaceSelection {
 				strictErrors = append(strictErrors, w)
 			} else {
 				strictWarnings = append(strictWarnings, w)
