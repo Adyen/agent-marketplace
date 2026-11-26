@@ -13,6 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -101,7 +103,10 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 		if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
 			return err
 		}
-		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
+		extra = append(extra, withConfigStaging(opts.configStaging))
+	}
+	if opts.DependencyReconcile != nil {
+		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile))
 	}
 	synced, err := silentSyncCollect(ctx, ws, extra...)
 	if opts.reportSink != nil {
@@ -125,8 +130,8 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	if err := RecoverDependencyTransactions(ctx); err != nil {
 		return nil, err
 	}
-	if err := ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
-		return nil, err
+	if validationErr := ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); validationErr != nil {
+		return nil, validationErr
 	}
 	opts.workspace = &ws
 	defer func() {
@@ -173,6 +178,9 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 
 	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, ws)
 	if err != nil {
+		if result, handled, removeErr := removeMissingMarketplaceSelection(ctx, opts, ws, name, err); handled {
+			return result, removeErr
+		}
 		return nil, err
 	}
 
@@ -617,6 +625,261 @@ func loadRemoveConfig(ctx context.Context, ws Workspace) (mergedCfg, repoCfg, or
 	return ec.Merged, ec.Repo.Config, ec.Organization.Config, nil
 }
 
+func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, ws Workspace, name string, loadErr error) (result *RemoveResult, handled bool, retErr error) {
+	if !config.MissingMarketplaceEvidence(loadErr) {
+		return nil, false, nil
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
+	if len(intent.Errors) != 0 {
+		return nil, false, nil
+	}
+	if err := MarketplaceAllowlistError(intent); err != nil {
+		return nil, false, nil
+	}
+	candidates, missing, skipped, err := missingMarketplaceRemovalCandidates(intent, name)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(missing) == 0 {
+		return nil, false, nil
+	}
+	from := ""
+	if strings.TrimSpace(opts.FromURL) != "" {
+		from, err = config.NormalizeMarketplaceURL(opts.FromURL)
+		if err != nil {
+			return nil, false, nil
+		}
+	}
+	effective := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), SkipMarketplaceSelections: skipped,
+	}, nil)
+	for _, candidate := range marketplaceRemovalCandidates(effective.Merged, name) {
+		if candidate.Source == config.Organization {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if from != "" {
+		candidates = slices.DeleteFunc(candidates, func(candidate resolver.ResolvedArtifact) bool {
+			if !candidate.IsMarketplace {
+				return true
+			}
+			endpoint, err := config.NormalizeMarketplaceURL(candidate.RegistryURL)
+			return err != nil || endpoint != from
+		})
+	}
+	if opts.FromURL != "" && !opts.ScopeSpecified {
+		opts.Scope = ScopeRepo
+		opts.ScopeSpecified = true
+	}
+	target, err := resolvedResourceByNameInScope(candidates, name, opts.Kind, opts.HasKind, nil, opts.Scope, opts.ScopeSpecified)
+	if err != nil {
+		return nil, true, err
+	}
+	match := missingMarketplaceSelectionForTarget(target, missing)
+	if match == nil {
+		return nil, false, nil
+	}
+	if match.request.Required {
+		return nil, true, fmt.Errorf("marketplace %s %q is required and cannot be removed", match.request.MarketplaceKind(), name)
+	}
+	if strings.TrimSpace(opts.FromURL) != "" {
+		_, isMarketplaceEndpoint, err := marketplaceRemovalSource(effective.Merged, opts)
+		if err != nil {
+			return nil, true, err
+		}
+		if !isMarketplaceEndpoint {
+			return nil, false, nil
+		}
+	}
+	for _, issue := range effective.Errors {
+		if !removalCanBootstrapLockEvidence(issue) {
+			return nil, true, errors.Join(effective.Errors...)
+		}
+	}
+	scope := inferMarketplaceRemoveScope(match.source)
+	if opts.ScopeSpecified {
+		scope = opts.Scope
+	}
+	if err := config.ValidateScopeBoundary(match.source, scopeToConfigSource(scope)); err != nil {
+		return nil, true, err
+	}
+
+	createdStaging := false
+	if opts.configStaging == nil {
+		opts.configStaging, err = newConfigStagingManager()
+		if err != nil {
+			return nil, true, err
+		}
+		createdStaging = true
+	}
+	if createdStaging {
+		defer closeConfigStaging(opts.configStaging, "remove", &retErr)
+	}
+	entry := config.MarketplaceEntry{URL: match.url, Alias: match.sourceName, Source: match.source}
+	if err := editRemovalLayer(opts.RepoRoot, scope, opts.configStaging, func(m *LayerMutation) error {
+		binding, found, err := m.editor.LookupMarketplaceSource(entry.URL)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("marketplace endpoint %q has no v4 source in this layer", entry.URL)
+		}
+		return m.editor.RemoveMarketplaceRequest(binding, match.request)
+	}); err != nil {
+		return nil, true, err
+	}
+	edits, err := opts.configStaging.Edits()
+	if err != nil {
+		return nil, true, err
+	}
+	overlays := stagedConfigOverlays(edits, nil)
+	stagedIntent := config.ReadIntent(ctx, config.LoadEffectiveOptions{
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: overlays,
+	})
+	if len(stagedIntent.Errors) > 0 {
+		return nil, true, errors.Join(stagedIntent.Errors...)
+	}
+	if err := MarketplaceAllowlistError(stagedIntent); err != nil {
+		return nil, true, err
+	}
+	if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
+		return nil, true, err
+	}
+	if _, err := commitRemovalConfig(ctx, ws.RepoRoot(), ws.LocalConfigDir(), false, edits); err != nil {
+		return nil, true, err
+	}
+	opts.configStaging = nil
+	if err := syncAfterRemove(ctx, opts); err != nil {
+		return nil, true, err
+	}
+	return &RemoveResult{RemovedName: name, IsCollection: match.request.Kind == "collection", InferredUserScope: !opts.ScopeSpecified && scope == ScopeUser}, true, nil
+}
+
+type missingMarketplaceSelection struct {
+	source     config.Source
+	sourceName string
+	url        string
+	request    config.V4ResourceRequest
+}
+
+func missingMarketplaceRemovalCandidates(intent config.Intent, name string) ([]resolver.ResolvedArtifact, []missingMarketplaceSelection, []config.MarketplaceSelectionToSkip, error) {
+	var candidates []resolver.ResolvedArtifact
+	var missing []missingMarketplaceSelection
+	var skipped []config.MarketplaceSelectionToSkip
+	for _, source := range []config.Source{config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		layer := intent.Layers[source]
+		if !layer.Present() || layer.Err() != nil {
+			continue
+		}
+		var current *lockfile.Document
+		if len(layer.MarketplaceSources()) > 0 {
+			paths, err := config.ResolveConfigLockPaths(layer.Path)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			doc, _, exists, err := ReadLayerLock(paths.CanonicalLock, lockfile.Scope(source.LockScope()))
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if exists {
+				current = doc
+			}
+		}
+		for _, decl := range layer.Sources() {
+			if decl.Kind == config.V4SourceMarketplace {
+				continue
+			}
+			for _, decision := range decl.Decisions {
+				request := decision.Request
+				if request == nil || request.Name != name || request.Options.HasAs && request.Options.As != request.Name {
+					continue
+				}
+				kind, ok := skill.ParseKind(request.Kind)
+				if !ok {
+					continue
+				}
+				candidates = append(candidates, resolver.ResolvedArtifact{
+					Entry:       catalog.Entry{Kind: kind, Name: request.Name, SourceHarness: decl.SourceHarness},
+					RegistryURL: decl.URL, RegistryPath: decl.Path, Ref: decl.Ref,
+					V4Kind: decl.Kind, Source: source, Required: request.Required,
+				})
+			}
+		}
+		for _, marketplaceSource := range layer.MarketplaceSources() {
+			for _, request := range marketplaceSource.Requests {
+				record, present := marketplacelock.MarketplaceRequestRecord(current, marketplaceSource.URL, request)
+				if present && request.Options.Revision != "" && request.Options.Revision != record.Revision {
+					return nil, nil, nil, fmt.Errorf("marketplace selection %s requests revision %q, but its lock records %q", request.Locator, request.Options.Revision, record.Revision)
+				}
+				installedName := request.Name
+				if request.Options.HasAs {
+					installedName = request.Options.As
+				}
+				matchesName := request.Name == name || installedName == name
+				if !matchesName {
+					continue
+				}
+				if !present {
+					missing = append(missing, missingMarketplaceSelection{
+						source: source, sourceName: marketplaceSource.Name, url: marketplaceSource.URL, request: request,
+					})
+					if !request.Required {
+						skipped = append(skipped, config.MarketplaceSelectionToSkip{
+							Source: source, SourceName: marketplaceSource.Name, Locator: request.Locator,
+							URL: marketplaceSource.URL, Registry: request.Registry, Kind: request.MarketplaceKind(),
+							Name: request.Name, InstalledName: installedName,
+						})
+					}
+				}
+				if kind, ok := skill.ParseKind(request.Kind); ok {
+					candidates = append(candidates, resolver.ResolvedArtifact{
+						Entry:       catalog.Entry{Kind: kind, Name: installedName},
+						RegistryURL: marketplaceSource.URL, RegistryPath: request.Registry,
+						Source: source, Required: request.Required, IsMarketplace: true,
+						MarketplaceURL: marketplaceSource.URL, MarketplaceAlias: marketplaceSource.Name,
+						MarketplaceResourceName: request.Name,
+					})
+				}
+			}
+		}
+	}
+	return candidates, missing, skipped, nil
+}
+
+func removalCanBootstrapLockEvidence(err error) bool {
+	var lockErr *LockViewError
+	if errors.As(err, &lockErr) {
+		return lockErr.Code == "lock.missing"
+	}
+	var validation *config.V4ValidationError
+	if errors.As(err, &validation) {
+		return validation.Code == "v4.marketplace-lock-required" && validation.Variant == "lock-absent" ||
+			validation.Code == "v4.marketplace-lock-mismatch" && (validation.Variant == "" || validation.Variant == "resource-missing" || validation.Variant == "endpoint-missing")
+	}
+	return config.IsRegistryURLBlockedError(err)
+}
+
+func missingMarketplaceSelectionForTarget(target *resolver.ResolvedArtifact, missing []missingMarketplaceSelection) *missingMarketplaceSelection {
+	if target == nil || !target.IsMarketplace {
+		return nil
+	}
+	for i := range missing {
+		selection := &missing[i]
+		installedName := selection.request.Name
+		if selection.request.Options.HasAs {
+			installedName = selection.request.Options.As
+		}
+		if selection.source == target.Source &&
+			selection.url == target.RegistryURL &&
+			selection.request.MarketplaceKind() == skill.KindLabel(target.Kind) &&
+			selection.request.Name == target.MarketplaceResourceName &&
+			installedName == target.Name {
+			return selection
+		}
+	}
+	return nil
+}
+
 func registryEntryForResolved(target *resolver.ResolvedArtifact) config.RegistryEntry {
 	return config.RegistryEntry{
 		URL:           strings.TrimSpace(target.RegistryURL),
@@ -952,6 +1215,25 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 			}
 		}
 	}
+	marketplaceCandidates := marketplaceRemovalCandidates(cfg, name)
+	candidates = append(candidates, marketplaceCandidates...)
+	for _, candidate := range marketplaceCandidates {
+		hasEarly = true
+		hasOrganizationResource = hasOrganizationResource || candidate.Source == config.Organization && candidate.Kind != ir.KindCollection
+	}
+	// Identify organization resources so their opt-out can be deferred until
+	// catalog-selected resources also participate in ambiguity resolution.
+	if (!hasResource || !hasEarly) && !hasOrganizationResource {
+		return nil
+	}
+	return candidates
+}
+
+func marketplaceRemovalCandidates(cfg *config.Config, name string) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var candidates []resolver.ResolvedArtifact
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
 			member := !pin.Direct && len(pin.SelectedBy.List()) > 0
@@ -966,14 +1248,7 @@ func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.Resolved
 				Entry: catalog.Entry{Kind: kind, Name: name}, Source: entry.Source,
 				RegistryURL: entry.URL, RegistryPath: pin.RegistryID, IsMarketplace: true,
 			})
-			hasEarly = true
-			hasOrganizationResource = hasOrganizationResource || entry.Source == config.Organization && kind != ir.KindCollection
 		}
-	}
-	// Identify organization resources so their opt-out can be deferred until
-	// catalog-selected resources also participate in ambiguity resolution.
-	if (!hasResource || !hasEarly) && !hasOrganizationResource {
-		return nil
 	}
 	return candidates
 }
@@ -1390,6 +1665,11 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
+		if name := strings.TrimSpace(opts.ResourceName); name != "" {
+			if result, handled, removeErr := removeMissingMarketplaceSelection(ctx, opts, ws, name, errors.Join(ec.Errors...)); handled {
+				return result, removeErr
+			}
+		}
 		return nil, errors.Join(ec.Errors...)
 	}
 	if name := strings.TrimSpace(opts.ResourceName); name != "" {

@@ -1,14 +1,47 @@
 package marketplacelock
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
+
+func TestResolveWithRemovedSelectionsUsesSkipOnlyForWritingPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			_ = json.NewEncoder(w).Encode(api.DefaultWellKnown("mp", "https://example.com"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	layer := repoLayerWithRequests(t, server.URL, []string{"tools/skill/gone"})
+	existing := &lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: server.URL, InstanceID: "mp",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+			Resources:        []lockfile.MarketplaceResourceLock{{RegistryID: "src", Kind: "skill", Name: "gone"}},
+		}},
+	}
+	resolver := marketplace.NewResolver()
+	resolver.Cache = marketplace.NewCache(t.TempDir())
+	_, err := ResolveWithRemovedSelections(context.Background(), resolver, layer, existing, []string{"factory"}, nil, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("update preview bootstrap did not report the missing resource lookup: %v", err)
+	}
+}
 
 func TestMergePinsToV4DropsEdgesToRemovedCollections(t *testing.T) {
 	removedDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))

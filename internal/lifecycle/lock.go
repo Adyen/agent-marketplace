@@ -31,28 +31,39 @@ var (
 
 type LockLifecycleError = pipeline.LockViewError
 
+type RemovedMarketplaceSelectionWarning config.MarketplaceSelectionToSkip
+
+func (s RemovedMarketplaceSelectionWarning) Error() string {
+	return fmt.Sprintf(
+		"marketplace resource %s/%s/%s was removed from %s; run `agent-marketplace remove %s`",
+		s.Registry, s.Kind, s.Name, s.URL, s.InstalledName,
+	)
+}
+
 type LockMode struct {
-	Locked                     bool
-	Offline                    bool
-	Upgrade                    bool
-	Check                      bool
-	Selects                    map[lockfile.Scope]bool
-	ExplicitOrganization       bool
-	UpgradeSelection           lockfile.UpgradeSelection
-	UpgradeTargets             *UpgradeTargetSpec
-	UpgradeResult              *UpgradeTargetResult
-	IgnoreBlocked              bool
-	ReconcileUnselected        bool
-	StagedConfigEdits          []pipeline.StagedConfigEdit
-	StagedLockEdits            []pipeline.StagedLockEdit
-	CommitReads                []dependencytxn.ReadAssertion
-	CommitScope                dependencytxn.CommitScope
-	PrepareInstall             *PreparedInstallLocks
-	ReuseInstall               *PreparedInstallLocks
-	WarningSink                *[]error
-	MarketplacePolicy          resolver.MarketplaceRevocationPolicy
-	SelectionGuard             bool
-	AllowTransientOrganization bool
+	Locked                                    bool
+	Offline                                   bool
+	Upgrade                                   bool
+	Check                                     bool
+	Selects                                   map[lockfile.Scope]bool
+	ExplicitOrganization                      bool
+	UpgradeSelection                          lockfile.UpgradeSelection
+	UpgradeTargets                            *UpgradeTargetSpec
+	UpgradeResult                             *UpgradeTargetResult
+	IgnoreBlocked                             bool
+	ReconcileUnselected                       bool
+	StagedConfigEdits                         []pipeline.StagedConfigEdit
+	StagedLockEdits                           []pipeline.StagedLockEdit
+	CommitReads                               []dependencytxn.ReadAssertion
+	CommitScope                               dependencytxn.CommitScope
+	PrepareInstall                            *PreparedInstallLocks
+	ReuseInstall                              *PreparedInstallLocks
+	WarningSink                               *[]error
+	MarketplacePolicy                         resolver.MarketplaceRevocationPolicy
+	AllowOptionalRemovedMarketplaceSelections bool
+	SkippedMarketplaceSelections              *[]config.MarketplaceSelectionToSkip
+	SelectionGuard                            bool
+	AllowTransientOrganization                bool
 	// UpdatePreview, when set, receives the prepared prior/candidate view
 	// before any new publication. Its error aborts preparation and nothing
 	// is committed.
@@ -686,9 +697,20 @@ func PrepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode Lo
 	}
 	if canBootstrapMarketplace && (missingMarketplaceEvidence || unacquiredRegistration) {
 		slog.Debug("marketplace lock bootstrap triggered", "missing_evidence", missingMarketplaceEvidence, "unacquired_registration", unacquiredRegistration)
-		bootstrapChanged, err := BootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.Selects, mode.MarketplacePolicy)
+		bootstrapChanged, skipped, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode.Selects, mode.MarketplacePolicy, mode.AllowOptionalRemovedMarketplaceSelections)
 		if err != nil {
 			return nil, 0, nil, err
+		}
+		if len(skipped) > 0 {
+			loadOptions.SkipMarketplaceSelections = append(loadOptions.SkipMarketplaceSelections, skipped...)
+			if mode.SkippedMarketplaceSelections != nil {
+				*mode.SkippedMarketplaceSelections = append(*mode.SkippedMarketplaceSelections, skipped...)
+			}
+			if mode.WarningSink != nil {
+				for _, selection := range skipped {
+					*mode.WarningSink = append(*mode.WarningSink, RemovedMarketplaceSelectionWarning(selection))
+				}
+			}
 		}
 		changed += bootstrapChanged
 		if missingMarketplaceEvidence || bootstrapChanged > 0 {

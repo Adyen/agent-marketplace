@@ -267,18 +267,6 @@ func (e *LayerEditor) v4MarketplaceResourceGroup(name string) (*yaml.Node, *yaml
 }
 
 func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []MarketplaceResourcePin) error {
-	if err := e.checkBinding(binding); err != nil {
-		return err
-	}
-	name := binding.Name
-	source, known := e.loaded.Sources[name]
-	if added, addedSource := e.addedV4[name]; addedSource {
-		if added.kind != V4SourceMarketplace {
-			return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
-		}
-	} else if !known || source.Kind != V4SourceMarketplace {
-		return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
-	}
 	var requests []v4MarketplaceRequest
 	seen := make(map[string]bool)
 	for _, pin := range pins {
@@ -291,6 +279,36 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 		}
 		seen[request.locator] = true
 		requests = append(requests, request)
+	}
+	return e.removeMarketplaceRequests(binding, requests)
+}
+
+func (e *LayerEditor) RemoveMarketplaceRequest(binding SourceBinding, request V4ResourceRequest) error {
+	if request.SourceName != binding.Name {
+		return v4err("v4.source-kind", "resources."+binding.Name, 0, "Marketplace request belongs to source %q", request.SourceName)
+	}
+	if _, _, _, err := parseV4Locator(request.Locator, binding.Name); err != nil {
+		return v4err("v4.locator", request.Locator, 0, "%v", err)
+	}
+	item := v4MarketplaceRequest{locator: request.Locator, revision: request.Options.Revision}
+	if request.Options.HasAs {
+		item.as = request.Options.As
+	}
+	return e.removeMarketplaceRequests(binding, []v4MarketplaceRequest{item})
+}
+
+func (e *LayerEditor) removeMarketplaceRequests(binding SourceBinding, requests []v4MarketplaceRequest) error {
+	if err := e.checkBinding(binding); err != nil {
+		return err
+	}
+	name := binding.Name
+	source, known := e.loaded.Sources[name]
+	if added, addedSource := e.addedV4[name]; addedSource {
+		if added.kind != V4SourceMarketplace {
+			return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
+		}
+	} else if !known || source.Kind != V4SourceMarketplace {
+		return v4err("v4.source-kind", "sources."+name, 0, "Marketplace request requires a Marketplace source")
 	}
 	group, includes, err := e.v4MarketplaceResourceGroup(name)
 	if err != nil {

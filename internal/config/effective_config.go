@@ -121,13 +121,14 @@ type EffectiveConfig struct {
 // LoadEffectiveOptions overrides the default layer paths for tests and
 // non-standard layouts. Empty values use the standard resolution rules.
 type LoadEffectiveOptions struct {
-	RepoRoot         string
-	LocalConfigDir   string
-	OrganizationPath string
-	GlobalPath       string
-	RepoPath         string
-	LocalPath        string
-	FileOverlays     map[string][]byte
+	RepoRoot                  string
+	LocalConfigDir            string
+	OrganizationPath          string
+	GlobalPath                string
+	RepoPath                  string
+	LocalPath                 string
+	FileOverlays              map[string][]byte
+	SkipMarketplaceSelections []MarketplaceSelectionToSkip
 	// RelockOrganization skips only the deployed organization lock's
 	// configuration-match check for the explicit organization lock write;
 	// the lock is still recorded as evidence, and decode, scope, and trust

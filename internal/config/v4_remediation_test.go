@@ -133,7 +133,7 @@ func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
 			want:    `resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`,
 		},
 		{
-			name: "unrecorded endpoint", variant: "",
+			name: "unrecorded endpoint", variant: "endpoint-missing",
 			message: `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example"`,
 			want:    `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
 		},

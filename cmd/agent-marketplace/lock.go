@@ -30,6 +30,7 @@ func newLockCmd() *cobra.Command {
 			repoRoot := config.FindRepoRoot()
 			_, changed, err := lifecycle.PrepareExactLocks(cmd.Context(), repoRoot, config.FindLocalConfigDir(), lifecycle.LockMode{
 				Upgrade: upgrade, Check: check, Selects: selected, ExplicitOrganization: explicitOrg, UpgradeTargets: targets, UpgradeResult: result, WarningSink: &warnings,
+				AllowOptionalRemovedMarketplaceSelections: !upgrade && !check,
 			})
 			if err != nil {
 				return err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,16 @@ type StagedConfigEdit struct {
 	Expected      dependencytxn.Generation
 	Bytes         []byte
 	Mode          fs.FileMode
+}
+
+func stagedConfigOverlays(edits []StagedConfigEdit, extra map[string][]byte) map[string][]byte {
+	overlays := make(map[string][]byte, len(edits)*2+len(extra))
+	maps.Copy(overlays, extra)
+	for _, edit := range edits {
+		overlays[edit.Path] = edit.Bytes
+		overlays[edit.RequestedPath] = edit.Bytes
+	}
+	return overlays
 }
 
 type StagedLockEdit struct {
@@ -52,13 +63,7 @@ func MutateConfigWithDependencies(ctx context.Context, repoRoot, localDir string
 	if err != nil {
 		return err
 	}
-	overlays, err := staging.Overlays()
-	if err != nil {
-		return err
-	}
-	for _, edit := range edits {
-		overlays[edit.RequestedPath] = edit.Bytes
-	}
+	overlays := stagedConfigOverlays(edits, nil)
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays})
 	if len(intent.Errors) != 0 {
 		return errors.Join(intent.Errors...)

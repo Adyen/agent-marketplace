@@ -86,6 +86,17 @@ type MarketplaceSource struct {
 	Requests []V4ResourceRequest
 }
 
+type MarketplaceSelectionToSkip struct {
+	Source        Source
+	SourceName    string
+	Locator       string
+	URL           string
+	Registry      string
+	Kind          string
+	Name          string
+	InstalledName string
+}
+
 type Evidence struct {
 	Locks  [5]*lockfile.Document
 	Reads  []ConfigRead
@@ -309,17 +320,21 @@ func (l LayerIntent) probeConfig() *Config {
 }
 
 func (l LayerIntent) bind(doc *lockfile.Document) (*Config, error) {
+	return l.bindWithMarketplaceSelectionSkips(doc, nil)
+}
+
+func (l LayerIntent) bindWithMarketplaceSelectionSkips(doc *lockfile.Document, skipped []MarketplaceSelectionToSkip) (*Config, error) {
 	if l.v4 == nil {
 		return nil, nil
 	}
 	kind := layerForIntentSource(l.Source)
 	if l.rootTree != nil {
-		if _, err := l.rootTree.toLegacyConfig(kind, doc, v4AuthoredBinding); err != nil {
+		if _, err := withoutMarketplaceSelections(l.rootTree, l.Source, skipped).toLegacyConfig(kind, doc, v4AuthoredBinding); err != nil {
 			return nil, err
 		}
-		return l.v4.toLegacyConfig(kind, doc, v4RootProjectionBinding)
+		return withoutMarketplaceSelections(l.v4, l.Source, skipped).toLegacyConfig(kind, doc, v4RootProjectionBinding)
 	}
-	return l.v4.toLegacyConfig(kind, doc, v4AuthoredBinding)
+	return withoutMarketplaceSelections(l.v4, l.Source, skipped).toLegacyConfig(kind, doc, v4AuthoredBinding)
 }
 
 func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Document, error) {
@@ -631,13 +646,13 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 	return intent
 }
 
-func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
+func bindLayerResult(li LayerIntent, ev Evidence, source Source, skipped []MarketplaceSelectionToSkip) LayerResult {
 	lr := LayerResult{Source: li.Source, Path: li.Path, Reads: li.Reads, Sources: li.Sources()}
 	lr.Errors = append(lr.Errors, li.errors...)
 	lr.Errors = append(lr.Errors, ev.errors[source]...)
 	lr.Reads = append(lr.Reads, ev.reads[source]...)
 	if li.Present() && len(li.errors) == 0 && len(ev.errors[source]) == 0 {
-		cfg, err := li.bind(ev.Locks[source])
+		cfg, err := li.bindWithMarketplaceSelectionSkips(ev.Locks[source], skipped)
 		if err != nil {
 			lr.Errors = append(lr.Errors, err)
 		} else if source == RepoPersonal {
@@ -650,14 +665,18 @@ func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
 }
 
 func bindLayers(intent Intent, ev Evidence) EffectiveConfig {
+	return bindLayersWithMarketplaceSelectionSkips(intent, ev, nil)
+}
+
+func bindLayersWithMarketplaceSelectionSkips(intent Intent, ev Evidence, skipped []MarketplaceSelectionToSkip) EffectiveConfig {
 	ec := EffectiveConfig{Diagnostics: intent.Diagnostics}
 	ec.Errors = intent.Errors[:len(intent.Errors):len(intent.Errors)]
 	ec.Warnings = intent.Warnings[:len(intent.Warnings):len(intent.Warnings)]
 
-	ec.Organization = bindLayerResult(intent.Layers[Organization], ev, Organization)
-	ec.User = bindLayerResult(intent.Layers[UserPersonal], ev, UserPersonal)
-	ec.Repo = bindLayerResult(intent.Layers[RepoCommitted], ev, RepoCommitted)
-	ec.LocalLayer = bindLayerResult(intent.Layers[RepoPersonal], ev, RepoPersonal)
+	ec.Organization = bindLayerResult(intent.Layers[Organization], ev, Organization, skipped)
+	ec.User = bindLayerResult(intent.Layers[UserPersonal], ev, UserPersonal, skipped)
+	ec.Repo = bindLayerResult(intent.Layers[RepoCommitted], ev, RepoCommitted, skipped)
+	ec.LocalLayer = bindLayerResult(intent.Layers[RepoPersonal], ev, RepoPersonal, skipped)
 	ec.Local = ec.LocalLayer.Local
 	return ec
 }
@@ -809,4 +828,8 @@ func validateBoundMarketplaceEntries(entries []MarketplaceEntry) []error {
 
 func Bind(intent Intent, ev Evidence) EffectiveConfig {
 	return finishBind(intent, ev, bindLayers(intent, ev))
+}
+
+func BindWithMarketplaceSelectionSkips(intent Intent, ev Evidence, skipped []MarketplaceSelectionToSkip) EffectiveConfig {
+	return finishBind(intent, ev, bindLayersWithMarketplaceSelectionSkips(intent, ev, skipped))
 }

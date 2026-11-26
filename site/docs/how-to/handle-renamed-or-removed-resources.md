@@ -201,6 +201,8 @@ marketplace https://marketplace.example.com pin shared-agents/skill/foo: resourc
 
 In that 404 case, follow the replacement procedure above for your pin. The old pin cannot install again because the revision itself is gone.
 
+An unrecorded optional direct Marketplace selection without an explicit revision can be skipped before its first lock when its latest-revision lookup reports resource-not-found (HTTP 404). A writing `lock` or `sync` warns with the `agent-marketplace remove <installed name>` remedy; `lock` records the other selections but does not install them. Plain `sync` records and installs the remaining selections; `sync --strict` does the same work and exits 1 with the removal remedy. Run the suggested `remove` command to drop the selection; it does not query that resource, though syncing the rest can update the lock and installed files. A missing required selection still fails — change the configuration entry that marks it required, as in [section 5](#_5-fix-a-required-selection). An unavailable explicit revision, missing registry, or endpoint-level 404 still fails. The full skip-and-failure rules are in the [lockfiles reference](../reference/lockfiles.md).
+
 ## 7. Commit the result
 
 For repository configuration, commit the configuration and the lock together:
