@@ -35,8 +35,9 @@ const (
 const defaultTimeout = 30 * time.Second
 
 type APIError struct {
-	StatusCode int
-	Detail     string
+	StatusCode       int
+	Detail           string
+	resourceNotFound bool
 }
 
 func (e *APIError) Error() string {
@@ -1001,14 +1002,22 @@ func apiError(status int, body []byte) error {
 		Error string `json:"error"`
 	}
 	detail := ""
+	resourceNotFound := false
 	if err := json.Unmarshal(body, &e); err == nil && e.Error != "" {
 		detail = e.Error
+		resourceNotFound = status == http.StatusNotFound && e.Error == "resource not found"
 	} else if len(body) > 0 {
 		detail = string(body)
+	}
+	if status == http.StatusNotFound && !resourceNotFound {
+		switch strings.TrimSpace(string(body)) {
+		case "", "Not Found", "404 page not found", "resource not found":
+			resourceNotFound = true
+		}
 	}
 	quoted := QuoteTerminal(detail)
 	if len(quoted) > maxAPIErrorOutputBytes {
 		quoted = quoted[:maxAPIErrorOutputBytes-3] + "..."
 	}
-	return &APIError{StatusCode: status, Detail: quoted}
+	return &APIError{StatusCode: status, Detail: quoted, resourceNotFound: resourceNotFound}
 }

@@ -459,7 +459,7 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 	if err != nil {
 		resolveErr := fmt.Errorf("resolve resource revision: %w", err)
 		var apiErr *APIError
-		if exactRevision == "" && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		if exactRevision == "" && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound && apiErr.resourceNotFound {
 			return nil, &MissingResourceError{
 				URL: canonical.URL, Registry: locator.Registry, Kind: locator.Kind, Name: locator.Name, Err: resolveErr,
 			}

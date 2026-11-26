@@ -60,10 +60,9 @@ func TestRecoverMissingMarketplaceSelectionWithoutLock(t *testing.T) {
 					if err != nil {
 						t.Fatalf("%s: %v\n%s", command, err, output)
 					}
-					for _, want := range []string{fixture.endpoint, "tools", "skill", "gone", "agent-marketplace remove gone"} {
-						if !strings.Contains(output, want) {
-							t.Errorf("%s output lacks %q:\n%s", command, want, output)
-						}
+					wantWarning := "marketplace resource tools/skill/gone was removed from " + fixture.endpoint + "; run `agent-marketplace remove gone`"
+					if !strings.Contains(output, wantWarning) {
+						t.Errorf("%s output lacks %q:\n%s", command, wantWarning, output)
 					}
 					if got := fixture.goneLookups.Load(); got != 1 {
 						t.Fatalf("%s latest lookup count for removed selection = %d, want 1", command, got)
@@ -93,6 +92,49 @@ func TestRecoverMissingMarketplaceSelectionWithoutLock(t *testing.T) {
 					}
 				})
 			}
+		}
+	})
+
+	t.Run("registry-not-found 404 refuses optional selection", func(t *testing.T) {
+		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone"}, false, `{"error":"registry not found"}`)
+		output, err := executeCommand("sync")
+		if err == nil {
+			t.Fatalf("sync skipped an optional resource after a registry-level 404:\n%s", output)
+		}
+		if !strings.Contains(err.Error()+"\n"+output, "registry not found") {
+			t.Fatalf("sync error omitted the registry-level 404 cause: %v\n%s", err, output)
+		}
+		if strings.Contains(output, "marketplace resource tools/skill/gone was removed from "+fixture.endpoint) {
+			t.Fatalf("registry-level 404 produced a skip warning:\n%s", output)
+		}
+		if _, err := os.Stat(fixture.lockPath); !os.IsNotExist(err) {
+			t.Fatalf("registry-level 404 wrote a lock: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(fixture.repoRoot, ".factory", "skills", "gone")); !os.IsNotExist(err) {
+			t.Fatalf("registry-level 404 materialized the resource: %v", err)
+		}
+		if got := fixture.goneLookups.Load(); got != 1 {
+			t.Fatalf("latest lookup count = %d, want 1", got)
+		}
+	})
+
+	t.Run("structured resource-not-found 404 is skipped", func(t *testing.T) {
+		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone", "keep"}, false, `{"error":"resource not found"}`)
+		output, err := executeCommand("sync")
+		if err != nil {
+			t.Fatalf("sync did not skip a structured resource miss: %v\n%s", err, output)
+		}
+		wantWarning := "marketplace resource tools/skill/gone was removed from " + fixture.endpoint + "; run `agent-marketplace remove gone`"
+		if !strings.Contains(output, wantWarning) {
+			t.Fatalf("structured resource miss warning lacks %q:\n%s", wantWarning, output)
+		}
+		assertRemainingMarketplaceLock(t, fixture)
+		assertFileExists(t, filepath.Join(fixture.repoRoot, ".factory", "skills", "keep", "SKILL.md"))
+		if _, err := os.Stat(filepath.Join(fixture.repoRoot, ".factory", "skills", "gone")); !os.IsNotExist(err) {
+			t.Fatalf("removed skill was materialized: %v", err)
+		}
+		if got := fixture.goneLookups.Load(); got != 1 {
+			t.Fatalf("latest lookup count = %d, want 1", got)
 		}
 	})
 
@@ -569,7 +611,7 @@ type recoverMissingMarketplaceFixture struct {
 	goneLookups *atomic.Int32
 }
 
-func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected []string, required bool) recoverMissingMarketplaceFixture {
+func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected []string, required bool, goneResponseJSON ...string) recoverMissingMarketplaceFixture {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -582,7 +624,13 @@ func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/resources/tools/skill/gone" {
 			goneLookups.Add(1)
-			http.Error(w, http.StatusText(goneStatus), goneStatus)
+			if len(goneResponseJSON) == 0 {
+				http.Error(w, http.StatusText(goneStatus), goneStatus)
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(goneStatus)
+				_, _ = w.Write([]byte(goneResponseJSON[0]))
+			}
 			return
 		}
 		backend.Config.Handler.ServeHTTP(w, r)
