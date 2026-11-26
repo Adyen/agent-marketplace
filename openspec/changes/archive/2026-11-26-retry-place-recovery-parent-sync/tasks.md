@@ -11,5 +11,5 @@
 
 ## 3. Integration and completion
 
-- [ ] 3.1 Run `make validate`, `make spec-check`, `make validate-e2e`, and `openspec validate --all --strict`; record successful results for the implementation and scenario binding.
-- [ ] 3.2 Archive the completed change with `openspec archive retry-place-recovery-parent-sync --yes` and verify the archived target-profile-place requirement.
+- [x] 3.1 Run `make validate`, `make spec-check`, `make validate-e2e`, and `openspec validate --all --strict`; record successful results for the implementation and scenario binding.
+- [x] 3.2 Archive the completed change with `openspec archive retry-place-recovery-parent-sync --yes` and verify the archived target-profile-place requirement.
