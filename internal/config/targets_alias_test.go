@@ -98,6 +98,13 @@ func TestTargetsAliasRootAndGroupScopes(t *testing.T) {
 	}
 	_, err := config.LoadV4ConfigIfPresent(unknownPath, config.UserPersonal)
 	assertTargetAliasError(t, err, "v4.harness", unknownPath, "future/tool")
+	if err := os.WriteFile(unknownPath, []byte("apiVersion: agent-marketplace/v4\ntargets: [future-tool]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := config.LoadV4ConfigIfPresent(unknownPath, config.UserPersonal)
+	if err != nil || parsed == nil || !reflect.DeepEqual(parsed.Harnesses, []string{"future-tool"}) {
+		t.Fatalf("layer loader: got %#v, %v; want future-tool retained for effective validation", parsed, err)
+	}
 }
 
 // spec: consumer-config-format/both-spellings-in-one-file-are-refused

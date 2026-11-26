@@ -580,7 +580,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 			Local:        localCfg,
 			Errors:       errs,
 		}
-		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
+		// Machine Place IDs are only syntactically checked by per-layer loaders.
+		// Resolve them against all declared profiles before using the config.
+		needsPlaceIntent := (orgCfg != nil && len(orgCfg.PlaceTargets) > 0) ||
+			(globalCfg != nil && len(globalCfg.PlaceTargets) > 0)
+		if (len(ec.Errors) == 0 && needsPlaceIntent) || (loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors)) {
 			ec, transientOrganizationMarketplaceLock = loadEffectiveForResolve()
 		}
 	} else {

@@ -19,8 +19,9 @@ const observe = (files: string[]) => files.map((file) => {
 // spec: tui-interactions/unknown-harness-target-ids-refuse-configuration
 // spec: consumer-config-format/unknown-harness-targets-gate-configuration-dependent-actions
 for (const scope of ["user", "project"] as const) {
-  for (const field of ["harnesses", "materialization"] as const) {
-    const code = field === "harnesses" ? "v4.harness" : "v4.auxiliary";
+  for (const field of ["harnesses", "targets", "materialization"] as const) {
+    if (scope === "project" && field === "targets") continue;
+    const code = field === "materialization" ? "v4.auxiliary" : "v4.harness";
     const journey = defineFixture(`unknown-harness-${scope}-${field}`, ["tui"], 80, 24);
     let config: string;
     let good: Buffer;
@@ -34,8 +35,8 @@ for (const scope of ["user", "project"] as const) {
         "      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/alpha-skill\n"));
       config = scope === "user" ? path.join(fixture.home, ".agents", "config.yaml") : project;
       good = readRegularFile(config);
-      const bad = field === "harnesses"
-        ? good.toString("utf8").replace("harnesses:\n  - factory\n", "") + "harnesses: [factory, future-tool]\n"
+      const bad = field !== "materialization"
+        ? good.toString("utf8").replace("harnesses:\n  - factory\n", "") + `${field}: [factory, future-tool]\n`
         : good.toString("utf8") + "materialization: {targets: {factory: file, future-tool: file}}\n";
       fs.writeFileSync(config, bad);
       const skills = path.join(fixture.repo, ".factory", "skills");
@@ -70,7 +71,7 @@ for (const scope of ["user", "project"] as const) {
       await step("errors identify the unknown harness setting", () => terminal.write("e"), async () => {
         await locate(terminal, "Errors (1)").unique().expect();
         const screen = (await terminal.text()).replace(/\s+/g, "");
-        for (const expected of [`${code}:`, "future-tool", field === "harnesses" ? "harnesses[1]" : "materialization.targets"]) {
+        for (const expected of [`${code}:`, "future-tool", field === "materialization" ? "materialization.targets" : `${field}[1]`]) {
           assert.ok(screen.includes(expected), `the errors screen lost ${expected}:\n${await terminal.text()}`);
         }
       });
