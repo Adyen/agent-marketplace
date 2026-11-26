@@ -3,12 +3,18 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // noopSyncCmd replaces runSyncCmd in tests so that anyCmdProducesQuitMsg
@@ -99,7 +105,7 @@ func TestConfirmYesStartsSyncWithoutImmediateQuit(t *testing.T) {
 	}
 }
 
-func TestSyncDoneMsgWithQuitAfterSyncEmitsQuit(t *testing.T) {
+func TestSyncDoneMsgWithQuitAfterSyncWaitsForAuthoritativeReload(t *testing.T) {
 	m := newTestModel()
 	m.syncing = true
 	m.quitAfterSync = true
@@ -107,14 +113,17 @@ func TestSyncDoneMsgWithQuitAfterSyncEmitsQuit(t *testing.T) {
 	updated, cmd := m.Update(syncDoneMsg{err: nil})
 	got := updated.(Model)
 
-	if got.syncing {
-		t.Fatalf("syncDoneMsg should clear syncing")
+	if !got.syncing {
+		t.Fatalf("syncDoneMsg should keep syncing active until the authoritative reload")
 	}
-	if got.quitAfterSync {
-		t.Fatalf("syncDoneMsg should clear quitAfterSync after quitting")
+	if !got.quitAfterSync {
+		t.Fatalf("syncDoneMsg should retain quitAfterSync until the authoritative reload")
 	}
-	if !cmdProducesQuitMsg(cmd) {
-		t.Fatalf("syncDoneMsg with quitAfterSync=true should emit tea.Quit")
+	if cmdProducesQuitMsg(cmd) {
+		t.Fatalf("syncDoneMsg with no hard error should not emit tea.Quit before the authoritative reload")
+	}
+	if got.syncReload == 0 {
+		t.Fatalf("syncDoneMsg did not schedule the authoritative reload")
 	}
 }
 
@@ -268,5 +277,81 @@ func TestToastExpiredMsgDoesNotClearFreshToast(t *testing.T) {
 
 	if got.toast != "some error" {
 		t.Fatalf("toastExpiredMsg should NOT clear fresh toast")
+	}
+}
+
+// spec: tui-feedback/quit-confirmation-lists-pending-installs-and-removals
+func TestQuitConfirmationListsSyncableChangesWithinTerminalBounds(t *testing.T) {
+	report := materialize.DriftReport{
+		Missing: []materialize.DriftItem{
+			{Name: skill.ResourceKey(ir.KindMcpServer, "genai-psx"), Reason: materialize.DriftMissing},
+			{Name: skill.ResourceKey(ir.KindSkill, "code-review"), Reason: materialize.DriftMissing},
+			{Name: skill.ResourceKey(ir.KindSkill, "zeta"), Reason: materialize.DriftMissing},
+			{Name: skill.ResourceKey(ir.KindSkill, "unsafe\x1b[2J"), Reason: materialize.DriftMissing},
+			{Name: skill.ResourceKey(ir.KindSkill, "zzz-one"), Reason: materialize.DriftMissing},
+			{Name: skill.ResourceKey(ir.KindSkill, "zzz-two"), Reason: materialize.DriftMissing},
+		},
+		Orphaned: []materialize.DriftItem{
+			{Name: skill.ResourceKey(ir.KindSkill, "old-tool"), Reason: materialize.DriftOrphaned},
+		},
+	}
+	for _, size := range [][2]int{{50, 12}, {80, 24}, {120, 34}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.width, m.height = size[0], size[1]
+			m.driftReport = report
+			next, _ := m.dispatchAction(actionQuit)
+			got := next.(Model)
+
+			plain := ansi.Strip(fitTerminal(renderConfirm(got), size[0], size[1]))
+			lines := assertCompleteFrame(t, "quit confirmation", plain, size[0])
+			if len(lines) > size[1] {
+				t.Fatalf("confirmation is %d rows at %dx%d", len(lines), size[0], size[1])
+			}
+			for _, want := range []string{
+				"+ install mcp/genai-psx",
+				"+ install skill/code-review",
+				"- remove skill/old-tool",
+			} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("confirmation lacks %q:\n%s", want, plain)
+				}
+			}
+			if size[0] == 50 {
+				if !regexp.MustCompile(`\+\s+\d+\s+more`).MatchString(plain) {
+					t.Fatalf("compact confirmation lacks the bounded overflow count:\n%s", plain)
+				}
+			} else {
+				for _, want := range []string{
+					"+ install skill/unsafe\\x1B[2J",
+					"+ install skill/zzz-one",
+					"+ install skill/zzz-two",
+				} {
+					if !strings.Contains(plain, want) {
+						t.Errorf("confirmation lacks %q:\n%s", want, plain)
+					}
+				}
+				if strings.Contains(plain, "more") {
+					t.Fatalf("roomy confirmation unexpectedly omits items:\n%s", plain)
+				}
+			}
+		})
+	}
+}
+
+// spec: tui-feedback/broken-only-drift-does-not-loop-on-quit
+func TestQuitWithOnlyBrokenDriftDoesNotPromptToSync(t *testing.T) {
+	m := newTestModel()
+	m.driftReport = materialize.DriftReport{
+		Broken: []materialize.DriftItem{{Name: "skill/missing-upstream", Reason: materialize.DriftBroken}},
+	}
+
+	next, cmd := m.dispatchAction(actionQuit)
+	got := next.(Model)
+	if got.pane == paneConfirm {
+		t.Fatal("Broken-only drift opened the sync+quit confirmation")
+	}
+	if !cmdProducesQuitMsg(cmd) {
+		t.Fatal("quitting with only Broken diagnostics did not exit")
 	}
 }

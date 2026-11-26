@@ -22,6 +22,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -266,7 +267,7 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 // or a newer superseding snapshot — is accepted or fails. The sync's own
 // pipeline error, when it carried one, wins over the reload verdict so a
 // failed sync is never reported as success.
-func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) (tea.Cmd, bool) {
+func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error, snapshotDrift materialize.DriftReport) (tea.Cmd, bool) {
 	if m.syncReload == 0 || generation < m.syncReload {
 		return nil, false
 	}
@@ -292,10 +293,15 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	m.syncing = false
 	m.clearOperationProgress()
 	m.finishDependencyOperation()
-	// A sync+quit confirmed while the reload was already in flight still
-	// quits once the authoritative reload lands; the verdict is carried to
-	// Run() rather than toasted.
 	if m.quitAfterSync && !reviewBeforeQuit {
+		if pendingErr == nil && reloadErr == nil && snapshotDrift.SyncableCount() > 0 {
+			m.quitAfterSync = false
+			m.syncQuitErr = nil
+			warning := fmt.Errorf("sync complete with %d changes still pending", snapshotDrift.SyncableCount())
+			m.recordOperationWarnings(operationSync, diagnosticSync, warning)
+			m.pushToast(warning.Error(), 5*time.Second)
+			return toastExpiryCmd(5 * time.Second), false
+		}
 		m.quitAfterSync = false
 		m.syncQuitErr = pendingErr
 		if m.syncQuitErr == nil {
@@ -411,7 +417,7 @@ func (m Model) handleSnapshotLoaded(msg snapshotLoadedMsg) (tea.Model, tea.Cmd) 
 	m.assessmentPending = false
 	m.applySnapshotStatus(msg)
 	updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
-	syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
+	syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg), msg.driftReport)
 	if msg.mergedCfg == nil && len(m.errs) > 0 {
 		m.pendingInventory.set(nil)
 		m.provisionalRows = nil
@@ -577,7 +583,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.assessmentPending = false
 		m.applySnapshotStatus(msg.snapshotLoadedMsg)
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
-		syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
+		syncCmd, syncQuitting := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg), msg.driftReport)
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
 			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
@@ -809,10 +815,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncDoneMsg:
 		m.refreshing = false
-		// If the user confirmed "sync+quit", quit now that the sync has
-		// actually completed. This avoids the race where tea.Quit in a
-		// tea.Batch kills the program before the sync goroutine finishes.
-		if m.quitAfterSync && (msg.report == nil || len(msg.report.HookChanges) == 0) && !slices.ContainsFunc(msg.warnings, pipeline.IsPromotedDiagnostic) {
+		// A hard sync error still exits after the sync goroutine has finished
+		// and carries its original identity back through Run(). A successful
+		// sync+quit waits for the authoritative reload before deciding to exit.
+		if m.quitAfterSync && msg.err != nil && (msg.report == nil || len(msg.report.HookChanges) == 0) && !slices.ContainsFunc(msg.warnings, pipeline.IsPromotedDiagnostic) {
 			m.syncing = false
 			m.quitAfterSync = false
 			m.clearOperationProgress()
@@ -1307,9 +1313,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 	switch id {
 	case actionQuit:
-		if m.driftReport.PendingCount() > 0 {
+		if m.driftReport.SyncableCount() > 0 {
 			m.pane = paneConfirm
-			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit?", m.driftReport.PendingCount())
+			m.confirmMsg = fmt.Sprintf("%d pending changes not synced. Sync+quit?", m.driftReport.SyncableCount())
 			return m, nil
 		}
 		m.cancelMarketplaceLoads()
