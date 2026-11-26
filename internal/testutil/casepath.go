@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ func SameFileCaseVariant(t testing.TB, path string) string {
 	}
 	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
 	variant := ""
+	var statErr error
 	for i, component := range parts {
 		if component == "" {
 			continue
@@ -28,7 +30,13 @@ func SameFileCaseVariant(t testing.TB, path string) string {
 			candidateParts[i] = spelling
 			candidate := strings.Join(candidateParts, string(filepath.Separator))
 			candidateInfo, err := os.Stat(candidate)
-			if err == nil && os.SameFile(info, candidateInfo) {
+			if err != nil {
+				if statErr == nil && !errors.Is(err, os.ErrNotExist) {
+					statErr = err
+				}
+				continue
+			}
+			if os.SameFile(info, candidateInfo) {
 				variant = candidate
 				break
 			}
@@ -38,6 +46,9 @@ func SameFileCaseVariant(t testing.TB, path string) string {
 		}
 	}
 	if variant == "" {
+		if statErr != nil {
+			t.Fatalf("find same-file case variant for %q: %v", path, statErr)
+		}
 		t.Skipf("filesystem has no same-file case variant for %q", path)
 	}
 	t.Logf("same-file case variant: original=%q variant=%q", path, variant)

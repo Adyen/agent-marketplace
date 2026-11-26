@@ -176,8 +176,19 @@ func TestApprovalReceiptRejectsLinksAndTampering(t *testing.T) {
 		if err := os.Link(external, path); err != nil {
 			t.Fatal(err)
 		}
+		before, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
 		requireApprovalError(t, RequireApproval(binding), "target.approval.receipt-invalid")
 		requireApprovalError(t, RecordApproval(binding), "target.approval.receipt-invalid")
+		after, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("hardlink receipt was replaced")
+		}
 		assertReceiptDirectoryHasOnlyLink(t, fixture.stateRoot, filepath.Base(path), 0)
 		got, err := os.ReadFile(external)
 		if err != nil || !bytes.Equal(got, raw) {

@@ -106,10 +106,7 @@ func TestTargetApprovalBinding(t *testing.T) {
 	if err := os.Symlink(f.root, alias); err != nil {
 		t.Fatal(err)
 	}
-	outside := f.env.Home + "-outside"
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	outside := t.TempDir()
 	for _, path := range []string{alias, outside} {
 		env := f.env
 		env.Override = &path
