@@ -140,9 +140,8 @@ func TestTargetRetirePreservesEditedAndUnownedFiles(t *testing.T) {
 		!strings.Contains(stderr, "mods/sample/keep.md") || !strings.Contains(stderr, "mods/sample/edit.md") {
 		t.Fatalf("retirement preview omitted recorded context: %s", stderr)
 	}
-	if !strings.Contains(stdout, "Removed: mods/sample/keep.md") ||
-		!strings.Contains(stdout, "Ceded: mods/sample/edit.md") {
-		t.Fatalf("retirement result omitted removed or ceded status: %s", stdout)
+	if !strings.HasSuffix(strings.TrimSpace(stdout), "Removed: mods/sample/keep.md. Ceded: mods/sample/edit.md.") {
+		t.Fatalf("retirement result must report only the removed and ceded files: %s", stdout)
 	}
 	if _, err := os.Stat(filepath.Join(fixture.targetRoot, "mods", "sample", "keep.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unchanged owned file remains after retirement: %v", err)
@@ -176,6 +175,12 @@ func TestTargetRetirePreservesEditedAndUnownedFiles(t *testing.T) {
 	if err != nil || len(projection.Packages) != 0 {
 		t.Fatalf("retirement ownership projection = %#v, %v", projection, err)
 	}
+	for _, directory := range projection.Directories {
+		if directory.Path == "mods/sample" {
+			return
+		}
+	}
+	t.Fatalf("nonempty mods/sample lost its ownership record: %+v", projection.Directories)
 }
 
 func TestTargetRetireRefusesStateRootReplacementAfterPrompt(t *testing.T) {

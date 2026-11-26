@@ -9,7 +9,7 @@ import (
 )
 
 // ListCurrentRequirementCandidates runs the required_by candidate query: the
-// current-head skill, command, and subagent revisions of one Marketplace that
+// current-head skill, command, subagent, and scoped revisions of one Marketplace that
 // are in the requested registry or a listed registry.
 func (s *Store) ListCurrentRequirementCandidates(ctx context.Context, marketplace store.MarketplaceID, registry store.RegistryID) ([]store.RequirementCandidate, error) {
 	rows, err := s.q.QueryContext(ctx, `SELECT o.registry_id, r.slug, o.kind, o.name, o.content_digest, rr.requires
@@ -20,7 +20,7 @@ JOIN resource_revisions rr
 JOIN registries r ON r.id = o.registry_id
 WHERE o.marketplace_id = ?
   AND (o.registry_id = ? OR r.listed = ?)
-  AND o.kind IN ('skill', 'command', 'subagent')
+  AND (o.kind IN ('skill', 'command', 'subagent') OR o.kind LIKE '%/%')
 ORDER BY r.slug, o.kind, o.name`, marketplace, registry, true)
 	if err != nil {
 		return nil, err

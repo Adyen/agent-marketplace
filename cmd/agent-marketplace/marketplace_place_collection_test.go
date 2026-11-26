@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,14 @@ func TestMarketplacePlaceCollectionSkipsUnavailableMember(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	fixture := newTargetApprovalFixture(t)
+	fixture := newTargetApprovalFixtureWithProfile(t, []byte(targetApproveProfileYAML+
+		"host: {executable: collection-host, version_probe: {argv: [--version], pattern: '(.*)'}}\n"))
+	bin := t.TempDir()
+	executable := filepath.Join(bin, "collection-host")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\necho 1.0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	profileCoordinate := store.ResourceCoordinate{
 		Marketplace: "market-id", Registry: "tools-id", Kind: "target-profile", Name: fixture.identity.TargetID,
 	}
@@ -231,6 +239,50 @@ resources:
 	}
 
 	t.Setenv("INVENTED_APP_HOME", fixture.targetRoot)
+	t.Run("execute-only host", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root can read execute-only files")
+		}
+		if err := os.Chmod(executable, 0o100); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chmod(executable, 0o700); err != nil {
+				t.Error(err)
+			}
+		})
+		output, err := executeCommand("sync")
+		if err != nil || !strings.Contains(output, "target.place.collection-member-skipped") ||
+			!strings.Contains(output, "target.approval.executable-unavailable") {
+			t.Fatalf("collection sync with unreadable executable: %v\n%s", err, output)
+		}
+		output, err = executeCommand("install", "--scope", "user", server.URL+"/r/tools/invented-app%2Fmod/sample")
+		if !errors.Is(err, os.ErrPermission) || !errors.Is(err, targetprofile.ErrPlaceTargetUnavailable) {
+			t.Fatalf("direct install with unreadable executable: %v\n%s", err, output)
+		}
+	})
+	t.Run("hard-linked host", func(t *testing.T) {
+		alias := executable + ".link"
+		if err := os.Link(executable, alias); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Remove(alias); err != nil {
+				t.Error(err)
+			}
+		})
+		output, err := executeCommand("sync")
+		if err == nil || !strings.Contains(output+err.Error(), "target.approval.executable-invalid") ||
+			strings.Contains(output, "target.place.collection-member-skipped") {
+			t.Fatalf("collection sync with unsafe executable: %v\n%s", err, output)
+		}
+	})
+	assertTargetStateTreeUnchanged(t, targetBefore, fixture.targetRoot)
+	assertTargetStateTreeUnchanged(t, stateBefore, fixture.stateRoot)
+	assertCollectionLockConfigUnchanged(t, fixture, lockedConfig, lockedBytes)
+	if archiveRequests.Load() != 0 || scopedRevisionRequests.Load() != 1 {
+		t.Fatalf("executable capture failures acquired package data: archives=%d scoped revisions=%d", archiveRequests.Load(), scopedRevisionRequests.Load())
+	}
 	approvalBinding, err := pipeline.PrepareDeployedPlaceApproval(context.Background(), mustTargetWorkspace(t, fixture), fixture.identity.TargetID)
 	if err != nil {
 		t.Fatalf("prepare approval for positive collection control: %v", err)

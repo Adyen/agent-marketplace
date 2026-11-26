@@ -1,10 +1,14 @@
 package targetprofile
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
 
 type approvalTestFixture struct {
@@ -64,6 +68,24 @@ func writeApprovalTestFile(t *testing.T, path, value string, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(value), mode); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApprovalExecutableCaptureAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		cause error
+		want  bool
+	}{
+		{os.ErrNotExist, true},
+		{os.ErrPermission, true},
+		{fsboundary.ErrUnsafeFile, false},
+		{errors.Join(os.ErrPermission, fsboundary.ErrGenerationConflict), false},
+		{errors.Join(os.ErrNotExist, fsboundary.ErrUnsafePath), false},
+		{errors.Join(os.ErrPermission, errors.New("unexpected read failure")), false},
+	} {
+		if got := executableCaptureUnavailable(fmt.Errorf("capture executable: %w", tc.cause)); got != tc.want {
+			t.Errorf("capture availability for %v = %t, want %t", tc.cause, got, tc.want)
+		}
 	}
 }
 

@@ -195,9 +195,6 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 				resolver.WithTargetHarnesses(result.TargetHarnesses),
 				resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 			}
-			if result.HasPlaceTargets() && len(result.MachineTargetHarnesses) == 0 {
-				secondResolveOpts = append(secondResolveOpts, resolver.WithNoMachineHarnesses())
-			}
 			// The second resolve keeps the Marketplace view consistent with the
 			// primary one: when the pipeline resolved Marketplace artifacts
 			// from cache, the excluded diff must see the same artifacts. The

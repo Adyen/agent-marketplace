@@ -1047,11 +1047,8 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid resource path")
 		return
 	}
-	if len(parts) >= 2 {
-		_, _, scoped := nameutil.SplitPlaceKind(parts[1])
-		if scoped || parts[1] == nameutil.TargetProfileKind {
-			w.Header().Add("Vary", placeFeaturesHeader)
-		}
+	if len(parts) == 3 || (len(parts) >= 2 && isPlaceKind(parts[1])) {
+		w.Header().Add("Vary", placeFeaturesHeader)
 	}
 
 	switch len(parts) {
@@ -1184,13 +1181,14 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	requires, err := s.resourceRequires(r.Context(), rev)
+	allowPlace := placeRequested(r)
+	requires, err := s.resourceRequires(r.Context(), rev, allowPlace)
 	if err != nil {
 		slog.Error("resource requires failed", "coord", coord, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	requiredBy, err := s.resourceRequiredBy(r.Context(), rev.Coordinate)
+	requiredBy, err := s.resourceRequiredBy(r.Context(), rev.Coordinate, allowPlace)
 	if err != nil {
 		slog.Error("resource required_by failed", "coord", coord, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
@@ -1203,7 +1201,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 
 // resourceVisible reports whether coord's own resource detail request would
 // succeed in this request context.
-func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordinate) (bool, error) {
+func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordinate, allowPlace bool) (bool, error) {
 	rev, err := s.meta.GetLatestResourceRevision(ctx, coord)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
@@ -1211,7 +1209,7 @@ func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordi
 	if err != nil {
 		return false, err
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+	if err := validateResourceRevisionMatches(rev, coord, "", allowPlace); err != nil {
 		return false, nil
 	}
 	if s.cfg.Management.Mode == "database" {
@@ -1223,7 +1221,7 @@ func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordi
 
 // resourceRequires echoes the indexed prerequisites of a revision, resolving
 // each against current-head occurrences and visibility. Nil when unindexed.
-func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourceRevision) (*[]ResourceRequirement, error) {
+func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourceRevision, allowPlace bool) (*[]ResourceRequirement, error) {
 	if rev.Requires == "" {
 		return nil, nil
 	}
@@ -1233,8 +1231,11 @@ func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourc
 	}
 	out := make([]ResourceRequirement, 0, len(stored))
 	for _, entry := range stored {
+		if !allowPlace && isPlaceKind(entry.Kind) {
+			continue
+		}
 		dto := ResourceRequirement{Kind: entry.Kind, Name: entry.Name, Registry: entry.Registry, Path: entry.Path}
-		resolved, err := s.resolveRequirement(ctx, rev.Coordinate.Registry, entry)
+		resolved, err := s.resolveRequirement(ctx, rev.Coordinate.Registry, entry, allowPlace)
 		if err != nil {
 			return nil, err
 		}
@@ -1247,7 +1248,7 @@ func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourc
 // resolveRequirement resolves one stored prerequisite to a visible
 // current-head target under the registry, occurrence, path, and visibility
 // rules. Hidden and missing targets are indistinguishable.
-func (s *Server) resolveRequirement(ctx context.Context, requirer store.RegistryID, entry store.ResourceRequirement) (*ResourceRelation, error) {
+func (s *Server) resolveRequirement(ctx context.Context, requirer store.RegistryID, entry store.ResourceRequirement, allowPlace bool) (*ResourceRelation, error) {
 	targetRegistry := requirer
 	if entry.Registry != "" {
 		registry, err := s.resolveRegistry(ctx, entry.Registry)
@@ -1270,7 +1271,7 @@ func (s *Server) resolveRequirement(ctx context.Context, requirer store.Registry
 	if !store.SourceRootMatches(roots.Roots, roots.SourcePath, entry.Path) {
 		return nil, nil
 	}
-	visible, err := s.resourceVisible(ctx, coord)
+	visible, err := s.resourceVisible(ctx, coord, allowPlace)
 	if err != nil || !visible {
 		return nil, err
 	}
@@ -1284,7 +1285,7 @@ func (s *Server) resolveRequirement(ctx context.Context, requirer store.Registry
 // resourceRequiredBy lists the visible, in-scope current-head dependents of a
 // resource. It returns nil when a visible in-scope unindexed revision leaves
 // the dependent set unknown.
-func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoordinate) (*[]ResourceRelation, error) {
+func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoordinate, allowPlace bool) (*[]ResourceRelation, error) {
 	candidates, err := s.meta.ListCurrentRequirementCandidates(ctx, s.mpID, coord.Registry)
 	if err != nil {
 		return nil, err
@@ -1296,6 +1297,9 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 	out := make([]ResourceRelation, 0)
 	seen := make(map[ResourceRelation]bool)
 	for _, row := range candidates {
+		if !IsMarketplaceKind(row.Kind) && (!allowPlace || !isPlaceKind(row.Kind)) {
+			continue
+		}
 		if row.Registry == coord.Registry && row.Kind == coord.Kind && row.Name == coord.Name {
 			continue
 		}
@@ -1335,7 +1339,7 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 				continue
 			}
 		}
-		visible, err := s.resourceVisible(ctx, store.ResourceCoordinate{Marketplace: s.mpID, Registry: row.Registry, Kind: row.Kind, Name: row.Name})
+		visible, err := s.resourceVisible(ctx, store.ResourceCoordinate{Marketplace: s.mpID, Registry: row.Registry, Kind: row.Kind, Name: row.Name}, allowPlace)
 		if err != nil {
 			return nil, err
 		}
@@ -2526,10 +2530,6 @@ func validatePublicResourceAssessment(assessment store.ResourceAssessment) error
 		return errors.New("resource assessment coordinate kind is invalid")
 	}
 	return nil
-}
-
-func validatePublicResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
-	return validateResourceRevisionMatches(rev, expected, expectedDigest, false)
 }
 
 func validateRequestedResourceRevision(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {

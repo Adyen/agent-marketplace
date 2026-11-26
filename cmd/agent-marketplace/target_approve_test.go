@@ -390,9 +390,12 @@ func TestTargetEnableRequiresSelectedAdmittedProfile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("enable selected target: %v\n%s", err, output)
 		}
-		data, err := os.ReadFile(fixture.userConfig)
-		if err != nil || !bytes.Contains(data, []byte("harnesses:")) || !bytes.Contains(data, []byte(fixture.identity.TargetID)) {
-			t.Fatalf("enabled user config = %q, %v", data, err)
+		cfg, err := config.LoadConfigFromPath(fixture.userConfig)
+		if err != nil || cfg == nil {
+			t.Fatalf("load enabled user config %q: config=%v, err=%v", fixture.userConfig, cfg, err)
+		}
+		if !slices.Contains(cfg.PlaceTargets, fixture.identity.TargetID) {
+			t.Fatalf("enabled PlaceTargets = %v, want to contain %q", cfg.PlaceTargets, fixture.identity.TargetID)
 		}
 		assertTargetApprovalNonConfigUnchanged(t, fixture, 0)
 		assertTargetProfileSelected(t, fixture)

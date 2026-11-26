@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/processstart"
@@ -295,6 +296,7 @@ func clone(ctx context.Context, origin, ref, exactCommit string, roots []string,
 		if err != nil {
 			return nil, err
 		}
+		// Full checkout: exact paths select literal filesystem entries, never Git arguments.
 		roots = nil
 	}
 
@@ -465,28 +467,36 @@ func normalizeRoots(roots []string) ([]string, error) {
 }
 
 func normalizeExactPaths(paths []string) ([]string, error) {
-	copied := append([]string(nil), paths...)
-	normalize := pathFoldNormalizer()
-	for _, exact := range copied {
-		if exact == "" || exact == "." || exact != strings.TrimSpace(exact) ||
-			strings.Contains(exact, `\`) ||
-			filepath.ToSlash(filepath.Clean(filepath.FromSlash(exact))) != exact {
-			return nil, fmt.Errorf("validate exact path: %q must be a canonical relative slash path", exact)
-		}
-		for _, segment := range strings.Split(exact, "/") {
-			if normalize(segment) == ".git" {
-				return nil, fmt.Errorf("validate exact path: %q cannot address Git metadata", exact)
-			}
-		}
-	}
-	normalized, err := normalizeRoots(copied)
-	if err != nil {
-		return nil, fmt.Errorf("validate exact path: %w", err)
-	}
-	if len(normalized) == 0 {
+	if len(paths) == 0 {
 		return nil, errors.New("validate exact path: at least one non-dot repository path is required")
 	}
-	return normalized, nil
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, exact := range paths {
+		if err := ValidateExactPath(exact); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[exact]; !ok {
+			seen[exact] = struct{}{}
+			out = append(out, exact)
+		}
+	}
+	return out, nil
+}
+
+// ValidateExactPath checks a literal slash-separated path beneath the checkout.
+func ValidateExactPath(exact string) error {
+	if !fs.ValidPath(exact) || exact == "." || exact != strings.TrimSpace(exact) ||
+		strings.Contains(exact, `\`) || strings.ContainsFunc(exact, unicode.IsControl) {
+		return fmt.Errorf("validate exact path: %q must be a canonical relative slash path", exact)
+	}
+	normalize := pathFoldNormalizer()
+	for segment := range strings.SplitSeq(exact, "/") {
+		if normalize(segment) == ".git" {
+			return fmt.Errorf("validate exact path: %q cannot address Git metadata", exact)
+		}
+	}
+	return nil
 }
 
 func pathFoldNormalizer() func(string) string {

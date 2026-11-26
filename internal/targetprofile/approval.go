@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -211,9 +212,29 @@ func approvalExecutable(command string) (ExecutableBinding, error) {
 	}
 	digest, err := captureExecutableDigest(canonical)
 	if err != nil {
-		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-invalid: declared executable is not a readable regular executable")
+		if executableCaptureUnavailable(err) {
+			return ExecutableBinding{}, fmt.Errorf("target.approval.executable-unavailable: %w: %w", ErrPlaceTargetUnavailable, err)
+		}
+		return ExecutableBinding{}, fmt.Errorf("target.approval.executable-invalid: declared executable is not a readable regular executable: %w", err)
 	}
 	return ExecutableBinding{CanonicalPath: canonical, SHA256: digest}, nil
+}
+
+// A read failure can be joined with a revalidation failure. A collection may
+// skip the host only if every cause is an ordinary availability error.
+func executableCaptureUnavailable(err error) bool {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if !executableCaptureUnavailable(cause) {
+				return false
+			}
+		}
+		return len(joined.Unwrap()) != 0
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return executableCaptureUnavailable(cause)
+	}
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrNotExist)
 }
 
 func captureExecutableDigest(path string) (string, error) {
@@ -221,7 +242,10 @@ func captureExecutableDigest(path string) (string, error) {
 		return "", errors.New("executable path is not canonical")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || resolved != path {
+	if err != nil {
+		return "", err
+	}
+	if resolved != path {
 		return "", errors.New("executable path is no longer canonical")
 	}
 	parentPath := filepath.Dir(path)
@@ -239,7 +263,10 @@ func captureExecutableDigest(path string) (string, error) {
 	}
 	defer func() { _ = destination.Close() }()
 	mode := destination.Identity().Mode
-	if !destination.Exists() || destination.Path() != path || !mode.IsRegular() || mode.Perm()&0o111 == 0 {
+	if !destination.Exists() {
+		return "", fs.ErrNotExist
+	}
+	if destination.Path() != path || !mode.IsRegular() || mode.Perm()&0o111 == 0 {
 		return "", errors.New("executable is not a regular executable file")
 	}
 	hash := sha256.New()

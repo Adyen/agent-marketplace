@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,115 +159,95 @@ func packageGenerationFixture(t *testing.T) (Input, string) {
 }
 
 func TestGarbageCollectKeepsGenerationReferencedByPendingOwnershipJournal(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	canonicalHome, err := filepath.EvalSymlinks(home)
+	input, packagesDir := packageGenerationFixture(t)
+	generation, err := Publish(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", canonicalHome)
-	stateRoot, err := StateRoot()
+	instanceKey := strings.Repeat("a", 64)
+	statePath, err := ownership.PluginStatePath(instanceKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repoRoot := filepath.Join(root, "repo")
-	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	canonicalRoot, err := ownership.CanonicalRoot(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	instanceKey := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	rootKey := ownership.RootKey(canonicalRoot)
-	statePath := filepath.Join(stateRoot, "ownership", "plugin-packages", instanceKey+".json")
-	tempPath := filepath.Join(filepath.Dir(statePath), ".dependencytxn-pending.tmp")
-	generationKey := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	pluginState := ownership.PluginState{
 		Version: 1,
 		Instance: ownership.PluginGenerationRef{
 			InstanceKey:   instanceKey,
 			Name:          "kit",
 			Target:        "claude",
-			Scope:         "repo:" + rootKey,
-			GenerationKey: generationKey,
+			Scope:         "machine",
+			GenerationKey: generation.Key,
 		},
 	}
 	stateBytes, err := ownership.EncodePluginState(pluginState)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(tempPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(tempPath, stateBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	transactionDir, err := dependencytxn.StateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(transactionDir, 0o700); err != nil {
+	interrupted := errors.New("stop after journal")
+	_, err = dependencytxn.Commit(t.Context(), transactionDir, []dependencytxn.DesiredFile{
+		{Path: statePath, Bytes: stateBytes, Mode: 0o600},
+	}, dependencytxn.WithFaultHook(func(p dependencytxn.FaultPoint) error {
+		if p.Stage == dependencytxn.FaultAfterJournal {
+			return interrupted
+		}
+		return nil
+	}))
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("interrupt plugin transaction: %v", err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("destination already published: %v", err)
+	}
+	if removed, err := GarbageCollect(false); err != nil || len(removed) != 0 {
+		t.Fatalf("pending journal generation collection = %v / %v", removed, err)
+	}
+	orphan := filepath.Join(packagesDir, strings.Repeat("b", 64))
+	if err := os.Mkdir(orphan, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	journalBytes, err := json.Marshal(struct {
-		Version int    `json:"version"`
-		ID      string `json:"id"`
-		Files   []struct {
-			Path string `json:"path"`
-			Temp string `json:"temp"`
-		} `json:"files"`
-	}{
-		Version: 1,
-		ID:      "pending",
-		Files: []struct {
-			Path string `json:"path"`
-			Temp string `json:"temp"`
-		}{{Path: statePath, Temp: tempPath}},
+	// An unreadable reference set must abort before even the orphan is swept.
+	badRef := filepath.Join(filepath.Dir(statePath), strings.Repeat("f", 64)+".json")
+	if err := os.WriteFile(badRef, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GarbageCollect(false); err == nil {
+		t.Fatal("collected despite malformed committed state")
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatalf("reference read failure did not preserve orphan: %v", err)
+	}
+	if err := os.Remove(badRef); err != nil {
+		t.Fatal(err)
+	}
+	if removed := collectAcrossRecovery(t, transactionDir); !slices.Equal(removed, []string{orphan}) {
+		t.Fatalf("collection across recovery = %v; want only %s", removed, orphan)
+	}
+	state, _, _, _, err := ownership.ReadPluginState(instanceKey)
+	if err != nil || state.Instance.GenerationKey != generation.Key {
+		t.Fatalf("recovered generation = %s / %v", state.Instance.GenerationKey, err)
+	}
+	if _, err := os.Stat(filepath.Join(generation.Path, "plugin.json")); err != nil {
+		t.Fatalf("recovered generation missing: %v", err)
+	}
+}
+
+func collectAcrossRecovery(t *testing.T, transactionDir string) []string {
+	t.Helper()
+	removed, err := garbageCollect(false, func() ([]ownership.PluginGenerationRef, error) {
+		if err := dependencytxn.Recover(t.Context(), transactionDir); err != nil {
+			return nil, err
+		}
+		return ownership.ReadPendingPluginGenerationRefs()
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	journalPath := filepath.Join(transactionDir, ".dependencytxn-pending.json")
-	if err := os.WriteFile(journalPath, journalBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	staged, stagedGeneration, _, stagedErr := dependencytxn.ReadSnapshot(tempPath)
-	if stagedErr != nil || !stagedGeneration.Exists {
-		t.Fatalf("staged plugin state snapshot = %q / %+v / %v", staged, stagedGeneration, stagedErr)
-	}
-	pending, err := ownership.ReadPendingPluginGenerationRefs()
-	if err != nil || len(pending) != 1 || pending[0].InstanceKey != instanceKey || pending[0].GenerationKey != generationKey {
-		t.Fatalf("pending plugin generation references = %+v / %v; state=%s journal=%s", pending, err, statePath, journalBytes)
-	}
-	generationPath := filepath.Join(stateRoot, "packages", generationKey)
-	if err := os.MkdirAll(generationPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(generationPath, "plugin.json"), []byte("package"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	removed, err := GarbageCollect(false)
-	if err != nil || len(removed) != 0 {
-		t.Fatalf("pending journal generation collection = %v / %v", removed, err)
-	}
-	if _, err := os.Stat(generationPath); err != nil {
-		t.Fatalf("pending ownership journal did not keep generation alive: %v", err)
-	}
-
-	if err := os.Remove(journalPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(tempPath); err != nil {
-		t.Fatal(err)
-	}
-	removed, err = GarbageCollect(false)
-	if err != nil || len(removed) != 1 || removed[0] != generationPath {
-		t.Fatalf("unreferenced generation collection = %v / %v", removed, err)
-	}
+	return removed
 }

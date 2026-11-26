@@ -53,7 +53,7 @@ func preparePlaceAdmission(
 	packages *marketplace.Resolver,
 	mode resolver.MarketplaceResolveMode,
 	includeEmpty bool,
-	preapproval func(targetprofile.ApprovalBinding) error,
+	preapproval placePreapproval,
 ) (PlaceAdmission, error) {
 	if err := ctx.Err(); err != nil {
 		return PlaceAdmission{}, err
@@ -123,13 +123,15 @@ func preparePlaceAdmission(
 			}
 			return PlaceAdmission{}, fmt.Errorf("target %s approval binding: %w", targetID, err)
 		}
-		approvalErr := targetprofile.RequireApproval(binding)
-		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) && preapproval != nil {
-			approvalErr = preapproval(binding)
-		}
-		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) {
+		approvalErr := preapproval.requireApproval(binding)
+		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) || errors.Is(approvalErr, errPreapprovalStateRootMismatch) {
 			admission.Pending = append(admission.Pending, identity)
-			skipReasons[targetID] = fmt.Errorf("target.approval.required: target %s is pending local approval", targetID)
+			reason := fmt.Errorf("target.approval.required: target %s is pending local approval", targetID)
+			if errors.Is(approvalErr, errPreapprovalStateRootMismatch) {
+				reason = fmt.Errorf("%w: %w", reason, errPreapprovalStateRootMismatch)
+			}
+			skipReasons[targetID] = reason
+			admission.Skipped = append(admission.Skipped, reason)
 			continue
 		} else if approvalErr != nil {
 			return PlaceAdmission{}, fmt.Errorf("target %s approval: %w", targetID, approvalErr)
@@ -138,7 +140,7 @@ func preparePlaceAdmission(
 		approvedProfiles[identity] = append([]byte(nil), raw...)
 	}
 	admission.profiles = approvedProfiles
-	admission.Skipped = placeCollectionSkipWarnings(cfg, enabled, skipReasons)
+	admission.Skipped = append(admission.Skipped, placeCollectionSkipWarnings(cfg, enabled, skipReasons)...)
 	if len(approvedProfiles) == 0 {
 		return admission, nil
 	}
@@ -151,6 +153,16 @@ func preparePlaceAdmission(
 	}
 	admission.Packages = resolved
 	return admission, nil
+}
+
+type placePreapproval func(targetprofile.ApprovalBinding) error
+
+func (preapproval placePreapproval) requireApproval(binding targetprofile.ApprovalBinding) error {
+	err := targetprofile.RequireApproval(binding)
+	if errors.Is(err, targetprofile.ErrApprovalRequired) && preapproval != nil {
+		return preapproval(binding)
+	}
+	return err
 }
 
 func directlySelectedPlaceTargets(cfg *config.Config) map[string]bool {

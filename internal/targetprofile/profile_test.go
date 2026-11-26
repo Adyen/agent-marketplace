@@ -80,6 +80,24 @@ func TestTargetProfileParseAllowsSinglePlatform(t *testing.T) {
 	}
 }
 
+func TestTargetProfileParseStableFirstDiagnostic(t *testing.T) {
+	for _, tt := range []struct{ name, before, after, want string }{
+		{"shipped", "host: {", "host: {shipped: {z.invalid: [], alpha: [pkg, pkg]}, ", "invalid or duplicate shipped package name"},
+		{"checks", "checks: {", "checks: {zulu: {}, alpha: {scope: eager-package-load, subject: {under: mods, component: package-name}}, ", "command argv requires a literal command role"},
+		{"kinds", "kinds: {", "kinds: {zulu: {}, alpha: {deliver: place, into: [mods/], verify: missing}, ", "kind references an undefined check"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := replaceProfileText(t, tt.before, tt.after)
+			id := profileIdentity(data, "invented-app")
+			for range 16 {
+				if _, err := Parse(data, id); err == nil || err.Error() != profileInvalidCode+": "+tt.want {
+					t.Fatalf("Parse() error = %v, want first diagnostic %q", err, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestTargetProfileParseRefusesInvalidInput(t *testing.T) {
 	singlePlatformMissingRoot := replaceProfileText(t, "platforms: [macos, linux]", "platforms: [linux]")
 	singlePlatformMissingRoot = []byte(strings.Replace(string(singlePlatformMissingRoot),

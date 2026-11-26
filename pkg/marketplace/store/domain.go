@@ -488,7 +488,7 @@ type ResourceRevision struct {
 	Requires string `json:"-"`
 }
 
-// RequirementCandidate is a current-head skill, command, or subagent revision
+// RequirementCandidate is a current-head skill, command, subagent, or scoped revision
 // in scope for a resource detail dependent lookup. Requires is empty when the
 // revision is unindexed (SQL NULL).
 type RequirementCandidate struct {

@@ -7,6 +7,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/gitidentity"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/acquire"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -38,6 +39,9 @@ func checkoutAssessmentSource(origin, ref string, identity targetprofile.Identit
 	checkoutOrigin, err := gitidentity.CanonicalV1(origin)
 	if source.Kind != "git" || err != nil || source.Origin != checkoutOrigin || source.Ref != ref {
 		return targetprofile.Source{}, fmt.Errorf("marketplace.profile.unavailable: %s is not in the current registry checkout", identity.TargetID)
+	}
+	if err := acquire.ValidateExactPath(source.Root); err != nil {
+		return targetprofile.Source{}, fmt.Errorf("marketplace.profile.unavailable: %w", err)
 	}
 	return source, nil
 }

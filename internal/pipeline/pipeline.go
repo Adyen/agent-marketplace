@@ -178,9 +178,6 @@ func StatusCompiledMarketplaceConfig(cfg *config.Config) *config.Config {
 	return compiled
 }
 
-// HasPlaceTargets reports whether resolution captured enabled deployed place targets.
-func (r ResolveResult) HasPlaceTargets() bool { return len(r.placeTargets) > 0 }
-
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
 // target harness set is configured.
 type TargetHarnessSetMissingError struct{}
@@ -207,7 +204,7 @@ type SyncResult struct {
 	// "removed upstream".
 	//
 	// MaterializeErrors are the hard failures raised AFTER the catalog was read
-	// and the selections resolved: backup failures, materialize diagnostics
+	// and the selections resolved: Place deployment and backup failures, materialize diagnostics
 	// promoted to errors, and the materialize.Run error itself. They say
 	// nothing about whether the catalog was trustworthy.
 	//
@@ -229,7 +226,7 @@ type PluginDeliveryChoice struct {
 
 // hccTargetsFromStrings converts a []string harness list into []hcc.Target.
 func hccTargetsFromStrings(targets []string) []hcc.Target {
-	if len(targets) == 0 {
+	if targets == nil {
 		return nil
 	}
 	out := make([]hcc.Target, len(targets))
@@ -834,9 +831,6 @@ func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, re
 		resolver.WithSelectedCollections(&selectedCollections),
 		resolver.WithImpliedPreview(&result.ImpliedPreview),
 	}
-	if len(ec.PlaceTargets) > 0 && len(result.MachineTargetHarnesses) == 0 {
-		resolveOptions = append(resolveOptions, resolver.WithNoMachineHarnesses())
-	}
 	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
 		marketplaceCfg, catalog.EntriesByKey(loadResult.Catalogs), result.LocalCfg, resolveOptions...,
 	)
@@ -1203,11 +1197,6 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	if opts.EnablePlaceSync {
 		placeResult, err := syncDeployedPlace(ctx, resolved, opts.Offline, opts.Workspace.RepoRoot())
 		result.PlaceSync = placeResult
-		for _, identity := range placeResult.Pending {
-			result.Warnings = append(result.Warnings, fmt.Errorf(
-				"target.approval.required: target %s is pending local approval", identity.TargetID,
-			))
-		}
 		result.Warnings = append(result.Warnings, placeResult.Skipped...)
 		result.Warnings = append(result.Warnings, placeResult.VerificationWarnings...)
 		cededTargets := make([]string, 0, len(placeResult.Ceded))
@@ -1224,9 +1213,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			}
 		}
 		if err != nil {
-			wrapped := fmt.Errorf("sync deployed place targets: %w", err)
-			result.Errors = append(result.Errors, wrapped)
-			result.CatalogTrustErrors = append(result.CatalogTrustErrors, wrapped)
+			result.addMaterializeError(fmt.Errorf("sync deployed place targets: %w", err))
 			return result
 		}
 	}

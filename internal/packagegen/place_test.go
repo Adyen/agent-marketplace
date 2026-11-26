@@ -164,9 +164,32 @@ func TestPlaceGenerationCollection(t *testing.T) {
 		t.Fatalf("recovered journal entries = %v / %v", entries, err)
 	}
 
-	commitPlaceProjection(t, store, stateDir, rootIdentity, ownership.PlaceProjection{
-		Packages: []ownership.PlacePackage{firstPackage},
-	})
+	// Once a target write has happened, recovery finishes ownership publication
+	// instead of clearing the intent. Complete that handoff inside GC's snapshot.
+	interrupted := errors.New("stop after target write")
+	_, err = dependencytxn.CommitPlace(t.Context(), stateDir, dependencytxn.PlacePlan{
+		Root: store.CanonicalRoot(), RootIdentity: rootIdentity, Ownership: ownershipFile,
+		Directories: []string{filepath.Dir(firstFile.DestinationPath)},
+		Writes: []dependencytxn.PlaceWrite{{
+			Path: firstFile.DestinationPath, GenerationKey: first.Key, SourcePath: firstFile.SourcePath,
+			Digest: dependencytxn.Digest(firstFile.Bytes), Mode: firstFile.Mode, Size: int64(len(firstFile.Bytes)),
+			ParentCreated: true,
+		}},
+	}, dependencytxn.WithFaultHook(func(p dependencytxn.FaultPoint) error {
+		if p.Stage == dependencytxn.FaultPlaceAfterPublish {
+			return interrupted
+		}
+		return nil
+	}))
+	if !errors.Is(err, interrupted) {
+		t.Fatalf("interrupt place transaction: %v", err)
+	}
+	if removed := collectAcrossRecovery(t, stateDir); len(removed) != 0 {
+		t.Fatalf("collection across place recovery removed %v", removed)
+	}
+	if keys, err := ownership.ReadCommittedPackageGenerationKeys(); err != nil || !reflect.DeepEqual(keys, []string{first.Key}) {
+		t.Fatalf("recovered place references = %v / %v", keys, err)
+	}
 	secondFile := targetprofile.PackageFile{
 		SourcePath: "source/second.json", DestinationPath: "mods/second.json",
 		Mode: 0o644, Bytes: []byte(`{"package":"second"}`),

@@ -3,6 +3,7 @@ package packagegen
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,46 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func TestPublishGenerationRetriesParentSyncOnReuse(t *testing.T) {
+	parent := t.TempDir()
+	gen := Generation{Path: filepath.Join(parent, "generation")}
+	syncFailure := errors.New("injected parent sync failure")
+	var writes, verifies, syncs int
+	publish := func() (bool, error) {
+		return publishGeneration(gen, parent, []string{"file"}, func(stage string, _ int) error {
+			writes++
+			return writeGenerationFile(stage, "file", []byte("payload"), 0o644)
+		}, func(path string) error {
+			verifies++
+			data, err := os.ReadFile(filepath.Join(path, "file"))
+			if err == nil && string(data) != "payload" {
+				t.Fatalf("reused generation contains %q", data)
+			}
+			return err
+		}, func(path string) error {
+			if path != parent {
+				t.Fatalf("syncing %q, want %q", path, parent)
+			}
+			syncs++
+			if syncs <= 2 {
+				return syncFailure
+			}
+			return syncDirectory(path)
+		})
+	}
+	for i := range 2 {
+		if fresh, err := publish(); fresh || !errors.Is(err, syncFailure) {
+			t.Fatalf("attempt %d = (%v, %v), want parent sync failure", i+1, fresh, err)
+		}
+	}
+	if fresh, err := publish(); fresh || err != nil {
+		t.Fatalf("final retry = (%v, %v), want verified reuse", fresh, err)
+	}
+	if writes != 1 || verifies != 2 || syncs != 3 {
+		t.Fatalf("writes/verifications/parent syncs = %d/%d/%d, want 1/2/3", writes, verifies, syncs)
+	}
+}
 
 func TestBuildKeyCoversPluginBuildInputsAndSortsExclusions(t *testing.T) {
 	base := Input{

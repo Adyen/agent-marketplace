@@ -427,19 +427,25 @@ func seedPlaceResourceRevision(cache *Cache, endpoint string, instanceID store.M
 	return err
 }
 
-type placeCacheFileSnapshot struct {
+type placeCacheEntrySnapshot struct {
+	IsDir   bool
 	Bytes   []byte
 	ModTime time.Time
 }
 
-func snapshotPlaceCache(t *testing.T, root string) map[string]placeCacheFileSnapshot {
+func snapshotPlaceCache(t *testing.T, root string) map[string]placeCacheEntrySnapshot {
 	t.Helper()
-	snapshot := make(map[string]placeCacheFileSnapshot)
+	snapshot := make(map[string]placeCacheEntrySnapshot)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
 		if entry.IsDir() {
+			snapshot[relative] = placeCacheEntrySnapshot{IsDir: true}
 			return nil
 		}
 		info, err := entry.Info()
@@ -450,11 +456,7 @@ func snapshotPlaceCache(t *testing.T, root string) map[string]placeCacheFileSnap
 		if err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		snapshot[relative] = placeCacheFileSnapshot{Bytes: content, ModTime: info.ModTime()}
+		snapshot[relative] = placeCacheEntrySnapshot{Bytes: content, ModTime: info.ModTime()}
 		return nil
 	})
 	if err != nil {
@@ -463,7 +465,7 @@ func snapshotPlaceCache(t *testing.T, root string) map[string]placeCacheFileSnap
 	return snapshot
 }
 
-func assertPlaceCacheUnchanged(t *testing.T, root string, before map[string]placeCacheFileSnapshot) {
+func assertPlaceCacheUnchanged(t *testing.T, root string, before map[string]placeCacheEntrySnapshot) {
 	t.Helper()
 	after := snapshotPlaceCache(t, root)
 	if !reflect.DeepEqual(after, before) {

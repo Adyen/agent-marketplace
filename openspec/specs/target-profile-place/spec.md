@@ -171,7 +171,7 @@ Place delivery SHALL build each package as an immutable generation in agent-mark
 
 ### Requirement: Place staging is journaled and outside the target root
 
-Place delivery SHALL write a durable dependency-journal intent before the first staging write. The intent records the payload manifest, generation key, stage path and identity, ordered writes, journaled directory creations and root identity. Staging MUST happen in an agent-marketplace place-stage directory, never inside the target root.
+Before creating the stage directory, place delivery SHALL write a durable dependency-journal intent recording the planned stage path (without a stage identity), payload manifest, generation key, ordered writes, journaled directory creations and root identity. Place delivery MUST create the place-stage directory under agent-marketplace state, outside the target root, and durably record the new directory's identity in the journal before writing any payload to the stage.
 
 #### Scenario: Staging happens outside the target root
 
@@ -249,7 +249,7 @@ While a place journal is pending, read-only commands such as `status` and `sync 
 
 ### Requirement: Recovery before the first target write clears only exact stages
 
-When no target write has happened, recovery SHALL clear an intent that has no captured stage. It MUST remove a stage only when the stage's recorded identity matches and every present file is a byte prefix of its manifest entry, and it MUST NOT resume publication. A stage that is unrecorded, changed or foreign MUST be retained, and recovery MUST stop.
+When no target write has happened and the planned stage path is absent, recovery SHALL clear the intent. If a stage is present without a matching recorded identity, recovery MUST stop and retain both stage and journal. Even when the identity matches, recovery MUST remove the stage only if every present file is a byte prefix of its manifest entry; otherwise it MUST stop and retain both stage and journal. Recovery MUST NOT resume publication.
 
 #### Scenario: Incomplete staging is cleared, never resumed
 

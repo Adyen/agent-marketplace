@@ -71,7 +71,7 @@ func commitPlaceChanges(
 			slog.Warn("place upsert transaction failed", "target_id", binding.Profile.TargetID, "error", retErr)
 		}
 	}()
-	prepared, err := preparePlaceChanges(ctx, binding, profileBytes, environment, packages, pruneDeselected)
+	prepared, err := preparePlaceChanges(ctx, binding, profileBytes, environment, packages, pruneDeselected, nil)
 	if err != nil {
 		return dependencytxn.PlaceResult{}, nil, err
 	}
@@ -90,7 +90,7 @@ func commitPlaceChanges(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := checkCurrentPlaceApproval(binding, prepared.profile, environment); err != nil {
+		if err := checkCurrentPlaceApproval(binding, prepared.profile, environment, nil); err != nil {
 			return err
 		}
 		if err := dependencytxn.CheckPending(prepared.stateDir); err != nil {
@@ -122,26 +122,7 @@ func commitPlaceChanges(
 	if err != nil {
 		return dependencytxn.PlaceResult{}, nil, err
 	}
-	cededSet := make(map[string]struct{}, len(prepared.ceded)+len(result.Retained))
-	for _, path := range prepared.ceded {
-		cededSet[path] = struct{}{}
-	}
-	retainedDirectories := make(map[string]bool)
-	for _, prune := range prepared.plan.Prunes {
-		if prune.Directory != nil {
-			retainedDirectories[prune.Path] = true
-		}
-	}
-	for _, path := range result.Retained {
-		if !retainedDirectories[path] {
-			cededSet[path] = struct{}{}
-		}
-	}
-	ceded = make([]string, 0, len(cededSet))
-	for path := range cededSet {
-		ceded = append(ceded, path)
-	}
-	sort.Strings(ceded)
+	ceded = placeCededPaths(prepared.ceded, prepared.plan.Prunes, result.Retained)
 	slog.Info("place upsert transaction committed", "target_id", binding.Profile.TargetID, "packages", len(prepared.upserts), "changed_paths", len(result.Changed))
 	return result, ceded, nil
 }
@@ -153,7 +134,7 @@ func preparePlaceUpserts(
 	environment targetprofile.ApprovalEnvironment,
 	packages []marketplace.ResolvedPlacePackage,
 ) (prepared preparedPlaceUpserts, retErr error) {
-	return preparePlaceChanges(ctx, binding, profileBytes, environment, packages, false)
+	return preparePlaceChanges(ctx, binding, profileBytes, environment, packages, false, nil)
 }
 
 func preparePlaceChanges(
@@ -163,6 +144,7 @@ func preparePlaceChanges(
 	environment targetprofile.ApprovalEnvironment,
 	packages []marketplace.ResolvedPlacePackage,
 	pruneDeselected bool,
+	preapproval placePreapproval,
 ) (prepared preparedPlaceUpserts, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return prepared, err
@@ -172,7 +154,7 @@ func preparePlaceChanges(
 	if err != nil {
 		return prepared, fmt.Errorf("target %s profile validation: %w", binding.Profile.TargetID, err)
 	}
-	if err := checkCurrentPlaceApproval(binding, profile, environment); err != nil {
+	if err := checkCurrentPlaceApproval(binding, profile, environment, preapproval); err != nil {
 		return prepared, err
 	}
 	stateDir, err := dependencytxn.StateDir()
@@ -483,7 +465,7 @@ func preparePlaceWriteParentProofs(
 	return nil
 }
 
-func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) error {
+func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment, preapproval placePreapproval) error {
 	current, err := resolvePlaceApprovalBinding(profile, binding.Profile, environment)
 	if err != nil {
 		return fmt.Errorf("target %s approval binding: %w", binding.Profile.TargetID, err)
@@ -491,7 +473,7 @@ func checkCurrentPlaceApproval(binding targetprofile.ApprovalBinding, profile ta
 	if err := binding.Match(current); err != nil {
 		return err
 	}
-	if err := targetprofile.RequireApproval(current); err != nil {
+	if err := preapproval.requireApproval(current); err != nil {
 		return fmt.Errorf("target %s approval: %w", binding.Profile.TargetID, err)
 	}
 	return nil

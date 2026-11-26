@@ -1,6 +1,6 @@
 # Design
 
-The normative design is `docs/plans/2026-11-13-target-profiles-design.md` on `feat/target-profiles`. It is the authority for the areas below, and this change implements it.
+`openspec/specs/` is normative for user-observable behavior. `docs/plans/2026-11-13-target-profiles-design.md` on `feat/target-profiles` is the design reference for the decisions below.
 
 | Area | Design decisions |
 | --- | --- |

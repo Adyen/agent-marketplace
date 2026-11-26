@@ -58,7 +58,7 @@ func preparePlaceVerification(
 	if err := ctx.Err(); err != nil {
 		return prepared, err
 	}
-	if err := checkCurrentPlaceApproval(binding, profile, env); err != nil {
+	if err := checkCurrentPlaceApproval(binding, profile, env, nil); err != nil {
 		return prepared, err
 	}
 	if err := binding.VerifyExecutable(); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -56,8 +57,8 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 	if err := os.WriteFile(gitSkill, []byte("---\nname: machine-control\ndescription: git source control\n---\n# Machine Control\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, gitFixture.repo, "add", gitFixture.root, "profiles/skills")
-	runGit(t, gitFixture.repo, "commit", "-m", "add a valid source root")
+	placeFixtureGit(t, gitFixture.repo, "add", gitFixture.root, "profiles/skills")
+	placeFixtureGit(t, gitFixture.repo, "commit", "-m", "add a valid source root")
 	lockedCommit, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, gitFixture.repo))
 	if err != nil {
 		t.Fatal(err)
@@ -87,9 +88,9 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 		t.Fatal(err)
 	}
 	host := "#!/bin/sh\n" +
+		"printf 'check\\n' >> " + shellQuote(marker) + "\n" +
 		"if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " + shellQuote(filepath.Join(targetRoot, "mods", "sample")) + " ]; then exit 91; fi\n" +
 		"if [ ! -f \"$2/guide.md\" ]; then exit 92; fi\n" +
-		"printf 'check\\n' >> " + shellQuote(marker) + "\n" +
 		"if [ -f " + shellQuote(sentinel) + " ]; then exit 0; fi\nexit 17\n"
 	hostPath := filepath.Join(hostDir, "place-sync-checker")
 	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {
@@ -400,6 +401,41 @@ resources:
 	if err != nil {
 		t.Fatalf("resolve actual approval binding: %v", err)
 	}
+	t.Run("grant check revalidates selection without invoking host", func(t *testing.T) {
+		org := filepath.Join(home, "grant.yaml")
+		grantOpts := opts
+		grantOpts.EffectiveOpts.OrganizationPath = org
+		grant := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+target_preapprovals:
+  - os: %q
+    target_id: %q
+    profile_digest: %q
+    canonical_root: %q
+    canonical_state_root: %q
+    executable: {canonical_path: %q, sha256: %q}
+    command_roles: [initial-load]
+`, binding.OS, binding.Profile.TargetID, binding.Profile.RevisionDigest, binding.CanonicalRoot,
+			binding.CanonicalStateRoot, binding.Executable.CanonicalPath, binding.Executable.SHA256)
+		if err := os.WriteFile(org, []byte(grant), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		resolved, release := ResolveWithExactLockLease(ctx, grantOpts)
+		defer release()
+		check, err := CheckDeployedPlace(ctx, resolved)
+		if err != nil || !slices.Equal(check.Drift, []string{binding.Profile.TargetID}) {
+			t.Fatalf("executable grant check = %+v, %v", check, err)
+		}
+		assertPlacePublishPathAbsent(t, marker)
+		if err := os.WriteFile(org, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CheckDeployedPlace(ctx, resolved); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+			t.Fatalf("check with changed grant file = %v; want selection conflict", err)
+		}
+		if err := targetprofile.RequireApproval(binding); !errors.Is(err, targetprofile.ErrApprovalRequired) {
+			t.Fatalf("check changed approval: %v", err)
+		}
+	})
 	if err := targetprofile.RecordApproval(binding); err != nil {
 		t.Fatalf("record local approval receipt: %v", err)
 	}
@@ -552,6 +588,15 @@ resources:
 	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
 		t.Fatalf("read-only tampered check ran initial-load check: %q, %v", data, err)
 	}
+	t.Run("place conflict fails sync without invalidating catalog trust", func(t *testing.T) {
+		conflict := Sync(ctx, opts)
+		if len(conflict.Errors) != 1 || !strings.Contains(conflict.Errors[0].Error(), "place upsert refused at "+files[0].DestinationPath) {
+			t.Fatalf("sync errors = %v, want refusal for edited Place destination", conflict.Errors)
+		}
+		if !conflict.CatalogTrusted() || !slices.Equal(conflict.MaterializeErrors, conflict.Errors) {
+			t.Fatalf("catalog trust errors = %v, materialize errors = %v; want only the deployment failure", conflict.CatalogTrustErrors, conflict.MaterializeErrors)
+		}
+	})
 	if err := os.WriteFile(targetFile, files[0].Bytes, files[0].Mode); err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +720,7 @@ resources:
 	}
 	deselectionPlan, err := preparePlaceChanges(
 		ctx, deselectionGroups[0].binding, deselectionGroups[0].profile,
-		deselectionEnvironment, deselectionGroups[0].packages, true,
+		deselectionEnvironment, deselectionGroups[0].packages, true, nil,
 	)
 	if err != nil || !deselectionPlan.changed {
 		t.Fatalf("final-pin place plan changed=%v err=%v", deselectionPlan.changed, err)

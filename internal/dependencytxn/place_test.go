@@ -101,6 +101,7 @@ func newPlaceFixture(t *testing.T, oldState bool) (string, string, PlacePlan) {
 
 // spec: target-profile-place/cross-filesystem-targets-refuse-before-writes
 func TestPlaceRefusesDifferentStageDeviceBeforeWrites(t *testing.T) {
+	t.Run("ownership", testPlaceOwnershipDevice)
 	for _, existingParent := range []bool{false, true} {
 		name := "missing parent"
 		if existingParent {
@@ -108,15 +109,7 @@ func TestPlaceRefusesDifferentStageDeviceBeforeWrites(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			_, stateDir, plan := newPlaceFixture(t, false)
-			tempRoot, err := os.MkdirTemp("/dev/shm", "agent-marketplace-place-device-")
-			if err != nil {
-				t.Skipf("cross-device temporary root unavailable under /dev/shm: %v", err)
-			}
-			t.Cleanup(func() { _ = os.RemoveAll(tempRoot) })
-			root, err := filepath.EvalSymlinks(tempRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
+			root := newPlaceShmDir(t)
 			targetRoot, err := fsboundary.OpenDir(root)
 			if err != nil {
 				t.Fatal(err)
@@ -178,6 +171,56 @@ func TestPlaceRefusesDifferentStageDeviceBeforeWrites(t *testing.T) {
 				t.Fatalf("cross-device refusal created journals: %v, %v", got, err)
 			}
 		})
+	}
+}
+
+func newPlaceShmDir(t *testing.T) string {
+	t.Helper()
+	temp, err := os.MkdirTemp("/dev/shm", "agent-marketplace-place-device-")
+	if err != nil {
+		t.Skipf("cross-device temporary root unavailable under /dev/shm: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(temp) })
+	canonical, err := filepath.EvalSymlinks(temp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+// With no privileged mounts we cannot put another filesystem at the fixed
+// ownership/<key> path. Exercise the same preflight directly with /dev as the
+// state root and an ownership participant beneath its existing shm mount.
+func testPlaceOwnershipDevice(t *testing.T) {
+	parent := newPlaceShmDir(t)
+	dev, err := fsboundary.OpenDir("/dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dev.Close() }()
+	ownership, err := fsboundary.OpenDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ownership.Close() }()
+	if dev.Identity().Device == ownership.Identity().Device {
+		t.Skipf("stage and ownership parent both use device %d", dev.Identity().Device)
+	}
+	t.Logf("stage device %d; ownership ancestor device %d", dev.Identity().Device, ownership.Identity().Device)
+	base, err := filepath.Rel(dev.Path(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, child := range []string{"state.json", "missing/key/state.json"} {
+		rel := filepath.Join(base, child)
+		err := validatePlaceDevices(dev, dev.Path(), nil, rel)
+		if !errors.Is(err, ErrUnsafePath) || !strings.Contains(err.Error(), "place stage device") ||
+			!strings.Contains(err.Error(), rel) {
+			t.Errorf("preflight for %s = %v, want ownership device mismatch", rel, err)
+		}
+	}
+	if entries, err := os.ReadDir(parent); err != nil || len(entries) != 0 {
+		t.Fatalf("ownership preflight changed destination: %v, %v", entries, err)
 	}
 }
 
@@ -450,6 +493,44 @@ func TestPlaceRefusesChangedStageModeBeforePublishing(t *testing.T) {
 }
 
 // spec: target-profile-place/oversized-journal-refuses-before-staging
+func TestPlaceJournalSizeUsesEncodedPendingOperation(t *testing.T) {
+	ops := []placeOperation{
+		{Kind: "write", Path: "longer-name"},
+		{Kind: "write", Index: 1, Path: "a&b<c"},
+	}
+	// The second path is shorter in bytes, but longer on the JSON wire.
+	intent := &placeIntent{
+		Operations: ops, Pending: &ops[1], Completed: len(ops),
+		StageIdentity: placeSizingIdentity(), OwnershipNextDigest: strings.Repeat("0", 64),
+		OwnershipNextSize: maxDependencyFileSize,
+	}
+	j := journal{Version: journalVersion, ID: "size-test", Place: intent}
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Root = strings.Repeat("x", int(maxJournalSize)-len(raw))
+	if err := checkPlaceJournalSize(&j); err != nil {
+		t.Fatalf("exactly at reader limit: %v", err)
+	}
+	stateDir := t.TempDir()
+	path, err := persistJournal(stateDir, &j, fsyncDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Root += "x"
+	if err := checkPlaceJournalSize(&j); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Errorf("preflight with encoded pending operation one byte over limit: %v", err)
+	}
+	if _, err := persistJournal(stateDir, &j, fsyncDir); !errors.Is(err, ErrRecoveryBlocked) {
+		t.Errorf("persist one byte over limit: %v", err)
+	}
+	got, _, err := readRegularFile(path, maxJournalSize)
+	if err != nil || int64(len(got)) != maxJournalSize {
+		t.Fatalf("read previously persisted boundary journal: %d bytes, %v", len(got), err)
+	}
+}
+
 func TestPlaceOversizedJournalRefusesBeforeStage(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
 	write := plan.Writes[0]
@@ -783,16 +864,20 @@ func TestPlaceEXDEVStaysPendingWithoutCopyFallback(t *testing.T) {
 	}
 }
 
+func bindPlaceRootSpelling(t *testing.T, plan *PlacePlan, stateDir, spelling string) {
+	t.Helper()
+	plan.Root = spelling
+	key := testPlaceRootKey(spelling)
+	plan.Ownership.Path = filepath.Join(filepath.Dir(stateDir), "ownership", key, "state.json")
+	plan.Ownership.Bytes = mustPlaceState(t, placeStateFixture{
+		CanonicalRoot: spelling, RootKey: key, PlaceDirectories: []any{},
+	})
+}
+
 // spec: target-profile-place/a-root-alias-or-replaced-destination-symlink-is-not-ownership-proof
 func TestPlaceRefusesCaseVariantRootWithoutWrites(t *testing.T) {
 	root, stateDir, plan := newPlaceFixture(t, false)
-	variant := testutil.SameFileCaseVariant(t, root)
-	plan.Root = variant
-	key := testPlaceRootKey(variant)
-	plan.Ownership.Path = filepath.Join(filepath.Dir(stateDir), "ownership", key, "state.json")
-	plan.Ownership.Bytes = mustPlaceState(t, placeStateFixture{
-		CanonicalRoot: variant, RootKey: key, PlaceDirectories: []any{},
-	})
+	bindPlaceRootSpelling(t, &plan, stateDir, testutil.SameFileCaseVariant(t, root))
 	_, commitErr := CommitPlace(context.Background(), stateDir, plan)
 	if !errors.Is(commitErr, ErrGenerationConflict) {
 		t.Errorf("case-variant root commit error = %v, want ErrGenerationConflict", commitErr)
@@ -822,9 +907,10 @@ func TestPlaceRootAliasDoesNotOpenOwnership(t *testing.T) {
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
 	}
-	plan.Root = alias
-	if _, err := CommitPlace(context.Background(), stateDir, plan); err == nil {
-		t.Fatal("place accepted a root alias")
+	bindPlaceRootSpelling(t, &plan, stateDir, alias)
+	_, err := CommitPlace(context.Background(), stateDir, plan)
+	if !errors.Is(err, ErrGenerationConflict) || !errors.Is(err, fsboundary.ErrNonCanonicalDir) {
+		t.Errorf("root alias commit = %v, want generation conflict from noncanonical root", err)
 	}
 	if got := journals(t, stateDir); len(got) != 0 {
 		t.Fatalf("root alias created a journal: %v", got)
@@ -832,8 +918,8 @@ func TestPlaceRootAliasDoesNotOpenOwnership(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "mods")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("root alias changed the target: %v", err)
 	}
-	if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("root alias created ownership state: %v", err)
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(stateDir), "ownership")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("root alias created ownership tree: %v", err)
 	}
 }
 

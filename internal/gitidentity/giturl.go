@@ -80,10 +80,7 @@ func canonicalRemote(u *url.URL) (string, error) {
 			port = ""
 		}
 	}
-	hostPort := host
-	if strings.Contains(host, ":") {
-		hostPort = "[" + host + "]"
-	}
+	hostPort := urlHost(host)
 	if port != "" {
 		hostPort = net.JoinHostPort(host, port)
 	}
@@ -102,14 +99,22 @@ func canonicalSCP(user, host, repositoryPath string) (string, error) {
 	if strings.HasPrefix(repositoryPath, "/") {
 		return "", fmt.Errorf("SCP repository path must be relative")
 	}
-	if strings.ContainsAny(user, "?#") || strings.ContainsAny(host, "?#@") || HasASCIIControl(user+host) || !validRemoteHost(strings.ToLower(host)) {
+	host = strings.ToLower(host)
+	if strings.ContainsAny(user, "?#") || strings.ContainsAny(host, "?#@") || HasASCIIControl(user+host) || !validRemoteHost(host) {
 		return "", fmt.Errorf("invalid SCP origin")
 	}
 	cleaned, err := canonicalRepositoryPath(repositoryPath, false)
 	if err != nil {
 		return "", err
 	}
-	return "git+scp://" + url.User(user).String() + "@" + strings.ToLower(host) + "/" + cleaned, nil
+	return "git+scp://" + url.User(user).String() + "@" + urlHost(host) + "/" + cleaned, nil
+}
+
+func urlHost(host string) string {
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func canonicalFile(u *url.URL) (string, error) {
@@ -148,11 +153,18 @@ func canonicalRepositoryPath(escaped string, absolute bool) (string, error) {
 		cleaned = strings.TrimPrefix(cleaned, "/")
 	}
 	cleaned = strings.TrimSuffix(cleaned, "/")
-	cleaned = strings.TrimSuffix(cleaned, ".git")
 	if cleaned == "" || cleaned == "." || cleaned == "/" {
 		return "", fmt.Errorf("repository path is required")
 	}
 	segments := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	last := len(segments) - 1
+	if name, ok := strings.CutSuffix(segments[last], ".git"); ok {
+		// A second normalization must not remove another suffix or path segment.
+		if name == "" || name == "." || name == ".." || strings.HasSuffix(name, ".git") {
+			return "", fmt.Errorf("unstable repository name after stripping .git")
+		}
+		segments[last] = name
+	}
 	for i := range segments {
 		segments[i] = url.PathEscape(segments[i])
 	}

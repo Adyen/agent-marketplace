@@ -180,14 +180,15 @@ func TestApprovalReceiptRejectsLinksAndTampering(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		requireApprovalError(t, RequireApproval(binding), "target.approval.receipt-invalid")
-		requireApprovalError(t, RecordApproval(binding), "target.approval.receipt-invalid")
-		after, err := os.Lstat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !os.SameFile(before, after) {
-			t.Fatal("hardlink receipt was replaced")
+		for _, approve := range []func(ApprovalBinding) error{RequireApproval, RecordApproval} {
+			requireApprovalError(t, approve(binding), "target.approval.receipt-invalid")
+			after, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(before, after) {
+				t.Fatal("hardlink receipt was replaced")
+			}
 		}
 		assertReceiptDirectoryHasOnlyLink(t, fixture.stateRoot, filepath.Base(path), 0)
 		got, err := os.ReadFile(external)
@@ -242,44 +243,51 @@ func assertReceiptDirectoryHasOnlyLink(t *testing.T, root, name string, linkType
 
 func TestApprovalReceiptSeparatesCanonicalRoots(t *testing.T) {
 	fixture := newApprovalTestFixture(t, []byte(validProfileYAML))
-	oldBinding := resolveApprovalTest(t, fixture.profile, fixture.identity, fixture.env)
+	env := fixture.env
+	env.Override = &fixture.root
+	oldBinding := resolveApprovalTest(t, fixture.profile, fixture.identity, env)
 	if err := RecordApproval(oldBinding); err != nil {
 		t.Fatal(err)
 	}
-	entries, _ := os.ReadDir(fixture.stateRoot)
+	if err := RequireApproval(oldBinding); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(fixture.stateRoot)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one receipt: entries=%v err=%v", entries, err)
+	}
 	oldPath := filepath.Join(fixture.stateRoot, entries[0].Name())
-	oldBytes, _ := os.ReadFile(oldPath)
+	oldBytes, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	newRoot := filepath.Join(fixture.env.Home, "other-app")
-	newState := filepath.Join(fixture.env.Home, ".local", "state", "other-marketplace")
 	if err := os.Mkdir(newRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(newState, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	env := fixture.env
-	env.Override = &newRoot
-	env.CanonicalStateRoot = newState
-	newBinding := resolveApprovalTest(t, fixture.profile, fixture.identity, env)
-	requireApprovalError(t, RequireApproval(newBinding), "target.approval.required")
-	if entries, err := os.ReadDir(newState); err != nil || len(entries) != 0 {
-		t.Fatalf("new state root was modified: entries=%v err=%v", entries, err)
-	}
-	if got, err := os.ReadFile(oldPath); err != nil || !bytes.Equal(got, oldBytes) {
-		t.Fatalf("old state root changed: %v", err)
-	}
-	override := fixture.root
-	overrideEnv := fixture.env
-	overrideEnv.Override = &override
-	overrideBinding := resolveApprovalTest(t, fixture.profile, fixture.identity, overrideEnv)
-	if overrideBinding.CanonicalRoot != oldBinding.CanonicalRoot || overrideBinding.UsedOverride == oldBinding.UsedOverride {
-		t.Fatalf("override fixture does not isolate override state: old=%#v new=%#v", oldBinding, overrideBinding)
-	}
-	requireApprovalError(t, RequireApproval(overrideBinding), "target.approval.required")
-	if entries, err := os.ReadDir(fixture.stateRoot); err != nil || len(entries) != 1 {
-		t.Fatalf("override lookup modified state: entries=%v err=%v", entries, err)
-	}
-	if got, err := os.ReadFile(oldPath); err != nil || !bytes.Equal(got, oldBytes) {
-		t.Fatalf("override lookup changed original receipt: %v", err)
+	for _, tc := range []struct {
+		name, wantRoot string
+		override       *string
+	}{
+		{"different override root", newRoot, &newRoot},
+		{"same root without override", fixture.root, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := fixture.env
+			env.Override = tc.override
+			binding := resolveApprovalTest(t, fixture.profile, fixture.identity, env)
+			if oldBinding.CanonicalRoot != fixture.root || !oldBinding.UsedOverride ||
+				binding.CanonicalRoot != tc.wantRoot || binding.UsedOverride != (tc.override != nil) ||
+				binding.CanonicalStateRoot != oldBinding.CanonicalStateRoot || binding.StateRootKey != oldBinding.StateRootKey {
+				t.Fatalf("unexpected lookup fixture: old=%#v new=%#v", oldBinding, binding)
+			}
+			requireApprovalError(t, RequireApproval(binding), "target.approval.required")
+			if entries, err := os.ReadDir(fixture.stateRoot); err != nil || len(entries) != 1 {
+				t.Fatalf("lookup modified state: entries=%v err=%v", entries, err)
+			}
+			if got, err := os.ReadFile(oldPath); err != nil || !bytes.Equal(got, oldBytes) {
+				t.Fatalf("lookup changed original receipt: %v", err)
+			}
+		})
 	}
 }

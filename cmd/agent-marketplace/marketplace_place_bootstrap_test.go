@@ -92,28 +92,39 @@ func TestProspectiveMarketplacePlaceLocksRefuseMismatchedProfile(t *testing.T) {
 		t.Fatalf("matching prospective place lock refused: %v", err)
 	}
 
-	mismatchedBinding := binding
-	mismatchedBinding.ProfileIdentity.SourceID = "git:https%3A%2F%2Fexample.org%2Fother@main#profiles%2Finvented-app.yaml"
-	mismatchedBinding.ProfileIdentity.RevisionDigest = "sha256:" + strings.Repeat("f", 64)
-	mismatchedBinding.ProfileDigest = mismatchedBinding.ProfileIdentity.RevisionDigest
-	if err := mismatchedBinding.ProfileIdentity.Validate(); err != nil {
-		t.Fatalf("validate changed full profile identity: %v", err)
-	}
-	mismatchedPackageLock := packageLock
-	mismatchedPackageLock.HostPackageIdentity = &mismatchedBinding
-	mismatchedDoc := matchingDoc
-	mismatchedDoc.Marketplaces = append([]lockfile.MarketplaceLock(nil), matchingDoc.Marketplaces...)
-	mismatchedDoc.Marketplaces[0].Resources = append([]lockfile.MarketplaceResourceLock(nil), matchingDoc.Marketplaces[0].Resources...)
-	mismatchedDoc.Marketplaces[0].Resources[len(mismatchedDoc.Marketplaces[0].Resources)-1] = mismatchedPackageLock
-	mismatchedBytes, err := lockfile.Encode(mismatchedDoc)
-	if err != nil {
-		t.Fatalf("encode mismatched candidate lock: %v", err)
-	}
-	mismatched := []dependencytxn.DesiredFile{{Path: lockPaths.CanonicalLock, Bytes: mismatchedBytes}}
-	if _, err := validateProspectiveMarketplacePlaceLocks(context.Background(), intent, mismatched); err == nil ||
-		!strings.Contains(err.Error(), "marketplace.profile.revision-mismatch") ||
-		!strings.Contains(err.Error(), "sample") || !strings.Contains(err.Error(), "invented-app") {
-		t.Fatalf("mismatched prospective place lock error = %v", err)
+	for _, tc := range []struct{ name, digest string }{
+		{"source-only", binding.ProfileDigest},
+		{"source-and-digest", "sha256:" + strings.Repeat("f", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mismatchedBinding := binding
+			mismatchedBinding.ProfileIdentity.SourceID = "git:https%3A%2F%2Fexample.org%2Fother@main#profiles%2Finvented-app.yaml"
+			mismatchedBinding.ProfileIdentity.RevisionDigest = tc.digest
+			mismatchedBinding.ProfileDigest = tc.digest
+			if err := mismatchedBinding.ProfileIdentity.Validate(); err != nil {
+				t.Fatalf("validate changed full profile identity: %v", err)
+			}
+			mismatchedDoc, err := lockfile.Decode(matchingBytes)
+			if err != nil {
+				t.Fatalf("decode matching candidate lock: %v", err)
+			}
+			resources := mismatchedDoc.Marketplaces[0].Resources
+			for i := range resources {
+				if resources[i].Kind == packageLock.Kind && resources[i].Name == packageLock.Name {
+					resources[i].HostPackageIdentity = &mismatchedBinding
+				}
+			}
+			mismatchedBytes, err := lockfile.Encode(mismatchedDoc)
+			if err != nil {
+				t.Fatalf("encode mismatched candidate lock: %v", err)
+			}
+			mismatched := []dependencytxn.DesiredFile{{Path: lockPaths.CanonicalLock, Bytes: mismatchedBytes}}
+			if _, err := validateProspectiveMarketplacePlaceLocks(context.Background(), intent, mismatched); err == nil ||
+				!strings.Contains(err.Error(), "marketplace.profile.revision-mismatch") ||
+				!strings.Contains(err.Error(), "sample") || !strings.Contains(err.Error(), "invented-app") {
+				t.Fatalf("mismatched prospective place lock error = %v", err)
+			}
+		})
 	}
 	if after, err := os.ReadFile(fixture.userConfig); err != nil || !bytes.Equal(after, originalConfig) {
 		t.Fatalf("user config changed during prospective validation: %v", err)

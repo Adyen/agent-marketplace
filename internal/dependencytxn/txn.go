@@ -174,10 +174,11 @@ var defaultFault FaultHook
 type Option func(*options)
 
 type options struct {
-	fault   FaultHook
-	syncDir func(string) error
-	reads   []ReadAssertion
-	scope   CommitScope
+	fault           FaultHook
+	syncDir         func(string) error
+	syncPruneParent func(*fsboundary.Dir) error
+	reads           []ReadAssertion
+	scope           CommitScope
 }
 
 func WithCommitScope(scope CommitScope) Option {
@@ -1234,10 +1235,21 @@ func stageFile(destination string, data []byte, mode fs.FileMode) (string, error
 	return path, nil
 }
 
-func persistJournal(stateDir string, j *journal, syncDir func(string) error) (string, error) {
+func marshalBoundedJournal(j *journal, description string) ([]byte, error) {
 	raw, err := json.Marshal(j)
 	if err != nil {
-		return "", fmt.Errorf("dependency transaction: marshal journal: %w", err)
+		return nil, fmt.Errorf("dependency transaction: marshal journal: %w", err)
+	}
+	if int64(len(raw)) > maxJournalSize {
+		return nil, fmt.Errorf("%w: %s requires %d bytes; limit is %d", ErrRecoveryBlocked, description, len(raw), maxJournalSize)
+	}
+	return raw, nil
+}
+
+func persistJournal(stateDir string, j *journal, syncDir func(string) error) (string, error) {
+	raw, err := marshalBoundedJournal(j, "journal")
+	if err != nil {
+		return "", err
 	}
 	path := filepath.Join(stateDir, ".dependencytxn-"+j.ID+".json")
 	temp, err := os.CreateTemp(stateDir, ".dependencytxn-journal-*.tmp")
@@ -1785,7 +1797,7 @@ func sortedKeys(values map[string]struct{}) []string {
 }
 
 func applyOptions(opts []Option) options {
-	cfg := options{syncDir: fsyncDir, fault: defaultFault}
+	cfg := options{syncDir: fsyncDir, syncPruneParent: (*fsboundary.Dir).Sync, fault: defaultFault}
 	for _, opt := range opts {
 		opt(&cfg)
 	}

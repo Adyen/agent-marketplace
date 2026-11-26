@@ -536,6 +536,34 @@ func TestCommitPlaceUpsertsRequiresReceiptAndPublishes(t *testing.T) {
 	})
 }
 
+func TestPreparePlaceRetirementInaccessibleParent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can open a directory without read permission")
+	}
+	fixture := newPlaceAdmissionFixture(t)
+	setPlacePublishEnvironment(t, fixture)
+	if err := targetprofile.RecordApproval(fixture.binding); err != nil {
+		t.Fatal(err)
+	}
+	pkg := resolvedPlacePackageForPublish(t, fixture)
+	if _, err := CommitPlaceUpserts(t.Context(), fixture.binding, fixture.raw, fixture.env, []marketplace.ResolvedPlacePackage{pkg}); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(fixture.root, "mods", "sample")
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	id := placeInstallationID(fixture.identity.TargetID, fixture.binding.CanonicalRoot, fixture.binding.CanonicalStateRoot)
+	if _, err := PreparePlaceRetirement(t.Context(), id); !errors.Is(err, fs.ErrPermission) || !strings.Contains(err.Error(), "mods/sample") {
+		t.Fatalf("retirement error = %v, want permission failure for mods/sample", err)
+	}
+}
+
 func TestPlanPlaceRetirement(t *testing.T) {
 	t.Run("prunes only unchanged owned files and cedes edits or absence", func(t *testing.T) {
 		fixture := newPlaceAdmissionFixture(t)
@@ -1022,10 +1050,15 @@ func TestPlanPlaceDeselection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dependent := sameTargetOtherRevision
-	dependent.Requires = []string{installed.Packages[0].ID}
+	retiringID := placePackageID(retiring.Entry.URL, retiring.Revision.Coordinate)
 	withDependent := installed
-	withDependent.Packages = append(append([]ownership.PlacePackage(nil), installed.Packages...), dependent)
+	withDependent.Packages = slices.Clone(installed.Packages)
+	for i, pkg := range withDependent.Packages {
+		if pkg.ID == sameTargetOtherRevision.ID {
+			withDependent.Packages[i].Requires = []string{retiringID}
+			break
+		}
+	}
 	dependentRoot, err := fsboundary.OpenDir(fixture.root)
 	if err != nil {
 		t.Fatal(err)

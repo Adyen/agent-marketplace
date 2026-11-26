@@ -114,17 +114,27 @@ func validPlacePreapprovalPath(path string) bool {
 		path != string(filepath.Separator) && !strings.ContainsAny(path, "*?[]$\\\x00")
 }
 
-// Matches reports whether binding exactly matches this preapproval.
-func (p PlacePreapproval) Matches(binding targetprofile.ApprovalBinding) bool {
+// PlacePreapprovalMatch distinguishes exact authority from a diagnostic-only near-match.
+type PlacePreapprovalMatch uint8
+
+const (
+	PlacePreapprovalUnrelated PlacePreapprovalMatch = iota
+	PlacePreapprovalStateRootMismatch
+	PlacePreapprovalExact
+)
+
+func (p PlacePreapproval) Match(binding targetprofile.ApprovalBinding) PlacePreapprovalMatch {
 	roles := slices.Clone(binding.CommandRoles)
 	sort.Strings(roles)
-	return p.OS == binding.OS &&
-		p.TargetID == binding.Profile.TargetID &&
-		p.ProfileDigest == binding.Profile.RevisionDigest &&
-		p.CanonicalRoot == binding.CanonicalRoot &&
-		p.CanonicalStateRoot == binding.CanonicalStateRoot &&
-		p.executable == binding.Executable &&
-		slices.Equal(p.CommandRoles, roles)
+	if p.OS != binding.OS || p.TargetID != binding.Profile.TargetID ||
+		p.ProfileDigest != binding.Profile.RevisionDigest || p.CanonicalRoot != binding.CanonicalRoot ||
+		p.executable != binding.Executable || !slices.Equal(p.CommandRoles, roles) {
+		return PlacePreapprovalUnrelated
+	}
+	if p.CanonicalStateRoot != binding.CanonicalStateRoot {
+		return PlacePreapprovalStateRootMismatch
+	}
+	return PlacePreapprovalExact
 }
 
 func clonePlacePreapprovals(entries []PlacePreapproval) []PlacePreapproval {

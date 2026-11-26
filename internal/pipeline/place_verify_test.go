@@ -353,32 +353,76 @@ func TestRunPlaceVerificationRecordsExactOutcome(t *testing.T) {
 	}
 }
 
-func TestRunApprovedPlaceCheckHonorsCallerDeadline(t *testing.T) {
-	fixture := newInstalledPlaceVerificationFixture(t)
-	if err := os.WriteFile(fixture.hostExecutable, []byte("#!/bin/sh\nexec /bin/sleep 5\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	profile, err := targetprofile.Parse(fixture.admission.raw, fixture.admission.identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding, err := targetprofile.ResolveApprovalBinding(profile, fixture.admission.identity, fixture.admission.env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, _ := openPlacePublishOwnership(t, fixture.admission)
-	stateBefore, stateInfoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err = runApprovedPlaceCheck(ctx, binding, []string{"check"}, fixture.admission.env.Home, fixture.admission.root)
-	elapsed := time.Since(started)
-	if !errors.Is(ctx.Err(), context.DeadlineExceeded) || err == nil || elapsed >= 2*time.Second {
-		t.Fatalf("deadline runner error=%v context=%v elapsed=%s", err, ctx.Err(), elapsed)
-	}
-	stateAfter, stateInfoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
-	if !bytes.Equal(stateBefore, stateAfter) || !stateInfoBefore.ModTime().Equal(stateInfoAfter.ModTime()) {
-		t.Fatal("timed out check changed ownership state")
+func TestRunPlaceVerificationHonorsCallerContext(t *testing.T) {
+	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(want.Error(), func(t *testing.T) {
+			// The fixture approves and installs this exact checker. After validating
+			// the named check's argv it writes its marker, then blocks in sleep.
+			fixture := newInstalledPlaceVerificationFixtureForProbe(t, "exec /bin/sleep 12", false, false, false)
+			admission := fixture.admission
+			repoRoot := t.TempDir()
+			owner, _ := openPlacePublishOwnership(t, admission)
+			before, infoBefore := placeVerificationStateSnapshot(t, owner.StateFile())
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			done := make(chan struct{})
+			var verifyErr error
+			go func() {
+				defer close(done)
+				_, verifyErr = runPlaceVerification(ctx, admission.binding, admission.raw, admission.env,
+					repoRoot, "invented-app/mod", "sample")
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(15 * time.Second):
+					t.Error("verification did not stop during cleanup")
+				}
+			})
+
+			tick := time.NewTicker(10 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				data, err := os.ReadFile(fixture.marker)
+				if err == nil && string(data) == "invoked" {
+					break
+				}
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					t.Fatal(err)
+				}
+				select {
+				case <-done:
+					t.Fatalf("verification returned before checker was ready: %v", verifyErr)
+				case <-ctx.Done():
+					t.Fatal("checker did not signal readiness before the caller deadline")
+				case <-tick.C:
+				}
+			}
+			if deadline, _ := ctx.Deadline(); !time.Now().Before(deadline) {
+				t.Fatal("observed checker readiness only after the caller deadline")
+			}
+			if want == context.Canceled {
+				cancel()
+			}
+			<-ctx.Done()
+			select {
+			case <-done:
+				if !errors.Is(verifyErr, want) {
+					t.Fatalf("verification returned %v, want %v", verifyErr, want)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("running check did not stop with the caller context")
+			}
+			after, infoAfter := placeVerificationStateSnapshot(t, owner.StateFile())
+			if !bytes.Equal(before, after) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+				t.Fatal("interrupted verification changed ownership state")
+			}
+			owner, snapshot := openPlacePublishOwnership(t, admission)
+			projection, err := owner.PlaceFromSnapshot(snapshot)
+			if err != nil || len(projection.Packages) != 1 || projection.Packages[0].Verification != nil {
+				t.Fatalf("want installed package without a verification result, got %#v, %v", projection, err)
+			}
+		})
 	}
 }
 
@@ -397,7 +441,7 @@ func newInstalledPlaceVerificationFixtureWithVersionProbe(
 	t *testing.T,
 	mutateProbe bool,
 ) installedPlaceVerificationFixture {
-	return newInstalledPlaceVerificationFixtureForProbe(t, 0, false, true, mutateProbe)
+	return newInstalledPlaceVerificationFixtureForProbe(t, "exit 0", false, true, mutateProbe)
 }
 
 func newInstalledPlaceVerificationFixtureWithOutcome(
@@ -405,12 +449,12 @@ func newInstalledPlaceVerificationFixtureWithOutcome(
 	exitCode int,
 	mutate bool,
 ) installedPlaceVerificationFixture {
-	return newInstalledPlaceVerificationFixtureForProbe(t, exitCode, mutate, false, false)
+	return newInstalledPlaceVerificationFixtureForProbe(t, "exit "+strconv.Itoa(exitCode), mutate, false, false)
 }
 
 func newInstalledPlaceVerificationFixtureForProbe(
 	t *testing.T,
-	exitCode int,
+	checkEnd string,
 	mutate, withProbe, mutateProbe bool,
 ) installedPlaceVerificationFixture {
 	t.Helper()
@@ -465,7 +509,7 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 	} else {
 		script += "printf invoked > " + shellQuote(marker) + "\n"
 	}
-	script += "exit " + strconv.Itoa(exitCode) + "\n"
+	script += checkEnd + "\n"
 	if err := os.WriteFile(hostExecutable, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

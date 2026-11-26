@@ -16,6 +16,10 @@ import (
 var generationDirectoryName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func GarbageCollect(dryRun bool) ([]string, error) {
+	return garbageCollect(dryRun, ownership.ReadPendingPluginGenerationRefs)
+}
+
+func garbageCollect(dryRun bool, readPendingPlugins func() ([]ownership.PluginGenerationRef, error)) ([]string, error) {
 	stateRoot, err := StateRoot()
 	if err != nil {
 		return nil, err
@@ -40,11 +44,13 @@ func GarbageCollect(dryRun bool) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		committed, err := ownership.ReadCommittedPackageGenerationKeys()
+		// Recovery publishes state before removing its journal. If it moves the
+		// staged plugin state during the pending scan, the committed scan sees it.
+		pending, err := readPendingPlugins()
 		if err != nil {
 			return err
 		}
-		pending, err := ownership.ReadPendingPluginGenerationRefs()
+		committed, err := ownership.ReadCommittedPackageGenerationKeys()
 		if err != nil {
 			return err
 		}

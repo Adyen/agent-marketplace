@@ -117,6 +117,14 @@ func TestPlaceCheckoutPaths(t *testing.T) {
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("PlaceCheckoutPaths without selections = %q, %v; want empty", empty, err)
 	}
+	t.Run("Git metadata cannot be selected", func(t *testing.T) {
+		unsafe := cfg.HostPackageAssessmentProfiles[0]
+		unsafe.ProfileIdentity.SourceID = strings.Replace(identity.SourceID, "#profiles", "#.Git", 1)
+		unsafeCfg := config.Config{HostPackageAssessmentProfiles: []config.HostPackageAssessmentProfile{unsafe}}
+		if _, err := PlaceCheckoutPaths(unsafeCfg, registry); err == nil || !strings.Contains(err.Error(), "marketplace.profile.unavailable") {
+			t.Fatalf("PlaceCheckoutPaths for Git metadata = %v, want unavailable", err)
+		}
+	})
 	badRegistry := registry
 	badRegistry.Origins = []string{"https://git.example.com/other.git"}
 	if _, err := PlaceCheckoutPaths(cfg, badRegistry); err == nil || !strings.Contains(err.Error(), "marketplace.profile.unavailable") {

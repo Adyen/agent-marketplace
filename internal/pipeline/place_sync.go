@@ -40,23 +40,36 @@ func syncDeployedPlace(ctx context.Context, resolved ResolveResult, offline bool
 		mode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	reads := deployedPlacePruneReads(resolved, cfg)
-	preapproval := deployedPlacePreapproval(resolved.placePreapprovals, resolved.placeSelectionReads)
+	preapproval := resolved.deployedPlacePreapproval(targetprofile.RecordOrganizationApproval)
 	return syncPlaceUpserts(ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader, marketplace.NewResolver(), mode, repoRoot, reads, preapproval)
 }
 
-func deployedPlacePreapproval(grants []config.PlacePreapproval, reads []dependencytxn.ReadAssertion) func(targetprofile.ApprovalBinding) error {
+var errPreapprovalStateRootMismatch = errors.New("organization preapproval names a different canonical state root")
+
+// A nil recorder evaluates the same grant without publishing consent.
+func (resolved *ResolveResult) deployedPlacePreapproval(record func(targetprofile.ApprovalBinding) error) placePreapproval {
+	grants, reads := resolved.placePreapprovals, resolved.placeSelectionReads
 	if len(grants) == 0 || len(reads) == 0 {
 		return nil
 	}
 	return func(binding targetprofile.ApprovalBinding) error {
+		var mismatch bool
 		for _, grant := range grants {
-			if !grant.Matches(binding) {
-				continue
+			switch grant.Match(binding) {
+			case config.PlacePreapprovalStateRootMismatch:
+				mismatch = true
+			case config.PlacePreapprovalExact:
+				if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
+					return err
+				}
+				if record != nil {
+					return record(binding)
+				}
+				return nil
 			}
-			if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
-				return err
-			}
-			return targetprofile.RecordOrganizationApproval(binding)
+		}
+		if mismatch {
+			return errPreapprovalStateRootMismatch
 		}
 		return targetprofile.ErrApprovalRequired
 	}
@@ -146,7 +159,7 @@ func syncPlaceUpserts(
 	mode resolver.MarketplaceResolveMode,
 	repoRoot string,
 	reads []dependencytxn.ReadAssertion,
-	preapproval func(targetprofile.ApprovalBinding) error,
+	preapproval placePreapproval,
 ) (result PlaceSyncResult, retErr error) {
 	slog.Debug("place sync started", "enabled_targets", len(enabled))
 	defer func() {
@@ -402,9 +415,10 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 			return result, err
 		}
 	}
+	preapproval := resolved.deployedPlacePreapproval(nil)
 	admission, err := preparePlaceAdmission(
 		ctx, cfg, resolved.placeTargets, environment, resolved.placeProfileReader,
-		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch, pruneDeselected, nil,
+		marketplace.NewResolver(), resolver.MarketplaceResolveModeCachedNoFetch, pruneDeselected, preapproval,
 	)
 	if err != nil {
 		return result, fmt.Errorf("prepare deployed place check: %w", err)
@@ -423,7 +437,7 @@ func CheckDeployedPlace(ctx context.Context, resolved ResolveResult) (result Pla
 			return result, err
 		}
 		prepared, err := preparePlaceChanges(
-			ctx, group.binding, group.profile, environment, group.packages, pruneDeselected,
+			ctx, group.binding, group.profile, environment, group.packages, pruneDeselected, preapproval,
 		)
 		if err != nil {
 			return result, fmt.Errorf("check place upserts for target %s: %w", group.identity.TargetID, err)

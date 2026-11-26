@@ -76,7 +76,7 @@ func PublishPlaceUnderPackagesLock(input PlaceInput) (Generation, error) {
 		return writeGenerationFile(stage, file.SourcePath, file.Bytes, file.Mode)
 	}, func(path string) error {
 		return verifyPlaceGeneration(path, ordered)
-	})
+	}, syncDirectory)
 	if err != nil {
 		return Generation{}, err
 	}

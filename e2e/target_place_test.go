@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -54,8 +55,9 @@ files:
   - source_path: guide.md
     destination_path: mods/sample/guide.md
 `
+	const profilePath = "-example-app.yaml"
 	env.CreateBareRepo("place-e2e", map[string]string{
-		"profiles/example-app.yaml":                              strings.TrimSuffix(string(profile), "\n"),
+		profilePath: strings.TrimSuffix(string(profile), "\n"),
 		"packages/example-app/mod/sample/agent-marketplace.yaml": packageRevision,
 		"packages/example-app/mod/sample/payload/guide.md":       "place package guide",
 		"skills/place-fixture/SKILL.md":                          "---\nname: place-fixture\ndescription: E2E source layout fixture\n---\n",
@@ -69,7 +71,7 @@ files:
 	}
 	profileDigest := sha256.Sum256(profile)
 	profileRevision := "sha256:" + hex.EncodeToString(profileDigest[:])
-	profileSourceID := "git:" + url.QueryEscape(canonicalOrigin) + "@main#profiles%2Fexample-app.yaml"
+	profileSourceID := "git:" + url.QueryEscape(canonicalOrigin) + "@main#" + url.QueryEscape(profilePath)
 
 	marketplaceConfig := writeMarketplaceConfig(t, t.TempDir(), "place-e2e", "place-source", "place-source-id", origin)
 	configFile, err := os.OpenFile(marketplaceConfig, os.O_APPEND|os.O_WRONLY, 0)
@@ -181,12 +183,20 @@ resources:
 		t.Fatalf("approve refusal changed installation: %v", err)
 	}
 
-	approval := runTargetPlaceConfirmation(t, env, commandEnv, "target", "approve", "example-app", "--json")
-	installationIDMatch := regexp.MustCompile(`"installation_id"\s*:\s*"([a-f0-9]{64})"`).FindStringSubmatch(approval)
-	if len(installationIDMatch) != 2 {
-		t.Fatalf("approval JSON has no 64-hex installation ID:\n%s", approval)
+	stdout := runTargetPlaceConfirmation(t, env, commandEnv, "target", "approve", "example-app", "--json")
+	var approval struct {
+		Status  string `json:"status"`
+		Binding struct {
+			InstallationID string `json:"installation_id"`
+		} `json:"binding"`
 	}
-	installationID := installationIDMatch[1]
+	if err := json.Unmarshal(stdout, &approval); err != nil {
+		t.Fatalf("decode approval stdout: %v\n%s", err, stdout)
+	}
+	installationID := approval.Binding.InstallationID
+	if approval.Status != "approved" || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(installationID) {
+		t.Fatalf("want approved status and a 64-character lowercase hex binding.installation_id; got:\n%s", stdout)
+	}
 
 	enable := env.RunAM("target", "enable", "example-app")
 	env.AssertExitCode(enable, 0)
@@ -217,7 +227,7 @@ resources:
 		t.Fatalf("retire refusal changed installed package: %v", err)
 	}
 	retirement := runTargetPlaceConfirmation(t, env, commandEnv, "target", "retire", installationID)
-	if !strings.Contains(retirement, "Retired "+installationID) {
+	if !bytes.Contains(retirement, []byte("Retired "+installationID)) {
 		t.Fatalf("retirement output does not confirm installation ID:\n%s", retirement)
 	}
 	if _, err := os.Stat(installed); !os.IsNotExist(err) {
@@ -252,13 +262,15 @@ func assertTargetPlaceInvocationCoverage(t *testing.T) {
 	}
 }
 
-func runTargetPlaceConfirmation(t *testing.T, env *Env, extra map[string]string, args ...string) string {
+func runTargetPlaceConfirmation(t *testing.T, env *Env, extra map[string]string, args ...string) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, env.binary, args...)
 	cmd.Dir = env.workspace
 	cmd.Env = subprocessEnvWithOverrides(env.subprocessEnv(), extra)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout // Leave stdin and stderr on the PTY for confirmation.
 	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 160})
 	if err != nil {
 		t.Fatalf("start interactive %s: %v", strings.Join(args, " "), err)
@@ -304,5 +316,5 @@ func runTargetPlaceConfirmation(t *testing.T, env *Env, extra map[string]string,
 	case <-ctx.Done():
 		t.Fatalf("interactive %s exited before PTY output drained:\n%s", strings.Join(args, " "), output.String())
 	}
-	return output.String()
+	return stdout.Bytes()
 }

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -312,12 +314,12 @@ func validateHost(host Host, hasChecks bool) error {
 			return fmt.Errorf("%s: invalid verified range", profileInvalidCode)
 		}
 	}
-	for kind, names := range host.Shipped {
+	for _, kind := range slices.Sorted(maps.Keys(host.Shipped)) {
 		if !nameutil.IsTargetIdentifier(kind) {
 			return fmt.Errorf("%s: invalid shipped kind", profileInvalidCode)
 		}
 		seen := map[string]bool{}
-		for _, name := range names {
+		for _, name := range host.Shipped[kind] {
 			if !nameutil.IsPlacePackageName(name) || seen[name] {
 				return fmt.Errorf("%s: invalid or duplicate shipped package name", profileInvalidCode)
 			}
@@ -328,7 +330,8 @@ func validateHost(host Host, hasChecks bool) error {
 }
 
 func validateChecks(checks map[string]Check) error {
-	for name, check := range checks {
+	for _, name := range slices.Sorted(maps.Keys(checks)) {
+		check := checks[name]
 		if !nameutil.IsTargetIdentifier(name) || check.Scope != "eager-package-load" ||
 			!validProfileRelativePath(check.Subject.Under) || check.Subject.Component != "package-name" {
 			return fmt.Errorf("%s: invalid package check", profileInvalidCode)
@@ -344,7 +347,8 @@ func validateKinds(kinds map[string]Kind, checks map[string]Check) error {
 	if len(kinds) == 0 {
 		return fmt.Errorf("%s: at least one place kind is required", profileInvalidCode)
 	}
-	for name, kind := range kinds {
+	for _, name := range slices.Sorted(maps.Keys(kinds)) {
+		kind := kinds[name]
 		if !nameutil.IsTargetIdentifier(name) || kind.Deliver != "place" || len(kind.Into) == 0 {
 			return fmt.Errorf("%s: invalid local place kind", profileInvalidCode)
 		}

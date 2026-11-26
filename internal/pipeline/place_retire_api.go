@@ -171,21 +171,35 @@ func CommitPreparedPlaceRetirement(ctx context.Context, prepared PreparedPlaceRe
 			removedSet[path] = struct{}{}
 		}
 	}
-	cededSet := make(map[string]struct{})
-	for _, path := range current.preview.Ceded {
-		cededSet[path] = struct{}{}
+	result := PlaceRetirementResult{
+		Ceded: placeCededPaths(current.preview.Ceded, current.plan.Prunes, committed.Retained),
 	}
-	for _, path := range committed.Retained {
-		cededSet[path] = struct{}{}
-	}
-	result := PlaceRetirementResult{}
 	for path := range removedSet {
 		result.Removed = append(result.Removed, path)
 	}
-	for path := range cededSet {
-		result.Ceded = append(result.Ceded, path)
-	}
 	sort.Strings(result.Removed)
-	sort.Strings(result.Ceded)
 	return result, nil
+}
+
+// Retained file prunes release ownership, but retained directories stay recorded.
+func placeCededPaths(planned []string, prunes []dependencytxn.PlacePrune, retained []string) []string {
+	ceded := make(map[string]struct{}, len(planned)+len(retained))
+	for _, path := range planned {
+		ceded[path] = struct{}{}
+	}
+	retainedSet := make(map[string]bool, len(retained))
+	for _, path := range retained {
+		retainedSet[path] = true
+	}
+	for _, prune := range prunes {
+		if prune.Directory == nil && retainedSet[prune.Path] {
+			ceded[prune.Path] = struct{}{}
+		}
+	}
+	var paths []string
+	for path := range ceded {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }

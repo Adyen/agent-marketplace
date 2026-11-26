@@ -32,6 +32,16 @@ func TestHostedPlacePrerequisitesOrderPublicationAndDeselection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	t.Run("live endpoint receives no offline requests", func(t *testing.T) {
+		testHostedPlaceOrder(t, true)
+	})
+	t.Run("cache works with server stopped", func(t *testing.T) {
+		testHostedPlaceOrder(t, false)
+	})
+}
+
+func testHostedPlaceOrder(t *testing.T, keepServerLive bool) {
+	t.Helper()
 	profileBytes := []byte(strings.Replace(
 		targetApproveProfileYAML,
 		"kinds: {mod: {deliver: place, into: [mods/]}}",
@@ -254,8 +264,10 @@ resources:
 		t, binding.CanonicalRoot, binding.CanonicalStateRoot, modName, layoutName, modBytes, layoutBytes, modID, layoutID,
 	)
 
-	server.Close()
-	requestsAfterClose := requests.Load()
+	if !keepServerLive {
+		server.Close()
+	}
+	requestsBeforeOffline := requests.Load()
 
 	secondRoot := filepath.Join(fixture.home, ".config", "invented-app-second")
 	if err := os.MkdirAll(secondRoot, 0o700); err != nil {
@@ -284,8 +296,8 @@ resources:
 		t, secondBinding.CanonicalRoot, secondBinding.CanonicalStateRoot,
 		modName, layoutName, modBytes, layoutBytes, modID, layoutID,
 	)
-	if got := requests.Load(); got != requestsAfterClose {
-		t.Fatalf("offline cached publication made hosted requests: before=%d after=%d", requestsAfterClose, got)
+	if got := requests.Load(); keepServerLive && got != requestsBeforeOffline {
+		t.Fatalf("offline cached publication made hosted requests: before=%d after=%d", requestsBeforeOffline, got)
 	}
 
 	profileOnlyConfig := fmt.Sprintf(`apiVersion: agent-marketplace/v4
@@ -313,8 +325,8 @@ resources:
 	assertHostedPlacePackages(
 		t, binding.CanonicalRoot, binding.CanonicalStateRoot, modName, layoutName, modBytes, layoutBytes, modID, layoutID,
 	)
-	if got := requests.Load(); got != requestsAfterClose {
-		t.Fatalf("offline deselection made hosted requests: before=%d after=%d", requestsAfterClose, got)
+	if got := requests.Load(); keepServerLive && got != requestsBeforeOffline {
+		t.Fatalf("offline deselection made hosted requests: before=%d after=%d", requestsBeforeOffline, got)
 	}
 }
 

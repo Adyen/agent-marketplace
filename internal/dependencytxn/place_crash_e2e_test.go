@@ -156,6 +156,58 @@ func TestPlaceCrashRecoveryBoundaries(t *testing.T) {
 	}
 }
 
+func TestPlaceCrashPartialOwnershipNext(t *testing.T) {
+	for _, variant := range []string{"verified", "modified"} {
+		t.Run(variant, func(t *testing.T) {
+			_, stateDir, plan := newPlaceFixture(t, false)
+			runPlaceCrashChild(t, filepath.Join(t.TempDir(), "plan.json"), plan, FaultPlaceAfterOwnership, 0)
+			journalPath := journals(t, stateDir)[0]
+			j, err := readJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The ownership operation is marked. Move its published bytes back
+			// to staging and shorten them to model interruption during write.
+			next, err := os.ReadFile(plan.Ownership.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stageFile := filepath.Join(filepath.Dir(stateDir), filepath.FromSlash(j.Place.Stage), placeOwnershipNextName)
+			if err := os.Rename(plan.Ownership.Path, stageFile); err != nil {
+				t.Fatal(err)
+			}
+			prefix := bytes.Clone(next[:len(next)-1])
+			if variant == "modified" {
+				prefix[len(prefix)-1] ^= 1
+			}
+			if err := os.WriteFile(stageFile, prefix, plan.Ownership.Mode); err != nil {
+				t.Fatal(err)
+			}
+			err = Recover(context.Background(), stateDir)
+			if variant == "modified" {
+				if !errors.Is(err, ErrRecoveryBlocked) || !strings.Contains(err.Error(), placeOwnershipNextName) {
+					t.Fatalf("recovery of modified stage = %v", err)
+				}
+				assertFile(t, stageFile, string(prefix), plan.Ownership.Mode)
+				if _, err := os.Stat(journalPath); err != nil {
+					t.Fatalf("journal not retained: %v", err)
+				}
+				if _, err := os.Lstat(plan.Ownership.Path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("unexpected ownership publication: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFile(t, plan.Ownership.Path, string(next), plan.Ownership.Mode)
+			if err := CheckPending(stateDir); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // spec: target-profile-place/ownership-commits-once-after-full-publication
 func TestPlaceCrashCommitsOwnershipOnce(t *testing.T) {
 	for _, test := range []struct {
@@ -304,6 +356,24 @@ func TestPlaceCrashAfterDirectoryPruneRecovers(t *testing.T) {
 	if !errors.Is(pending, ErrRecoveryRequired) || !strings.Contains(pending.Error(), journalPath) ||
 		strings.Contains(pending.Error(), "layouts/stale.txt") {
 		t.Fatalf("CheckPending after directory prune = %v, want journal path without completed-file missing-parent failure", pending)
+	}
+	syncErr := errors.New("parent sync failed")
+	if err := Recover(context.Background(), stateDir, func(o *options) {
+		o.syncPruneParent = func(dir *fsboundary.Dir) error {
+			if !dir.Identity().SameObject(rootIdentity) {
+				t.Fatal("recovery synced the wrong prune parent")
+			}
+			return syncErr
+		}
+	}); !errors.Is(err, syncErr) {
+		t.Fatalf("resume marked absent directory = %v, want parent sync failure", err)
+	}
+	retry, err := readJournal(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Place.Completed != journal.Place.Completed || retry.Place.Pending == nil || *retry.Place.Pending != *journal.Place.Pending {
+		t.Fatalf("sync failure advanced directory prune: completed %d pending %+v", retry.Place.Completed, retry.Place.Pending)
 	}
 	if err := Recover(context.Background(), stateDir); err != nil {
 		t.Fatalf("recover after directory prune: %v", err)

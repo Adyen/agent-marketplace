@@ -27,7 +27,7 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
   };
   const openSearch = async (): Promise<void> => {
     await step("open search", () => terminal.write("/"), async () => {
-      await locate(terminal, /\/\s{20,}/).unique().expect();
+      await locate(terminal, "enter apply · esc cancel").unique().expect();
     });
   };
   const clearSearch = async (): Promise<void> => {

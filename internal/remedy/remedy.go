@@ -190,6 +190,18 @@ func organizationConfigHint(ctx hintContext) string {
 	return "Ask your administrator to correct the organization configuration."
 }
 
+func preapprovalScopeHint(ctx hintContext) string {
+	file := fileLine(ctx)
+	if file == "" {
+		file = "this file"
+	}
+	action := "Remove"
+	if ctx.Scope == "organization" {
+		action = "Ask your administrator to remove"
+	}
+	return action + " target_preapprovals from " + file + ". Any preapproval must be granted only in the organization root configuration. Then run `agent-marketplace doctor` to check the fix."
+}
+
 func versionRefusalHint(ctx hintContext) string {
 	const guide = "https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md"
 	if ctx.Scope == "organization" {
@@ -448,7 +460,7 @@ var catalog = map[string]hintFunc{
 	"v4.api-version-required":      versionRefusalHint,
 	"v4.auxiliary":                 configurationHint("Correct the named auxiliary configuration setting"),
 	"v4.target-preapprovals":       configurationHint("Correct the named target preapproval so it matches the exact profile and canonical roots"),
-	"v4.target-preapprovals-scope": configurationHint("Declare target_preapprovals only in the organization root configuration"),
+	"v4.target-preapprovals-scope": preapprovalScopeHint,
 	"v4.targets-alias":             configurationHint("Use only one of targets or harnesses in each v4 root or resource group"),
 	"v4.directory-path":            configurationHint("Choose a local source directory that exists and remains inside the allowed configuration root"),
 	"v4.duplicate":                 configurationHint("Remove the duplicate value from the named configuration field"),

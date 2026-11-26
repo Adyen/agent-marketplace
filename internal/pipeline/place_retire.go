@@ -359,8 +359,11 @@ func openPlaceRetirementParent(
 		return nil, fsboundary.Identity{}, false, nil
 	}
 	parent, err := root.OpenPath(filepath.FromSlash(parentPath))
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fsboundary.ErrUnsafePath) {
 		return nil, fsboundary.Identity{}, false, nil
+	}
+	if err != nil {
+		return nil, fsboundary.Identity{}, false, fmt.Errorf("open retirement parent %s: %w", parentPath, err)
 	}
 	if !parent.Identity().SameObject(recordedParent) {
 		if err := parent.Close(); err != nil {

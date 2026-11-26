@@ -161,7 +161,7 @@ func publishLocked(input Input, generation Generation, files []ir.PluginFile, pa
 		return copyFile(sourceRoot.FS(), stage, files[index])
 	}, func(path string) error {
 		return verifyGeneration(path, input.PackageRoot, files)
-	})
+	}, syncDirectory)
 	if err != nil {
 		return Generation{}, err
 	}
@@ -179,7 +179,7 @@ func publishLocked(input Input, generation Generation, files []ir.PluginFile, pa
 	return generation, nil
 }
 
-func publishGeneration(generation Generation, packagesDir string, paths []string, writeFile func(string, int) error, verifyExisting func(string) error) (bool, error) {
+func publishGeneration(generation Generation, packagesDir string, paths []string, writeFile func(string, int) error, verifyExisting, syncParent func(string) error) (bool, error) {
 	if existing, err := os.Stat(generation.Path); err == nil {
 		if !existing.IsDir() {
 			return false, fmt.Errorf("packagegen: generation %q is not a directory", generation.Key)
@@ -187,7 +187,8 @@ func publishGeneration(generation Generation, packagesDir string, paths []string
 		if err := verifyExisting(generation.Path); err != nil {
 			return false, err
 		}
-		return false, nil
+		// A prior rename may have succeeded without its parent sync succeeding.
+		return false, syncParent(packagesDir)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
@@ -235,13 +236,13 @@ func publishGeneration(generation Generation, packagesDir string, paths []string
 	if err := os.Rename(stage, generation.Path); err != nil {
 		if info, statErr := os.Stat(generation.Path); statErr == nil && info.IsDir() {
 			if verifyErr := verifyExisting(generation.Path); verifyErr == nil {
-				return false, nil
+				return false, syncParent(packagesDir)
 			}
 		}
 		return false, err
 	}
 	published = true
-	if err := syncDirectory(packagesDir); err != nil {
+	if err := syncParent(packagesDir); err != nil {
 		return false, err
 	}
 	return true, nil

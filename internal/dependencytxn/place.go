@@ -239,7 +239,7 @@ func CommitPlace(ctx context.Context, stateDir string, plan PlacePlan, opts ...O
 			return PlaceResult{}, err
 		}
 	}
-	if err := validatePlaceDevices(root, stateRoot, plan); err != nil {
+	if err := validatePlaceDevices(root, stateRoot, plan.Writes, sizingIntent.OwnershipPath); err != nil {
 		return PlaceResult{}, err
 	}
 
@@ -865,64 +865,57 @@ func readPlaceGeneration(stateRoot string, write PlaceWrite) ([]byte, error) {
 	return data, nil
 }
 
-func validatePlaceDevices(root *fsboundary.Dir, stateRoot string, plan PlacePlan) error {
+func validatePlaceDevices(root *fsboundary.Dir, stateRoot string, writes []PlaceWrite, ownershipRel string) error {
 	state, err := fsboundary.OpenDir(stateRoot)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = state.Close() }()
 	stageDevice := state.Identity().Device
 	if stageParent, err := state.OpenPath("place-stage"); err == nil {
 		stageDevice = stageParent.Identity().Device
 		_ = stageParent.Close()
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		_ = state.Close()
 		return err
 	}
-	_ = state.Close()
+	for _, write := range writes {
+		if err := validatePlacePublishDevice(root, write.Path, write.Link, stageDevice); err != nil {
+			return err
+		}
+	}
+	// Ownership is published by rename too, but its leaf may never be a link.
+	return validatePlacePublishDevice(state, ownershipRel, nil, stageDevice)
+}
 
-	for _, write := range plan.Writes {
-		parent, err := openPlaceParent(root, write.Path)
-		var device uint64
-		if err == nil {
-			device = parent.Identity().Device
-			_ = parent.Close()
-			if write.Link != nil {
-				destination, captureErr := fsboundary.CaptureDestination(root, write.Path, fsboundary.LinkPolicyRepository)
-				if captureErr != nil {
-					return captureErr
-				}
-				effective, effectiveErr := destination.StagingDir()
-				_ = destination.Close()
-				if effectiveErr != nil {
-					return effectiveErr
-				}
-				device = effective.Identity().Device
-				_ = effective.Close()
+func validatePlacePublishDevice(root *fsboundary.Dir, rel string, link *fsboundary.CapturedLink, stageDevice uint64) error {
+	device := root.Identity().Device
+	if link != nil {
+		destination, err := fsboundary.CaptureDestination(root, rel, fsboundary.LinkPolicyRepository)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = destination.Close() }()
+		effective, err := destination.StagingDir()
+		if err != nil {
+			return err
+		}
+		device = effective.Identity().Device
+		_ = effective.Close()
+	} else {
+		for ancestor := path.Dir(rel); ancestor != "."; ancestor = path.Dir(ancestor) {
+			dir, err := root.OpenPath(ancestor)
+			if err == nil {
+				device = dir.Identity().Device
+				_ = dir.Close()
+				break
 			}
-		} else {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
-			parentPath := placeParentPath(write.Path)
-			for parentPath != "." {
-				dir, openErr := root.OpenPath(parentPath)
-				if openErr == nil {
-					device = dir.Identity().Device
-					_ = dir.Close()
-					break
-				}
-				if !errors.Is(openErr, fs.ErrNotExist) {
-					return openErr
-				}
-				parentPath = path.Dir(parentPath)
-			}
-			if device == 0 {
-				device = root.Identity().Device
-			}
 		}
-		if device != stageDevice {
-			return fmt.Errorf("%w: place stage device %d differs from target ancestor device %d at %s", ErrUnsafePath, stageDevice, device, write.Path)
-		}
+	}
+	if device != stageDevice {
+		return fmt.Errorf("%w: place stage device %d differs from target ancestor device %d at %s", ErrUnsafePath, stageDevice, device, rel)
 	}
 	return nil
 }
@@ -1025,39 +1018,26 @@ func checkPlaceJournalSize(j *journal) error {
 	}
 	intent.OwnershipNextDigest = strings.Repeat("0", 64)
 	intent.OwnershipNextSize = maxDependencyFileSize
-	pendingIndex := 0
+	intent.Completed = len(intent.Operations)
+	intent.Pending = nil
+	// An omitted pending field is smaller than any marked one. Compare just
+	// the encoded field values, then marshal the fully marked journal once.
+	largest := 0
 	for i := range intent.Operations {
-		if len(intent.Operations[i].Path)+len(intent.Operations[i].Kind)+len(fmt.Sprint(intent.Operations[i].Index)) >
-			len(intent.Operations[pendingIndex].Path)+len(intent.Operations[pendingIndex].Kind)+len(fmt.Sprint(intent.Operations[pendingIndex].Index)) {
-			pendingIndex = i
+		op := &intent.Operations[i]
+		raw, err := json.Marshal(op)
+		if err != nil {
+			return err
 		}
-	}
-	if len(intent.Operations) != 0 {
-		marked := intent.Operations[pendingIndex]
-		intent.Pending = &marked
-		intent.Completed = len(intent.Operations)
+		if len(raw) > largest {
+			largest = len(raw)
+			intent.Pending = op
+		}
 	}
 	copy := *j
 	copy.Place = &intent
-	raw, err := json.Marshal(copy)
-	if err != nil {
-		return err
-	}
-	maximum := len(raw)
-	intent.Completed = len(intent.Operations)
-	intent.Pending = nil
-	copy.Place = &intent
-	raw, err = json.Marshal(copy)
-	if err != nil {
-		return err
-	}
-	if len(raw) > maximum {
-		maximum = len(raw)
-	}
-	if int64(maximum) > maxJournalSize {
-		return fmt.Errorf("%w: fully marked place journal requires %d bytes; limit is %d", ErrRecoveryBlocked, maximum, maxJournalSize)
-	}
-	return nil
+	_, err := marshalBoundedJournal(&copy, "fully marked place journal")
+	return err
 }
 
 func placeSizingIdentity() *fsboundary.Identity {
@@ -1117,11 +1097,24 @@ func writePlaceStageFile(stage *fsboundary.Dir, name string, data []byte, mode f
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	if err := file.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return err
+	if name == placeOwnershipNextName {
+		// Recheck the prefix on the descriptor we will write, not just at
+		// recovery preflight. ReadFile leaves the offset after the prefix.
+		prefix, identity, err := fsboundary.ReadFile(file, int64(len(data)))
+		if err != nil {
+			return err
+		}
+		if !bytes.HasPrefix(data, prefix) || len(prefix) > 0 && identity.Mode.Perm() != mode {
+			return fmt.Errorf("stage prefix changed at %s", name)
+		}
+		data = data[len(prefix):]
+	} else {
+		if err := file.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
 	}
 	if err := file.Chmod(mode); err != nil {
 		return err
@@ -1647,6 +1640,15 @@ func validatePlaceStageContents(stage *fsboundary.Dir, stateRoot string, intent 
 		}
 		switch {
 		case int64(len(data)) == expected.Size && Digest(data) == expected.Digest:
+		case int64(len(data)) < expected.Size && entry.Name() == placeOwnershipNextName &&
+			intent.Pending != nil && intent.Pending.Kind == "ownership":
+			source, err := expectedPlaceOwnership(stage, intent)
+			if err != nil {
+				return fmt.Errorf("verify %s: %w", entry.Name(), err)
+			}
+			if int64(len(source)) != expected.Size || Digest(source) != expected.Digest || !bytes.HasPrefix(source, data) {
+				return fmt.Errorf("stage prefix changed at %s", entry.Name())
+			}
 		case int64(len(data)) < expected.Size && expected.GenerationKey != "":
 			source, err := readPlaceGeneration(stateRoot, PlaceWrite{
 				GenerationKey: expected.GenerationKey, SourcePath: expected.SourcePath,
@@ -2110,9 +2112,10 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 			return false, false, placeStop(ErrGenerationConflict, journalPath, op.Path, errors.New("prune parent identity changed"))
 		}
 		if prune.Directory != nil {
-			directory, err := root.OpenPath(prune.Path)
+			directory, err := parent.OpenPath(path.Base(prune.Path))
 			if errors.Is(err, fs.ErrNotExist) && resumeMarked {
-				return false, false, nil
+				// Rmdir may have succeeded before its parent sync became durable.
+				return false, false, cfg.syncPruneParent(parent)
 			}
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) && recovering {
@@ -2139,7 +2142,7 @@ func applyPlaceOperation(stateDir, stateRoot, journalPath string, j *journal, st
 			if removeErr != nil {
 				return false, false, placeStop(ErrRecoveryBlocked, journalPath, op.Path, removeErr)
 			}
-			if err := parent.Sync(); err != nil {
+			if err := cfg.syncPruneParent(parent); err != nil {
 				return false, false, err
 			}
 			return true, false, nil

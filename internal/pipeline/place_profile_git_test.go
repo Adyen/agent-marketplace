@@ -23,10 +23,9 @@ import (
 )
 
 func TestLockedGitPlaceProfileReaderUsesPinnedCommit(t *testing.T) {
-	repo := t.TempDir()
-	runGit(t, repo, "init", "--object-format=sha1", "--initial-branch=main")
-	runGit(t, repo, "config", "user.name", "Test")
-	runGit(t, repo, "config", "user.email", "test@example.invalid")
+	other := newPlaceGitRepo(t)
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	repo := newPlaceGitRepo(t)
 	profilePath := filepath.Join(repo, "profiles", "invented-app.yaml")
 	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
 		t.Fatal(err)
@@ -35,16 +34,16 @@ func TestLockedGitPlaceProfileReaderUsesPinnedCommit(t *testing.T) {
 	if err := os.WriteFile(profilePath, first, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "add", "profiles/invented-app.yaml")
-	runGit(t, repo, "commit", "-m", "add profile")
+	placeFixtureGit(t, repo, "add", "profiles/invented-app.yaml")
+	placeFixtureGit(t, repo, "commit", "-m", "add profile")
 	firstCommit := gitCommitForTest(t, repo)
 
 	second := bytes.Replace(first, []byte("label: Invented App"), []byte("label: Changed App"), 1)
 	if err := os.WriteFile(profilePath, second, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "add", "profiles/invented-app.yaml")
-	runGit(t, repo, "commit", "-m", "change profile")
+	placeFixtureGit(t, repo, "add", "profiles/invented-app.yaml")
+	placeFixtureGit(t, repo, "commit", "-m", "change profile")
 
 	canonicalRepo, err := filepath.EvalSymlinks(repo)
 	if err != nil {
@@ -170,8 +169,8 @@ func TestLockedGitPlaceProfileReaderUsesPinnedCommit(t *testing.T) {
 	if err := os.Symlink("target.yaml", profilePath); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "add", "-A")
-	runGit(t, repo, "commit", "-m", "replace profile with symlink")
+	placeFixtureGit(t, repo, "add", "-A")
+	placeFixtureGit(t, repo, "commit", "-m", "replace profile with symlink")
 	symlinkCommit, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, repo))
 	if err != nil {
 		t.Fatal(err)
@@ -288,10 +287,7 @@ type deployedPlaceGitProfileFixture struct {
 
 func newDeployedGitPlaceProfileFixture(t *testing.T) deployedPlaceGitProfileFixture {
 	t.Helper()
-	repo := t.TempDir()
-	runGit(t, repo, "init", "--object-format=sha1", "--initial-branch=main")
-	runGit(t, repo, "config", "user.name", "Test")
-	runGit(t, repo, "config", "user.email", "test@example.invalid")
+	repo := newPlaceGitRepo(t)
 	root := "profiles/invented-app.yaml"
 	profilePath := filepath.Join(repo, filepath.FromSlash(root))
 	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
@@ -301,8 +297,8 @@ func newDeployedGitPlaceProfileFixture(t *testing.T) deployedPlaceGitProfileFixt
 	if err := os.WriteFile(profilePath, profile, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "add", root)
-	runGit(t, repo, "commit", "-m", "add profile")
+	placeFixtureGit(t, repo, "add", root)
+	placeFixtureGit(t, repo, "commit", "-m", "add profile")
 	first, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, repo))
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +307,8 @@ func newDeployedGitPlaceProfileFixture(t *testing.T) deployedPlaceGitProfileFixt
 	if err := os.WriteFile(profilePath, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repo, "add", root)
-	runGit(t, repo, "commit", "-m", "change profile")
+	placeFixtureGit(t, repo, "add", root)
+	placeFixtureGit(t, repo, "commit", "-m", "change profile")
 	second, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, repo))
 	if err != nil {
 		t.Fatal(err)
@@ -420,12 +416,28 @@ func profileTestDigest(raw []byte) string {
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
-func gitCommitForTest(t *testing.T, repo string) string {
+func newPlaceGitRepo(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD")
-	output, err := cmd.Output()
+	repo := t.TempDir()
+	placeFixtureGit(t, repo, "init", "--object-format=sha1", "--initial-branch=main")
+	placeFixtureGit(t, repo, "config", "user.name", "Test")
+	placeFixtureGit(t, repo, "config", "user.email", "test@example.invalid")
+	return repo
+}
+
+func placeFixtureGit(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repo
+	cmd.Env = cache.GitEnv()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git rev-parse HEAD: %v", err)
+		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func gitCommitForTest(t *testing.T, repo string) string {
+	t.Helper()
+	return placeFixtureGit(t, repo, "rev-parse", "HEAD")
 }

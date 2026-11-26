@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
@@ -87,6 +90,15 @@ func (f requiresFixture) seed(t *testing.T, reg store.Registry, kind, name, requ
 		License:       "MIT",
 		Requires:      requires,
 	}
+	var binding *targetprofile.Binding
+	if target, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		rev.ArchiveDigest = store.ArchiveDigest(requiresDigest("archive"))
+		profile := string(requiresStableDigest(target))
+		binding = &targetprofile.Binding{
+			PackageContentDigest: string(rev.ContentDigest), DeliveryMappingDigest: string(requiresDigest("mapping")),
+			ProfileDigest: profile, ProfileIdentity: targetprofile.Identity{TargetID: target, SourceID: "builtin:agent-marketplace", RevisionDigest: profile},
+		}
+	}
 	if err := f.meta.PutResourceRevision(ctx, rev); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +124,7 @@ func (f requiresFixture) seed(t *testing.T, reg store.Registry, kind, name, requ
 		Coordinate: rev.Coordinate, ContentDigest: rev.ContentDigest, AnalyzerVersion: "1.0.0",
 		PolicyDigest:             store.PolicyDigest(requiresDigest("p" + name)),
 		Decision:                 store.AssessmentDecisionAllow,
+		HostPackageIdentity:      binding,
 		InspectionManifestDigest: requiresDigest("i" + name), AssessedAt: time.Now().UTC(),
 	})
 	if err != nil {
@@ -126,10 +139,23 @@ func (f requiresFixture) seed(t *testing.T, reg store.Registry, kind, name, requ
 	return rev
 }
 
-func (f requiresFixture) detail(t *testing.T, slug, kind, name string) map[string]any {
+func (f requiresFixture) detail(t *testing.T, slug, kind, name string, features ...string) map[string]any {
 	t.Helper()
-	resp := mustGet(t, f.public.URL+"/api/v1/resources/"+slug+"/"+kind+"/"+name)
+	req, err := http.NewRequest(http.MethodGet, f.public.URL+"/api/v1/resources/"+slug+"/"+kind+"/"+name, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range features {
+		req.Header.Add(placeFeaturesHeader, value)
+	}
+	resp, err := f.public.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := mustRead(t, resp)
+	if !slices.Contains(resp.Header.Values("Vary"), placeFeaturesHeader) {
+		t.Fatalf("Vary = %v, want %s", resp.Header.Values("Vary"), placeFeaturesHeader)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("detail %s/%s/%s status %d: %s", slug, kind, name, resp.StatusCode, body)
 	}
@@ -165,6 +191,53 @@ func relations(list []any) []string {
 		out = append(out, fmt.Sprintf("%v/%v/%v", m["registry"], m["kind"], m["name"]))
 	}
 	return out
+}
+
+func TestResourceDetailPlaceRelations(t *testing.T) {
+	f := newRequiresFixture(t)
+	reg := f.addRegistry(t, "src-a", "source-a", true, ".agents")
+	const onSubject = `[{"kind":"skill","name":"subject"}]`
+	f.seed(t, reg, "command", "legacy", onSubject, ".agents/legacy", true)
+	f.seed(t, reg, "invented-app/mod", "scoped", onSubject, ".agents/scoped", true)
+	f.seed(t, reg, "invented-app/mod", "hidden", onSubject, ".agents/hidden", false)
+	f.seed(t, reg, "skill", "subject", `[{"kind":"command","name":"legacy"},{"kind":"invented-app/mod","name":"scoped"},{"kind":"invented-app/mod","name":"hidden"}]`, ".agents/subject", true)
+	for _, tc := range []struct {
+		name    string
+		headers []string
+		optedIn bool
+	}{
+		{"legacy", nil, false},
+		{"invalid", []string{"other"}, false},
+		{"duplicate", []string{TargetProfilePlaceFeature, TargetProfilePlaceFeature}, false},
+		{"opt-in", []string{TargetProfilePlaceFeature}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := f.detail(t, reg.Slug, "skill", "subject", tc.headers...)
+			requires, _ := detailRequires(body)
+			requiredBy, _ := detailRequiredBy(body)
+			want := []string{"source-a/command/legacy"}
+			wantCount := 1
+			if tc.optedIn {
+				want = append(want, "source-a/invented-app/mod/scoped")
+				wantCount = 3
+			}
+			if len(requires) != wantCount || !slices.Equal(relations(requiredBy), want) {
+				t.Fatalf("requires = %v, required_by = %v", requires, requiredBy)
+			}
+			for i, coordinate := range want {
+				entry := requires[i].(map[string]any)
+				if got := relations([]any{entry["resolved"]}); got[0] != coordinate {
+					t.Fatalf("requires[%d] = %v, want resolved %s", i, entry, coordinate)
+				}
+			}
+			if tc.optedIn {
+				hidden := requires[2].(map[string]any)
+				if hidden["name"] != "hidden" || hidden["resolved"] != nil {
+					t.Fatalf("hidden prerequisite = %v, want unresolved", hidden)
+				}
+			}
+		})
+	}
 }
 
 // spec: marketplace-api/indexed-revision-lists-its-prerequisites

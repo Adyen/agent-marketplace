@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
 
@@ -38,14 +39,14 @@ func TestV4OrganizationPlacePreapprovals(t *testing.T) {
 			CanonicalPath: "/usr/bin/invented app", SHA256: placePreapprovalExecutableDigest,
 		},
 	}
-	if !preapprovals[0].Matches(binding) {
+	if preapprovals[0].Match(binding) != PlacePreapprovalExact {
 		t.Fatal("exact organization preapproval did not match binding with reordered roles")
 	}
 	for _, test := range []struct {
 		name   string
 		change func(*targetprofile.ApprovalBinding)
 	}{
-		{name: "state root", change: func(b *targetprofile.ApprovalBinding) { b.CanonicalStateRoot += "/other" }},
+		{name: "target ID", change: func(b *targetprofile.ApprovalBinding) { b.Profile.TargetID += "-other" }},
 		{name: "target root", change: func(b *targetprofile.ApprovalBinding) { b.CanonicalRoot += "/other" }},
 		{name: "profile digest", change: func(b *targetprofile.ApprovalBinding) { b.Profile.RevisionDigest = "sha256:" + strings.Repeat("f", 64) }},
 		{name: "executable digest", change: func(b *targetprofile.ApprovalBinding) { b.Executable.SHA256 = "sha256:" + strings.Repeat("f", 64) }},
@@ -56,8 +57,11 @@ func TestV4OrganizationPlacePreapprovals(t *testing.T) {
 			mismatched := binding
 			mismatched.CommandRoles = append([]string(nil), binding.CommandRoles...)
 			test.change(&mismatched)
-			if preapprovals[0].Matches(mismatched) {
-				t.Fatalf("preapproval matched changed %s", test.name)
+			for _, stateRoot := range []string{binding.CanonicalStateRoot, binding.CanonicalStateRoot + "/other"} {
+				mismatched.CanonicalStateRoot = stateRoot
+				if got := preapprovals[0].Match(mismatched); got != PlacePreapprovalUnrelated {
+					t.Fatalf("changed %s at state root %s: match = %v, want unrelated", test.name, stateRoot, got)
+				}
 			}
 		})
 	}
@@ -77,7 +81,7 @@ func TestV4OrganizationPlacePreapprovals(t *testing.T) {
 	noExecutionBinding := binding
 	noExecutionBinding.CommandRoles = nil
 	noExecutionBinding.Executable = targetprofile.ExecutableBinding{}
-	if got := noExecution.PlacePreapprovals(); len(got) != 1 || !got[0].Matches(noExecutionBinding) {
+	if got := noExecution.PlacePreapprovals(); len(got) != 1 || got[0].Match(noExecutionBinding) != PlacePreapprovalExact {
 		t.Fatalf("no-execution preapproval = %#v, want exact no-execution match", got)
 	}
 
@@ -115,17 +119,25 @@ func TestV4OrganizationPlacePreapprovals(t *testing.T) {
 }
 
 func TestV4OrganizationPlacePreapprovalsScope(t *testing.T) {
+	checkScopeError := func(t *testing.T, err error, action, location string) {
+		t.Helper()
+		requirePlacePreapprovalError(t, err, "v4.target-preapprovals-scope")
+		hint := remedy.For(err, "sync")
+		if !strings.HasPrefix(hint, action+" target_preapprovals from ") || !strings.Contains(hint, location) || !strings.Contains(hint, "only in the organization root configuration") {
+			t.Fatalf("scope remediation = %q, want removal from %s and organization-root-only grant guidance", hint, location)
+		}
+	}
 	fragment := []byte("target_preapprovals: []\n")
 	if _, err := parseV4Document(fragment, "included.yaml", false, organizationLayer); err == nil {
 		t.Fatal("organization include accepted target_preapprovals")
 	} else {
-		requirePlacePreapprovalError(t, err, "v4.target-preapprovals-scope")
+		checkScopeError(t, err, "Ask your administrator to remove", "included.yaml:1")
 	}
 	for _, kind := range []layerKind{userLayer, repoLayer, localLayer} {
 		t.Run(kind.name(), func(t *testing.T) {
 			data := []byte("apiVersion: agent-marketplace/v4\ntarget_preapprovals: []\n")
 			_, err := readRootLayerIntent("authored.yaml", data, kind)
-			requirePlacePreapprovalError(t, err, "v4.target-preapprovals-scope")
+			checkScopeError(t, err, "Remove", "authored.yaml:2")
 		})
 	}
 }
