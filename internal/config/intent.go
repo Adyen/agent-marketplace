@@ -644,6 +644,14 @@ func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
 			lr.Local = configAsLocal(cfg)
 		} else {
 			lr.Config = cfg
+			if authored := li.acquisitionConfig(); authored != nil {
+				for name := range authored.Sources {
+					if authored.requiresMarketplaceEvidence(name, v4AuthoredBinding) {
+						lr.MarketplaceEvidenceRequired = true
+						break
+					}
+				}
+			}
 		}
 	}
 	return lr

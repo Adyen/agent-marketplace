@@ -97,21 +97,36 @@ func TestE2EOpenCodeOwnershipRepair(t *testing.T) {
 	if err := os.WriteFile(file, []byte(initial), 0600); err != nil {
 		t.Fatal(err)
 	}
-	missing := env.RunAM("doctor", "--repair", "--yes")
-	if missing.ExitCode == 0 || !strings.Contains(missing.Combined, "lock.missing") {
-		t.Fatalf("invalid acquisition accepted: %s", missing.Combined)
+	env.MustRunAM("lock", "--scope", "repo")
+	lockFile := filepath.Join(env.workspace, ".agents", "lock.yaml")
+	validLock := readFile(t, lockFile)
+	malformedLock := "not: [valid\n"
+	if err := os.WriteFile(lockFile, []byte(malformedLock), 0600); err != nil {
+		t.Fatal(err)
+	}
+	invalid := env.RunAM("doctor", "--repair", "--yes")
+	if invalid.ExitCode == 0 || !strings.Contains(invalid.Combined, "lock.invalid") {
+		t.Fatalf("invalid acquisition was not refused: %s", invalid.Combined)
 	}
 	if readFile(t, file) != initial {
 		t.Fatal("refused repair changed config")
 	}
-	env.MustRunAM("lock", "--scope", "repo")
+	if got := readFile(t, lockFile); got != malformedLock {
+		t.Fatalf("refused repair changed malformed lock: %q", got)
+	}
+	if err := os.WriteFile(lockFile, []byte(validLock), 0600); err != nil {
+		t.Fatal(err)
+	}
 	repair := env.RunAM("doctor", "--repair", "--yes")
 	if !strings.Contains(repair.Combined, "adopted") || strings.Contains(readFile(t, file), "desired") || readFile(t, file) != initial {
 		t.Fatalf("adoption changed bytes or replaced conflict: %s", repair.Combined)
 	}
-	confirmed := runAMInTTY(t, env, "doctor", "--repair", "[y/N]", "y\n")
+	confirmed := runAMInTTY(t, env, "doctor", "--repair", "[y/N]", "y\ny\n")
 	if confirmed.ExitCode != 0 || !strings.Contains(readFile(t, file), "desired") || !strings.Contains(readFile(t, file), "// handwritten") {
 		t.Fatalf("replacement: %s", confirmed.Combined)
+	}
+	if check := env.RunAM("sync", "--check"); check.ExitCode != 0 {
+		t.Fatalf("sync --check after repair exited %d: %s", check.ExitCode, check.Combined)
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,12 +22,12 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
+	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
@@ -38,13 +39,15 @@ import (
 // binary.
 type doctorOptions struct {
 	out io.Writer
+	err io.Writer
 	in  io.Reader
-	// isTTY decides the interactive half of the repair contract: "on a TTY it
-	// then prompts for each authorized action" versus "off-TTY, `doctor
-	// --repair` is preview-only".
-	isTTY  bool
-	repair bool
-	yes    bool
+	// isTTY enables the safe-step and destructive-entry confirmations.
+	isTTY        bool
+	repair       bool
+	yes          bool
+	json         bool
+	jsonReport   *repairplanner.JSONReport
+	repairReader *bufio.Reader
 	// ctx carries cancellation and request-scoped values from the command.
 	// Tests that do not set it get context.Background().
 	ctx context.Context
@@ -63,6 +66,7 @@ type doctorOptions struct {
 func newDoctorCmd() *cobra.Command {
 	var repair bool
 	var assumeYes bool
+	var jsonOutput bool
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -75,37 +79,76 @@ the 3000.3 compatibility floor, and recommends selecting the devin harness when
 a Devin CLI is installed but no harness list contains it. Sync
 never requires a Devin binary, so nothing doctor reports here blocks it.
 
---repair is the recovery surface for Devin and Codex shared aggregate files
-(hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json, and
-.codex/config.toml). It previews exact adoption
-matches, evidence-backed orphan candidates, and existing unmanaged entries whose
-key matches a selected resource but whose value differs, and, on a terminal,
-prompts for each one. Off a terminal it is preview-only. Every aggregate it
-inspected is listed, including the ones with nothing to repair. It never edits
-harness lists.
+--repair diagnoses harness drift and shared-aggregate ownership, then prints a
+numbered plan with each step's safety class, diagnostic code, files, and inputs
+or blocker. Each step is classified as safe, destructive, guided, or
+human-only. After a step runs, doctor diagnoses again and confirms any newly
+available safe steps before continuing. Pending dependency and ownership
+journals left by an interrupted run are recovered first as safe steps that
+need only the journal itself, so they run even when configuration is invalid.
+Replaying a journal completes only writes an earlier run already admitted; it
+is a safe step, not a destructive replacement, and a refused recovery fails the
+step, exits 1, and leaves the journal and its target bytes unchanged. One
+terminal confirmation authorizes safe steps. Destructive replacements and
+orphan removals keep their per-entry confirmations and never run with --yes.
+Devin and Codex shared aggregate files include hooks.v1.json, config.json#hooks,
+mcp_config.json, .codex/hooks.json, and .codex/config.toml.
+Repair also inspects the shared aggregates of every other harness target that
+declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
+mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
+mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
+Off a terminal, --repair is preview-only unless --yes
+is set; --yes runs only safe steps. Drift repair keeps acquisition locks unchanged.
+If no organization Marketplace lock is deployed, it can reuse verified evidence
+from this doctor run. Safe lock steps can create a missing writable lock or
+reconcile a stale one without upgrading pins; destructive lock recovery needs
+a terminal confirmation and a backup. Repair never rewrites configuration
+automatically, edits harness lists, or edits organization files.
+Configuration field, YAML, and duplicate-key errors are guided with a safe
+source snippet. On a terminal without --yes, repair offers $VISUAL or $EDITOR
+and diagnoses again after the editor exits. With --yes or off a terminal,
+guided configuration edits are deferred. Version and organization issues
+remain human-only.
+
+With --repair, --json emits one structured plan and result document to stdout
+without prompting. Use --yes to run safe steps; destructive and guided steps
+remain deferred.
+
+Repair exits 0 when the setup ends clean, when you decline without unresolved
+missing or stale acquisition authority, for an off-terminal preview with only
+safe or destructive steps, or when --yes leaves only destructive entries
+unchanged. It exits 1 when a step fails, missing or stale acquisition
+authority remains after preview or decline, or, in a run you did not decline,
+corrupt state or any blocked, guided, or human-only item remains.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if assumeYes && !repair {
 				return fmt.Errorf("--yes only applies to --repair")
 			}
+			if jsonOutput && !repair {
+				return fmt.Errorf("--json only applies to --repair")
+			}
 			return runDoctor(doctorOptions{
 				ctx:    cmd.Context(),
 				out:    cmd.OutOrStdout(),
+				err:    cmd.ErrOrStderr(),
 				in:     cmd.InOrStdin(),
 				isTTY:  term.IsTerminal(os.Stdin.Fd()),
 				repair: repair,
 				yes:    assumeYes,
+				json:   jsonOutput,
 			})
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Preview and, on a terminal, confirm recovery of Devin and Codex shared-aggregate ownership state")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, adopt exact current desired matches without prompting; removing an orphan or replacing a conflicting entry still requires an interactive per-entry confirmation")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, shared-aggregate repairs for Devin and Codex, Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode, and guided configuration fixes")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "With --repair, emit the plan and results as JSON")
 	return cmd
 }
 
-func runDoctor(opts doctorOptions) error {
+func runDoctor(opts doctorOptions) (runErr error) {
 	if opts.ctx == nil {
 		opts.ctx = context.Background()
 	}
@@ -113,10 +156,29 @@ func runDoctor(opts doctorOptions) error {
 	if opts.out == nil {
 		opts.out = os.Stdout
 	}
+	if opts.json && !opts.repair {
+		return fmt.Errorf("--json only applies to --repair")
+	}
+	if opts.err == nil {
+		opts.err = os.Stderr
+	}
 	if opts.probe == nil {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
 	}
 	out := opts.out
+	if opts.json {
+		jsonOut := out
+		report := repairplanner.NewJSONReport()
+		opts.jsonReport = report
+		opts.out = io.Discard
+		opts.isTTY = false
+		out = opts.out
+		defer func() {
+			if err := json.NewEncoder(jsonOut).Encode(report); err != nil && runErr == nil {
+				runErr = err
+			}
+		}()
+	}
 
 	repoRoot := config.FindRepoRoot()
 	detected := "none"
@@ -175,18 +237,7 @@ func runDoctor(opts doctorOptions) error {
 	if !opts.repair {
 		return nil
 	}
-	if len(ec.Errors) > 0 {
-		return fmt.Errorf("doctor --repair: invalid configuration: %w", errors.Join(ec.Errors...))
-	}
-	reads, err := pipeline.EffectivePolicyReadAssertions(ec)
-	if err != nil {
-		return fmt.Errorf("doctor --repair: snapshot policy: %w", err)
-	}
-	revalidate := func() error { return dependencytxn.ValidateReadAssertions(reads) }
-	if err := revalidate(); err != nil {
-		return fmt.Errorf("doctor --repair: validate policy: %w", err)
-	}
-	return runDoctorRepair(out, opts, repoRoot, revalidate)
+	return runDoctorRepairPlanner(out, opts, repoRoot, ec)
 }
 
 // writeDoctorInstallRoots lists every declared target with its capabilities and
@@ -384,139 +435,6 @@ func devinHarnessSelection(ec config.EffectiveConfig) (bool, []string) {
 	return len(scopes) > 0, scopes
 }
 
-// runDoctorRepair implements the plan's repair contract verbatim:
-//
-//	"`doctor --repair` previews exact adoption matches and evidence-backed
-//	orphan candidates; on a TTY it then prompts for each authorized action"
-//	"off-TTY, `doctor --repair` is preview-only"
-//	"`doctor --repair --yes` adopts exact current desired matches without prompting"
-//	"orphan-removal candidates require ... explicit per-entry confirmation and a fresh backup"
-//	"exit 0 means clean, repaired, or declined without operational failure"
-//	"exit 1 means corrupt state/file or partial repair failure"
-//
-// It also offers the third repair class (bead agent-marketplace-0w2g): an
-// existing unmanaged entry whose key matches a desired entry but whose value
-// differs. It is destructive, so it follows the orphan-removal half of the
-// contract in every respect — TTY-only, per-entry confirmation, fresh backup,
-// never under --yes.
-//
-// The exit code is produced by returning a non-nil error, which main turns into
-// exit 1. Every other path returns nil, including "nothing to repair", "preview
-// only", and "the user said no to everything".
-func runDoctorRepair(out io.Writer, opts doctorOptions, repoRoot string, revalidate func() error) error {
-	ctx := opts.ctx
-	slog.Info("doctor repair preview start", "repo_root", repoRoot)
-	var selection []resolver.ResolvedArtifact
-	var err error
-	releaseExactLease := func() {}
-	if opts.resolve != nil {
-		selection, err = opts.resolve(ctx, repoRoot)
-		if err != nil {
-			return err
-		}
-	} else {
-		ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
-		if err != nil {
-			return err
-		}
-		resolved, release := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-			Workspace: ws, CatalogMode: catalog.LoadModeCached, ReadOnlyExactLocks: true,
-		})
-		releaseExactLease = release
-		if err := errors.Join(resolved.Errors...); err != nil {
-			releaseExactLease()
-			return fmt.Errorf("repair preview: resolve selected resources: %w", err)
-		}
-		selection = resolved.Resolved
-	}
-	previews, err := materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
-	releaseExactLease()
-	if err != nil {
-		slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
-		return fmt.Errorf("repair preview: %w", err)
-	}
-	if err := revalidate(); err != nil {
-		return fmt.Errorf("repair preview: policy changed: %w", err)
-	}
-
-	actionable := false
-	corrupt := false
-	for _, targetPreview := range previews {
-		if _, err := fmt.Fprintf(out, "repair: %s shared-aggregate ownership\n", targetDisplayName(string(targetPreview.Target))); err != nil {
-			return err
-		}
-		if err := writeRepairDiagnostics(out, targetPreview.Preview); err != nil {
-			return err
-		}
-		if err := writeRepairPreview(out, targetPreview.Preview); err != nil {
-			return err
-		}
-		actionable = actionable || targetPreview.Preview.Actionable()
-		corrupt = corrupt || targetPreview.Preview.HasErrors()
-	}
-	slog.Info("doctor repair preview complete", "repo_root", repoRoot, "targets", len(previews), "actionable", actionable, "corrupt", corrupt)
-
-	// A corrupt ownership record or an unparseable aggregate is reported and
-	// never repaired around: "exit 1 means corrupt state/file". Actions are
-	// still offered for the files that ARE readable, because per-file
-	// independence is the same rule sync follows.
-	if !actionable {
-		if _, err := fmt.Fprintln(out, "  nothing to repair"); err != nil {
-			return err
-		}
-		if corrupt {
-			slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
-			return errors.New("doctor --repair: corrupt ownership state or aggregate file")
-		}
-		slog.Info("doctor repair execution complete", "repo_root", repoRoot, "status", "success", "actions", 0)
-		return nil
-	}
-
-	if !opts.isTTY && !opts.yes {
-		// "off-TTY, `doctor --repair` is preview-only". Nothing below this point
-		// runs, and every target preview has no mutation path, so this is a
-		// structural guarantee rather than a promise.
-		if _, err := fmt.Fprintln(out, "  preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches"); err != nil {
-			return err
-		}
-		slog.Info("doctor repair preview-only: stdin is not a terminal", "repo_root", repoRoot)
-		if corrupt {
-			slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
-			return errors.New("doctor --repair: corrupt ownership state or aggregate file")
-		}
-		return nil
-	}
-
-	slog.Info("doctor repair execution start", "repo_root", repoRoot, "targets", len(previews), "automatic_adoption", opts.yes)
-	var failures []error
-	for _, targetPreview := range previews {
-		failures = append(failures, applyRepairActions(out, opts, targetPreview.Preview, revalidate)...)
-		if slices.ContainsFunc(failures, func(err error) bool { return errors.Is(err, dependencytxn.ErrGenerationConflict) }) {
-			break
-		}
-	}
-	if len(failures) > 0 {
-		for _, failure := range failures {
-			if _, err := fmt.Fprintf(out, "  repair failed: %v [%s]\n", failure, diag.CodeDoctorRepairFailed); err != nil {
-				return err
-			}
-		}
-		slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", corrupt, "failures", len(failures), "code", diag.CodeDoctorRepairFailed)
-		for _, failure := range failures {
-			if errors.Is(failure, dependencytxn.ErrGenerationConflict) {
-				return fmt.Errorf("doctor --repair: policy changed: %w", dependencytxn.ErrGenerationConflict)
-			}
-		}
-		return fmt.Errorf("doctor --repair: %d repair action(s) failed", len(failures))
-	}
-	if corrupt {
-		slog.Error("doctor repair execution failed", "repo_root", repoRoot, "status", "error", "corrupt", true, "failures", 0, "code", diag.CodeDoctorRepairFailed)
-		return errors.New("doctor --repair: corrupt ownership state or aggregate file")
-	}
-	slog.Info("doctor repair execution complete", "repo_root", repoRoot, "status", "success")
-	return nil
-}
-
 // writeRepairDiagnostics prints each preview diagnostic AT MOST ONCE.
 //
 // The preview derives its state per aggregate file, so one cause can legitimately
@@ -618,23 +536,7 @@ func writeRepairPreview(out io.Writer, preview *materialize.RepairPreview) error
 	return nil
 }
 
-// applyRepairActions performs the authorized actions and returns the failures.
-//
-// The three classes are authorized along ONE line: does acting destroy bytes the
-// user wrote?
-//
-//   - Adoption changes no bytes of the user's file; it only records that an
-//     entry which is already byte-identical to marketplace output is ours.
-//     "`doctor --repair --yes` adopts exact current desired matches without
-//     prompting" therefore covers it entirely.
-//   - Orphan removal DELETES a user-visible entry, and the plan requires
-//     "explicit per-entry confirmation" with no exception for --yes. So --yes
-//     never removes anything: off a terminal, orphan candidates are reported
-//     and left alone.
-//   - Replacing a conflicting entry OVERWRITES a value the user wrote, so it
-//     inherits orphan removal's rules exactly. opts.yes is deliberately not
-//     consulted in that loop at all: there is no code path from --yes to a
-//     replacement, and ownership.Apply would refuse an unconfirmed one anyway.
+// applyRepairActions runs plan-approved adoptions and prompts before destructive entries.
 func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.RepairPreview, revalidate func() error) []error {
 	var failures []error
 	// bufio.NewReader(nil) returns a NON-nil reader wrapping a nil io.Reader,
@@ -642,32 +544,17 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 	// deliberately so confirmPrompt's nil guard is the live fail-closed answer:
 	// no stdin is no consent, and a destructive class must decline rather than
 	// crash halfway through a file's candidate list.
-	var reader *bufio.Reader
-	if opts.in != nil {
-		reader = bufio.NewReader(opts.in)
-	}
+	reader := opts.repairReader
 
 	for _, file := range preview.Files {
 		var adopt []int
 		for i, candidate := range file.Adoptions {
+			authorization := "plan confirmation"
 			if opts.yes {
-				logDoctorRepairDecision(file, "adopt", "authorized", candidate.EntryKind(), candidate.Identity(), "--yes")
-				adopt = append(adopt, i)
-				continue
+				authorization = "--yes"
 			}
-			prompt := fmt.Sprintf("  adopt %s %q in %s? [y/N] ", candidate.EntryKind(), candidate.Identity(), file.Rel)
-			ok, err := confirmPrompt(out, reader, prompt)
-			if err != nil {
-				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "adopt", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
-				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
-				break
-			}
-			if ok {
-				logDoctorRepairDecision(file, "adopt", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
-				adopt = append(adopt, i)
-			} else {
-				logDoctorRepairDecision(file, "adopt", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
-			}
+			logDoctorRepairDecision(file, "adopt", "authorized", candidate.EntryKind(), candidate.Identity(), authorization)
+			adopt = append(adopt, i)
 		}
 		if len(adopt) > 0 {
 			if err := revalidate(); err != nil {
@@ -693,6 +580,9 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "replace", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
+			if err := revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed before replacement confirmation: %w", err))
+			}
 			prompt := fmt.Sprintf("  replace %s %q in %s with the entry generated for resource %q (generated value digest %s)? this deletes the existing value [y/N] ",
 				candidate.EntryKind(), candidate.Identity(), file.Rel, candidate.Resource, candidate.DesiredValueDigest())
 			confirmed, err := confirmPrompt(out, reader, prompt)
@@ -700,6 +590,9 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "replace", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
 				break
+			}
+			if err := revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed after replacement confirmation: %w", err))
 			}
 			if !confirmed {
 				// A decline is a success, and it leaves the file byte-identical.
@@ -710,8 +603,13 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "replace", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
-			if err := revalidate(); err != nil {
-				return append(failures, fmt.Errorf("repair policy changed before replacement: %w", err))
+			if opts.yes {
+				if _, err := fmt.Fprintf(out, "  conflicting %s %q in %s left unchanged: destructive repairs are never run with --yes\n",
+					candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
+					failures = append(failures, err)
+				}
+				logDoctorRepairDecision(file, "replace", "deferred", candidate.EntryKind(), candidate.Identity(), "--yes")
+				continue
 			}
 			logDoctorRepairDecision(file, "replace", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.ReplaceConflict(i, true); err != nil {
@@ -735,12 +633,18 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "remove", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
+			if err := revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed before removal confirmation: %w", err))
+			}
 			prompt := fmt.Sprintf("  remove %s %q from %s? this deletes the entry [y/N] ", candidate.EntryKind(), candidate.Identity(), file.Rel)
 			confirmed, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
 				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "remove", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
 				failures = append(failures, fmt.Errorf("read confirmation for %s %q: %w", candidate.EntryKind(), candidate.Identity(), err))
 				break
+			}
+			if err := revalidate(); err != nil {
+				return append(failures, fmt.Errorf("repair policy changed after removal confirmation: %w", err))
 			}
 			if !confirmed {
 				// "exit 0 means clean, repaired, or declined without
@@ -751,8 +655,13 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "remove", "declined", candidate.EntryKind(), candidate.Identity(), "interactive")
 				continue
 			}
-			if err := revalidate(); err != nil {
-				return append(failures, fmt.Errorf("repair policy changed before removal: %w", err))
+			if opts.yes {
+				if _, err := fmt.Fprintf(out, "  orphan candidate %s %q in %s left unchanged: destructive repairs are never run with --yes\n",
+					candidate.EntryKind(), candidate.Identity(), file.Rel); err != nil {
+					failures = append(failures, err)
+				}
+				logDoctorRepairDecision(file, "remove", "deferred", candidate.EntryKind(), candidate.Identity(), "--yes")
+				continue
 			}
 			logDoctorRepairDecision(file, "remove", "authorized", candidate.EntryKind(), candidate.Identity(), "interactive")
 			if _, err := file.RemoveOrphan(i, true); err != nil {

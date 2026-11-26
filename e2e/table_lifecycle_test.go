@@ -145,6 +145,15 @@ func init() {
 		},
 	})
 
+	// spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
+	testTable = append(testTable, TestCase{
+		Name:      "doctor/repair_json_clean",
+		GlobalCfg: v4(),
+		Steps: []Step{
+			ok("doctor", "--repair", "--json").out(`"steps":[]`, `"results":[]`).notOut("agent-marketplace doctor"),
+		},
+	})
+
 	// ===== complex multi-step =====
 	testTable = append(testTable, TestCase{
 		Name: "lifecycle/full_workflow",

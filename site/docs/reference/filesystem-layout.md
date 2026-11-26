@@ -52,7 +52,7 @@ Durable state lives in `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/s
 
 | Path | Contents |
 |---|---|
-| `ownership/<root-id>/state.json` | Which entries in Devin CLI, Codex, and Gemini CLI shared files sync installed, one folder per harness root. |
+| `ownership/<root-id>/state.json` | Which entries in shared harness aggregate files sync installed, one folder per harness root. |
 | `locks/<root-id>.lock` | Mutex lock files that stop two processes from editing the same harness root at once. |
 | `safety-backups/<root-id>/` | Copies of each shared file taken before sync changes it. Sync keeps the five newest copies per file, and takes them even when `backup.enabled` is `false`. |
 | `dependencies/` | Journal of changes to configuration and lockfiles. If a command is interrupted halfway, read-only commands refuse to run and the next command that changes configuration finishes the interrupted change. |
@@ -63,7 +63,7 @@ Durable state lives in `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/s
 
 One exception: the mutex lock files for `dependencies/` are always in `~/.local/state/agent-marketplace/dependencies/locks/`, even when `XDG_STATE_HOME` is set.
 
-If the ownership records are deleted or damaged, sync treats every entry in the affected shared files as one you wrote. It keeps them all, removes nothing, and refuses to overwrite an entry with the same name. For Devin CLI and Codex files, `doctor --repair` can take ownership again of entries that exactly match what sync would install. Moving a repository to a new path has the same effect for that repository, because records are keyed by the root's full path.
+If the ownership records are deleted or damaged, sync treats every entry in the affected shared files as one you wrote. It keeps them all, removes nothing, and refuses to overwrite an entry with the same name. `doctor --repair` can take ownership again of entries that exactly match what sync would install. Moving a repository to a new path has the same effect for that repository, because records are keyed by the root's full path.
 
 ### Backups, logs, and manifests
 

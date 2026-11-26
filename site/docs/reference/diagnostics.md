@@ -35,7 +35,7 @@ The first part of a code names the area that reported it.
 | `bundle.*` | Conflicts between resources in one bundle, such as two resources writing the same path. |
 | `json.*` | Malformed or duplicate-key JSON in a harness file. |
 | `materialize.*` | Writing generated files into harness folders. |
-| `ownership.*` | Ownership records and locking for Devin and Codex shared configuration files. |
+| `ownership.*` | Ownership records and locking for shared harness aggregate files. |
 | `doctor.*` | Findings from `agent-marketplace doctor` and `doctor --repair`. |
 | `config.*` | Loading and editing configuration files, such as `config.edit.include-owned`. |
 | `v4.*` | Consumer configuration validation, such as `v4.api-version-required` or `v4.api-version`. |
@@ -62,7 +62,7 @@ Where each prefix's hints send you:
 | Prefix | What the hint tells you to do |
 |---|---|
 | `v4.*` | Fix the named configuration file and line, then run `agent-marketplace doctor`. `v4.api-version-required` and `v4.api-version` instead name the older released migrator (or your administrator for organization configuration) and link the [conversion guide](../how-to/migrate-configuration.md). `v4.marketplace-lock-required` and `v4.marketplace-lock-mismatch` name a writing `agent-marketplace sync` run while online to record the selected resource in the lock, then commit it. When an organization intentionally deploys no acquisition lock, `v4.marketplace-lock-required` instead says so and names an online `agent-marketplace sync` or `agent-marketplace sync --check` as the command that verifies organization resources; it does not direct the user to an administrator or to organization files. |
-| `lock.*` | Restore or reconcile the named lock, then run `agent-marketplace sync --check`. Stale, missing, or outdated locks point at `agent-marketplace lock` or a writing `sync`; verification failures warn you not to delete the lock or bypass the check. |
+| `lock.*` | Restore or reconcile the named lock, then run `agent-marketplace sync --check`. Stale, missing, or outdated locks point at `agent-marketplace lock` or a writing `sync`; verification failures warn you not to delete the lock or bypass the check. Separately, `agent-marketplace doctor --repair` also offers a supported recovery for locks with conflict markers, forbidden aliases or merge keys, or duplicate fields. |
 | `config.edit.*` | Adjust the named selection or rerun the edit as the hint describes, then run `agent-marketplace doctor`. |
 | `dependency.*` | Run a writing `agent-marketplace sync` or `lock` while online to finish an interrupted write. |
 | `ownership.*` | Retry after the other process finishes, run `agent-marketplace doctor --repair`, or fix the named cause, as the hint says. |

@@ -201,40 +201,9 @@ func TestPluginInstanceCommitFailureDoesNotBlockLaterInstance(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", stateRoot)
 
-	resolvedPlugin := func(name, body string) resolver.ResolvedArtifact {
-		t.Helper()
-		packageRoot := filepath.Join(repo, "vendor", name)
-		memberPath := "skills/guide/SKILL.md"
-		source := "---\nname: guide\ndescription: Guide\n---\n" + body
-		files := []ir.PluginFile{writePluginPackageFile(t, packageRoot, memberPath, source, 0o644)}
-		skill := ir.NewSkill("guide", "Guide", body, nil, nil, ir.SourceRef{File: memberPath})
-		plugin := &ir.Plugin{
-			Format:   "claude-plugin",
-			Manifest: ir.Manifest{Name: name},
-			Members:  []ir.PluginMember{{Resource: skill}},
-			Files:    files,
-		}
-		return resolver.ResolvedArtifact{
-			Entry:         catalog.Entry{Kind: ir.KindSkill, Name: name + "-guide", Path: filepath.Join(packageRoot, filepath.FromSlash(memberPath)), Resource: skill},
-			RegistryURL:   packageRoot,
-			V4Kind:        config.V4SourceDirectory,
-			Source:        config.RepoCommitted,
-			Harnesses:     []hcc.Target{hcc.TargetClaude},
-			InstalledName: name + "-guide",
-			PluginPackage: &resolver.PluginPackage{
-				Name:               name,
-				PackageRoot:        packageRoot,
-				CatalogFingerprint: "test-catalog",
-				Delivery:           "decompose",
-				Scope:              config.RepoCommitted.String(),
-				MemberPath:         memberPath,
-				Package:            plugin,
-			},
-		}
-	}
 	initial := []resolver.ResolvedArtifact{
-		resolvedPlugin("alpha-kit", "alpha original\n"),
-		resolvedPlugin("beta-kit", "beta original\n"),
+		resolvedDecomposedPlugin(t, repo, "alpha-kit", "alpha original\n"),
+		resolvedDecomposedPlugin(t, repo, "beta-kit", "beta original\n"),
 	}
 	modes := WithMaterializationModes(config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile})
 	if report, err := Run(context.Background(), repo, initial, modes, WithPluginStateReconciliation()); err != nil {
@@ -262,8 +231,8 @@ func TestPluginInstanceCommitFailureDoesNotBlockLaterInstance(t *testing.T) {
 	}
 
 	updated := []resolver.ResolvedArtifact{
-		resolvedPlugin("alpha-kit", "alpha updated\n"),
-		resolvedPlugin("beta-kit", "beta updated\n"),
+		resolvedDecomposedPlugin(t, repo, "alpha-kit", "alpha updated\n"),
+		resolvedDecomposedPlugin(t, repo, "beta-kit", "beta updated\n"),
 	}
 	injected := errors.New("injected alpha instance commit fault")
 	faulted := false
@@ -311,6 +280,235 @@ func TestPluginInstanceCommitFailureDoesNotBlockLaterInstance(t *testing.T) {
 	}
 	if currentGeneration["beta-kit"] == priorGeneration["beta-kit"] || currentGeneration["beta-kit"] == "" {
 		t.Fatalf("beta state was not committed after alpha failed: before=%s after=%s", priorGeneration["beta-kit"], currentGeneration["beta-kit"])
+	}
+}
+
+type packageLockWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *packageLockWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+func TestRunBeforePublishRevalidatesPolicyAfterPackageLockWait(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		changePolicy bool
+	}{
+		{name: "changed policy refuses publication", changePolicy: true},
+		{name: "unchanged policy publishes", changePolicy: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := filepath.Join(root, "home")
+			repo := filepath.Join(root, "repo")
+			stateRoot := filepath.Join(root, "state")
+			for _, dir := range []string{home, repo, stateRoot} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", stateRoot)
+
+			policyPath := filepath.Join(repo, ".agents", "config.yaml")
+			policy := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n"
+			if err := os.MkdirAll(filepath.Dir(policyPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(policyPath, []byte(policy), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			canonical, err := dependencytxn.CanonicalConfigDestination(policyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, err := dependencytxn.ReadGeneration(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reads := []dependencytxn.ReadAssertion{{Path: canonical, RequestedPath: policyPath, Expected: generation}}
+			var checkedErr error
+			validatePolicy := func() error {
+				checkedErr = dependencytxn.ValidateReadAssertions(reads)
+				return checkedErr
+			}
+			resolved := resolvedDecomposedPlugin(t, repo, "policy-kit", "approved policy\n")
+
+			lockHeld := make(chan struct{})
+			releaseLock := make(chan struct{})
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseLock) }) }
+			holderDone := make(chan error, 1)
+			go func() {
+				holderDone <- packagegen.WithPackagesLock(context.Background(), func() error {
+					close(lockHeld)
+					<-releaseLock
+					return nil
+				})
+			}()
+			holderJoined := false
+			runJoined := false
+			var cancel context.CancelFunc
+			type runResult struct {
+				report *Report
+				err    error
+			}
+			var runDone chan runResult
+			defer func() {
+				if cancel != nil {
+					cancel()
+				}
+				release()
+				if !holderJoined {
+					select {
+					case err := <-holderDone:
+						if err != nil {
+							t.Errorf("package lock holder: %v", err)
+						}
+					case <-time.After(10 * time.Second):
+						t.Error("package lock holder did not exit")
+					}
+				}
+				if runDone != nil && !runJoined {
+					select {
+					case <-runDone:
+					case <-time.After(10 * time.Second):
+						t.Error("materialization did not exit")
+					}
+				}
+			}()
+
+			select {
+			case <-lockHeld:
+			case err := <-holderDone:
+				holderJoined = true
+				t.Fatalf("package lock holder returned before acquiring the lock: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("package lock holder did not acquire the lock")
+			}
+			ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+			cancel = stop
+			waitCtx := &packageLockWaitContext{Context: ctx, waiting: make(chan struct{})}
+			runDone = make(chan runResult, 1)
+			modes := WithMaterializationModes(config.MaterializationModes{
+				Project: config.MaterializationModeFile,
+				Machine: config.MaterializationModeFile,
+			})
+			go func() {
+				report, err := Run(waitCtx, repo, []resolver.ResolvedArtifact{resolved},
+					modes,
+					WithPluginStateReconciliation(),
+					WithBeforePublish(validatePolicy),
+				)
+				runDone <- runResult{report: report, err: err}
+			}()
+			select {
+			case <-waitCtx.waiting:
+			case result := <-runDone:
+				runJoined = true
+				t.Fatalf("materialization returned before waiting on the package lock: %v", result.err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("materialization did not wait on the held package lock")
+			}
+			select {
+			case result := <-runDone:
+				runJoined = true
+				t.Fatalf("materialization returned while the package lock was held: %v", result.err)
+			default:
+			}
+
+			updatedPolicy := policy
+			if tc.changePolicy {
+				updatedPolicy += "# changed while materialization waited\n"
+				if err := os.WriteFile(policyPath, []byte(updatedPolicy), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			release()
+			if err := <-holderDone; err != nil {
+				holderJoined = true
+				t.Fatalf("release package lock: %v", err)
+			}
+			holderJoined = true
+			result := <-runDone
+			runJoined = true
+
+			if tc.changePolicy {
+				if !errors.Is(result.err, dependencytxn.ErrGenerationConflict) || result.err != checkedErr || result.report != nil {
+					t.Fatalf("materialize result = (%+v, %v), want unchanged generation conflict and no report", result.report, result.err)
+				}
+				if _, err := os.Lstat(filepath.Join(repo, ".claude")); !os.IsNotExist(err) {
+					t.Fatalf("policy change created Claude output: %v", err)
+				}
+				generations, err := filepath.Glob(filepath.Join(stateRoot, "agent-marketplace", "packages", "[0-9a-f]*"))
+				if err != nil || len(generations) != 0 {
+					t.Fatalf("policy change published package generations: %v / %v", generations, err)
+				}
+				if _, err := os.Stat(filepath.Join(stateRoot, "agent-marketplace", "ownership")); !os.IsNotExist(err) {
+					t.Fatalf("policy change published ownership state: %v", err)
+				}
+				if after, err := os.ReadFile(policyPath); err != nil || string(after) != updatedPolicy {
+					t.Fatalf("concurrent policy edit was not preserved: %v\n%s", err, after)
+				}
+				return
+			}
+
+			if result.err != nil || result.report == nil {
+				t.Fatalf("unchanged policy materialize result = (%+v, %v)", result.report, result.err)
+			}
+			output, err := os.ReadFile(filepath.Join(repo, ".claude", "skills", "policy-kit-guide", "SKILL.md"))
+			if err != nil || !strings.Contains(string(output), "approved policy") {
+				t.Fatalf("healthy run did not publish plugin output: %v\n%s", err, output)
+			}
+			generations, err := filepath.Glob(filepath.Join(stateRoot, "agent-marketplace", "packages", "[0-9a-f]*"))
+			if err != nil || len(generations) != 1 {
+				t.Fatalf("healthy run package generations = %v / %v, want one", generations, err)
+			}
+			states, err := filepath.Glob(filepath.Join(stateRoot, "agent-marketplace", "ownership", "plugin-packages", "*.json"))
+			if err != nil || len(states) != 1 {
+				t.Fatalf("healthy run plugin states = %v / %v, want one", states, err)
+			}
+		})
+	}
+}
+
+func resolvedDecomposedPlugin(t *testing.T, repo, name, body string) resolver.ResolvedArtifact {
+	t.Helper()
+	packageRoot := filepath.Join(repo, "vendor", name)
+	memberPath := "skills/guide/SKILL.md"
+	source := "---\nname: guide\ndescription: Guide\n---\n" + body
+	files := []ir.PluginFile{writePluginPackageFile(t, packageRoot, memberPath, source, 0o644)}
+	skill := ir.NewSkill("guide", "Guide", body, nil, nil, ir.SourceRef{File: memberPath})
+	plugin := &ir.Plugin{
+		Format:   "claude-plugin",
+		Manifest: ir.Manifest{Name: name},
+		Members:  []ir.PluginMember{{Resource: skill}},
+		Files:    files,
+	}
+	return resolver.ResolvedArtifact{
+		Entry:         catalog.Entry{Kind: ir.KindSkill, Name: name + "-guide", Path: filepath.Join(packageRoot, filepath.FromSlash(memberPath)), Resource: skill},
+		RegistryURL:   packageRoot,
+		V4Kind:        config.V4SourceDirectory,
+		Source:        config.RepoCommitted,
+		Harnesses:     []hcc.Target{hcc.TargetClaude},
+		InstalledName: name + "-guide",
+		PluginPackage: &resolver.PluginPackage{
+			Name:               name,
+			PackageRoot:        packageRoot,
+			CatalogFingerprint: "test-catalog",
+			Delivery:           "decompose",
+			Scope:              config.RepoCommitted.String(),
+			MemberPath:         memberPath,
+			Package:            plugin,
+		},
 	}
 }
 

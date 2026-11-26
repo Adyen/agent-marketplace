@@ -242,23 +242,32 @@ func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	}
 	prior := pipeline.Resolve(ctx, priorOptions)
 
-	desiredOverlays := make(map[string][]byte, len(overlays)+len(lockDesired))
-	for path, data := range overlays {
-		desiredOverlays[path] = data
-	}
-	for path, data := range lockDesired {
-		desiredOverlays[path] = data
-	}
-	desired := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		Workspace:                           ws,
-		SkipInventory:                       true,
-		CatalogOption:                       []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(lookup(desiredSet, nil), desiredSet.catalogs)},
-		LockMetadata:                        snapshotLockMetadata(desiredJobs),
-		EffectiveOpts:                       config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: desiredOverlays},
-		MarketplacePinsToSkip:               marketplacePinsToSkip,
-		KeepRemovedMarketplacePinsFromCache: priorMarketplaceFromCache,
-	})
+	desired := ResolvePreparedSelection(ctx, PreparedUpdateView{
+		Ws:          ws,
+		DesiredJobs: desiredJobs,
+		Overlays:    overlays,
+		LockDesired: lockDesired,
+	}, lookup(desiredSet, nil), desiredSet.catalogs, marketplacePinsToSkip, priorMarketplaceFromCache)
 	return ResolvedUpdateSides{Prior: prior, Desired: desired, PriorSet: priorSet, DesiredSet: desiredSet, LoadErrors: loadErrors}, nil
+}
+
+func ResolvePreparedSelection(ctx context.Context, view PreparedUpdateView, exact catalog.ExactSnapshotFunc, catalogs map[string]map[string]*catalog.Catalog, marketplacePinsToSkip []pipeline.MarketplacePinUpdate, keepRemovedMarketplacePinsFromCache bool) pipeline.ResolveResult {
+	desiredOverlays := make(map[string][]byte, len(view.Overlays)+len(view.LockDesired))
+	for path, data := range view.Overlays {
+		desiredOverlays[path] = data
+	}
+	for path, data := range view.LockDesired {
+		desiredOverlays[path] = data
+	}
+	return pipeline.Resolve(ctx, pipeline.ResolveOptions{
+		Workspace:                           view.Ws,
+		SkipInventory:                       true,
+		CatalogOption:                       []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(exact, catalogs)},
+		LockMetadata:                        snapshotLockMetadata(view.DesiredJobs),
+		EffectiveOpts:                       config.LoadEffectiveOptions{RepoRoot: view.Ws.RepoRoot(), LocalConfigDir: view.Ws.LocalConfigDir(), FileOverlays: desiredOverlays},
+		MarketplacePinsToSkip:               marketplacePinsToSkip,
+		KeepRemovedMarketplacePinsFromCache: keepRemovedMarketplacePinsFromCache,
+	})
 }
 
 func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs, desiredJobs []SnapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *ExactLockSet, lookup func(*ExactLockSet, func() error) catalog.ExactSnapshotFunc) error {

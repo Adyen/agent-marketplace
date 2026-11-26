@@ -84,10 +84,12 @@ func newSyncCmd() *cobra.Command {
 }
 
 type lockRunOptions struct {
-	locked            bool
-	noConfigBackup    bool
-	marketplacePolicy resolver.MarketplaceRevocationPolicy
-	userConfig        *pipeline.UserConfigSnapshot
+	locked                     bool
+	reuseTransientOrganization bool
+	noConfigBackup             bool
+	marketplacePolicy          resolver.MarketplaceRevocationPolicy
+	beforeMaterialize          func() error
+	userConfig                 *pipeline.UserConfigSnapshot
 }
 
 var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
@@ -111,11 +113,14 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 	}()
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
+	reuseTransientOrganization := len(lockOpts) > 0 && lockOpts[0].reuseTransientOrganization && locked && !offline
 	var noConfigBackup bool
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
+	var beforeMaterialize func() error
 	if len(lockOpts) > 0 {
 		noConfigBackup = lockOpts[0].noConfigBackup
 		marketplacePolicy = lockOpts[0].marketplacePolicy
+		beforeMaterialize = lockOpts[0].beforeMaterialize
 	}
 	ws, err := discoverSyncWorkspace()
 	if err != nil {
@@ -144,7 +149,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
 	var lockMetadata []pipeline.LockMetadata
-	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata})
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, ReuseTransientOrganization: reuseTransientOrganization, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -175,6 +180,10 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		MarketplaceRevocationPolicy:           marketplacePolicy,
 		MarketplaceLockEvidenceStrict:         locked,
 		MarketplaceReportArchiveEvidenceDrift: !locked && !offline,
+	}
+	resolveOpts.BeforeMaterialize = beforeMaterialize
+	if reuseTransientOrganization {
+		resolveOpts.ConfigLoadMode = pipeline.ConfigLoadTransientOnly
 	}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)

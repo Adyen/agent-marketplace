@@ -177,9 +177,11 @@ generated roots you use (for example `.claude/skills/`,
 Sync edits shared files entry by entry and keeps handwritten entries, comments,
 and unrelated settings.
 
-- Claude, Factory, Cursor, Windsurf, and Gemini hooks mark entries with
+- Claude, Factory, Cursor, and Windsurf MCP files mark managed entries with
   `"_managed_by": "agent-marketplace"`.
-- Devin, Codex, and Gemini MCP carry no marker. Ownership lives under
+- Devin, Codex, OpenCode, and Gemini shared files, along with every target's
+  native hook aggregates, including those of Claude, Factory, Cursor, and
+  Windsurf, carry no marker. Ownership lives under
   `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`).
   When that state is missing or corrupt, sync preserves every entry, refuses
   collisions, and prunes nothing. A raw safety backup (five newest per file) is
@@ -244,11 +246,39 @@ agent-marketplace deinit               # remove managed artifacts and cache
 
 `doctor` reports repo detection, config diagnostics, harness roots, unmet
 prerequisites, and Devin CLI compatibility (3000.3 floor; it only recommends
-adding `devin`). `--repair` covers Devin and Codex aggregate ownership: it
-previews exact adoption matches, evidence-backed orphans, and value conflicts.
-`--yes` adopts byte-identical matches only; removing an orphan or replacing a
-conflict always needs an interactive per-entry confirmation. Off a terminal,
-`--repair` without `--yes` only previews.
+adding `devin`). `--repair` prints a numbered plan for acquisition locks and
+snapshots, harness drift, shared-aggregate ownership for every harness target
+that declares aggregate files (Claude, Codex, Cursor, Devin, Factory, Gemini,
+OpenCode, and Windsurf), and guided configuration fixes. Confirmed safe steps
+create or refresh writable acquisition locks without upgrading existing pins,
+and fetch missing exact snapshots without changing lock bytes. The later drift
+step uses locked sync and does not change acquisition locks. Each step shows
+its safety class, diagnostic code, files, and inputs or blocker. For the
+aggregates: exact adoption matches,
+evidence-backed orphans, and value conflicts. One terminal confirmation runs
+all safe steps; adoption no longer prompts per entry. Orphan removal and
+conflict replacement keep their per-entry prompts and never run under `--yes`
+or off a terminal. Invalid configuration or failed resolution does not refuse
+repair: the cause appears as a plan item and dependent steps are listed as
+blocked; exit is 1 when only blocked, deferred guided, or human-only items
+remain. Off a terminal without `--yes`, `--repair` only previews. Missing or
+stale acquisition lock authority still makes preview or decline exit 1.
+
+Conflicted locks and locks with YAML aliases, merges, or duplicate fields need
+a terminal without `--yes`, a per-lock confirmation, and a fresh private backup.
+Different Git commits on the conflict sides require an explicit choice.
+Off-terminal or under `--yes`, unresolved choices stay guided and leave the
+lock unchanged. Repair refuses a choice that would lose a still-selected
+one-sided pin, never deletes a lock to bypass verification, leaves integrity
+and trust failures human-only, and never writes an organization lock.
+
+`--repair` also lists writable-layer field, YAML, and duplicate-key issues as
+`guided` steps with escaped source context. On a terminal without `--yes`, it
+offers `$VISUAL` or `$EDITOR` with a separate confirmation and re-diagnoses
+after the editor exits, including a non-zero exit. Without an editor it prints
+manual instructions. Guided steps are deferred off a terminal and under
+`--yes`; unresolved guided items exit 1. Version and organization problems
+remain human-only. It never rewrites configuration automatically.
 
 ## Hosted Marketplaces
 

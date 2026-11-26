@@ -203,6 +203,10 @@ func selectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lock
 	return false
 }
 
+func SelectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lockfile.Document) bool {
+	return selectedMarketplaceResourcesMissing(layer, current)
+}
+
 func MergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved lockfile.Document) (lockfile.Document, error) {
 	doc := current
 	doc.Marketplaces = slices.Clone(current.Marketplaces)
@@ -412,6 +416,10 @@ func unrecordedRegistrations(layer config.LayerIntent, current *lockfile.Documen
 		}
 	}
 	return endpoints
+}
+
+func UnrecordedRegistrations(layer config.LayerIntent, current *lockfile.Document) []string {
+	return unrecordedRegistrations(layer, current)
 }
 
 // appendRegistrationIdentities adds one identity-only record per endpoint,
