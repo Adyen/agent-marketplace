@@ -201,6 +201,8 @@ marketplace https://marketplace.example.com pin shared-agents/skill/foo: resourc
 
 In that 404 case, follow the replacement procedure above for your pin. The old pin cannot install again because the revision itself is gone.
 
+A selection can also be removed upstream before any lock records it — for example when you add a Marketplace resource to the configuration but its latest-revision lookup answers 404 on the first `sync`. A non-required selection is skipped with a warning that names the `agent-marketplace remove <installed name>` remedy; run that command to drop the selection (it works without a lock record and edits only the configuration). A `required` selection still fails — change the configuration entry that marks it required, as in [section 5](#_5-fix-a-required-selection). The full skip-and-failure rules are in the [lockfiles reference](../reference/lockfiles.md).
+
 ## 7. Commit the result
 
 For repository configuration, commit the configuration and the lock together:
