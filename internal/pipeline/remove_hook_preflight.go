@@ -13,16 +13,25 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 )
 
-func preflightHookRemoval(ctx context.Context, ws Workspace, edits []StagedConfigEdit, extraOverlays map[string][]byte) error {
+func preflightHookRemoval(ctx context.Context, ws Workspace, edits []StagedConfigEdit, extraOverlays map[string][]byte, removed *missingMarketplaceSelection) error {
 	if len(edits) == 0 || !materialize.HasActiveNativeHooks(ws.MaterializeRoot()) {
 		return nil
 	}
 	ctx = WithTransientOrganizationMarketplaceLockCache(ctx)
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
+	beforeOpts := config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}
+	if removed != nil && removed.request.Reason == config.V4SelectionExplicit && !removed.request.Required && removed.request.Options.Revision == "" {
+		// Only these direct leaves cannot contribute hooks. An unrecorded
+		// collection may have installed hooks, so its before-state is required.
+		switch removed.request.Kind {
+		case "skill", "command", "subagent", "mcp":
+			beforeOpts.SkipMarketplaceSelections = []config.MarketplaceSelectionToSkip{removed.MarketplaceSelectionToSkip}
+		}
+	}
+	ec := LoadEffective(ctx, ConfigLoadOnline, beforeOpts, nil)
 	ctx, view := exactLockViewWithContext(ctx, ec, true)
 	defer view.release()
 	options := ResolveOptions{
-		Workspace: ws, CatalogMode: catalog.LoadModeInspect,
+		Workspace: ws, CatalogMode: catalog.LoadModeInspect, EffectiveOpts: beforeOpts,
 		CatalogOption:           []catalog.LoadOption{view.catalogOption},
 		IgnoreBlockedRegistries: true, SkipInventory: true,
 		MarketplaceArtifactsFromCache: true,
@@ -31,7 +40,7 @@ func preflightHookRemoval(ctx context.Context, ws Workspace, edits []StagedConfi
 	if len(before.Errors) != 0 {
 		return errors.Join(before.Errors...)
 	}
-	options.EffectiveOpts.FileOverlays = stagedConfigOverlays(edits, extraOverlays)
+	options.EffectiveOpts = config.LoadEffectiveOptions{FileOverlays: stagedConfigOverlays(edits, extraOverlays)}
 	after := Resolve(ctx, options)
 	if len(after.Errors) != 0 {
 		return errors.Join(after.Errors...)

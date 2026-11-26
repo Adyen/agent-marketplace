@@ -138,7 +138,9 @@ func init() {
 			"resources: {hub: {include: [hub/skill/gone, hub/skill/keep]}}",
 		),
 		Steps: []Step{
-			ok("sync").
+			exits(1, "sync", "--strict").
+				out("marketplace resource hub/skill/gone", "agent-marketplace remove gone").
+				unchanged("./.agents/config.yaml").
 				has("./.agents/lock.yaml", "name: keep").
 				lacks("./.agents/lock.yaml", "name: gone").
 				has("./.factory/skills/keep/SKILL.md", "Available Marketplace skill").
