@@ -8,4 +8,4 @@
 
 - [x] 2.1 Add spec-annotated Go tests in `internal/tui/confirm_sync_test.go` and `internal/materialize/`.
 - [x] 2.2 Add or extend a real-terminal TUI QA journey under `tools/tui-qa/tests/` proving the itemized quit-sync prompt, broken-only quit, and unresolved post-sync retention, and update `tools/tui-qa/README.md`.
-- [ ] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
+- [x] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
