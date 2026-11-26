@@ -52,6 +52,29 @@ func TestCanonicalGitURLSharedFixtures(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/registry-inputs-retain-the-preceding-git-suffix
+func TestRegistryRepeatedGitSuffix(t *testing.T) {
+	const raw = "https://git.example/team/tools.git.git"
+	const want = "https://git.example/team/tools.git"
+	t.Run("configured registry", func(t *testing.T) {
+		if got, err := CanonicalGitConfigURL(raw); err != nil || got != want {
+			t.Fatalf("CanonicalGitConfigURL(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	})
+	for _, version := range []string{APIVersionV1, APIVersionV2} {
+		t.Run(version, func(t *testing.T) {
+			lock := "apiVersion: " + version + "\nscope: repo\nregistries:\n  - url: " + raw + "\n    ref: main\n    commit: " + sha1a + "\n"
+			doc, err := Decode([]byte(lock))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(doc.Registries) != 1 || doc.Registries[0].URL != want {
+				t.Fatalf("decoded registries = %#v; want one registry at %q", doc.Registries, want)
+			}
+		})
+	}
+}
+
 func TestCanonicalGitURLSharedNonEquivalentFixtures(t *testing.T) {
 	for _, tc := range testutil.NonEquivalentGitURLPairs {
 		left, err := CanonicalGitURL(tc.Left)

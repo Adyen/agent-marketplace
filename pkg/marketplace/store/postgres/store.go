@@ -769,25 +769,8 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 	if err := assessment.Validate(); err != nil {
 		return err
 	}
-	res, err := s.q.ExecContext(ctx, `INSERT INTO current_resource_assessments
-		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest)
-		SELECT marketplace_id, registry_id, kind, name, content_digest, assessment_digest
-		FROM resource_assessments
-		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4
-		  AND content_digest=$5 AND assessment_digest=$6
-		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest) DO UPDATE
-		SET assessment_digest=EXCLUDED.assessment_digest`,
-		assessment.Coordinate.Marketplace, assessment.Coordinate.Registry, assessment.Coordinate.Kind,
-		assessment.Coordinate.Name, assessment.ContentDigest, assessment.AssessmentDigest)
-	if err != nil {
+	if err := store.SelectCurrentAssessment(ctx, s.q, assessment); err != nil {
 		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return store.ErrNotFound
 	}
 	return s.advanceCatalogVersion(ctx)
 }

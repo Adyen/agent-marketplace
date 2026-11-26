@@ -17,7 +17,7 @@ func CanonicalGitConfigURL(raw string) (string, error) {
 func CanonicalGitURL(raw string) (string, error) { return CanonicalGitURLV1(raw) }
 
 func CanonicalGitURLV1(raw string) (string, error) {
-	canonical, err := gitidentity.CanonicalV1(raw)
+	canonical, err := gitidentity.CanonicalRegistryV1(raw)
 	if err != nil {
 		return "", coded(CodeInvalidGitURL, "%s", err)
 	}

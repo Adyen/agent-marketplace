@@ -2,6 +2,7 @@ package gitidentity
 
 import "testing"
 
+// spec: acquisition-lock-codec/exact-profile-origins-refuse-repeated-git-suffixes
 func TestCanonicalRepositorySuffix(t *testing.T) {
 	for _, origin := range []struct{ input, canonical string }{
 		{"http://git.example/", "http://git.example/"},
