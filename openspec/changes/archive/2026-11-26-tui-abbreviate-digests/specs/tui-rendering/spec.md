@@ -2,7 +2,7 @@
 
 ### Requirement: Abbreviated digests in the TUI detail summary pane
 
-The TUI right-hand detail summary pane SHALL abbreviate algorithm-qualified hex digests to `<algorithm>:<first 12 hex>…` while keeping short non-digest revisions intact. When a Marketplace row's `Revision` equals its `Digest`, the summary pane SHALL omit the duplicate `Revision:` line. The full detail view (`enter`) SHALL retain the complete digest, and verification SHALL remain exact.
+The TUI right-hand detail summary pane SHALL abbreviate 64-hex SHA-256 digests (`sha256:<64 hex>`) to `sha256:<first 12 hex>…` while keeping short non-digest revisions and non-SHA-256 or malformed values intact. When a Marketplace row's `Revision` equals its `Digest`, the summary pane SHALL omit the duplicate `Revision:` line. The full detail view (`enter`) SHALL retain the complete digest, and verification SHALL remain exact.
 
 #### Scenario: Summary pane abbreviates SHA-256 digests and deduplicates identical revision
 
