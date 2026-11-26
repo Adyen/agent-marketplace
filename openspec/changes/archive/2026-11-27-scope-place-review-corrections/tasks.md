@@ -20,4 +20,4 @@
 
 ## 5. Archive
 
-- [ ] 5.1 Run `openspec archive scope-place-review-corrections --yes` after final instruction.
+- [x] 5.1 Run `openspec archive scope-place-review-corrections --yes` after final instruction.

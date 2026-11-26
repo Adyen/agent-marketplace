@@ -89,3 +89,18 @@ An acquisition-lock Marketplace resource `selected_by` entry SHALL accept an opt
 
 - **WHEN** a requires edge has an explicit collection kind, an unknown kind, a missing parent, a mismatched digest, a self reference, or an unbound registry
 - **THEN** reading the lock MUST fail as an invalid document
+
+### Requirement: Registry Git URL compatibility preserves a preceding suffix
+
+Source configuration and v1/v2 acquisition-lock reads MUST remove exactly one terminal `.git` from a registry repository path and accept a canonical path that still ends in `.git`. Exact target-profile identity MUST continue to refuse an origin whose canonical registry path ends in `.git`.
+
+#### Scenario: Registry inputs retain the preceding Git suffix
+
+- **WHEN** source configuration or a v1/v2 acquisition lock uses `https://git.example/team/tools.git.git`
+- **THEN** normalization MUST yield `https://git.example/team/tools.git`
+- **AND** the lock MUST remain readable under its original API version
+
+#### Scenario: Exact profile origins refuse repeated Git suffixes
+
+- **WHEN** exact target-profile origin identity receives `https://git.example/team/tools.git.git`
+- **THEN** identity validation MUST refuse the origin as unstable
