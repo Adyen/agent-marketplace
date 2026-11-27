@@ -103,6 +103,8 @@ resources:
 
 `agent-marketplace install platform-onboarding --kind collection --scope repo` writes the same entry. During resolution, the collection expands into its members before any other selection happens. The collection itself produces no files in the harness folders; only its members do. Excludes that the consumer configured for a providing registry still apply to the members that the collection selects there.
 
+In the [TUI](./tui.md), a collection with known members is an expandable row whose detail pane lists its members and included sub-collections, and `space` on an available member installs only that member as a direct selection. Inspecting a Marketplace collection verifies its published manifest read-only and reports an error rather than showing unverified members; the inspection never installs anything.
+
 ## Removal
 
 Removing a collection member records an `exclude` in the active scope while keeping the collection selected. For example, `agent-marketplace remove frontend-design` adds `skill/frontend-design` to the group's `exclude` list and prints `Excluded frontend-design (provided by collection:platform-onboarding)`. When the collection sets `version`, the label reads `collection:<name>@<version>`. Removing the collection name removes the collection selection itself and prints `Removed collection <name>`.
