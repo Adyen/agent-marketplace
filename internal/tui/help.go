@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/internal/hookreview"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/cellbuf"
 )
 
@@ -137,11 +139,65 @@ func renderErrors(m Model) string {
 func renderConfirm(m Model) string {
 	t := m.currentTheme()
 	m.ensureSyncQuitForm()
-	body := []string{sanitizeTerminalData(m.confirmMsg, terminalSingleLine)}
+	message := sanitizeTerminalData(m.confirmMsg, terminalSingleLine)
+	form := ""
 	if m.syncQuitForm != nil {
-		body = append(body, "", m.syncQuitForm.View())
+		form = m.syncQuitForm.View()
+	}
+	body := []string{message}
+	body = append(body, boundedConfirmSyncChanges(m, message, form)...)
+	if form != "" {
+		body = append(body, "", form)
 	}
 	return modalFrame(m, t.warn, warnBoldStyle(t).Render("Confirm"), body, []footerHint{
 		{"y", "sync+quit"}, {"n", "quit"}, {"esc", "cancel"},
 	})
+}
+
+func boundedConfirmSyncChanges(m Model, message, form string) []string {
+	type change struct {
+		name   string
+		remove bool
+	}
+	changes := make([]change, 0, m.driftReport.SyncableCount())
+	for _, item := range m.driftReport.Missing {
+		changes = append(changes, change{name: item.Name})
+	}
+	for _, item := range m.driftReport.Orphaned {
+		changes = append(changes, change{name: item.Name, remove: true})
+	}
+	sort.Slice(changes, func(i, j int) bool {
+		if changes[i].name != changes[j].name {
+			return changes[i].name < changes[j].name
+		}
+		return !changes[i].remove && changes[j].remove
+	})
+	lines := make([]string, 0, len(changes))
+	for _, item := range changes {
+		action := "+ install "
+		if item.remove {
+			action = "- remove "
+		}
+		name := strings.Replace(item.name, "\x00", "/", 1)
+		lines = append(lines, ansi.Truncate(action+sanitizeTerminalData(name, terminalSingleLine), modalInnerWidth(m), "…"))
+	}
+	if len(lines) == 0 || m.height <= 0 {
+		return lines
+	}
+	inner := modalInnerWidth(m)
+	maxBody := max(1, m.height-modalFrameRows)
+	fixedRows := 1 +
+		len(strings.Split(ansi.Wrap(message, inner, ""), "\n")) +
+		1 +
+		len(strings.Split(ansi.Wrap(form, inner, ""), "\n"))
+	slots := max(0, maxBody-fixedRows)
+	if len(lines) <= slots {
+		return lines
+	}
+	if slots == 0 {
+		return nil
+	}
+	visible := slots - 1
+	bounded := append([]string(nil), lines[:visible]...)
+	return append(bounded, fmt.Sprintf("+ %d more", len(lines)-visible))
 }
