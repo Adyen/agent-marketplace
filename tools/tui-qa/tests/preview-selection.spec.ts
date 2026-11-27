@@ -30,9 +30,9 @@ journey.test("right-pane drag highlights, copies on release, and leaves wheel an
     assert.equal(await terminal.getClipboard(), "");
   });
 
-  const copied = "Name:     skill-00";
+  const run = await findTextRun(terminal, /Name:\s+skill-00/);
+  const copied = run.text;
   await step("drag across the detail pane highlights and copies on release", async () => {
-    const run = await findTextRun(terminal, /Name:\s+skill-00/);
     await terminal.write(drag(run.x, run.y, run.x + run.width - 1, run.y));
   }, async () => {
     await waitForInverse(terminal, /Name:\s+skill-00/, 1);
