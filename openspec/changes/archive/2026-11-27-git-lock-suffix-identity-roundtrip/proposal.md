@@ -18,3 +18,7 @@ Canonical Git URLs that end in `.git` lose their distinction from the same repos
 # Impact
 
 Changes are limited to `internal/lockfile`, `cmd/agent-marketplace`, and `internal/cache`. No lock field, API version, dependency, or external service changes.
+
+## Release note
+
+Rewriting a lock or upgrading a Git registry whose URL ends in `.git.git` now keeps the intended repository. Ordinary registry lock bytes are unchanged.
