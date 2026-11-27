@@ -8,4 +8,4 @@
 
 - [x] 2.1 Add spec-annotated Go tests in `internal/tui/badges_test.go`, `internal/tui/detail_test.go`, and `internal/session/`.
 - [x] 2.2 Add or extend a real-terminal TUI QA journey under `tools/tui-qa/tests/` proving `O` badge and detail provenance display, and update `tools/tui-qa/README.md`.
-- [ ] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
+- [x] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
