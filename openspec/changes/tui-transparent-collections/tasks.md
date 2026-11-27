@@ -9,4 +9,4 @@
 
 - [x] 2.1 Add spec-annotated Go tests in `internal/tui/tree_test.go`, `internal/tui/detail_test.go`, `internal/tui/marketplace_inspection_test.go`, and `internal/tui/installed_collections_test.go`.
 - [x] 2.2 Add a real-terminal TUI QA journey under `tools/tui-qa/tests/` proving collection member detail, inline expansion under `View → Kind`, and 1-by-1 member install, and update `tools/tui-qa/README.md`.
-- [ ] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
+- [x] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.

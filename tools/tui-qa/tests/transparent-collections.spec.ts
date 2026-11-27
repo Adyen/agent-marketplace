@@ -56,27 +56,31 @@ journey.test("collection members expand under Kind and install as independent se
     await locate(terminal, "fixture/alpha-skill").unique().expect();
     await locate(terminal, "fixture/genai-psx").unique().expect();
   });
-  await step("select the skill member", () => terminal.write("j"), async () => {
-    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+  await step("select the MCP member", async () => {
+    await terminal.write("j");
+    await terminal.write("j");
+  }, async () => {
+    await locate(terminal, /Name:\s+genai-psx/).unique().expect();
   });
   await step("open the member toggle", () => terminal.write(" "), async () => {
-    await locate(terminal, /"alpha-skill"/).unique().expect();
+    await locate(terminal, /"genai-psx"/).unique().expect();
     await locate(terminal, "toggle project").unique().expect();
   });
-  await step("select only the skill at project scope", () => terminal.write("p"), async () => {
-    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+  await step("select only the MCP member at project scope", () => terminal.write("p"), async () => {
+    await locate(terminal, /Name:\s+genai-psx/).unique().expect();
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
   });
   const config = fs.readFileSync(repoConfig, "utf8");
-  assert.match(config, /- skill\/alpha-skill/);
+  assert.match(config, /- mcp\/genai-psx/);
   assert.match(config, /- skill\/beta-skill/);
-  assert.doesNotMatch(config, /- collection\/suite|- mcpserver\/genai-psx/);
+  assert.doesNotMatch(config, /- collection\/suite|- skill\/alpha-skill/);
 
   await step("sync installs only the selected member", () => terminal.write("s"), async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  assert.equal(fs.readFileSync(path.join(fixture.repo, ".factory", "skills", "alpha-skill", "SKILL.md"), "utf8"), fixture.expectedAlphaSkillContent);
-  assert.equal(fs.existsSync(path.join(fixture.repo, ".factory", "mcp.json")), false, "the unselected MCP sibling was materialized");
+  const mcpConfig = JSON.parse(fs.readFileSync(path.join(fixture.repo, ".factory", "mcp.json"), "utf8"));
+  assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["genai-psx"]);
+  assert.equal(fs.existsSync(path.join(fixture.repo, ".factory", "skills", "alpha-skill")), false, "the unselected skill sibling was materialized");
 
   await step("quit", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);

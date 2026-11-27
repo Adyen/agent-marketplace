@@ -457,24 +457,11 @@ func collectionMemberRows(parent row, knownRows []row) []row {
 	for _, member := range members {
 		child, found := collectionMemberRow(parent, member, knownRows)
 		if !found {
-			registry := firstNonEmpty(member.Registry, parent.RegistryURL)
-			ref := firstNonEmpty(member.Ref, parent.RegistryRef)
-			sourcePath := firstNonEmpty(member.Path, parent.RegistryPath)
 			child = row{
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{
-						Kind: member.Kind, Name: member.Name, SourceHarness: parent.Artifact.SourceHarness,
-					},
-					RegistryURL: registry, RegistryPath: sourcePath, Ref: ref,
-					V4Kind: parent.Artifact.V4Kind, Source: parent.Artifact.Source,
+					Entry: catalog.Entry{Kind: member.Kind, Name: member.Name},
 				},
-				IsAvailable:  parent.IsAvailable,
-				RegistryURL:  registry,
-				RegistryPath: sourcePath,
-				RegistryRef:  ref,
-			}
-			if !parent.IsAvailable {
-				child.PendingVerification = true
+				PendingVerification: true,
 			}
 			if parent.Artifact.IsMarketplace {
 				child.Artifact.IsMarketplace = true
@@ -512,6 +499,15 @@ func collectionMemberRows(parent row, knownRows []row) []row {
 }
 
 func collectionMemberRow(parent row, member ir.CollectionMember, knownRows []row) (row, bool) {
+	var chosen row
+	var chosenLocation string
+	found, ambiguous := false, false
+	registry, ref := strings.TrimSpace(member.Registry), strings.TrimSpace(member.Ref)
+	memberPath, pathPinned := config.NormalizeRegistryPath(member.Path), strings.TrimSpace(member.Path) != ""
+	var parentLocation string
+	if registry == "" && parent.Artifact.CatalogKey == "" {
+		parentLocation = sourceIdentity(parent)
+	}
 	for _, candidate := range knownRows {
 		if parent.Artifact.IsMarketplace {
 			if member.Registry == "" || member.Ref == "" {
@@ -543,18 +539,43 @@ func collectionMemberRow(parent row, member ir.CollectionMember, knownRows []row
 			continue
 		}
 		if candidate.Artifact.Kind != member.Kind || candidate.Artifact.Name != member.Name ||
-			candidate.Artifact.IsMarketplace != parent.Artifact.IsMarketplace {
+			candidate.Artifact.IsMarketplace || candidate.IsMalformed || candidate.Artifact.Unresolved ||
+			candidate.UnavailableReason != "" || candidate.PendingVerification || candidate.IsExcluded ||
+			candidate.ExcludedLocally {
 			continue
 		}
-		registry := firstNonEmpty(member.Registry, parent.RegistryURL)
-		ref := firstNonEmpty(member.Ref, parent.RegistryRef)
-		if candidate.RegistryURL != registry || candidate.RegistryRef != ref ||
-			(candidate.Artifact.CatalogKey != "" && parent.Artifact.CatalogKey != "" && candidate.Artifact.CatalogKey != parent.Artifact.CatalogKey) {
+		if registry != "" {
+			if config.NormalizeGitURL(strings.TrimSpace(candidate.RegistryURL)) != config.NormalizeGitURL(registry) ||
+				(ref != "" && strings.TrimSpace(candidate.RegistryRef) != "" && strings.TrimSpace(candidate.RegistryRef) != ref) ||
+				(pathPinned && config.NormalizeRegistryPath(candidate.RegistryPath) != memberPath) {
+				continue
+			}
+		} else if parent.Artifact.CatalogKey != "" {
+			if candidate.Artifact.CatalogKey != parent.Artifact.CatalogKey {
+				continue
+			}
+		} else if sourceIdentity(candidate) != parentLocation {
 			continue
 		}
-		return candidate, true
+		location := sourceIdentity(candidate)
+		if !found {
+			chosen, chosenLocation, found = candidate, location, true
+			continue
+		}
+		if location != chosenLocation {
+			ambiguous = true
+		}
+		if candidate.Artifact.Required && !chosen.Artifact.Required {
+			chosen = candidate
+		} else if candidate.Artifact.Required == chosen.Artifact.Required &&
+			config.CompareEntryPrecedence(candidate.Artifact.Source, candidate.Artifact.FilePrecedence, chosen.Artifact.Source, chosen.Artifact.FilePrecedence) > 0 {
+			chosen = candidate
+		}
 	}
-	return row{}, false
+	if !found || (ambiguous && (!pathPinned || ref == "")) {
+		return row{}, false
+	}
+	return chosen, true
 }
 
 func firstNonEmpty(values ...string) string {

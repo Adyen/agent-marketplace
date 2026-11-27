@@ -57,13 +57,11 @@ func collectionRowsNamed(rows []row, name string) []row {
 // spec: tui-interactions/installing-a-single-member-from-an-available-collection
 func TestAvailableCollectionMemberUsesItsOwnToggleAction(t *testing.T) {
 	parent := collectionTestRow()
-	parent.RegistryURL = "file:///registries/team.git"
-	parent.RegistryRef = "main"
-	parent.RegistryPath = "skills"
+	member := collectionCatalogMember("code-review", ir.KindSkill, parent.RegistryURL, parent.RegistryRef, parent.RegistryPath, parent.Artifact.CatalogKey, false)
 
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
-	m.rows = []row{parent}
+	m.rows = []row{parent, member}
 	m.filteredRows = m.rows
 	m.rebuildFlatItems()
 	for i, item := range m.flatItems {
