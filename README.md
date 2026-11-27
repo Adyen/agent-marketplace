@@ -8,7 +8,7 @@ one in the native layout of every harness you target: Factory Droid, Claude
 Code, Cursor, Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode.
 
 It ships as a single Go binary for macOS and Linux with no runtime
-dependencies.
+dependencies. Windows support is in progress; no Windows binaries are published yet.
 
 **Documentation: [agent-marketplace.io/docs](https://agent-marketplace.io/docs/)**
 
