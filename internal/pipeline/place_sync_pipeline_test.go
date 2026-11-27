@@ -1,0 +1,911 @@
+package pipeline
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
+// spec: target-profile-place/headless-sync-skips-pending-consent-and-continues
+// spec: target-profile-place/failed-verification-keeps-files-and-retries
+func TestSyncUsesDeployedPlaceTargets(t *testing.T) {
+	ctx := context.Background()
+	gitFixture := newDeployedGitPlaceProfileFixture(t)
+	gitFixture.profile = []byte(strings.Replace(
+		string(gitFixture.profile),
+		"kinds: {mod: {deliver: place, into: [mods/]}}",
+		`host: {executable: place-sync-checker}
+checks: {initial-load: {scope: eager-package-load, argv: [check, "{subject}"], subject: {under: mods, component: package-name}}}
+kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
+		1,
+	))
+	gitFixture.identity.RevisionDigest = profileTestDigest(gitFixture.profile)
+	if err := os.WriteFile(filepath.Join(gitFixture.repo, filepath.FromSlash(gitFixture.root)), gitFixture.profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitSkill := filepath.Join(gitFixture.repo, "profiles", "skills", "machine-control", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(gitSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gitSkill, []byte("---\nname: machine-control\ndescription: git source control\n---\n# Machine Control\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	placeFixtureGit(t, gitFixture.repo, "add", gitFixture.root, "profiles/skills")
+	placeFixtureGit(t, gitFixture.repo, "commit", "-m", "add a valid source root")
+	lockedCommit, err := lockfile.ParseGitOID("sha1:" + gitCommitForTest(t, gitFixture.repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitFixture.lockedFirst.Commit = lockedCommit
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDeployedPlaceGitHome(t, home)
+	configHome := filepath.Join(home, ".config")
+	stateHome := filepath.Join(home, ".local", "state")
+	stateRoot := filepath.Join(stateHome, "agent-marketplace")
+	targetRoot := filepath.Join(configHome, "invented-app")
+	for _, root := range []string{configHome, stateHome, stateRoot, targetRoot} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("INVENTED_APP_HOME", targetRoot)
+	marker := filepath.Join(home, "place-initial-load-checks")
+	sentinel := filepath.Join(home, "allow-place-initial-load")
+	hostDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(hostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	host := "#!/bin/sh\n" +
+		"printf 'check\\n' >> " + shellQuote(marker) + "\n" +
+		"if [ \"$#\" -ne 2 ] || [ \"$1\" != check ] || [ \"$2\" != " + shellQuote(filepath.Join(targetRoot, "mods", "sample")) + " ]; then exit 91; fi\n" +
+		"if [ ! -f \"$2/guide.md\" ]; then exit 92; fi\n" +
+		"if [ -f " + shellQuote(sentinel) + " ]; then exit 0; fi\nexit 17\n"
+	hostPath := filepath.Join(hostDir, "place-sync-checker")
+	if err := os.WriteFile(hostPath, []byte(host), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", hostDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	profileReader := LockedGitPlaceProfileReader(gitFixture.lockedFirst, gitFixture.rawURL)
+	profileBytes, err := profileReader(ctx, gitFixture.identity, resolver.MarketplaceResolveModeRefresh)
+	if err != nil || !bytes.Equal(profileBytes, gitFixture.profile) {
+		t.Fatalf("warm pinned profile cache = %q, %v", profileBytes, err)
+	}
+	gitRoot := deployedPlaceTestGitRoot(t, ctx, gitFixture)
+
+	files := []targetprofile.PackageFile{{
+		SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
+		Mode: 0o644, Bytes: []byte("deployed place package\n"),
+	}}
+	hostBinding, err := targetprofile.BuildBinding(gitFixture.identity, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := hccartifact.NewPlaceArtifact("invented-app/mod", "sample", gitFixture.identity, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, placeholder, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinate := store.ResourceCoordinate{
+		Marketplace: "market-id", Registry: "tools-id", Kind: "invented-app/mod", Name: "sample",
+	}
+	assessment := store.ResourceAssessment{
+		Coordinate: coordinate, ContentDigest: store.RevisionDigest(hostBinding.PackageContentDigest),
+		AnalyzerVersion: "fixture-analyzer", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("d", 64)),
+		Decision:                 store.AssessmentDecisionAllow,
+		InspectionManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("e", 64)),
+		AssessedAt:               time.Unix(1, 0).UTC(),
+		HostPackageIdentity:      &hostBinding,
+	}
+	assessment, err = store.FinalizeResourceAssessment(assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := store.AssessedResourceRevision{
+		ResourceRevision: store.ResourceRevision{
+			Coordinate: coordinate, ContentDigest: store.RevisionDigest(hostBinding.PackageContentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		},
+		Assessment: assessment,
+	}
+	revision.Occurrence = store.ResourceOccurrence{
+		Coordinate: coordinate, ContentDigest: store.RevisionDigest(hostBinding.PackageContentDigest),
+		Commit: strings.Repeat("1", 40), ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("f", 64)),
+	}
+	var wellKnownRequests, revisionRequests, archiveRequests atomic.Int32
+	var peer *httptest.Server
+	revisionPath := "/api/v1/resources/" + url.PathEscape("tools-id") + "/" +
+		url.PathEscape("invented-app/mod") + "/" + url.PathEscape("sample") +
+		"/revisions/" + hostBinding.PackageContentDigest
+	archivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(archiveDigest, "sha256:")
+	peer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.EscapedPath() {
+		case "/.well-known/agent-marketplace.json":
+			wellKnownRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("market-id", peer.URL))
+		case revisionPath:
+			revisionRequests.Add(1)
+			values := req.Header.Values("X-Agent-Marketplace-Features")
+			if len(values) != 1 || values[0] != mpapi.TargetProfilePlaceFeature {
+				t.Errorf("resource feature header = %q", values)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(struct {
+				store.AssessedResourceRevision
+				CurrentAvailability struct {
+					Availability string `json:"availability"`
+				} `json:"current_availability"`
+				Requires []store.ResourceRequirement `json:"requires"`
+			}{
+				AssessedResourceRevision: revision,
+				CurrentAvailability: struct {
+					Availability string `json:"availability"`
+				}{Availability: "available"},
+				Requires: []store.ResourceRequirement{},
+			})
+		case archivePath:
+			archiveRequests.Add(1)
+			_, _ = w.Write(placeholder)
+		default:
+			t.Errorf("unexpected Marketplace request path %q", req.URL.EscapedPath())
+			http.NotFound(w, req)
+		}
+	}))
+	defer peer.Close()
+
+	profileLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: "target-profile", Name: gitFixture.identity.TargetID,
+		Revision: gitFixture.identity.RevisionDigest, ContentDigest: lockfile.Digest(gitFixture.identity.RevisionDigest),
+		ProfileIdentity: &gitFixture.identity, Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}
+	packageLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: "invented-app/mod", Name: "sample",
+		Revision: hostBinding.PackageContentDigest, ContentDigest: lockfile.Digest(hostBinding.PackageContentDigest),
+		ArchiveDigest: lockfile.Digest(archiveDigest), AssessmentDigest: lockfile.Digest(assessment.AssessmentDigest),
+		HostPackageIdentity: &hostBinding, Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}
+	lockData, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser,
+		Registries: []lockfile.GitRegistry{{
+			URL: gitFixture.origin, Ref: gitFixture.ref, Commit: gitFixture.lockedFirst.Commit,
+			Roots: []lockfile.GitRoot{gitRoot},
+		}},
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: peer.URL, InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "tools-id"}},
+			Resources:        []lockfile.MarketplaceResourceLock{profileLock, packageLock},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encode deployed user lock: %v", err)
+	}
+
+	repo := filepath.Join(home, "workspace")
+	userConfigPath := filepath.Join(home, ".agents", "config.yaml")
+	repoConfigPath := filepath.Join(repo, ".agents", "config.yaml")
+	localConfigPath := filepath.Join(repo, ".agents", "config.local.yaml")
+	organizationConfigPath := filepath.Join(home, "organization", "config.yaml")
+	registryRoot := filepath.Join(repo, "registry")
+	skillPath := filepath.Join(registryRoot, "skills", "review", "SKILL.md")
+	for _, dir := range []string{filepath.Dir(userConfigPath), filepath.Dir(repoConfigPath), filepath.Dir(skillPath)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	userConfig := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+targets: [invented-app]
+sources:
+  profile:
+    git: %q
+    ref: %q
+    path: profiles
+    source_harness: factory
+  hosted:
+    marketplace: %q
+resources:
+  profile: [skill/machine-control]
+  hosted:
+    include:
+      - tools/target-profile/invented-app
+      - tools/invented-app%%2Fmod/sample
+`, gitFixture.rawURL, gitFixture.ref, peer.URL)
+	repoConfig := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+targets: [factory]
+sources:
+  local: {directory: %q, source_harness: factory}
+resources:
+  local: [skill/review]
+`, registryRoot)
+	for path, data := range map[string][]byte{
+		userConfigPath: []byte(userConfig),
+		repoConfigPath: []byte(repoConfig),
+		skillPath:      []byte("---\nname: review\ndescription: compiled control\n---\n# Review\n"),
+	} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths, err := config.ResolveConfigLockPaths(userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.CanonicalLock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.CanonicalLock, lockData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	effectiveOpts := config.LoadEffectiveOptions{
+		RepoRoot: repo, LocalConfigDir: repo, OrganizationPath: organizationConfigPath,
+		GlobalPath: userConfigPath, RepoPath: repoConfigPath, LocalPath: localConfigPath,
+	}
+	effective := LoadEffective(ctx, ConfigLoadStrict, effectiveOpts, nil)
+	if len(effective.Errors) != 0 || effective.Merged == nil {
+		t.Fatalf("load deployed config and lock: merged=%#v errors=%v", effective.Merged, effective.Errors)
+	}
+	seedResolver := marketplace.NewResolver()
+	seedResolver.HTTPClient = peer.Client()
+	if _, err := seedResolver.ResolvePlacePackages(
+		ctx, effective.Merged, map[targetprofile.Identity][]byte{gitFixture.identity: gitFixture.profile},
+		resolver.MarketplaceResolveModeRefresh,
+	); err != nil {
+		t.Fatalf("seed verified locked package cache: %v", err)
+	}
+	warmRequestCounts := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}
+	if warmRequestCounts[0] == 0 || warmRequestCounts[1] == 0 || warmRequestCounts[2] == 0 {
+		t.Fatalf("package cache seed requests = %v", warmRequestCounts)
+	}
+	peer.Close()
+
+	workspace, err := NewWorkspace(repo, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := ResolveOptions{
+		Workspace: workspace, Offline: true, NoBackup: true, NoConfigBackup: true,
+		ConfigLoadMode: ConfigLoadStrict, ReadOnlyExactLocks: true, EnablePlaceSync: true,
+		EffectiveOpts: effectiveOpts,
+	}
+	assertPending := func(result SyncResult) {
+		t.Helper()
+		if len(result.Errors) != 0 {
+			t.Fatalf("offline Sync errors = %v", result.Errors)
+		}
+		foundPending := false
+		for _, warning := range result.Warnings {
+			if strings.Contains(warning.Error(), "target.approval.required") &&
+				strings.Contains(warning.Error(), gitFixture.identity.TargetID) {
+				foundPending = true
+			}
+		}
+		if !foundPending {
+			t.Fatalf("offline Sync warnings = %v, want pending approval for %s", result.Warnings, gitFixture.identity.TargetID)
+		}
+		if len(result.PlaceSync.Pending) != 1 || result.PlaceSync.Pending[0] != gitFixture.identity ||
+			len(result.PlaceSync.Committed) != 0 {
+			t.Fatalf("offline place sync = %#v", result.PlaceSync)
+		}
+		if len(result.MachineTargetHarnesses) != 0 {
+			t.Fatalf("compiled machine targets = %v, want none for place-only user targets", result.MachineTargetHarnesses)
+		}
+		assertedPaths := make(map[string]bool, len(result.placeSelectionReads))
+		for _, read := range result.placeSelectionReads {
+			assertedPaths[read.Path] = true
+		}
+		if len(assertedPaths) == 0 || !assertedPaths[userConfigPath] || !assertedPaths[paths.CanonicalLock] {
+			t.Fatalf("place selection read assertions = %#v, want authored config and deployed lock", result.placeSelectionReads)
+		}
+		if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
+			t.Fatalf("pending Sync wrote place target: entries=%v err=%v", entries, err)
+		}
+	}
+	pending := Sync(ctx, opts)
+	assertPending(pending)
+	filteredOpts := opts
+	filteredOpts.MarketplaceSourceFilter = func(config.Source) bool { return true }
+	filteredResult := Resolve(ctx, filteredOpts)
+	if len(filteredResult.placeSelectionReads) != 0 {
+		t.Fatalf("filtered resolution captured place selection reads: %#v", filteredResult.placeSelectionReads)
+	}
+	checkResolved, releaseCheck := ResolveWithExactLockLease(ctx, opts)
+	defer releaseCheck()
+	if len(checkResolved.Errors) != 0 {
+		t.Fatalf("resolve for place check = %v", checkResolved.Errors)
+	}
+	pendingCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	if err != nil || len(pendingCheck.Pending) != 1 || pendingCheck.Pending[0] != gitFixture.identity ||
+		len(pendingCheck.Drift) != 0 {
+		t.Fatalf("place check before approval = %#v, err=%v", pendingCheck, err)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("unapproved sync or read-only check ran initial-load check: %v", err)
+	}
+	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("pending place check changed target root: %v, %v", entries, err)
+	}
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "ownership"))
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "packages"))
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("pending place check issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
+	if !containsResolvedSource(pending.Resolved, config.RepoCommitted, "review") || pending.Report == nil {
+		t.Fatalf("compiled directory source did not materialize independently: resolved=%#v report=%#v", pending.Resolved, pending.Report)
+	}
+	repoSkill, err := os.ReadFile(filepath.Join(repo, ".factory", "skills", "review", "SKILL.md"))
+	if err != nil || !bytes.Contains(repoSkill, []byte("compiled control")) {
+		t.Fatalf("repo compiled skill = %q, %v", repoSkill, err)
+	}
+	for _, artifact := range pending.Resolved {
+		if artifact.Source == config.UserPersonal && len(artifact.Harnesses) > 0 {
+			t.Fatalf("place-only machine configuration compiled %s for %v", artifact.Name, artifact.Harnesses)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "machine-control", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("place-only machine configuration wrote machine skill: %v", err)
+	}
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("offline pending Sync issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
+
+	profile, err := targetprofile.Parse(gitFixture.profile, gitFixture.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform := "linux"
+	if runtime.GOOS == "darwin" {
+		platform = "macos"
+	}
+	approvalEnvironment := targetprofile.ApprovalEnvironment{
+		Platform: platform, Home: home, XDGConfig: configHome, CanonicalStateRoot: filepath.Dir(stateDir),
+	}
+	binding, err := resolvePlaceApprovalBinding(profile, gitFixture.identity, approvalEnvironment)
+	if err != nil {
+		t.Fatalf("resolve actual approval binding: %v", err)
+	}
+	t.Run("grant check revalidates selection without invoking host", func(t *testing.T) {
+		org := filepath.Join(home, "grant.yaml")
+		grantOpts := opts
+		grantOpts.EffectiveOpts.OrganizationPath = org
+		grant := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+target_preapprovals:
+  - os: %q
+    target_id: %q
+    profile_digest: %q
+    canonical_root: %q
+    canonical_state_root: %q
+    executable: {canonical_path: %q, sha256: %q}
+    command_roles: [initial-load]
+`, binding.OS, binding.Profile.TargetID, binding.Profile.RevisionDigest, binding.CanonicalRoot,
+			binding.CanonicalStateRoot, binding.Executable.CanonicalPath, binding.Executable.SHA256)
+		if err := os.WriteFile(org, []byte(grant), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		resolved, release := ResolveWithExactLockLease(ctx, grantOpts)
+		defer release()
+		check, err := CheckDeployedPlace(ctx, resolved)
+		if err != nil || !slices.Equal(check.Drift, []string{binding.Profile.TargetID}) {
+			t.Fatalf("executable grant check = %+v, %v", check, err)
+		}
+		assertPlacePublishPathAbsent(t, marker)
+		if err := os.WriteFile(org, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CheckDeployedPlace(ctx, resolved); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+			t.Fatalf("check with changed grant file = %v; want selection conflict", err)
+		}
+		if err := targetprofile.RequireApproval(binding); !errors.Is(err, targetprofile.ErrApprovalRequired) {
+			t.Fatalf("check changed approval: %v", err)
+		}
+	})
+	if err := targetprofile.RecordApproval(binding); err != nil {
+		t.Fatalf("record local approval receipt: %v", err)
+	}
+	approvedCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	if err != nil || len(approvedCheck.Pending) != 0 || len(approvedCheck.Drift) != 1 ||
+		approvedCheck.Drift[0] != gitFixture.identity.TargetID {
+		t.Fatalf("approved pre-install place check = %#v, err=%v", approvedCheck, err)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("read-only check ran initial-load check: %v", err)
+	}
+	if entries, err := os.ReadDir(targetRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("approved place check changed target root: %v, %v", entries, err)
+	}
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "ownership"))
+	assertPlacePublishPathAbsent(t, filepath.Join(stateRoot, "packages"))
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("approved place check issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
+
+	approved := Sync(ctx, opts)
+	if len(approved.Errors) != 0 {
+		t.Fatalf("approved offline Sync errors = %v", approved.Errors)
+	}
+	committed, ok := approved.PlaceSync.Committed[gitFixture.identity.TargetID]
+	if !ok || len(committed.Changed) == 0 {
+		t.Fatalf("approved offline place sync = %#v", approved.PlaceSync)
+	}
+	if len(approved.Errors) != 0 || len(approved.PlaceSync.VerificationWarnings) != 1 ||
+		!strings.Contains(approved.PlaceSync.VerificationWarnings[0].Error(), "target.place.check-failed") ||
+		!strings.Contains(fmt.Sprint(approved.Warnings), "target.place.check-failed") {
+		t.Fatalf("failed initial-load check was not a propagated warning: warnings=%v result=%#v", approved.Warnings, approved.PlaceSync)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\n" {
+		t.Fatalf("first approved initial-load check = %q, %v", data, err)
+	}
+	targetFile := filepath.Join(targetRoot, "mods", "sample", "guide.md")
+	assertPlacePublishFile(t, targetFile, files[0].Bytes, files[0].Mode)
+	info, err := os.Stat(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := openPlacePublishOwnership(t, placeAdmissionFixture{binding: binding})
+	ownershipPath := owner.StateFile()
+	failedSnapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedProjection, err := owner.PlaceFromSnapshot(failedSnapshot)
+	if err != nil || len(failedProjection.Packages) != 1 ||
+		failedProjection.Packages[0].Verification == nil ||
+		failedProjection.Packages[0].Verification.Outcome != "fail" ||
+		failedProjection.Packages[0].Verification.EvidenceSource != "initial-load" {
+		t.Fatalf("failed initial-load result = %#v, %v", failedProjection, err)
+	}
+	failedState, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, statusWarnings := InspectDeployedPlaceStatus(ctx, approved.ResolveResult)
+	if len(statusWarnings) != 0 {
+		t.Fatalf("status warnings after failed verification = %v", statusWarnings)
+	}
+	if len(rows) != 1 || rows[0].Name != "sample" || rows[0].Verification != "failed" || len(rows[0].Drift) != 0 {
+		t.Fatalf("place status after failed verification = %#v, want one failed, drift-free sample row", rows)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\n" {
+		t.Fatalf("status reran host check after failed verification: %q, %v", data, err)
+	}
+	stateAfterStatus, err := os.ReadFile(ownershipPath)
+	if err != nil || !bytes.Equal(stateAfterStatus, failedState) {
+		t.Fatalf("status changed failed-verification ownership: read=%v", err)
+	}
+	if err := os.WriteFile(sentinel, []byte("retry check\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retried := Sync(ctx, opts)
+	if len(retried.Errors) != 0 || len(retried.PlaceSync.VerificationWarnings) != 0 ||
+		len(retried.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
+		t.Fatalf("same-generation initial-load retry = %#v", retried)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("failed check was not retried after same-generation sync: %q, %v", data, err)
+	}
+	passedSnapshot, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	passedProjection, err := owner.PlaceFromSnapshot(passedSnapshot)
+	if err != nil || len(passedProjection.Packages) != 1 ||
+		passedProjection.Packages[0].Verification == nil ||
+		passedProjection.Packages[0].Verification.Outcome != "pass" ||
+		passedProjection.Packages[0].Verification.EvidenceSource != "initial-load" {
+		t.Fatalf("passed initial-load result = %#v, %v", passedProjection, err)
+	}
+	ownershipBefore, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownershipInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageTreeBefore := snapshotPlaceCheckTree(t, filepath.Join(stateRoot, "packages"))
+	unchanged := Sync(ctx, opts)
+	if len(unchanged.Errors) != 0 || len(unchanged.PlaceSync.VerificationWarnings) != 0 ||
+		len(unchanged.PlaceSync.Committed[gitFixture.identity.TargetID].Changed) != 0 {
+		t.Fatalf("second offline Sync = %#v", unchanged.PlaceSync)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("passing same-generation sync reran initial-load check: %q, %v", data, err)
+	}
+	after, err := os.Stat(targetFile)
+	if err != nil || !info.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("repeat offline Sync changed place file timestamp: before=%v after=%v err=%v", info, after, err)
+	}
+	cleanCheck, err := CheckDeployedPlace(ctx, checkResolved)
+	ownershipAfter, readErr := os.ReadFile(ownershipPath)
+	ownershipAfterInfo, statErr := os.Stat(ownershipPath)
+	targetAfterCheck, targetStatErr := os.Stat(targetFile)
+	packageTreeAfter := snapshotPlaceCheckTree(t, filepath.Join(stateRoot, "packages"))
+	if err != nil || len(cleanCheck.Pending) != 0 || len(cleanCheck.Drift) != 0 || readErr != nil || statErr != nil ||
+		targetStatErr != nil || !bytes.Equal(ownershipBefore, ownershipAfter) ||
+		!ownershipInfo.ModTime().Equal(ownershipAfterInfo.ModTime()) ||
+		!info.ModTime().Equal(targetAfterCheck.ModTime()) || !reflect.DeepEqual(packageTreeBefore, packageTreeAfter) {
+		t.Fatalf("clean place check changed installed state: check=%#v err=%v read=%v stat=%v targetStat=%v", cleanCheck, err, readErr, statErr, targetStatErr)
+	}
+	assertPlacePublishFile(t, targetFile, files[0].Bytes, files[0].Mode)
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("read-only clean check ran initial-load check: %q, %v", data, err)
+	}
+	tampered := []byte("operator edit remains untouched\n")
+	if err := os.WriteFile(targetFile, tampered, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	tamperedInfo, err := os.Stat(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckDeployedPlace(ctx, checkResolved); err == nil {
+		t.Fatal("place check accepted a tampered owned file")
+	}
+	tamperedAfter, err := os.ReadFile(targetFile)
+	tamperedAfterInfo, statErr := os.Stat(targetFile)
+	stateAfterConflict, readErr := os.ReadFile(ownershipPath)
+	if err != nil || statErr != nil || readErr != nil || !bytes.Equal(tamperedAfter, tampered) ||
+		!tamperedInfo.ModTime().Equal(tamperedAfterInfo.ModTime()) || !bytes.Equal(ownershipBefore, stateAfterConflict) {
+		t.Fatalf("conflict check changed tampered installation: read=%v stat=%v state=%v", err, statErr, readErr)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "check\ncheck\n" {
+		t.Fatalf("read-only tampered check ran initial-load check: %q, %v", data, err)
+	}
+	t.Run("place conflict fails sync without invalidating catalog trust", func(t *testing.T) {
+		conflict := Sync(ctx, opts)
+		if len(conflict.Errors) != 1 || !strings.Contains(conflict.Errors[0].Error(), "place upsert refused at "+files[0].DestinationPath) {
+			t.Fatalf("sync errors = %v, want refusal for edited Place destination", conflict.Errors)
+		}
+		if !conflict.CatalogTrusted() || !slices.Equal(conflict.MaterializeErrors, conflict.Errors) {
+			t.Fatalf("catalog trust errors = %v, materialize errors = %v; want only the deployment failure", conflict.CatalogTrustErrors, conflict.MaterializeErrors)
+		}
+	})
+	if err := os.WriteFile(targetFile, files[0].Bytes, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	if got := []int32{wellKnownRequests.Load(), revisionRequests.Load(), archiveRequests.Load()}; got[0] != warmRequestCounts[0] || got[1] != warmRequestCounts[1] || got[2] != warmRequestCounts[2] {
+		t.Fatalf("offline approved Sync issued Marketplace requests: before=%v after=%v", warmRequestCounts, got)
+	}
+
+	if err := os.WriteFile(targetFile, tampered, files[0].Mode); err != nil {
+		t.Fatal(err)
+	}
+	configWithoutPackage := strings.Replace(userConfig, "      - tools/invented-app%2Fmod/sample\n", "", 1)
+	if configWithoutPackage == userConfig {
+		t.Fatal("could not remove scoped package pin from fixture")
+	}
+	if err := os.WriteFile(userConfigPath, []byte(configWithoutPackage), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deployedLock, err := lockfile.Decode(lockData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := deployedLock.Marketplaces[0].Resources[:0]
+	for _, resource := range deployedLock.Marketplaces[0].Resources {
+		if resource.Kind != "invented-app/mod" {
+			resources = append(resources, resource)
+		}
+	}
+	deployedLock.Marketplaces[0].Resources = resources
+	lockWithoutPackage, err := lockfile.Encode(deployedLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.CanonicalLock, lockWithoutPackage, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ownershipBeforeDeselection, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := filepath.Glob(filepath.Join(binding.CanonicalStateRoot, "target-approval-*.json"))
+	if err != nil || len(receipts) == 0 {
+		t.Fatalf("approval receipts = %v, %v", receipts, err)
+	}
+	for _, receipt := range receipts {
+		if err := os.Remove(receipt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := targetprofile.RequireApproval(binding); err == nil {
+		t.Fatal("test failed to remove local approval receipt")
+	}
+	unapprovedDeselection := Sync(ctx, opts)
+	if len(unapprovedDeselection.Errors) != 0 || len(unapprovedDeselection.PlaceSync.Pending) != 1 ||
+		len(unapprovedDeselection.PlaceSync.Ceded) != 0 ||
+		len(unapprovedDeselection.PlaceSync.Committed) != 0 {
+		t.Fatalf("missing approval authorized deselection: errors=%v pending=%v ceded=%v committed=%v",
+			unapprovedDeselection.Errors, unapprovedDeselection.PlaceSync.Pending,
+			unapprovedDeselection.PlaceSync.Ceded, unapprovedDeselection.PlaceSync.Committed)
+	}
+	if got, err := os.ReadFile(targetFile); err != nil || !bytes.Equal(got, tampered) {
+		t.Fatalf("missing approval changed edited place file: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(ownershipPath); err != nil || !bytes.Equal(got, ownershipBeforeDeselection) {
+		t.Fatalf("missing approval changed place ownership: %v", err)
+	}
+	currentEnvironment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err = resolvePlaceApprovalBinding(profile, gitFixture.identity, currentEnvironment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetprofile.RecordApproval(binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := targetprofile.RequireApproval(binding); err != nil {
+		t.Fatalf("fresh profile approval = %v", err)
+	}
+
+	deselectionResolve := Resolve(ctx, opts)
+	if len(deselectionResolve.Errors) != 0 || len(deselectionResolve.placeSelectionReads) == 0 {
+		t.Fatalf("resolve final-pin deselection: %v", deselectionResolve.Errors)
+	}
+	var resolvedPlacePins []string
+	for _, entry := range deselectionResolve.placeConfig.Marketplaces {
+		for _, pin := range entry.Resources {
+			if _, _, scoped := nameutil.SplitPlaceKind(pin.Kind); scoped {
+				resolvedPlacePins = append(resolvedPlacePins, pin.Kind+"/"+pin.Name)
+			}
+		}
+	}
+	if len(resolvedPlacePins) != 0 {
+		t.Fatalf("final-pin fixture retained scoped Marketplace pins: %v", resolvedPlacePins)
+	}
+	pruneReads := deployedPlacePruneReads(deselectionResolve, deselectionResolve.placeConfig)
+	if len(pruneReads) == 0 {
+		t.Fatal("final-pin resolution has no prune authority")
+	}
+	selectedProfiles, profileSelectionErr := deselectionResolve.placeConfig.SelectedMarketplaceProfiles()
+	if profileSelectionErr != nil || len(selectedProfiles) != 1 {
+		t.Fatalf("final-pin profile selection = %v err=%v", selectedProfiles, profileSelectionErr)
+	}
+	deselectionEnvironment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deselectionAdmission, err := preparePlaceAdmission(
+		ctx, deselectionResolve.placeConfig, deselectionResolve.placeTargets, deselectionEnvironment,
+		deselectionResolve.placeProfileReader, marketplace.NewResolver(),
+		resolver.MarketplaceResolveModeCachedNoFetch, true, nil,
+	)
+	if err != nil || len(deselectionAdmission.Approvals) != 1 || len(deselectionAdmission.Packages) != 0 {
+		t.Fatalf("final-pin admission = approvals %v packages %d err=%v",
+			deselectionAdmission.Approvals, len(deselectionAdmission.Packages), err)
+	}
+	deselectionGroups, err := buildPlaceSyncGroups(deselectionAdmission, true)
+	if err != nil || len(deselectionGroups) != 1 {
+		t.Fatalf("final-pin groups=%v err=%v", deselectionGroups, err)
+	}
+	deselectionPlan, err := preparePlaceChanges(
+		ctx, deselectionGroups[0].binding, deselectionGroups[0].profile,
+		deselectionEnvironment, deselectionGroups[0].packages, true, nil,
+	)
+	if err != nil || !deselectionPlan.changed {
+		t.Fatalf("final-pin place plan changed=%v err=%v", deselectionPlan.changed, err)
+	}
+	beforeCheckInfo, err := os.Stat(targetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeCheckStateInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deselectionCheck, err := CheckDeployedPlace(ctx, deselectionResolve)
+	afterCheckFile, fileReadErr := os.ReadFile(targetFile)
+	afterCheckState, stateReadErr := os.ReadFile(ownershipPath)
+	afterCheckFileInfo, fileStatErr := os.Stat(targetFile)
+	afterCheckStateInfo, stateStatErr := os.Stat(ownershipPath)
+	if err != nil || !reflect.DeepEqual(deselectionCheck.Drift, []string{gitFixture.identity.TargetID}) ||
+		fileReadErr != nil || stateReadErr != nil || fileStatErr != nil || stateStatErr != nil ||
+		!bytes.Equal(afterCheckFile, tampered) || !bytes.Equal(afterCheckState, ownershipBeforeDeselection) ||
+		!beforeCheckInfo.ModTime().Equal(afterCheckFileInfo.ModTime()) ||
+		!beforeCheckStateInfo.ModTime().Equal(afterCheckStateInfo.ModTime()) {
+		t.Fatalf("read-only final-pin deselection check changed state: result=%#v err=%v file=%v state=%v",
+			deselectionCheck, err, fileReadErr, stateReadErr)
+	}
+	deselected := Sync(ctx, opts)
+	if len(deselected.Errors) != 0 || !slices.Equal(deselected.PlaceSync.Ceded[gitFixture.identity.TargetID], []string{"mods/sample/guide.md"}) {
+		t.Fatalf("final-pin deselection sync = %#v", deselected.PlaceSync)
+	}
+	if !strings.Contains(fmt.Sprint(deselected.Warnings), "target.place.ceded") {
+		t.Fatalf("ceded path warning was not propagated: %v", deselected.Warnings)
+	}
+	if got, err := os.ReadFile(targetFile); err != nil || !bytes.Equal(got, tampered) {
+		t.Fatalf("deselection pruned edited file: %q, %v", got, err)
+	}
+	afterDeselection, err := owner.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterDeselectionProjection, err := owner.PlaceFromSnapshot(afterDeselection)
+	if err != nil || len(afterDeselectionProjection.Packages) != 0 {
+		t.Fatalf("deselection ownership = %#v, %v", afterDeselectionProjection, err)
+	}
+	stateAfterDeselection, err := os.ReadFile(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateAfterDeselectionInfo, err := os.Stat(ownershipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerAfterDeselection, err := os.ReadFile(marker)
+	if err != nil || string(markerAfterDeselection) != "check\ncheck\n" {
+		t.Fatalf("deselection ran a host check: %q, %v", markerAfterDeselection, err)
+	}
+	repeatedDeselection := Sync(ctx, opts)
+	stateAfterRepeat, readErr := os.ReadFile(ownershipPath)
+	stateAfterRepeatInfo, statErr := os.Stat(ownershipPath)
+	if len(repeatedDeselection.Errors) != 0 || readErr != nil || statErr != nil ||
+		!bytes.Equal(stateAfterDeselection, stateAfterRepeat) ||
+		!stateAfterDeselectionInfo.ModTime().Equal(stateAfterRepeatInfo.ModTime()) {
+		t.Fatalf("repeated deselection rewrote ownership: result=%#v read=%v stat=%v", repeatedDeselection, readErr, statErr)
+	}
+	markerAfterRepeat, err := os.ReadFile(marker)
+	if err != nil || string(markerAfterRepeat) != "check\ncheck\n" {
+		t.Fatalf("repeated deselection ran a host check: %q, %v", markerAfterRepeat, err)
+	}
+}
+
+type placeCheckTreeEntry struct {
+	bytes   []byte
+	mode    os.FileMode
+	modTime time.Time
+}
+
+func snapshotPlaceCheckTree(t *testing.T, root string) map[string]placeCheckTreeEntry {
+	t.Helper()
+	snapshot := make(map[string]placeCheckTreeEntry)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		var data []byte
+		if !entry.IsDir() {
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		snapshot[relative] = placeCheckTreeEntry{bytes: data, mode: info.Mode(), modTime: info.ModTime()}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot place check tree %s: %v", root, err)
+	}
+	return snapshot
+}
+
+func deployedPlaceTestGitRoot(t *testing.T, ctx context.Context, fixture deployedPlaceGitProfileFixture) lockfile.GitRoot {
+	t.Helper()
+	oid, err := cache.ParseGitOID(fixture.lockedFirst.Commit.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, release, err := cache.LeaseExactGitReadOnlyWithRootContext(ctx, fixture.origin, oid, "profiles")
+	if err != nil {
+		t.Fatalf("open warmed exact Git snapshot: %v", err)
+	}
+	defer release()
+	built, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{
+		SnapshotRoot: snapshot, RootPath: "profiles", SourceHarness: "factory",
+		RevisionSchema: lockfile.CurrentRevisionSchema,
+	})
+	if err != nil {
+		t.Fatalf("build exact Git root revision: %v", err)
+	}
+	projection := built.Projection()
+	root := lockfile.GitRoot{
+		Path: "profiles", SourceHarness: projection.SourceHarness, RevisionSchema: projection.RevisionSchema,
+		RevisionDigest: lockfile.Digest(projection.RevisionDigest),
+	}
+	for _, resource := range projection.Resources {
+		support := make(map[string]lockfile.Digest, len(resource.SupportFiles))
+		for name, digest := range resource.SupportFiles {
+			support[name] = lockfile.Digest(digest)
+		}
+		root.Resources = append(root.Resources, lockfile.GitResource{
+			Kind: resource.Kind, Name: resource.Name, ContentDigest: lockfile.Digest(resource.ContentDigest),
+			ArchiveDigest: lockfile.Digest(resource.ArchiveDigest), SupportFiles: support,
+		})
+	}
+	return root
+}
+
+func containsResolvedSource(artifacts []resolver.ResolvedArtifact, source config.Source, name string) bool {
+	for _, artifact := range artifacts {
+		if artifact.Source == source && artifact.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMarketplaceConfigViewsForPlaceSync(t *testing.T) {
+	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{
+		{
+			Source: config.UserPersonal,
+			Resources: []config.MarketplaceResourcePin{
+				{Kind: nameutil.TargetProfileKind, Name: "invented-app"},
+				{Kind: "invented-app/mod", Name: "sample"},
+				{Kind: "skill", Name: "review"},
+			},
+		},
+		{Source: config.UserPersonal},
+		{
+			Source: config.RepoCommitted,
+			Resources: []config.MarketplaceResourcePin{
+				{Kind: nameutil.TargetProfileKind, Name: "other-app"},
+			},
+		},
+	}}
+	filter := func(source config.Source) bool { return source == config.UserPersonal }
+	compiled, place := marketplaceConfigViews(cfg, true, filter)
+	if compiled == cfg || place == cfg || len(compiled.Marketplaces) != 2 || len(place.Marketplaces) != 2 {
+		t.Fatalf("filtered config views = compiled %#v, place %#v", compiled, place)
+	}
+	if len(compiled.Marketplaces[0].Resources) != 1 || compiled.Marketplaces[0].Resources[0].Kind != "skill" ||
+		len(compiled.Marketplaces[1].Resources) != 0 {
+		t.Fatalf("compiled Marketplace entries = %#v", compiled.Marketplaces)
+	}
+	if len(place.Marketplaces[0].Resources) != 3 || len(place.Marketplaces[1].Resources) != 0 {
+		t.Fatalf("place Marketplace entries = %#v", place.Marketplaces)
+	}
+	legacy, _ := marketplaceConfigViews(cfg, false, filter)
+	if len(legacy.Marketplaces) != 2 || len(legacy.Marketplaces[0].Resources) != 3 {
+		t.Fatalf("source-filtered legacy view = %#v", legacy.Marketplaces)
+	}
+}

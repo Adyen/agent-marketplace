@@ -323,13 +323,11 @@ func WithTargetHarnesses(targets []hcc.Target) ResolveOption {
 }
 
 // WithMachineTargetHarnesses sets the target harness set for machine-scope
-// (user and organization) artifacts. When unset, machine-scope artifacts use
-// the WithTargetHarnesses set.
+// (user and organization) artifacts. Nil inherits the WithTargetHarnesses
+// set; an explicitly empty set disables machine-scope harness output.
 func WithMachineTargetHarnesses(targets []hcc.Target) ResolveOption {
 	return func(opts *resolveOptions) {
-		if len(targets) > 0 {
-			opts.machineTargetHarnesses = slices.Clone(targets)
-		}
+		opts.machineTargetHarnesses = slices.Clone(targets)
 	}
 }
 
@@ -1228,6 +1226,7 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 	}
 	occurrencesByName := make(map[resourceSelection][]skillOccurrence, len(artifacts))
 	for i, a := range artifacts {
+		a.Harnesses = targets.narrow(a.Source, a.Harnesses)
 		if hp, ok := heldPins[a.MarketplaceInstanceID+"\x00"+a.MarketplaceRegistryID+"\x00"+mpapi.FromIR(a.Kind)+"\x00"+a.MarketplaceResourceName+"\x00"+a.MarketplaceDigest]; ok {
 			sel := resourceSelection{kind: a.Kind, name: a.Name}
 			held[sel] = append(held[sel], marketplaceHeldCandidate{artifact: a, entry: hp.entry, pin: hp.pin})
@@ -1236,7 +1235,6 @@ func buildMarketplaceOccurrences(ctx context.Context, mpResolver MarketplaceReso
 		if a.IsMarketplace && !a.Required && suppressed[ownedPin{a.Source, a.CatalogKey}] {
 			continue
 		}
-		a.Harnesses = targets.narrow(a.Source, a.Harnesses)
 		sel := resourceSelection{kind: a.Kind, name: a.Name}
 		source := a.MarketplaceURL
 		if a.MarketplaceRegistryID != "" {
@@ -3137,7 +3135,7 @@ type scopeTargets struct {
 
 // forSource returns the target set for output selected by source.
 func (s scopeTargets) forSource(source config.Source) []hcc.Target {
-	if source.IsMachineScope() && len(s.machine) > 0 {
+	if source.IsMachineScope() && s.machine != nil {
 		return s.machine
 	}
 	return s.repository
@@ -3161,31 +3159,31 @@ func UnionTargetHarnesses(repository, machine []hcc.Target) []hcc.Target {
 }
 
 // narrow restricts harnesses resolved against every target to the set of the
-// artifact's install scope, in that set's order. A nil list keeps its
-// unrestricted meaning.
+// artifact's install scope, in that set's order. An explicitly empty scope
+// disables even unrestricted (nil) artifact harnesses.
 func (s scopeTargets) narrow(source config.Source, harnesses []hcc.Target) []hcc.Target {
 	scoped := s.forSource(source)
-	if harnesses == nil || len(scoped) == 0 {
+	if scoped != nil && len(scoped) == 0 {
+		return scoped
+	}
+	if harnesses == nil || scoped == nil {
 		return harnesses
 	}
 	return intersectTargets(scoped, harnesses)
 }
 
 // resolveEntryHarnesses intersects the entry's configured harnesses with the
-// machine-wide target set. When targetSet is nil or empty, it returns the
-// entry's harnesses unchanged (preserving nil-vs-empty semantics). When the
-// entry has no per-entry harnesses and targetSet is non-empty, the target set
+// scope's target set. When targetSet is nil, it returns the entry's
+// harnesses unchanged. When the entry has no per-entry harnesses, the target set
 // is returned. Otherwise the intersection is returned, preserving the entry's
 // harness order.
 func resolveEntryHarnesses(entry config.RegistryEntry, targetSet []hcc.Target) []hcc.Target {
-	if len(targetSet) == 0 {
+	if targetSet == nil {
 		return harnessTargetsFromEntry(entry)
 	}
 	entryTargets := harnessTargetsFromEntry(entry)
 	if entryTargets == nil {
-		out := make([]hcc.Target, len(targetSet))
-		copy(out, targetSet)
-		return out
+		return slices.Clone(targetSet)
 	}
 	return intersectTargets(entryTargets, targetSet)
 }

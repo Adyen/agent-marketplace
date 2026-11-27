@@ -105,10 +105,12 @@ type EffectiveConfig struct {
 	// declares an allowlist (permitting all remote origins), empty when a
 	// layer explicitly sets an empty allowlist (denying all remote origins),
 	// and non-empty when an allowlist is configured.
-	Allowed                       []string
-	AllowedMarketplaces           []string
-	TargetHarnesses               []string
-	TargetHarnessSource           Source
+	Allowed             []string
+	AllowedMarketplaces []string
+	TargetHarnesses     []string
+	TargetHarnessSource Source
+	// PlaceTargets contains the effective machine-scope target-profile IDs.
+	PlaceTargets                  []string
 	ConfigurationValidationFailed bool
 	Errors                        []error
 	Warnings                      []error

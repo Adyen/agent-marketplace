@@ -21,10 +21,12 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -38,6 +40,10 @@ const MaxRegistryHistoryEntries = store.MaxRegistryHistoryEntries
 const maxRegistrySummaries = 1000
 const blobProbeTimeout = 2 * time.Second
 const defaultServerVersion = "dev"
+
+// TargetProfilePlaceFeature is the opt-in feature token for place resource routes.
+const TargetProfilePlaceFeature = "target-profile-place-v1"
+const placeFeaturesHeader = "X-Agent-Marketplace-Features"
 
 type ServerOption func(*Server)
 
@@ -237,6 +243,7 @@ func (s *Server) capabilities() Capabilities {
 			return feature == CatalogProjectionV1Alpha1Feature
 		})
 	}
+	caps.Features = append(caps.Features, TargetProfilePlaceFeature)
 	return caps
 }
 
@@ -745,9 +752,13 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", placeFeaturesHeader)
+	allowPlace := placeRequested(r)
 	q := r.URL.Query()
 	kind := q.Get("kind")
-	if kind != "" && !IsMarketplaceKind(kind) {
+	_, _, scopedKind := nameutil.SplitPlaceKind(kind)
+	validPlaceKind := scopedKind || kind == nameutil.TargetProfileKind
+	if kind != "" && !IsMarketplaceKind(kind) && (!allowPlace || !validPlaceKind) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -787,6 +798,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !allowPlace {
+		revs = slices.DeleteFunc(revs, func(rev store.AssessedResourceRevision) bool {
+			return isPlaceKind(rev.Coordinate.Kind)
+		})
+	}
+
 	registries, err := s.registryIndex(r.Context())
 	if err != nil {
 		slog.Error("registry index failed", "err", logvalue.Safe(err))
@@ -795,7 +812,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, rev := range revs {
-		if err := validatePublicResourceRevision(rev); err != nil {
+		if err := validateResourceRevision(rev, allowPlace); err != nil {
 			slog.Error("search returned invalid resource revision", "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
@@ -1025,9 +1042,14 @@ func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, s
 }
 
 func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/resources/")
-	path = strings.Trim(path, "/")
-	parts := strings.Split(path, "/")
+	parts, err := parseResourceRoutePath(r.URL.EscapedPath())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid resource path")
+		return
+	}
+	if len(parts) == 3 || (len(parts) >= 2 && isPlaceKind(parts[1])) {
+		w.Header().Add("Vary", placeFeaturesHeader)
+	}
 
 	switch len(parts) {
 	case 3:
@@ -1071,8 +1093,57 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func parseResourceRoutePath(escapedPath string) ([]string, error) {
+	const prefix = "/api/v1/resources/"
+	if !strings.HasPrefix(escapedPath, prefix) {
+		return nil, errors.New("resource route prefix is invalid")
+	}
+	path := strings.Trim(strings.TrimPrefix(escapedPath, prefix), "/")
+	rawParts := strings.Split(path, "/")
+	parts := make([]string, len(rawParts))
+	for i, token := range rawParts {
+		if i != 1 && nameutil.ContainsEncodedPathSeparator(token) {
+			return nil, errors.New("resource path contains an encoded separator")
+		}
+		if i == 1 {
+			if kind, ok := nameutil.DecodePlaceKindToken(token); ok {
+				parts[i] = kind
+				continue
+			}
+			if nameutil.ContainsEncodedPathSeparator(token) {
+				return nil, errors.New("resource kind contains a noncanonical separator")
+			}
+		}
+		decoded, err := url.PathUnescape(token)
+		if err != nil || strings.ContainsAny(decoded, "/\\") {
+			return nil, errors.New("resource path contains an unsafe token")
+		}
+		parts[i] = decoded
+	}
+	return parts, nil
+}
+
+func resourceCoordinateAllowed(r *http.Request, kind, name string) bool {
+	if IsMarketplaceKind(kind) {
+		return true
+	}
+	if !placeRequested(r) {
+		return false
+	}
+	if kind == nameutil.TargetProfileKind {
+		return nameutil.IsTargetIdentifier(name)
+	}
+	_, _, scoped := nameutil.SplitPlaceKind(kind)
+	return scoped && nameutil.IsPlacePackageName(name)
+}
+
+func placeRequested(r *http.Request) bool {
+	values := r.Header.Values(placeFeaturesHeader)
+	return len(values) == 1 && values[0] == TargetProfilePlaceFeature
+}
+
 func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1097,7 +1168,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+	if err := validateRequestedResourceRevision(rev, coord, ""); err != nil {
 		slog.Error("resource detail contains invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
@@ -1105,18 +1176,15 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	dto, ok := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())).(resourceRevisionDTO)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "failed to load resource")
-		return
-	}
-	requires, err := s.resourceRequires(r.Context(), rev)
+	dto := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context()))
+	allowPlace := placeRequested(r)
+	requires, err := s.resourceRequires(r.Context(), rev, allowPlace)
 	if err != nil {
 		slog.Error("resource requires failed", "coord", coord, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
-	requiredBy, err := s.resourceRequiredBy(r.Context(), rev.Coordinate)
+	requiredBy, err := s.resourceRequiredBy(r.Context(), rev.Coordinate, allowPlace)
 	if err != nil {
 		slog.Error("resource required_by failed", "coord", coord, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
@@ -1129,7 +1197,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 
 // resourceVisible reports whether coord's own resource detail request would
 // succeed in this request context.
-func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordinate) (bool, error) {
+func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordinate, allowPlace bool) (bool, error) {
 	rev, err := s.meta.GetLatestResourceRevision(ctx, coord)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
@@ -1137,7 +1205,7 @@ func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordi
 	if err != nil {
 		return false, err
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+	if err := validateResourceRevisionMatches(rev, coord, "", allowPlace); err != nil {
 		return false, nil
 	}
 	if s.cfg.Management.Mode == "database" {
@@ -1149,7 +1217,7 @@ func (s *Server) resourceVisible(ctx context.Context, coord store.ResourceCoordi
 
 // resourceRequires echoes the indexed prerequisites of a revision, resolving
 // each against current-head occurrences and visibility. Nil when unindexed.
-func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourceRevision) (*[]ResourceRequirement, error) {
+func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourceRevision, allowPlace bool) (*[]ResourceRequirement, error) {
 	if rev.Requires == "" {
 		return nil, nil
 	}
@@ -1159,8 +1227,11 @@ func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourc
 	}
 	out := make([]ResourceRequirement, 0, len(stored))
 	for _, entry := range stored {
+		if !allowPlace && isPlaceKind(entry.Kind) {
+			continue
+		}
 		dto := ResourceRequirement{Kind: entry.Kind, Name: entry.Name, Registry: entry.Registry, Path: entry.Path}
-		resolved, err := s.resolveRequirement(ctx, rev.Coordinate.Registry, entry)
+		resolved, err := s.resolveRequirement(ctx, rev.Coordinate.Registry, entry, allowPlace)
 		if err != nil {
 			return nil, err
 		}
@@ -1173,7 +1244,7 @@ func (s *Server) resourceRequires(ctx context.Context, rev store.AssessedResourc
 // resolveRequirement resolves one stored prerequisite to a visible
 // current-head target under the registry, occurrence, path, and visibility
 // rules. Hidden and missing targets are indistinguishable.
-func (s *Server) resolveRequirement(ctx context.Context, requirer store.RegistryID, entry store.ResourceRequirement) (*ResourceRelation, error) {
+func (s *Server) resolveRequirement(ctx context.Context, requirer store.RegistryID, entry store.ResourceRequirement, allowPlace bool) (*ResourceRelation, error) {
 	targetRegistry := requirer
 	if entry.Registry != "" {
 		registry, err := s.resolveRegistry(ctx, entry.Registry)
@@ -1196,7 +1267,7 @@ func (s *Server) resolveRequirement(ctx context.Context, requirer store.Registry
 	if !store.SourceRootMatches(roots.Roots, roots.SourcePath, entry.Path) {
 		return nil, nil
 	}
-	visible, err := s.resourceVisible(ctx, coord)
+	visible, err := s.resourceVisible(ctx, coord, allowPlace)
 	if err != nil || !visible {
 		return nil, err
 	}
@@ -1210,7 +1281,7 @@ func (s *Server) resolveRequirement(ctx context.Context, requirer store.Registry
 // resourceRequiredBy lists the visible, in-scope current-head dependents of a
 // resource. It returns nil when a visible in-scope unindexed revision leaves
 // the dependent set unknown.
-func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoordinate) (*[]ResourceRelation, error) {
+func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoordinate, allowPlace bool) (*[]ResourceRelation, error) {
 	candidates, err := s.meta.ListCurrentRequirementCandidates(ctx, s.mpID, coord.Registry)
 	if err != nil {
 		return nil, err
@@ -1222,6 +1293,9 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 	out := make([]ResourceRelation, 0)
 	seen := make(map[ResourceRelation]bool)
 	for _, row := range candidates {
+		if !IsMarketplaceKind(row.Kind) && (!allowPlace || !isPlaceKind(row.Kind)) {
+			continue
+		}
 		if row.Registry == coord.Registry && row.Kind == coord.Kind && row.Name == coord.Name {
 			continue
 		}
@@ -1261,7 +1335,7 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 				continue
 			}
 		}
-		visible, err := s.resourceVisible(ctx, store.ResourceCoordinate{Marketplace: s.mpID, Registry: row.Registry, Kind: row.Kind, Name: row.Name})
+		visible, err := s.resourceVisible(ctx, store.ResourceCoordinate{Marketplace: s.mpID, Registry: row.Registry, Kind: row.Kind, Name: row.Name}, allowPlace)
 		if err != nil {
 			return nil, err
 		}
@@ -1281,7 +1355,7 @@ func (s *Server) resourceRequiredBy(ctx context.Context, coord store.ResourceCoo
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1303,7 +1377,7 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	for i, rev := range revs {
-		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
+		if err := validateRequestedResourceRevision(rev, coord, ""); err != nil {
 			slog.Error("resource revisions contain invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
@@ -1326,7 +1400,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "invalid revision digest")
 		return
 	}
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
@@ -1351,7 +1425,7 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
-	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
+	if err := validateRequestedResourceRevision(rev, coord, digest); err != nil {
 		slog.Error("revision detail contains invalid revision", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
@@ -1359,11 +1433,48 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
+	dto := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context()))
+	if targetID, _, scoped := nameutil.SplitPlaceKind(kind); scoped && placeRequested(r) &&
+		dto.Revocation == nil &&
+		(dto.CurrentAvailability.Availability == AvailabilityAvailable ||
+			dto.CurrentAvailability.Availability == AvailabilityOperatorExposed) {
+		requires, err := exactPlaceResourceRequirements(rev, targetID)
+		if err != nil {
+			slog.Error("exact Place prerequisites invalid", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+			writeError(w, http.StatusInternalServerError, "failed to load revision")
+			return
+		}
+		dto.Requires = requires
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func exactPlaceResourceRequirements(rev store.AssessedResourceRevision, targetID string) (*[]ResourceRequirement, error) {
+	if strings.TrimSpace(rev.Requires) == "" {
+		return nil, nil
+	}
+	var stored []store.ResourceRequirement
+	if err := json.Unmarshal([]byte(rev.Requires), &stored); err != nil {
+		return nil, fmt.Errorf("decode stored prerequisites: %w", err)
+	}
+	if stored == nil {
+		return nil, nil
+	}
+	out := make([]ResourceRequirement, 0, len(stored))
+	for _, entry := range stored {
+		requiredTarget, _, scoped := nameutil.SplitPlaceKind(entry.Kind)
+		if entry.Registry != "" || entry.Path != "" || !scoped || requiredTarget != targetID ||
+			!nameutil.IsPlacePackageName(entry.Name) ||
+			(entry.Kind == rev.Coordinate.Kind && entry.Name == rev.Coordinate.Name) {
+			return nil, fmt.Errorf("stored Place prerequisites are not canonical")
+		}
+		out = append(out, ResourceRequirement{Kind: entry.Kind, Name: entry.Name})
+	}
+	return &out, nil
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
-	_, payload, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
+	_, payload, err := s.getResourceInspection(r, registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -1372,7 +1483,7 @@ func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest, fileDigest string) {
-	manifest, _, err := s.getResourceInspection(r.Context(), registrySlug, kind, name, digest)
+	manifest, _, err := s.getResourceInspection(r, registrySlug, kind, name, digest)
 	if err != nil {
 		s.writeInspectionError(w, err)
 		return
@@ -1388,7 +1499,11 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "inspection content not available")
 		return
 	}
-	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), s.cfg.Policy.Limits.FileBytes)
+	limit := s.cfg.Policy.Limits.FileBytes
+	if kind == nameutil.TargetProfileKind && (limit <= 0 || limit > targetprofile.MaxProfileBytes) {
+		limit = targetprofile.MaxProfileBytes
+	}
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), limit)
 	if err != nil {
 		if errors.Is(err, errPayloadReadLimit) {
 			writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
@@ -1402,7 +1517,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection content")
 		return
 	}
-	if s.cfg.Policy.Limits.FileBytes > 0 && int64(len(data)) > s.cfg.Policy.Limits.FileBytes {
+	if limit > 0 && int64(len(data)) > limit {
 		writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
 		return
 	}
@@ -1411,16 +1526,24 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
 		return
 	}
+	if manifest.ProfileIdentity != nil {
+		if _, err := targetprofile.Parse(data, *manifest.ProfileIdentity); err != nil {
+			slog.Error("target profile inspection content is invalid", "digest", file.ContentDigest, "err", logvalue.Safe(err))
+			writeError(w, http.StatusInternalServerError, "inspection content does not match profile identity")
+			return
+		}
+	}
 	writeImmutable(w, file.MediaType, data)
 }
 
-func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
+func (s *Server) getResourceInspection(r *http.Request, registrySlug, kind, name, digest string) (inspection.Manifest, []byte, error) {
 	if !isCanonicalSHA256Digest(digest) {
 		return inspection.Manifest{}, nil, errInvalidInspectionRevision
 	}
-	if !IsMarketplaceKind(kind) {
+	if !resourceCoordinateAllowed(r, kind, name) {
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
+	ctx := r.Context()
 	src, err := s.resolveRegistry(ctx, registrySlug)
 	if err != nil {
 		return inspection.Manifest{}, nil, err
@@ -1429,6 +1552,20 @@ func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, 
 	rev, err := s.meta.GetResourceRevision(ctx, coord, store.RevisionDigest(digest))
 	if err != nil {
 		return inspection.Manifest{}, nil, err
+	}
+	if kind == nameutil.TargetProfileKind {
+		if err := validateRequestedResourceRevision(rev, coord, digest); err != nil {
+			return inspection.Manifest{}, nil, err
+		}
+		if s.cfg.Management.Mode != "database" {
+			switch s.fileResourceAvailability(rev) {
+			case AvailabilityRevoked:
+				return inspection.Manifest{}, nil, errContentRevoked
+			case AvailabilityAvailable, AvailabilityOperatorExposed:
+			default:
+				return inspection.Manifest{}, nil, errContentBlocked
+			}
+		}
 	}
 	if s.cfg.Management.Mode == "database" {
 		restriction, err := s.managedOwnerRestriction(ctx, []store.AssessedResourceRevision{rev})
@@ -1558,6 +1695,13 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "invalid inspection manifest")
 		return
 	}
+	if manifest.Coordinate.Kind == nameutil.TargetProfileKind {
+		w.Header().Add("Vary", placeFeaturesHeader)
+		if !placeRequested(r) {
+			writeError(w, http.StatusNotFound, "inspection not found")
+			return
+		}
+	}
 	writeImmutable(w, "application/json", data)
 }
 
@@ -1669,7 +1813,8 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	// the payload's manifest type, canonical representation, and identity before
 	// returning it. An arbitrary JSON or archive blob must never become a public
 	// manifest merely because it was stored under a digest-shaped key.
-	if err := validateManifestPayload(data, digest, manifestPayloadLimit(s.cfg)); err != nil {
+	requiresPlace, err := validateManifestPayload(data, digest, manifestPayloadLimit(s.cfg))
+	if err != nil {
 		if errors.Is(err, errManifestUnsupported) {
 			writeError(w, http.StatusUnsupportedMediaType, "manifest media type is not supported")
 			return
@@ -1677,6 +1822,13 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		slog.Error("manifest blob is invalid", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
+	}
+	if requiresPlace {
+		w.Header().Add("Vary", placeFeaturesHeader)
+		if !placeRequested(r) {
+			writeError(w, http.StatusNotFound, "manifest not found")
+			return
+		}
 	}
 	restriction, err := s.manifestRestriction(r.Context(), store.RevisionDigest(digest), data)
 	if err != nil {
@@ -1905,14 +2057,14 @@ func manifestPayloadLimit(cfg config.Config) int64 {
 // form with revision_digest is also accepted. Collection manifests carry their
 // content_digest in the payload. Both forms must be canonical and match the
 // digest in the URL.
-func validateManifestPayload(data []byte, digest string, limit int64) error {
+func validateManifestPayload(data []byte, digest string, limit int64) (bool, error) {
 	if limit > 0 && int64(len(data)) > limit {
-		return fmt.Errorf("manifest payload size %d exceeds limit %d", len(data), limit)
+		return false, fmt.Errorf("manifest payload size %d exceeds limit %d", len(data), limit)
 	}
 
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal(data, &shape); err != nil || shape == nil {
-		return errManifestUnsupported
+		return false, errManifestUnsupported
 	}
 
 	_, registryShape := shape["generator"]
@@ -1925,28 +2077,31 @@ func validateManifestPayload(data []byte, digest string, limit int64) error {
 	if registryShape {
 		manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(data))
 		if err != nil {
-			return fmt.Errorf("decode registry revision manifest: %w", err)
+			return false, fmt.Errorf("decode registry revision manifest: %w", err)
 		}
+		requiresPlace := slices.ContainsFunc(manifest.Resources, func(resource marketplaceartifact.RevisionResource) bool {
+			return isPlaceKind(resource.Kind)
+		})
 		if manifest.RevisionDigest != "" {
 			if manifest.RevisionDigest != digest {
-				return fmt.Errorf("registry revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
+				return false, fmt.Errorf("registry revision manifest digest %q does not match requested %q", manifest.RevisionDigest, digest)
 			}
 			if err := marketplaceartifact.VerifyRegistryRevisionManifest(manifest, payload); err != nil {
-				return fmt.Errorf("verify registry revision manifest: %w", err)
+				return false, fmt.Errorf("verify registry revision manifest: %w", err)
 			}
-			return nil
+			return requiresPlace, nil
 		}
 		canonical, computed, err := marketplaceartifact.CanonicalRegistryRevisionPayload(manifest)
 		if err != nil {
-			return fmt.Errorf("validate registry revision manifest: %w", err)
+			return false, fmt.Errorf("validate registry revision manifest: %w", err)
 		}
 		if !bytes.Equal(canonical, payload) {
-			return errors.New("registry revision manifest is not canonical JSON")
+			return false, errors.New("registry revision manifest is not canonical JSON")
 		}
 		if computed != digest {
-			return fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", computed, digest)
+			return false, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", computed, digest)
 		}
-		return nil
+		return requiresPlace, nil
 	}
 
 	_, collectionShape := shape["name"]
@@ -1960,19 +2115,28 @@ func validateManifestPayload(data []byte, digest string, limit int64) error {
 		_, collectionShape = shape["supported_schema_versions"]
 	}
 	if !collectionShape {
-		return errManifestUnsupported
+		return false, errManifestUnsupported
 	}
 	collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("decode collection manifest: %w", err)
+		return false, fmt.Errorf("decode collection manifest: %w", err)
 	}
 	if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
-		return fmt.Errorf("verify collection manifest: %w", err)
+		return false, fmt.Errorf("verify collection manifest: %w", err)
 	}
 	if collection.ContentDigest != digest {
-		return fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
+		return false, fmt.Errorf("collection manifest digest %q does not match requested %q", collection.ContentDigest, digest)
 	}
-	return nil
+	isPlaceMember := func(member hccartifact.CollectionMemberEntry) bool {
+		return isPlaceKind(member.Kind)
+	}
+	return slices.ContainsFunc(collection.Members, isPlaceMember) ||
+		slices.ContainsFunc(collection.Leaves, isPlaceMember), nil
+}
+
+func isPlaceKind(kind string) bool {
+	_, _, scoped := nameutil.SplitPlaceKind(kind)
+	return scoped || kind == nameutil.TargetProfileKind
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -2182,7 +2346,8 @@ func resourceAvailability(rev store.AssessedResourceRevision, registry store.Reg
 	if rev.Revocation != nil {
 		return AvailabilityRevoked
 	}
-	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "" {
+	if registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection &&
+		rev.Coordinate.Kind != nameutil.TargetProfileKind && rev.ArchiveDigest == "" {
 		slog.Debug("listing resource without a mirrored artifact as blocked",
 			"coordinate", rev.Coordinate,
 			"content_digest", rev.ContentDigest,
@@ -2338,23 +2503,41 @@ func validatePublicRegistryOccurrence(occ store.RegistryOccurrence) error {
 }
 
 func validatePublicResourceRevision(rev store.AssessedResourceRevision) error {
+	return validateResourceRevision(rev, false)
+}
+
+func validateResourceRevision(rev store.AssessedResourceRevision, allowPlace bool) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return errors.New("resource coordinate is incomplete")
 	}
-	if !IsMarketplaceKind(coord.Kind) {
+	_, _, placeKind := nameutil.SplitPlaceKind(coord.Kind)
+	virtualProfile := coord.Kind == nameutil.TargetProfileKind
+	allowedPlace := (placeKind && nameutil.IsPlacePackageName(coord.Name)) ||
+		(virtualProfile && nameutil.IsTargetIdentifier(coord.Name))
+	if !IsMarketplaceKind(coord.Kind) && (!allowPlace || !allowedPlace) {
 		return fmt.Errorf("resource coordinate kind %q is invalid", coord.Kind)
+	}
+	if placeKind && rev.ArchiveDigest == "" {
+		return errors.New("scoped place resource revision must have an archive digest")
 	}
 	if !isCanonicalSHA256Digest(string(rev.ContentDigest)) {
 		return errors.New("resource content digest is not canonical")
 	}
-	if coord.Kind == KindCollection && rev.ArchiveDigest != "" {
-		return errors.New("virtual collection resource revision must not have an archive digest")
+	if (coord.Kind == KindCollection || virtualProfile) && rev.ArchiveDigest != "" {
+		if coord.Kind == KindCollection {
+			return errors.New("virtual collection resource revision must not have an archive digest")
+		}
+		return errors.New("virtual target profile resource revision must not have an archive digest")
 	}
 	if rev.ArchiveDigest != "" && !isCanonicalSHA256Digest(string(rev.ArchiveDigest)) {
 		return errors.New("resource archive digest is not canonical")
 	}
-	if err := validatePublicResourceAssessment(rev.Assessment); err != nil {
+	if placeKind || virtualProfile {
+		if err := rev.Assessment.Validate(); err != nil {
+			return err
+		}
+	} else if err := validatePublicResourceAssessment(rev.Assessment); err != nil {
 		return err
 	}
 	if rev.Assessment.Coordinate != coord || rev.Assessment.ContentDigest != rev.ContentDigest {
@@ -2382,8 +2565,14 @@ func validatePublicResourceAssessment(assessment store.ResourceAssessment) error
 	return nil
 }
 
-func validatePublicResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
-	if err := validatePublicResourceRevision(rev); err != nil {
+func validateRequestedResourceRevision(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string) error {
+	_, _, allowPlace := nameutil.SplitPlaceKind(expected.Kind)
+	allowPlace = allowPlace || expected.Kind == nameutil.TargetProfileKind
+	return validateResourceRevisionMatches(rev, expected, expectedDigest, allowPlace)
+}
+
+func validateResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest string, allowPlace bool) error {
+	if err := validateResourceRevision(rev, allowPlace); err != nil {
 		return err
 	}
 	if rev.Coordinate != expected {

@@ -603,9 +603,48 @@ func TestGarbageCollectWithLocksSeparatesCommitsFromSameSource(t *testing.T) {
 	}
 }
 
+// spec: cache-garbage-collection/repeated-suffix-lock-retains-its-exact-git-cache-identity
+func TestGarbageCollectRetainsRepeatedSuffixLockIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const raw = "https://git.example.com/team/tools.git.git"
+	const canonical = "https://git.example.com/team/tools.git"
+	const shortened = "https://git.example.com/team/tools"
+	lock, err := lockfile.Decode([]byte("apiVersion: " + lockfile.APIVersionV2 + "\nscope: user\nregistries:\n  - url: " + raw + "\n    ref: main\n    commit: sha1:" + strings.Repeat("1", 40) + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lock.Registries[0].URL; got != canonical {
+		t.Fatalf("decoded registry URL = %q, want %q", got, canonical)
+	}
+	oid := lock.Registries[0].Commit
+	reachable := []string{exactGitObjectStorePath(canonical), exactGitSnapshotPath(canonical, oid)}
+	shortenedCandidates := []string{exactGitObjectStorePath(shortened), exactGitSnapshotPath(shortened, oid)}
+	for _, path := range append(reachable, shortenedCandidates...) {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := GarbageCollect(context.Background(), false, staticReachability([]lockfile.Document{lock}))
+	if err != nil {
+		t.Fatalf("GarbageCollect: %v", err)
+	}
+	for _, path := range reachable {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("reachable repeated-suffix cache path %q was removed: %v; removed=%v", path, err, result.Removed)
+		}
+	}
+	for _, path := range shortenedCandidates {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("shortened identity cache path %q was retained: %v; removed=%v", path, err, result.Removed)
+		}
+	}
+}
+
 func TestGarbageCollectReloadsReachabilityUnderExclusiveLease(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	source := "https://git.example.com/catalog.git"
+	source := "https://git.example.com/catalog"
+	wireSource := source + ".git"
 	reachableOID, err := ParseGitOID("sha1:" + strings.Repeat("1", 40))
 	if err != nil {
 		t.Fatal(err)
@@ -625,7 +664,7 @@ func TestGarbageCollectReloadsReachabilityUnderExclusiveLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: source, Ref: "main", Commit: commit}}}
+	doc := lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeUser, Registries: []lockfile.GitRegistry{{URL: wireSource, Ref: "main", Commit: commit}}}
 	entered := make(chan struct{})
 	releaseReader := make(chan struct{})
 	reader := func(ctx context.Context) (GCReachability, error) {

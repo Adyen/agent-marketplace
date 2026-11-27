@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 const (
@@ -482,7 +483,7 @@ func (m CollectionManifest) Validate() error {
 		if !isCollectionKind(mem.Kind) {
 			return fmt.Errorf("members[%d].kind %q is not a valid collection member kind", i, mem.Kind)
 		}
-		if !validCollectionToken(mem.Name) {
+		if !validCollectionMemberName(mem) {
 			return fmt.Errorf("members[%d].name must be a route-safe token", i)
 		}
 		key := mem.Kind + "/" + mem.Name
@@ -541,7 +542,7 @@ func validateCollectionLeaf(leaf CollectionMemberEntry, index int) error {
 	if !isMaterializedCollectionKind(leaf.Kind) {
 		return fmt.Errorf("leaves[%d].kind %q is not a materialized collection member kind", index, leaf.Kind)
 	}
-	if !validCollectionToken(leaf.Name) {
+	if !validCollectionMemberName(leaf) {
 		return fmt.Errorf("leaves[%d].name must be a route-safe token", index)
 	}
 	if !validCollectionToken(leaf.RegistryID) {
@@ -551,6 +552,13 @@ func validateCollectionLeaf(leaf CollectionMemberEntry, index int) error {
 		return fmt.Errorf("leaves[%d].revision must be sha256:<64 lowercase hex>", index)
 	}
 	return nil
+}
+
+func validCollectionMemberName(member CollectionMemberEntry) bool {
+	if _, _, scoped := nameutil.SplitPlaceKind(member.Kind); scoped {
+		return nameutil.IsPlacePackageName(member.Name)
+	}
+	return validCollectionToken(member.Name)
 }
 
 func validCollectionDigest(value string) bool {
@@ -566,15 +574,14 @@ func validCollectionDigest(value string) bool {
 }
 
 func isMaterializedCollectionKind(kind string) bool {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return true
+	}
 	return kind == "skill" || kind == "command" || kind == "subagent" || kind == "hook" || kind == "mcpserver"
 }
 
 func isCollectionKind(kind string) bool {
-	switch kind {
-	case "skill", "command", "subagent", "hook", "mcpserver", "collection":
-		return true
-	}
-	return false
+	return kind == "collection" || isMaterializedCollectionKind(kind)
 }
 
 // CollectionFromIR builds a CollectionManifest skeleton from an IR Collection.

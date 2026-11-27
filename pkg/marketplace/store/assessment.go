@@ -2,10 +2,14 @@ package store
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
+
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // Validate returns an error if d is not a supported assessment decision.
@@ -35,6 +39,10 @@ func FinalizeResourceAssessment(assessment ResourceAssessment) (ResourceAssessme
 			location := *assessment.Findings[i].Location
 			assessment.Findings[i].Location = &location
 		}
+	}
+	if assessment.HostPackageIdentity != nil {
+		identity := *assessment.HostPackageIdentity
+		assessment.HostPackageIdentity = &identity
 	}
 	digest, err := resourceAssessmentDigest(assessment)
 	if err != nil {
@@ -82,13 +90,14 @@ func checkResourceAssessmentDigest(provided, computed AssessmentDigest) error {
 }
 
 type resourceAssessmentIdentity struct {
-	Coordinate               ResourceCoordinate `json:"coordinate"`
-	ContentDigest            RevisionDigest     `json:"content_digest"`
-	AnalyzerVersion          string             `json:"analyzer_version"`
-	PolicyDigest             PolicyDigest       `json:"policy_digest"`
-	Decision                 AssessmentDecision `json:"decision"`
-	Findings                 []Finding          `json:"findings"`
-	InspectionManifestDigest RevisionDigest     `json:"inspection_manifest_digest"`
+	Coordinate               ResourceCoordinate     `json:"coordinate"`
+	ContentDigest            RevisionDigest         `json:"content_digest"`
+	AnalyzerVersion          string                 `json:"analyzer_version"`
+	PolicyDigest             PolicyDigest           `json:"policy_digest"`
+	Decision                 AssessmentDecision     `json:"decision"`
+	Findings                 []Finding              `json:"findings"`
+	InspectionManifestDigest RevisionDigest         `json:"inspection_manifest_digest"`
+	HostPackageIdentity      *targetprofile.Binding `json:"host_package_identity,omitempty"`
 }
 
 func resourceAssessmentDigest(assessment ResourceAssessment) (AssessmentDigest, error) {
@@ -104,6 +113,7 @@ func resourceAssessmentDigest(assessment ResourceAssessment) (AssessmentDigest, 
 		Decision:                 assessment.Decision,
 		Findings:                 findings,
 		InspectionManifestDigest: assessment.InspectionManifestDigest,
+		HostPackageIdentity:      assessment.HostPackageIdentity,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal canonical resource assessment: %w", err)
@@ -127,8 +137,27 @@ func validateResourceAssessmentFields(assessment ResourceAssessment) error {
 			return fmt.Errorf("resource coordinate %s is required", part.label)
 		}
 	}
-	if !IsMarketplaceResourceKind(assessment.Coordinate.Kind) {
-		return fmt.Errorf("unsupported resource kind %q", assessment.Coordinate.Kind)
+	_, _, scoped := nameutil.SplitPlaceKind(assessment.Coordinate.Kind)
+	if scoped {
+		if !nameutil.IsPlacePackageName(assessment.Coordinate.Name) {
+			return fmt.Errorf("invalid place package name %q", assessment.Coordinate.Name)
+		}
+		if assessment.HostPackageIdentity == nil {
+			return fmt.Errorf("host package identity is required for scoped resource kind %q", assessment.Coordinate.Kind)
+		}
+		if err := assessment.HostPackageIdentity.ValidateFor(assessment.Coordinate.Kind, string(assessment.ContentDigest)); err != nil {
+			return fmt.Errorf("invalid host package identity: %w", err)
+		}
+	} else {
+		if assessment.HostPackageIdentity != nil {
+			return fmt.Errorf("host package identity is only valid for scoped resource kinds")
+		}
+		if assessment.Coordinate.Kind == nameutil.TargetProfileKind && !nameutil.IsTargetIdentifier(assessment.Coordinate.Name) {
+			return fmt.Errorf("invalid target profile name %q", assessment.Coordinate.Name)
+		}
+		if !IsMarketplaceResourceKind(assessment.Coordinate.Kind) && assessment.Coordinate.Kind != nameutil.TargetProfileKind {
+			return fmt.Errorf("unsupported resource kind %q", assessment.Coordinate.Kind)
+		}
 	}
 	if err := validateSHA256Digest("content digest", string(assessment.ContentDigest)); err != nil {
 		return err
@@ -173,4 +202,20 @@ func validateSHA256Digest(label, digest string) error {
 		}
 	}
 	return nil
+}
+
+func RestoreAssessmentBinding(a *ResourceAssessment, encoded sql.NullString) error {
+	_, _, scoped := nameutil.SplitPlaceKind(a.Coordinate.Kind)
+	if !scoped && !encoded.Valid {
+		return nil
+	}
+	if encoded.Valid {
+		if err := json.Unmarshal([]byte(encoded.String), &a.HostPackageIdentity); err != nil {
+			return fmt.Errorf("decode assessment host package identity: %w", err)
+		}
+	}
+	if !encoded.Valid || a.HostPackageIdentity == nil {
+		return fmt.Errorf("missing assessment host package identity")
+	}
+	return a.Validate()
 }

@@ -633,3 +633,93 @@ func TestPublishResourceRevision(t *testing.T) {
 		t.Fatalf("blob content = %q, want %q", got, archive)
 	}
 }
+
+func TestPublishTargetProfileRequiresAssessedRegistryRevision(t *testing.T) {
+	type fixture struct {
+		meta        *sqlite.Store
+		blobs       *fsblob.Store
+		revision    store.ResourceRevision
+		publication store.RegistryRevisionPublication
+	}
+	newFixture := func(t *testing.T) fixture {
+		t.Helper()
+		ctx := context.Background()
+		meta, blobs := openAtomicStores(t)
+
+		marketplace := store.Marketplace{
+			ID:           store.MarketplaceID("mp-target-profile"),
+			Name:         "Target Profile Marketplace",
+			CanonicalURL: "https://target-profile.test",
+		}
+		if err := meta.PutMarketplace(ctx, marketplace); err != nil {
+			t.Fatalf("PutMarketplace: %v", err)
+		}
+		registry := store.Registry{
+			ID:          store.RegistryID("src-target-profile"),
+			Slug:        "target-profile-registry",
+			Ref:         "main",
+			Acquisition: store.AcquisitionIndexOnly,
+			Listed:      true,
+		}
+		if err := meta.PutRegistry(ctx, registry); err != nil {
+			t.Fatalf("PutRegistry: %v", err)
+		}
+
+		manifest := []byte(`{"schema_version":"v1","generator":"test"}`)
+		manifestDigest := store.RevisionDigest(sha256Digest(manifest))
+		content := []byte("target_profile: invented-app\n")
+		revision := store.ResourceRevision{
+			Coordinate: store.ResourceCoordinate{
+				Marketplace: marketplace.ID,
+				Registry:    registry.ID,
+				Kind:        "target-profile",
+				Name:        "invented-app",
+			},
+			ContentDigest: store.RevisionDigest(sha256Digest(content)),
+		}
+		occurrence := store.RegistryOccurrence{
+			RegistryID:                     registry.ID,
+			Ref:                            "main",
+			Commit:                         "target-profile-commit",
+			RegistryRevisionManifestDigest: manifestDigest,
+			Acquisition:                    store.AcquisitionIndexOnly,
+			OccurredAt:                     time.Unix(1, 0).UTC(),
+		}
+		return fixture{
+			meta:     meta,
+			blobs:    blobs,
+			revision: revision,
+			publication: store.RegistryRevisionPublication{
+				Occurrence:          occurrence,
+				Resources:           []store.ResourceRevision{revision},
+				ResourceOccurrences: []store.ResourceOccurrence{{Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest, Commit: occurrence.Commit, ManifestDigest: manifestDigest}},
+				ManifestPayload:     manifest,
+			},
+		}
+	}
+
+	t.Run("single resource publication refuses", func(t *testing.T) {
+		f := newFixture(t)
+		err := store.PublishResourceRevision(context.Background(), f.meta, f.blobs, store.ResourceRevisionPublication{Revision: f.revision})
+		if err == nil || !strings.Contains(err.Error(), "virtual target profiles require an assessed registry publication") {
+			t.Fatalf("PublishResourceRevision error = %v, want assessed registry publication diagnostic", err)
+		}
+		if _, err := f.meta.GetResourceRevision(context.Background(), f.revision.Coordinate, f.revision.ContentDigest); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("resource revision after refusal error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("unassessed registry publication refuses", func(t *testing.T) {
+		f := newFixture(t)
+		err := store.PublishRegistryRevision(context.Background(), f.meta, f.blobs, f.publication)
+		if err == nil || !strings.Contains(err.Error(), "requires a matching assessment") {
+			t.Fatalf("PublishRegistryRevision error = %v, want matching assessment diagnostic", err)
+		}
+		if _, err := f.meta.GetResourceRevision(context.Background(), f.revision.Coordinate, f.revision.ContentDigest); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("resource revision after refusal error = %v, want ErrNotFound", err)
+		}
+		if _, err := f.meta.LatestRegistryOccurrence(context.Background(), f.publication.Occurrence.RegistryID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("registry head after refusal error = %v, want ErrNotFound", err)
+		}
+	})
+}

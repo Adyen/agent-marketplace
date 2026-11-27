@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/rootkey"
 )
 
 const (
@@ -20,10 +22,6 @@ const (
 
 	stateFileName   = "state.json"
 	journalFileName = "journal.json"
-
-	// keyDomain domain-separates the root-key hash so a digest computed here can
-	// never be confused with any other digest in the product.
-	keyDomain = "agent-marketplace/ownership/root/v1"
 )
 
 // StateRoot returns $XDG_STATE_HOME/agent-marketplace, defaulting to
@@ -74,37 +72,11 @@ func CanonicalRoot(targetRoot string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ownership: absolute path for %q: %w", targetRoot, err)
 	}
-	resolved, err := resolveExistingPrefix(abs)
+	resolved, err := fsboundary.ResolveExistingPrefix(abs)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("ownership: canonicalize %q: %w", abs, err)
 	}
 	return resolved, nil
-}
-
-// resolveExistingPrefix resolves symlinks in the longest existing ancestor of
-// abs and re-appends the remaining components.
-func resolveExistingPrefix(abs string) (string, error) {
-	remainder := []string{}
-	current := abs
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			for i := len(remainder) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, remainder[i])
-			}
-			return filepath.Clean(resolved), nil
-		} else if !os.IsNotExist(err) {
-			// A permission error or a symlink loop must not silently downgrade to
-			// an unresolved path: two different roots could then share a key.
-			return "", fmt.Errorf("ownership: canonicalize %q: %w", abs, err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			// Reached the filesystem root without finding anything that exists.
-			return filepath.Clean(abs), nil
-		}
-		remainder = append(remainder, filepath.Base(current))
-		current = parent
-	}
 }
 
 // RootKey derives the state key for a canonical root.
@@ -125,13 +97,7 @@ func resolveExistingPrefix(abs string) (string, error) {
 // from the requested one (ownership.state-root-mismatch). A key collision
 // therefore fails closed instead of aliasing two roots' ownership.
 func RootKey(canonicalRoot string) string {
-	h := sha256.New()
-	h.Write([]byte(keyDomain))
-	h.Write([]byte{0})
-	h.Write([]byte(strconv.Itoa(len(canonicalRoot))))
-	h.Write([]byte{0})
-	h.Write([]byte(canonicalRoot))
-	return hex.EncodeToString(h.Sum(nil))
+	return rootkey.ForCanonicalRoot(canonicalRoot)
 }
 
 // Digest returns the content digest used everywhere in this package. It is

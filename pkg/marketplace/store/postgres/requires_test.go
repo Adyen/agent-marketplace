@@ -387,10 +387,11 @@ func TestRequiresMigrationLeavesExistingRowsUnindexed(t *testing.T) {
 		t.Fatalf("requires is_nullable = %q, want YES", nullable)
 	}
 
+	// Roll back only the requires migration for this fixture.
 	if _, err := db.ExecContext(ctx, `
 SET search_path TO `+quoted+`;
 ALTER TABLE resource_revisions DROP COLUMN requires;
-DELETE FROM marketplace_metadata_v2_schema_migrations WHERE version = (SELECT max(version) FROM marketplace_metadata_v2_schema_migrations);
+DELETE FROM marketplace_metadata_v2_schema_migrations WHERE version = 10;
 INSERT INTO resource_revisions (marketplace_id, registry_id, kind, name, content_digest, description)
 VALUES ('mp', 'reg', 'skill', 'legacy', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '');
 `); err != nil {

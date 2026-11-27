@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -76,6 +77,156 @@ resources:
 		t.Fatalf("update retained old commit %q", first.Registries[0].Commit)
 	}
 	assertMaterializedSkillContains(t, repoRoot, "review", "Review v2")
+}
+
+// spec: acquisition-lock-codec/targeted-upgrade-retains-repeated-and-ordinary-sources
+func TestSyncRepeatedGitSuffixLockIdentitySurvivesUpgrade(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+
+	repeatedOrigin, repeatedWorking := createBareRepoWithWorkingClone(t, "tools.git.git")
+	shortened := strings.TrimSuffix(repeatedOrigin, ".git")
+	if _, err := os.Stat(shortened); err == nil {
+		t.Fatalf("shortened repository path unexpectedly exists beside %q", repeatedOrigin)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat shortened repository path %q: %v", shortened, err)
+	}
+	ordinaryOrigin, ordinaryWorking := createBareRepoWithWorkingClone(t, "ordinary.git")
+	writeSkill(t, repeatedWorking, "review", "Repeated v1", nil)
+	writeSkill(t, ordinaryWorking, "ordinary", "Ordinary v1", nil)
+	commitAndPushAll(t, repeatedWorking, "repeated v1")
+	commitAndPushAll(t, ordinaryWorking, "ordinary v1")
+
+	repeatedURL := "file://" + filepath.ToSlash(repeatedOrigin)
+	ordinaryURL := "file://" + filepath.ToSlash(ordinaryOrigin)
+	repeatedIdentity, err := lockfile.CanonicalGitConfigURL(repeatedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryIdentity, err := lockfile.CanonicalGitConfigURL(ordinaryURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatedIdentity == ordinaryIdentity {
+		t.Fatalf("repeated and ordinary source identities collapsed to %q", repeatedIdentity)
+	}
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  repeated: {git: `+repeatedURL+`, ref: main}
+  ordinary: {git: `+ordinaryURL+`, ref: main}
+resources:
+  repeated: [skill/review]
+  ordinary: [skill/ordinary]
+`)
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	initialBytes, initialWire := readLifecycleLock(t, lockPath)
+	if initialWire.APIVersion != "agent-marketplace-lock/v2" || len(initialWire.Registries) != 2 {
+		t.Fatalf("unexpected initial lock: %+v\n%s", initialWire, initialBytes)
+	}
+	if !strings.Contains(string(initialBytes), repeatedURL) {
+		t.Fatalf("initial lock lost repeated-suffix wire URL %q:\n%s", repeatedURL, initialBytes)
+	}
+	initial := readLockDocument(t, lockPath)
+	findRegistry := func(doc lockfile.Document, url string) (lockfile.GitRegistry, bool) {
+		t.Helper()
+		for _, registry := range doc.Registries {
+			if registry.URL == url {
+				return registry, true
+			}
+		}
+		return lockfile.GitRegistry{}, false
+	}
+	repeated, ok := findRegistry(initial, repeatedIdentity)
+	if !ok || len(repeated.Roots) == 0 {
+		t.Fatalf("initial lock lacks repeated-suffix identity and manifest %q: %+v", repeatedIdentity, initial.Registries)
+	}
+	ordinary, ok := findRegistry(initial, ordinaryIdentity)
+	if !ok || len(ordinary.Roots) == 0 {
+		t.Fatalf("initial lock lacks ordinary identity and manifest %q: %+v", ordinaryIdentity, initial.Registries)
+	}
+	initialRepeatedCommit := repeated.Commit
+	initialOrdinaryCommit := ordinary.Commit
+
+	assertLockReadsStable := func(stage string, before []byte) {
+		t.Helper()
+		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
+			if output, err := executeCommand(args...); err != nil {
+				t.Fatalf("%s %v: %v\n%s", stage, args, err, output)
+			}
+			after, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("%s %v rewrote the lock:\nbefore:\n%s\nafter:\n%s", stage, args, before, after)
+			}
+		}
+	}
+	assertLockReadsStable("initial", initialBytes)
+	assertMaterializedSkillContains(t, repoRoot, "review", "Repeated v1")
+	assertMaterializedSkillContains(t, repoRoot, "ordinary", "Ordinary v1")
+
+	writeSkill(t, repeatedWorking, "review", "Repeated v2", nil)
+	commitAndPushAll(t, repeatedWorking, "repeated v2")
+	writeSkill(t, ordinaryWorking, "ordinary", "Ordinary v2", nil)
+	commitAndPushAll(t, ordinaryWorking, "ordinary v2")
+	if output, err := executeCommand("lock", "--upgrade", "--scope", "repo", "--registry", repeatedURL); err != nil {
+		t.Fatalf("targeted repeated-suffix lock upgrade: %v\n%s", err, output)
+	}
+
+	upgradedBytes, upgradedWire := readLifecycleLock(t, lockPath)
+	if upgradedWire.APIVersion != "agent-marketplace-lock/v2" || len(upgradedWire.Registries) != 2 {
+		t.Fatalf("unexpected upgraded lock: %+v\n%s", upgradedWire, upgradedBytes)
+	}
+	if !strings.Contains(string(upgradedBytes), repeatedURL) {
+		t.Fatalf("upgraded lock lost repeated-suffix wire URL %q:\n%s", repeatedURL, upgradedBytes)
+	}
+	upgraded := readLockDocument(t, lockPath)
+	repeated, ok = findRegistry(upgraded, repeatedIdentity)
+	if !ok || repeated.Commit == initialRepeatedCommit || len(repeated.Roots) == 0 {
+		t.Fatalf("targeted upgrade did not advance repeated source %q: %+v", repeatedIdentity, upgraded.Registries)
+	}
+	ordinary, ok = findRegistry(upgraded, ordinaryIdentity)
+	if !ok || ordinary.Commit != initialOrdinaryCommit {
+		t.Fatalf("targeted upgrade changed ordinary source %q: %+v", ordinaryIdentity, upgraded.Registries)
+	}
+
+	assertLockReadsStable("upgraded", upgradedBytes)
+	assertMaterializedSkillContains(t, repoRoot, "review", "Repeated v2")
+	assertMaterializedSkillContains(t, repoRoot, "ordinary", "Ordinary v1")
+}
+
+// spec: acquisition-lock-codec/missing-configured-fetch-mapping-retains-the-repeated-suffix-origin
+func TestNewFetchURLResolverPreservesRepeatedSuffixFallback(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	const raw = "https://git.example/team/tools.git.git"
+	doc, err := lockfile.Decode([]byte("apiVersion: " + lockfile.APIVersionV2 + "\nscope: repo\nregistries:\n  - url: " + raw + "\n    ref: main\n    commit: sha1:0123456789abcdef0123456789abcdef01234567\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolveFetchURL, err := newFetchURLResolver(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveFetchURL(doc.Registries[0]); got != raw {
+		t.Fatalf("missing-mapping fetch URL = %q, want preserved origin %q", got, raw)
+	}
 }
 
 func TestSyncRootRemovalProjectsOldCommit(t *testing.T) {

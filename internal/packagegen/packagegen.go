@@ -140,22 +140,62 @@ func PublishUnderPackagesLock(input Input) (Generation, error) {
 }
 
 func publishLocked(input Input, generation Generation, files []ir.PluginFile, packagesDir string) (result Generation, retErr error) {
-	if existing, err := os.Stat(generation.Path); err == nil {
-		if !existing.IsDir() {
-			return Generation{}, fmt.Errorf("packagegen: generation %q is not a directory", generation.Key)
+	paths := make([]string, len(files))
+	for i := range files {
+		paths[i] = files[i].Path
+	}
+	var sourceRoot *os.Root
+	defer func() {
+		if sourceRoot != nil {
+			retErr = errors.Join(retErr, sourceRoot.Close())
 		}
-		if err := verifyGeneration(generation.Path, input.PackageRoot, files); err != nil {
-			return Generation{}, err
+	}()
+	fresh, err := publishGeneration(generation, packagesDir, paths, func(stage string, index int) error {
+		if sourceRoot == nil {
+			var err error
+			sourceRoot, err = os.OpenRoot(input.PackageRoot)
+			if err != nil {
+				return err
+			}
 		}
+		return copyFile(sourceRoot.FS(), stage, files[index])
+	}, func(path string) error {
+		return verifyGeneration(path, input.PackageRoot, files)
+	}, syncDirectory)
+	if err != nil {
+		return Generation{}, err
+	}
+	if !fresh {
 		slog.Debug("plugin package generation reused", "generation_key", generation.Key, "target", input.Target)
 		return generation, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	}
+	if err := os.MkdirAll(generation.DataPath, 0o700); err != nil {
 		return Generation{}, err
+	}
+	if err := requireDirectory(generation.DataPath); err != nil {
+		return Generation{}, err
+	}
+	slog.Info("plugin package generation published", "generation_key", generation.Key, "target", input.Target, "files", len(files))
+	return generation, nil
+}
+
+func publishGeneration(generation Generation, packagesDir string, paths []string, writeFile func(string, int) error, verifyExisting, syncParent func(string) error) (bool, error) {
+	if existing, err := os.Stat(generation.Path); err == nil {
+		if !existing.IsDir() {
+			return false, fmt.Errorf("packagegen: generation %q is not a directory", generation.Key)
+		}
+		if err := verifyExisting(generation.Path); err != nil {
+			return false, err
+		}
+		// A prior rename may have succeeded without its parent sync succeeding.
+		return false, syncParent(packagesDir)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
 	}
 
 	stage, err := os.MkdirTemp(packagesDir, ".packagegen-")
 	if err != nil {
-		return Generation{}, err
+		return false, err
 	}
 	published := false
 	defer func() {
@@ -163,23 +203,15 @@ func publishLocked(input Input, generation Generation, files []ir.PluginFile, pa
 			_ = os.RemoveAll(stage)
 		}
 	}()
-	root, err := os.OpenRoot(input.PackageRoot)
-	if err != nil {
-		return Generation{}, err
-	}
-	defer func() {
-		retErr = errors.Join(retErr, root.Close())
-	}()
-	source := root.FS()
 	directories := map[string]bool{"": true}
-	for _, file := range files {
-		if !cleanPackagePath(file.Path) {
-			return Generation{}, fmt.Errorf("packagegen: unsafe package path %q", file.Path)
+	for index, relativePath := range paths {
+		if !cleanPackagePath(relativePath) {
+			return false, fmt.Errorf("packagegen: unsafe package path %q", relativePath)
 		}
-		if err := copyFile(source, stage, file); err != nil {
-			return Generation{}, err
+		if err := writeFile(stage, index); err != nil {
+			return false, err
 		}
-		parent := path.Dir(file.Path)
+		parent := path.Dir(relativePath)
 		for parent != "." && parent != "" {
 			directories[filepath.FromSlash(parent)] = true
 			parent = path.Dir(parent)
@@ -198,29 +230,22 @@ func publishLocked(input Input, generation Generation, files []ir.PluginFile, pa
 			path = filepath.Join(stage, dir)
 		}
 		if err := syncDirectory(path); err != nil {
-			return Generation{}, err
+			return false, err
 		}
 	}
 	if err := os.Rename(stage, generation.Path); err != nil {
 		if info, statErr := os.Stat(generation.Path); statErr == nil && info.IsDir() {
-			if verifyErr := verifyGeneration(generation.Path, input.PackageRoot, files); verifyErr == nil {
-				return generation, nil
+			if verifyErr := verifyExisting(generation.Path); verifyErr == nil {
+				return false, syncParent(packagesDir)
 			}
 		}
-		return Generation{}, err
+		return false, err
 	}
 	published = true
-	if err := syncDirectory(packagesDir); err != nil {
-		return Generation{}, err
+	if err := syncParent(packagesDir); err != nil {
+		return false, err
 	}
-	if err := os.MkdirAll(generation.DataPath, 0o700); err != nil {
-		return Generation{}, err
-	}
-	if err := requireDirectory(generation.DataPath); err != nil {
-		return Generation{}, err
-	}
-	slog.Info("plugin package generation published", "generation_key", generation.Key, "target", input.Target, "files", len(files))
-	return generation, nil
+	return true, nil
 }
 
 func Check(input Input) (Generation, error) {
@@ -292,7 +317,7 @@ func writeIdentity(dst io.Writer, value string) {
 	_, _ = io.WriteString(dst, value)
 }
 
-func copyFile(source fs.FS, stage string, file ir.PluginFile) (retErr error) {
+func copyFile(source fs.FS, stage string, file ir.PluginFile) error {
 	data, sourceMode, code := hcc.ReadContainedSupportFile(source, file.Path, plugindecode.MaxPackageFileBytes)
 	if code != "" {
 		return fmt.Errorf("packagegen: %s: package path %q is unsafe", code, file.Path)
@@ -301,13 +326,20 @@ func copyFile(source fs.FS, stage string, file ir.PluginFile) (retErr error) {
 	if hex.EncodeToString(sum[:]) != file.Digest || sourceMode&0o111 != 0 != file.Executable {
 		return fmt.Errorf("packagegen: source inventory changed for %q", file.Path)
 	}
-	dst := filepath.Join(stage, filepath.FromSlash(file.Path))
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
 	mode := fs.FileMode(0o644)
 	if file.Executable {
 		mode = 0o755
+	}
+	return writeGenerationFile(stage, file.Path, data, mode)
+}
+
+func writeGenerationFile(stage, relativePath string, data []byte, mode fs.FileMode) error {
+	if !cleanPackagePath(relativePath) {
+		return fmt.Errorf("packagegen: unsafe package path %q", relativePath)
+	}
+	dst := filepath.Join(stage, filepath.FromSlash(relativePath))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
 	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {

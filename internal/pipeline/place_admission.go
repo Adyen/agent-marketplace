@@ -1,0 +1,255 @@
+package pipeline
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
+)
+
+// PlaceProfileReader returns exact profile bytes for the selected identity.
+// Implementations must not fetch or fall back to another source in
+// CachedNoFetch mode.
+type PlaceProfileReader func(ctx context.Context, selected targetprofile.Identity, mode resolver.MarketplaceResolveMode) ([]byte, error)
+
+// PlaceAdmission contains approved bindings, profiles awaiting consent, and
+// packages admitted against those bindings.
+type PlaceAdmission struct {
+	Approvals map[targetprofile.Identity]targetprofile.ApprovalBinding
+	Pending   []targetprofile.Identity
+	Skipped   []error
+	Packages  []marketplace.ResolvedPlacePackage
+	profiles  map[targetprofile.Identity][]byte
+}
+
+// PreparePlaceAdmission validates approved place profiles before resolving
+// their locked packages. It does not create receipts, execute host commands,
+// or authorize later writes; a transaction must re-resolve and recheck
+// approval before publishing.
+func PreparePlaceAdmission(
+	ctx context.Context,
+	cfg *config.Config,
+	enabled []string,
+	environment targetprofile.ApprovalEnvironment,
+	readProfile PlaceProfileReader,
+	packages *marketplace.Resolver,
+	mode resolver.MarketplaceResolveMode,
+) (PlaceAdmission, error) {
+	return preparePlaceAdmission(ctx, cfg, enabled, environment, readProfile, packages, mode, false, nil)
+}
+
+func preparePlaceAdmission(
+	ctx context.Context,
+	cfg *config.Config,
+	enabled []string,
+	environment targetprofile.ApprovalEnvironment,
+	readProfile PlaceProfileReader,
+	packages *marketplace.Resolver,
+	mode resolver.MarketplaceResolveMode,
+	includeEmpty bool,
+	preapproval placePreapproval,
+) (PlaceAdmission, error) {
+	if err := ctx.Err(); err != nil {
+		return PlaceAdmission{}, err
+	}
+	if mode != resolver.MarketplaceResolveModeRefresh && mode != resolver.MarketplaceResolveModeCachedNoFetch {
+		return PlaceAdmission{}, fmt.Errorf("unsupported Marketplace place admission mode %d", mode)
+	}
+	selected, err := cfg.SelectedMarketplaceProfiles()
+	if err != nil {
+		return PlaceAdmission{}, err
+	}
+	if len(selected) == 0 {
+		return PlaceAdmission{}, nil
+	}
+	placeTargets := selectedPlaceTargetIDs(cfg)
+	if len(placeTargets) == 0 && !includeEmpty {
+		return PlaceAdmission{}, nil
+	}
+	var allowed []string
+	if cfg.AllowedMarketplaces != nil {
+		allowed = *cfg.AllowedMarketplaces
+	}
+	if err := config.ValidateMarketplaceURLs(cfg.Marketplaces, allowed); err != nil {
+		return PlaceAdmission{}, fmt.Errorf("validate Marketplace endpoints for place admission: %w", err)
+	}
+
+	admission := PlaceAdmission{
+		Approvals: make(map[targetprofile.Identity]targetprofile.ApprovalBinding),
+	}
+	approvedProfiles := make(map[targetprofile.Identity][]byte)
+	seen := make(map[targetprofile.Identity]struct{})
+	directTargets := directlySelectedPlaceTargets(cfg)
+	skipReasons := make(map[string]error)
+	for _, targetID := range enabled {
+		if err := ctx.Err(); err != nil {
+			return PlaceAdmission{}, err
+		}
+		if !includeEmpty {
+			if _, ok := placeTargets[targetID]; !ok {
+				continue
+			}
+		}
+		identity, ok := selected[targetID]
+		if !ok {
+			continue
+		}
+		if _, duplicate := seen[identity]; duplicate {
+			continue
+		}
+		seen[identity] = struct{}{}
+		if readProfile == nil {
+			return PlaceAdmission{}, fmt.Errorf("target %s profile reader is required", targetID)
+		}
+		raw, err := readProfile(ctx, identity, mode)
+		if err != nil {
+			return PlaceAdmission{}, fmt.Errorf("target %s read exact profile: %w", targetID, err)
+		}
+		profile, err := targetprofile.Parse(raw, identity)
+		if err != nil {
+			return PlaceAdmission{}, fmt.Errorf("target %s profile validation: %w", targetID, err)
+		}
+		binding, err := resolvePlaceApprovalBinding(profile, identity, environment)
+		if err != nil {
+			if errors.Is(err, targetprofile.ErrPlaceTargetUnavailable) && !directTargets[targetID] {
+				skipReasons[targetID] = err
+				continue
+			}
+			return PlaceAdmission{}, fmt.Errorf("target %s approval binding: %w", targetID, err)
+		}
+		approvalErr := preapproval.requireApproval(binding)
+		if errors.Is(approvalErr, targetprofile.ErrApprovalRequired) || errors.Is(approvalErr, errPreapprovalStateRootMismatch) {
+			admission.Pending = append(admission.Pending, identity)
+			reason := fmt.Errorf("target.approval.required: target %s is pending local approval", targetID)
+			if errors.Is(approvalErr, errPreapprovalStateRootMismatch) {
+				reason = fmt.Errorf("%w: %w", reason, errPreapprovalStateRootMismatch)
+			}
+			skipReasons[targetID] = reason
+			admission.Skipped = append(admission.Skipped, reason)
+			continue
+		} else if approvalErr != nil {
+			return PlaceAdmission{}, fmt.Errorf("target %s approval: %w", targetID, approvalErr)
+		}
+		admission.Approvals[identity] = binding
+		approvedProfiles[identity] = append([]byte(nil), raw...)
+	}
+	admission.profiles = approvedProfiles
+	admission.Skipped = append(admission.Skipped, placeCollectionSkipWarnings(cfg, enabled, skipReasons)...)
+	if len(approvedProfiles) == 0 {
+		return admission, nil
+	}
+	if packages == nil {
+		return PlaceAdmission{}, fmt.Errorf("approved place profiles require a Marketplace resolver")
+	}
+	resolved, err := packages.ResolvePlacePackages(ctx, cfg, approvedProfiles, mode)
+	if err != nil {
+		return PlaceAdmission{}, fmt.Errorf("resolve approved place packages: %w", err)
+	}
+	admission.Packages = resolved
+	return admission, nil
+}
+
+type placePreapproval func(targetprofile.ApprovalBinding) error
+
+func (preapproval placePreapproval) requireApproval(binding targetprofile.ApprovalBinding) error {
+	err := targetprofile.RequireApproval(binding)
+	if errors.Is(err, targetprofile.ErrApprovalRequired) && preapproval != nil {
+		return preapproval(binding)
+	}
+	return err
+}
+
+func directlySelectedPlaceTargets(cfg *config.Config) map[string]bool {
+	targets := make(map[string]bool)
+	if cfg == nil {
+		return targets
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if scoped && (pin.Direct || len(pin.SelectedBy.List()) == 0) {
+				targets[targetID] = true
+			}
+		}
+	}
+	return targets
+}
+
+func placeCollectionSkipWarnings(cfg *config.Config, enabled []string, reasons map[string]error) []error {
+	if cfg == nil {
+		return nil
+	}
+	enabledTargets := make(map[string]struct{}, len(enabled))
+	for _, targetID := range enabled {
+		enabledTargets[targetID] = struct{}{}
+	}
+	var warnings []error
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if !scoped {
+				continue
+			}
+			for _, selector := range pin.SelectedBy.List() {
+				reason, hasReason := reasons[targetID]
+				if !hasReason {
+					if _, isEnabled := enabledTargets[targetID]; isEnabled {
+						continue
+					}
+					reason = fmt.Errorf("target.place.disabled: target %s is not enabled", targetID)
+				}
+				warnings = append(warnings, fmt.Errorf(
+					"target.place.collection-member-skipped: collection %s/%s skipped member %s/%s: %w",
+					selector.RegistryID, selector.Name, pin.Kind, pin.Name, reason,
+				))
+			}
+		}
+	}
+	return warnings
+}
+
+func resolvePlaceApprovalBinding(profile targetprofile.Profile, identity targetprofile.Identity, environment targetprofile.ApprovalEnvironment) (targetprofile.ApprovalBinding, error) {
+	return targetprofile.ResolveApprovalBinding(profile, identity, placeProfileEnvironment(profile, environment))
+}
+
+func placeProfileEnvironment(profile targetprofile.Profile, environment targetprofile.ApprovalEnvironment) targetprofile.ApprovalEnvironment {
+	profileEnvironment := environment
+	profileEnvironment.Override = nil
+	if key := profile.Roots.User.Override; key != "" {
+		if value, exists := os.LookupEnv(key); exists {
+			profileEnvironment.Override = &value
+		}
+	}
+	return profileEnvironment
+}
+
+func selectedPlaceTargetIDs(cfg *config.Config) map[string]struct{} {
+	targets := make(map[string]struct{})
+	if cfg == nil {
+		return targets
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			targetID, _, scoped := nameutil.SplitPlaceKind(pin.Kind)
+			if scoped {
+				targets[targetID] = struct{}{}
+			}
+		}
+	}
+	return targets
+}

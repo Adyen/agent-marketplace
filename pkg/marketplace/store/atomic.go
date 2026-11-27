@@ -11,10 +11,13 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // BlobUpload is a digest-addressed blob that must be present in the blob store
@@ -64,9 +67,7 @@ type RegistryRevisionPublication struct {
 	InspectionBlobs []BlobUpload
 }
 
-// PublishRegistryRevision uploads all required blobs, then writes the metadata in
-// a single transaction. It returns an error if any blob upload fails, without
-// writing metadata.
+// PublishRegistryRevision stores a registry occurrence and its immutable blobs.
 func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, req RegistryRevisionPublication) error {
 	if err := validateRegistryRevisionPublication(req); err != nil {
 		return err
@@ -82,13 +83,16 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 		return err
 	}
 
-	for _, u := range uploads {
-		if err := putImmutableBlob(ctx, blobs, u); err != nil {
-			return fmt.Errorf("upload immutable blob %s: %w", u.Digest, err)
+	upload := func(ctx context.Context) error {
+		for _, u := range uploads {
+			if err := putImmutableBlob(ctx, blobs, u); err != nil {
+				return fmt.Errorf("upload immutable blob %s: %w", u.Digest, err)
+			}
 		}
+		return nil
 	}
 
-	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
+	stageMetadata := func(txCtx context.Context, tx MetadataStore) error {
 		if req.PublicationID != "" || req.ManagedFence != nil {
 			publisher, ok := tx.(PublicationStore)
 			if !ok {
@@ -141,7 +145,28 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 			return err
 		}
 		return recordPublicationBlobOwners(txCtx, tx, req, uploads)
-	})
+	}
+	fileManagedProfile := false
+	if req.ManagedFence == nil {
+		for _, rev := range req.Resources {
+			if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+				fileManagedProfile = true
+				break
+			}
+		}
+	}
+	if fileManagedProfile {
+		return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
+			if err := stageMetadata(txCtx, tx); err != nil {
+				return err
+			}
+			return upload(txCtx)
+		})
+	}
+	if err := upload(ctx); err != nil {
+		return err
+	}
+	return meta.WithTx(ctx, stageMetadata)
 }
 
 // ResourceRevisionPublication groups a single resource revision with its archive blob.
@@ -153,6 +178,12 @@ type ResourceRevisionPublication struct {
 // PublishResourceRevision uploads the resource archive and writes the resource
 // revision in a single transaction.
 func PublishResourceRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, pub ResourceRevisionPublication) error {
+	if pub.Revision.Coordinate.Kind == nameutil.TargetProfileKind {
+		return errors.New("virtual target profiles require an assessed registry publication")
+	}
+	if _, _, scoped := nameutil.SplitPlaceKind(pub.Revision.Coordinate.Kind); scoped {
+		return errors.New("scoped place packages require an assessed registry publication")
+	}
 	archive := string(pub.Revision.ArchiveDigest)
 	if archive != "" && len(pub.ArchiveBytes) > 0 {
 		if err := putImmutableBlob(ctx, blobs, BlobUpload{Digest: pub.Revision.ArchiveDigest, Data: pub.ArchiveBytes}); err != nil {
@@ -169,6 +200,16 @@ func validateRegistryRevisionPublication(req RegistryRevisionPublication) error 
 	for _, rev := range req.Resources {
 		if rev.Coordinate.Kind == "collection" && rev.ArchiveDigest != "" {
 			return fmt.Errorf("collection resource revision %s must not have an archive digest", rev.Coordinate)
+		}
+		if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+			if rev.ArchiveDigest != "" {
+				return fmt.Errorf("virtual target profile %s must not have an archive digest", rev.Coordinate)
+			}
+			if !slices.ContainsFunc(req.Assessments, func(a ResourceAssessment) bool {
+				return a.Coordinate == rev.Coordinate && a.ContentDigest == rev.ContentDigest
+			}) {
+				return fmt.Errorf("virtual target profile %s requires a matching assessment", rev.Coordinate)
+			}
 		}
 	}
 	return nil
@@ -216,11 +257,12 @@ type inspectionPublicationFile struct {
 }
 
 type inspectionPublicationManifest struct {
-	SchemaVersion  string                      `json:"schema_version"`
-	Coordinate     ResourceCoordinate          `json:"coordinate"`
-	RevisionDigest string                      `json:"revision_digest"`
-	PrimaryPath    string                      `json:"primary_path"`
-	Files          []inspectionPublicationFile `json:"files"`
+	SchemaVersion   string                      `json:"schema_version"`
+	Coordinate      ResourceCoordinate          `json:"coordinate"`
+	RevisionDigest  string                      `json:"revision_digest"`
+	PrimaryPath     string                      `json:"primary_path"`
+	Files           []inspectionPublicationFile `json:"files"`
+	ProfileIdentity *targetprofile.Identity     `json:"profile_identity,omitempty"`
 }
 
 // validateInspectionManifestBytes mirrors inspection.Verify's canonical
@@ -259,6 +301,15 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 	if manifest.Coordinate.Marketplace == "" || manifest.Coordinate.Registry == "" || manifest.Coordinate.Name == "" || !validInspectionDigest(manifest.RevisionDigest) {
 		return errors.New("identity or revision digest is invalid")
 	}
+	if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+		if manifest.ProfileIdentity == nil || manifest.ProfileIdentity.Validate() != nil ||
+			manifest.ProfileIdentity.TargetID != rev.Coordinate.Name ||
+			manifest.ProfileIdentity.RevisionDigest != string(rev.ContentDigest) {
+			return errors.New("virtual target profile identity does not match revision")
+		}
+	} else if manifest.ProfileIdentity != nil {
+		return errors.New("profile identity is only valid for virtual target profiles")
+	}
 	seen := make(map[string]struct{}, len(manifest.Files))
 	primary := false
 	for _, file := range manifest.Files {
@@ -277,6 +328,10 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 			if file.MediaType != expectedMedia || file.InspectionClass != expectedClass {
 				return errors.New("primary file media policy is not canonical")
 			}
+			if rev.Coordinate.Kind == nameutil.TargetProfileKind &&
+				(file.ContentDigest != string(rev.ContentDigest) || len(manifest.Files) != 1) {
+				return errors.New("virtual target profile requires its exact primary content")
+			}
 			primary = true
 		} else if !canonicalInspectionSupportPath(file.Path) {
 			return fmt.Errorf("non-canonical file path %q", file.Path)
@@ -289,6 +344,11 @@ func validateInspectionManifestOwnership(data []byte, rev ResourceRevision, blob
 			}
 			if err := verifyInspectionBody(file, body); err != nil {
 				return fmt.Errorf("body for %q: %w", file.Path, err)
+			}
+			if manifest.ProfileIdentity != nil {
+				if _, err := targetprofile.Parse(body, *manifest.ProfileIdentity); err != nil {
+					return fmt.Errorf("body for %q: %w", file.Path, err)
+				}
 			}
 		}
 	}
@@ -332,6 +392,9 @@ func CheckInspectionBlobs(ctx context.Context, blobs BlobStore, digest RevisionD
 }
 
 func inspectionPrimaryPathForKind(kind string) string {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return nameutil.PlacePackageInspectionPath
+	}
 	switch kind {
 	case "skill":
 		return "SKILL.md"
@@ -345,17 +408,24 @@ func inspectionPrimaryPathForKind(kind string) string {
 		return ".mcp.json"
 	case "collection":
 		return "COLLECTION.json"
+	case nameutil.TargetProfileKind:
+		return nameutil.TargetProfileInspectionPath
 	default:
 		return ""
 	}
 }
 
 func inspectionPrimaryMediaPolicy(kind string) (string, string) {
+	if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+		return "application/json", "text"
+	}
 	switch kind {
 	case "skill", "command", "subagent", "hook":
 		return "text/markdown", "text"
 	case "mcpserver", "collection":
 		return "application/json", "text"
+	case nameutil.TargetProfileKind:
+		return "application/yaml", "text"
 	default:
 		return "", ""
 	}
@@ -439,7 +509,7 @@ func isUnsafeInspectionExtension(ext string) bool {
 
 func isInspectionPrimaryPath(value string) bool {
 	switch value {
-	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md":
+	case "SKILL.md", "COMMAND.md", "AGENT.md", "HOOK.md", nameutil.TargetProfileInspectionPath:
 		return true
 	default:
 		return false
@@ -576,6 +646,9 @@ func prepareUploads(req RegistryRevisionPublication) ([]BlobUpload, error) {
 		}
 	}
 
+	if err := validatePlaceArchiveBindings(req, uploads, seen, placeholders); err != nil {
+		return nil, err
+	}
 	return uploads, nil
 }
 

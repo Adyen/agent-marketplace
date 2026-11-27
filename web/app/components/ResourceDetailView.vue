@@ -354,7 +354,7 @@ function formatValue(value: unknown): string {
           <ul v-if="resource.requires?.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
             <li v-for="requirement in resource.requires" :key="`${requirement.kind}:${requirement.name}`" class="py-3">
               <div class="flex min-w-0 items-baseline gap-3">
-                <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(requirement.kind) }}</span>
+                <span class="shrink-0 text-xs font-medium text-muted">{{ isResourceKind(requirement.kind) ? kindLabel(requirement.kind) : requirement.kind }}</span>
                 <NuxtLink v-if="resolvedRequirementRoute(requirement)" :to="resolvedRequirementRoute(requirement)" class="min-w-0 truncate font-mono text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ requirement.name }}</NuxtLink>
                 <span v-else class="min-w-0 truncate font-mono text-sm font-semibold text-highlighted">{{ requirement.name }}</span>
                 <span data-testid="requirement-badge" class="ml-auto inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ requirementBadge(requirement) }}</span>
@@ -368,7 +368,7 @@ function formatValue(value: unknown): string {
           <h2 id="required-by-heading" class="text-sm font-semibold text-highlighted">Required by</h2>
           <ul v-if="resource.required_by?.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
             <li v-for="dependent in resource.required_by" :key="`${dependent.registry}:${dependent.kind}:${dependent.name}`" class="flex min-w-0 items-baseline gap-3 py-3">
-              <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(dependent.kind) }}</span>
+              <span class="shrink-0 text-xs font-medium text-muted">{{ isResourceKind(dependent.kind) ? kindLabel(dependent.kind) : dependent.kind }}</span>
               <NuxtLink v-if="resourceRelationRoute(dependent)" :to="resourceRelationRoute(dependent)" class="min-w-0 truncate font-mono text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ dependent.name }}</NuxtLink>
               <span v-else class="min-w-0 truncate font-mono text-sm font-semibold text-highlighted">{{ dependent.name }}</span>
             </li>

@@ -15,12 +15,12 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 // PreparedInstall is the verified, immutable input to a Marketplace config
-// mutation. The artifact has already passed Resolver's archive, content, and
-// manifest checks before this value is returned.
+// mutation or lock record.
 type PreparedInstall struct {
 	Entry         config.MarketplaceEntry
 	Pin           config.MarketplaceResourcePin
@@ -28,6 +28,7 @@ type PreparedInstall struct {
 	Resolved      resolver.ResolvedArtifact
 	Artifact      hccartifact.CanonicalArtifact
 	ArchiveDigest string
+	PlaceLock     *lockfile.MarketplaceResourceLock
 
 	// CollectionMembers contains the fully verified leaf plans for a virtual
 	// collection. The collection itself is never passed to materialization.
@@ -218,7 +219,7 @@ func validateLocatorRevision(locator MarketplaceLocator, revision store.Assessed
 // verifies its mirror artifact. It deliberately does not edit configuration.
 // Collection traversal shares the lock-bootstrap work limit.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
-	return r.prepareLocator(ctx, entry, locator, targets, NewPreparationBudget(lockfile.MaxMarketplaceLockResources), nil)
+	return r.prepareLocator(ctx, entry, locator, targets, NewPreparationBudget(lockfile.MaxMarketplaceLockResources), nil, false)
 }
 
 // PrepareLocatorWithResourceLimit is PrepareLocator with an upper bound on
@@ -237,7 +238,13 @@ func (r *Resolver) PrepareLocatorWithBudget(ctx context.Context, entry config.Ma
 	if len(policies) > 0 {
 		policy = policies[0]
 	}
-	return r.prepareLocator(ctx, entry, locator, targets, budget, policy)
+	return r.prepareLocator(ctx, entry, locator, targets, budget, policy, false)
+}
+
+// PrepareLocatorForLock prepares selected resources for lock recording,
+// retaining scoped collection leaves as metadata-only lock records.
+func (r *Resolver) PrepareLocatorForLock(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, budget *PreparationBudget, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+	return r.prepareLocator(ctx, entry, locator, targets, budget, policy, true)
 }
 
 // PreparationBudget bounds the preparation work shared by concurrent preparations.
@@ -294,7 +301,7 @@ func (b *collectionPreparationBudget) consume(count int) error {
 	return nil
 }
 
-func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, shared *PreparationBudget, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, shared *PreparationBudget, policy resolver.MarketplaceRevocationPolicy, lockOnly bool) (*PreparedInstall, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -447,7 +454,7 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 		}
 		members := make([]*PreparedInstall, 0, len(uniqueLeaves))
 		for _, member := range uniqueLeaves {
-			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, registry, revision, member, targets, policy)
+			memberPlan, err := r.prepareCollectionLeaf(ctx, client, cache, canonical, registry, revision, member, targets, policy, lockOnly)
 			if err != nil {
 				return nil, err
 			}
@@ -548,7 +555,7 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 	return nil
 }
 
-func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionRegistry store.Registry, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, collectionRegistry store.Registry, collectionRevision store.AssessedResourceRevision, member hccartifact.CollectionMemberEntry, targets []hcc.Target, policy resolver.MarketplaceRevocationPolicy, lockOnly bool) (*PreparedInstall, error) {
 	memberRegistry, err := client.GetRegistry(ctx, member.RegistryID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve collection member registry %q: %w", member.RegistryID, err)
@@ -564,6 +571,31 @@ func (r *Resolver) prepareCollectionLeaf(ctx context.Context, client *Client, ca
 		Kind: member.Kind, Name: member.Name, Revision: member.Revision,
 		Digest: member.Revision, Acquisition: acquisition,
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: string(collectionRegistry.ID), Name: collectionRevision.Coordinate.Name, Revision: string(collectionRevision.ContentDigest)}}),
+	}
+	if targetID, _, scoped := nameutil.SplitPlaceKind(member.Kind); scoped {
+		if !lockOnly || (entry.Source != config.UserPersonal && entry.Source != config.Organization) {
+			return nil, fmt.Errorf("scoped collection members can only be prepared for user or organization lock bootstrap")
+		}
+		if memberRegistry.Acquisition != store.AcquisitionMirror || memberRegistry.ID != store.RegistryID(member.RegistryID) {
+			return nil, fmt.Errorf("scoped collection member %s/%q requires its exact mirror registry", member.Kind, member.Name)
+		}
+		coordinate := store.ResourceCoordinate{
+			Marketplace: store.MarketplaceID(entry.InstanceID), Registry: memberRegistry.ID,
+			Kind: member.Kind, Name: member.Name,
+		}
+		leafRevision, err := fetchPlaceRevisionMetadata(ctx, client, coordinate, store.RevisionDigest(member.Revision))
+		if err != nil {
+			return nil, fmt.Errorf("resolve collection member %s/%q metadata: %w", member.Kind, member.Name, err)
+		}
+		if err := enforceMarketplaceUse(leafRevision, policy); err != nil {
+			return nil, fmt.Errorf("collection member %s/%q: %w", member.Kind, member.Name, err)
+		}
+		binding := leafRevision.Assessment.HostPackageIdentity
+		if binding.ProfileIdentity.TargetID != targetID {
+			return nil, fmt.Errorf("collection member %s/%q profile target %q does not match scoped target %q", member.Kind, member.Name, binding.ProfileIdentity.TargetID, targetID)
+		}
+		record := placePackageLockRecord(leafPin, leafRevision)
+		return &PreparedInstall{Entry: entry, Pin: leafPin, Revision: leafRevision, ArchiveDigest: string(leafRevision.ArchiveDigest), PlaceLock: &record}, nil
 	}
 	leafRevision, err := client.GetResourceRevisionForRegistry(ctx, string(memberRegistry.ID), string(memberRegistry.ID), member.Kind, member.Name, member.Revision)
 	if err != nil {

@@ -341,6 +341,24 @@ func init() {
 		},
 	})
 
+	// spec: resource-selection/explicit-empty-user-target-list-selects-no-machine-targets
+	testTable = append(testTable, TestCase{
+		Name:         "marketplace/organization_pin_empty_machine_targets",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: tableMarketplaceRegistry(Skill{Name: "org-skill", Description: "Organization skill"})}},
+		OrgCfg: v4(
+			"harnesses: [factory]",
+			"sources: {organization: {marketplace: '{{MKT:hub}}'}}",
+			"resources: {organization: {include: [hub/skill/org-skill]}}",
+		),
+		RepoCfg: v4("targets: [claude]"),
+		Steps: []Step{
+			writeFile("~/.agents/config.yaml", v4("targets: []")).then("sync").pass().
+				absent("~/.factory/skills/org-skill", "~/.claude/skills/org-skill", "./.claude/skills/org-skill"),
+			writeFile("~/.agents/config.yaml", v4()).then("sync").pass().
+				exists("~/.factory/skills/org-skill/SKILL.md").absent("~/.claude/skills/org-skill", "./.claude/skills/org-skill"),
+		},
+	})
+
 	// spec: status-reporting/organization-collection-members-are-not-orphaned-without-an-organization-lock
 	testTable = append(testTable, TestCase{
 		Name: "marketplace/organization_collection_status_without_lock",

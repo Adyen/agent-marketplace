@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/gitidentity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -74,6 +75,9 @@ func Encode(doc Document) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range normalized.Registries {
+		normalized.Registries[i].URL = normalized.Registries[i].FetchURL()
+	}
 	var out bytes.Buffer
 	enc := yaml.NewEncoder(&out)
 	enc.SetIndent(2)
@@ -105,11 +109,11 @@ func Normalize(input Document) (Document, error) {
 	}
 	for i := range doc.Registries {
 		registry := &doc.Registries[i]
-		canonical, err := CanonicalGitURL(registry.URL)
+		canonical, err := CanonicalGitURL(registry.FetchURL())
 		if err != nil {
 			return Document{}, fmt.Errorf("registries[%d].url: %w", i, err)
 		}
-		registry.URL = canonical
+		registry.setCanonicalURL(canonical)
 		if err := require(registry.Ref, fmt.Sprintf("registries[%d].ref", i)); err != nil {
 			return Document{}, err
 		}
@@ -265,7 +269,7 @@ func containsConflictMarkers(data []byte) bool {
 }
 
 func normalizeArtifactPath(value string, allowRoot bool) (string, error) {
-	if value == "" || strings.Contains(value, `\`) || hasControl(value) || strings.HasPrefix(value, "/") {
+	if value == "" || strings.Contains(value, `\`) || gitidentity.HasASCIIControl(value) || strings.HasPrefix(value, "/") {
 		return "", coded(CodeInvalidPath, "invalid portable path %q", value)
 	}
 	for part := range strings.SplitSeq(value, "/") {

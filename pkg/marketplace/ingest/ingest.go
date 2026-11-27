@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -35,6 +36,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/google/licensecheck"
 )
@@ -135,6 +137,14 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		supportFiles      map[string]string
 		inspectionBody    []byte
 		inspectionSupport analyze.FileSet
+		placeRequires     string
+	}
+	processedKindName := func(p processed) (string, string) {
+		kind, name := api.FromIR(p.entry.Kind), p.entry.Name
+		if p.result.Artifact.Manifest.HostPackageIdentity != nil || p.result.Kind == nameutil.TargetProfileKind {
+			kind, name = p.result.Kind, p.result.Name
+		}
+		return kind, name
 	}
 
 	var processedResults []processed
@@ -496,13 +506,76 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 	}
 
+	appendPlaceResult := func(result artifact.BuildResult, sourcePath string, inspectionBody []byte, identity *targetprofile.Identity, requires string) error {
+		kind, name := result.Kind, result.Name
+		coordinate := store.ResourceCoordinate{Marketplace: mpID, Registry: registry.ID, Kind: kind, Name: name}
+		var projection inspection.Projection
+		var err error
+		if identity == nil {
+			projection, err = inspection.Build(
+				coordinate, result.ContentDigest, inspectionBody, nil,
+				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+			)
+		} else {
+			projection, err = inspection.BuildTargetProfile(
+				coordinate, *identity, inspectionBody,
+				limits.FileCount, limits.FileBytes, limits.RepositoryBytes,
+			)
+		}
+		if err != nil {
+			return fmt.Errorf("inspection projection for %s %q: %w", kind, name, err)
+		}
+		key := kind + "/" + name
+		inspectionDigests[key] = projection.Manifest.ManifestDigest
+		inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(projection.Manifest.ManifestDigest), projection.Payload)
+		for digest, data := range projection.Bodies {
+			inspectionBlobs = appendUpload(inspectionBlobs, store.ArchiveDigest(digest), data)
+		}
+		processedResults = append(processedResults, processed{
+			sourcePath: sourcePath, result: result, inspectionBody: inspectionBody, placeRequires: requires,
+		})
+		return nil
+	}
+	profilePins := make(map[string]targetprofile.Identity)
+	for _, selection := range cfg.HostPackageAssessmentProfiles {
+		if selection.RegistryID != string(registry.ID) {
+			continue
+		}
+		place, err := buildPlaceCheckoutResult(ctx, cfg, registry, dir, selection, policy, limits, license)
+		if err != nil {
+			return rev, fmt.Errorf("build place package %q: %w", selection.Name, err)
+		}
+		identity := place.profileIdentity
+		if previous, ok := profilePins[identity.TargetID]; ok && previous != identity {
+			return rev, fmt.Errorf("marketplace.profile.selection-ambiguous: target %q has multiple profile identities", identity.TargetID)
+		}
+		if err := appendPlaceResult(place.result, place.sourcePath, place.inspectionBody, nil, place.requires); err != nil {
+			return rev, err
+		}
+		if _, exists := profilePins[identity.TargetID]; exists {
+			continue
+		}
+		profilePins[identity.TargetID] = identity
+		source, err := targetprofile.ParseSourceID(identity.SourceID)
+		if err != nil {
+			return rev, err
+		}
+		profileResult := applyPolicyToResult(artifact.BuildResult{
+			Kind: nameutil.TargetProfileKind, Name: identity.TargetID,
+			ContentDigest: identity.RevisionDigest, License: registry.License,
+		}, registry.ID, limits, license, registry.Acquisition)
+		if err := appendPlaceResult(profileResult, source.Root, place.profileBytes, &identity, ""); err != nil {
+			return rev, err
+		}
+	}
+
 	var manifest artifact.RegistryRevisionManifest
 	manifest.SchemaVersion = artifact.RegistryRevisionSchemaV1
 	manifest.Generator = artifact.RegistryRevisionGeneratorV1
 	manifest.Resources = make([]artifact.RevisionResource, 0, len(processedResults))
 
 	for _, p := range processedResults {
-		kind := api.FromIR(p.entry.Kind)
+		kind, name := processedKindName(p)
 		contentDigest := p.result.ContentDigest
 		archiveDigest := p.result.ArchiveDigest
 		if kind == "collection" {
@@ -513,7 +586,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		manifest.Resources = append(manifest.Resources, artifact.RevisionResource{
 			Kind:          kind,
-			Name:          p.entry.Name,
+			Name:          name,
 			ContentDigest: contentDigest,
 			ArchiveDigest: archiveDigest,
 			SupportFiles:  p.supportFiles,
@@ -543,12 +616,12 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionManifests []store.BlobUpload
 	var collections []store.CollectionRevision
 	for _, p := range processedResults {
-		kind := api.FromIR(p.entry.Kind)
+		kind, name := processedKindName(p)
 		coord := store.ResourceCoordinate{
 			Marketplace: mpID,
 			Registry:    registry.ID,
 			Kind:        kind,
-			Name:        p.entry.Name,
+			Name:        name,
 		}
 
 		contentDigest := p.result.ContentDigest
@@ -557,13 +630,23 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			contentDigest = p.result.ManifestDigest
 			archiveDigest = ""
 		}
+		requires := p.placeRequires
+		if requires == "" {
+			requires = revisionRequires(p.entry)
+		}
 		rev := store.ResourceRevision{
 			Coordinate:    coord,
 			ContentDigest: store.RevisionDigest(contentDigest),
 			ArchiveDigest: store.ArchiveDigest(archiveDigest),
 			License:       p.result.License,
 			Description:   p.result.Description,
-			Requires:      revisionRequires(p.entry),
+			Requires:      requires,
+		}
+		var findings []store.Finding
+		if p.result.Artifact.Manifest.HostPackageIdentity != nil {
+			findings = placeStoreFindings(p.result.Findings)
+		} else {
+			findings = toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport)
 		}
 		assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 			Coordinate:               coord,
@@ -571,12 +654,13 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			AnalyzerVersion:          analyze.AnalyzerVersionV1,
 			PolicyDigest:             policyDigest,
 			Decision:                 assessmentDecision(p.result),
-			Findings:                 toStoreFindings(p.result.Findings, inspection.PrimaryPath(kind), p.inspectionBody, p.inspectionSupport),
-			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+p.entry.Name]),
+			Findings:                 findings,
+			InspectionManifestDigest: store.RevisionDigest(inspectionDigests[kind+"/"+name]),
 			AssessedAt:               time.Now().UTC(),
+			HostPackageIdentity:      p.result.Artifact.Manifest.HostPackageIdentity,
 		})
 		if err != nil {
-			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, p.entry.Name, err)
+			return Revision{}, fmt.Errorf("finalize assessment for %s %q: %w", kind, name, err)
 		}
 		resources = append(resources, rev)
 		resourceOccurrences = append(resourceOccurrences, store.ResourceOccurrence{
@@ -590,20 +674,20 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		if kind == "collection" {
 			if p.result.ManifestDigest == "" || len(p.result.ManifestPayload) == 0 {
-				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", p.entry.Name)
+				return Revision{}, fmt.Errorf("collection %q has no standalone manifest", name)
 			}
 			collection, payload, err := hccartifact.DecodeCollectionManifest(bytes.NewReader(p.result.ManifestPayload))
 			if err != nil {
-				return Revision{}, fmt.Errorf("decode collection %q manifest: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("decode collection %q manifest: %w", name, err)
 			}
 			if err := hccartifact.VerifyCollectionManifest(collection, payload); err != nil {
-				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("verify collection %q manifest: %w", name, err)
 			}
 			if _, err := hccartifact.ValidateAndExpandCollectionManifestGraph(collection, publishedCollectionManifests); err != nil {
-				return Revision{}, fmt.Errorf("collection %q manifest graph: %w", p.entry.Name, err)
+				return Revision{}, fmt.Errorf("collection %q manifest graph: %w", name, err)
 			}
 			if collection.ContentDigest != p.result.ManifestDigest {
-				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", p.entry.Name)
+				return Revision{}, fmt.Errorf("collection %q manifest digest changed during ingest", name)
 			}
 			collectionManifests = appendUpload(collectionManifests, store.ArchiveDigest(p.result.ManifestDigest), p.result.ManifestPayload)
 			members := make([]store.ResourceCoordinate, 0, len(collection.Members))

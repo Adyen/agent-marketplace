@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -211,10 +212,14 @@ func ReadPluginInstanceStates() ([]PluginGenerationRef, error) {
 	return refs, nil
 }
 
-func ReadAllPluginGenerationRefs() ([]PluginGenerationRef, error) {
+func ReadCommittedPackageGenerationKeys() ([]string, error) {
 	refs, err := ReadPluginInstanceStates()
 	if err != nil {
 		return nil, err
+	}
+	keys := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		keys[ref.GenerationKey] = struct{}{}
 	}
 	stateRoot, err := StateRoot()
 	if err != nil {
@@ -226,7 +231,7 @@ func ReadAllPluginGenerationRefs() ([]PluginGenerationRef, error) {
 	}
 	recordDirs, err := os.ReadDir(filepath.Join(stateRoot, ownershipDirName))
 	if errors.Is(err, os.ErrNotExist) {
-		return refs, nil
+		return sortedGenerationKeys(keys), nil
 	}
 	if err != nil {
 		return nil, err
@@ -250,14 +255,31 @@ func ReadAllPluginGenerationRefs() ([]PluginGenerationRef, error) {
 		if err := json.Unmarshal(data, &record); err != nil {
 			return nil, fmt.Errorf("ownership: invalid aggregate ownership state %q", statePath)
 		}
-		if err := validateRecord(&record, record.CanonicalRoot, record.RootKey); err != nil {
+		canonicalRoot, err := CanonicalRoot(record.CanonicalRoot)
+		if err != nil {
 			return nil, err
 		}
-		if record.RootKey != entry.Name() {
-			return nil, fmt.Errorf("ownership: aggregate ownership filename does not match its root key")
+		rootKey := RootKey(canonicalRoot)
+		if record.RootKey != entry.Name() || record.RootKey != rootKey {
+			return nil, fmt.Errorf("ownership: aggregate ownership filename does not match its canonical root")
+		}
+		if err := validateRecord(&record, canonicalRoot, rootKey); err != nil {
+			return nil, err
+		}
+		for _, pkg := range record.PlacePackages {
+			keys[pkg.GenerationKey] = struct{}{}
 		}
 	}
-	return refs, nil
+	return sortedGenerationKeys(keys), nil
+}
+
+func sortedGenerationKeys(keys map[string]struct{}) []string {
+	out := make([]string, 0, len(keys))
+	for key := range keys {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func ReadPendingPluginGenerationRefs() ([]PluginGenerationRef, error) {

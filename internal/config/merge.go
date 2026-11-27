@@ -132,13 +132,16 @@ func MergeLayers(layers []Layer) *Config {
 	// Backfill Harnesses on entries that don't have their own. Entries of the
 	// user and organization layers inherit the machine list, so a repository
 	// list never narrows them; other entries inherit the merged top-level list.
-	machine, _ := MachineHarnesses(user, organization)
+	machine, machineSource := MachineHarnesses(user, organization)
+	machinePlaceOnly := len(machine) == 0 &&
+		(machineSource == UserPersonal && user != nil && len(user.PlaceTargets) > 0 ||
+			machineSource == Organization && organization != nil && len(organization.PlaceTargets) > 0)
 	for i := range merged.Registries {
 		if merged.Registries[i].Harnesses != nil {
 			continue
 		}
 		defaults := merged.Harnesses
-		if merged.Registries[i].Source.IsMachineScope() && len(machine) > 0 {
+		if merged.Registries[i].Source.IsMachineScope() && (len(machine) > 0 || machinePlaceOnly) {
 			defaults = machine
 		}
 		if len(defaults) > 0 {
@@ -225,16 +228,17 @@ func (s Source) CanConfigureLogging() bool {
 	return s == Organization || s == UserPersonal
 }
 
-// MachineHarnesses returns the top-level harness list for selections made by
-// the user and organization layers: a non-empty user list, otherwise a
-// non-empty organization list. It returns nil and SourceUnset when neither
-// declares one; callers then fall back to the repository-scope list.
+// MachineHarnesses returns the declared user target set or, absent one, a
+// non-empty organization compiled or place target set. It returns nil and
+// SourceUnset when neither declares one; callers then fall back to the
+// repository-scope list. A place-only set returns an empty compiled list with
+// its source so callers do not fall through to repository targets.
 func MachineHarnesses(user, organization *Config) ([]string, Source) {
-	if user != nil && (user.HasTargets || len(user.Harnesses) > 0) {
-		return append([]string(nil), user.Harnesses...), UserPersonal
+	if user != nil && (user.HasTargets || len(user.Harnesses) > 0 || len(user.PlaceTargets) > 0) {
+		return append([]string{}, user.Harnesses...), UserPersonal
 	}
-	if organization != nil && len(organization.Harnesses) > 0 {
-		return append([]string(nil), organization.Harnesses...), Organization
+	if organization != nil && (len(organization.Harnesses) > 0 || len(organization.PlaceTargets) > 0) {
+		return append([]string{}, organization.Harnesses...), Organization
 	}
 	return nil, SourceUnset
 }

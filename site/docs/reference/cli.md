@@ -342,6 +342,12 @@ With `--check`, an in-sync result prints no verdict and returns exit status 0. D
 
 A hard configuration, registry-load, or resolution error stops `--check` before it predicts output changes. It reports the refusal without treating an unloadable registry's installed hooks as deselected or counting them as drift. Warning-only checks still report genuine pending changes.
 
+For enabled Git-backed place targets with deployed locks, `--check` reads only cached profile and package evidence. Missing approval is a warning; an approved target with pending changes reports `target.place.out-of-sync` and exits nonzero. The check does not write approval receipts, publish packages, or run host commands.
+
+Mutating `sync` runs each declared initial-load check after all approved place packages have committed successfully. Checks run locally from the approved target root, including during cached or offline sync; offline mode prohibits CLI fetching, not local checks. A failed check leaves installed files in place, reports a warning, and is retried by a later sync until it passes. A recorded pass is skipped for the same package generation. Read-only commands, including `sync --check`, never run host checks.
+
+For an enabled, locally approved Git-backed target, `sync` also deselects installed packages omitted from the complete deployed pin set when the deployed config and lock reads can be fenced and no Marketplace exclusions are active. It prunes only unchanged files with proven ownership and parent identity. Edited files under a proven parent are preserved and ceded from ownership; missing files under a proven parent are ceded. If parent identity cannot be proven, sync refuses the deselection without changing ownership or files. Ceded paths are reported with `target.place.ceded`. If the target is disabled or unapproved, or the selected view is filtered, overlaid, transient, excluded, or otherwise unavailable, sync remains upsert-only. `sync --check` reports the pending deselection as drift without changing files or ownership. Place deselection never edits config or lock pins.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
@@ -400,6 +406,8 @@ agent-marketplace status
 
 The report prints these sections in this order. Sections other than `TARGET HARNESS SET`, `SYNCED RESOURCES`, and `DRIFT` appear only when they have content.
 
+The optional `PLACE PACKAGES` section covers only enabled Git-backed place targets and installations at each target's current root. Recorded verification is historical evidence for the installed generation and is shown separately from current file drift; status never runs the host executable or probes its version.
+
 | Section | Contents |
 |---|---|
 | `MANAGED INSTALLATION` | Present when an organization config manages the installation: its path and validation result. |
@@ -407,6 +415,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `EXACT REGISTRY LOCKS` | Source layer, canonical Git origin, declared ref, exact commit, and whether the cached snapshot is `available` or `missing`. |
 | `SYNCED RESOURCES` | Resource kind, name, harness, source, collection and prerequisite origin (`VIA`, including `requires <kind>:<name>` for selected resources with recorded requirement provenance, whether selected directly, through a collection, or transitively), target path, registry, ref, and cache state. |
 | `MARKETPLACE PINS` | Endpoint identity, registry, resource coordinate, installed name, exact revision and digest, acquisition mode, source layer, revocation and current state, cache state, and update availability. |
+| `PLACE PACKAGES` | Current-root installed packages, installation ID, recorded verification (`passed`, `failed`, pending, or unknown), and independently checked owned-file drift. |
 | `HARNESS TARGETS` | Target capabilities and resolved repository and machine roots. |
 | `LOCAL REGISTRIES` | Registry entries declared in repository-personal configuration. |
 | `ORPHANED FILES` | Generated files that a sync would remove. |
@@ -610,6 +619,52 @@ agent-marketplace deinit [flags]
 The output reports `Removed <n> managed artifact(s)` (or `Would remove ...` with `--dry-run`), or `No managed artifacts to remove`, followed by each removed cache and purged file.
 
 Unreadable configuration does not stop the teardown. The command prints a warning, assumes the default materialization mode, and notes that output created in another mode may remain.
+
+## `target`
+
+Manage local approval receipts for exact deployed target profiles.
+
+### `target approve`
+
+```text
+agent-marketplace target approve <target-id> [--json]
+```
+
+Reads the selected profile from the local cache using its already-deployed acquisition lock, displays the full approval binding, and requires typing `yes` in a terminal. It writes one owner-private local receipt. Approval does not enable the target, install packages, execute host commands, or fetch profile data. `--yes` is rejected; `--json` writes the result to standard output and keeps the confirmation prompt on standard error.
+
+The approval binding includes the future installation ID for that approved target root. It identifies the root and state location, not an installed package.
+
+### `target enable`
+
+```text
+agent-marketplace target enable <target-id>
+```
+
+Adds a selected, admitted target profile to the existing v4 user config. This is a config-only change; it does not approve the profile, install packages, or run sync. It uses deployed lock evidence and cached profile bytes only. An existing user config is required.
+
+### `target disable`
+
+```text
+agent-marketplace target disable <target-id>
+```
+
+Removes a place target from the user target list without changing its Marketplace selection, approval receipt, or installed files. Removing the last target from a `harnesses:` list, or from an inherited list without an authored `targets:` key, is refused with guidance to upgrade readers and rename the key. To represent no targets explicitly, use a `targets:` list; `targets: []` disables inheritance. The command requires an existing v4 user config and does not sync or remove packages.
+
+### `target verify`
+
+```text
+agent-marketplace target verify <target-id>%2F<kind>/<name> --installation <id>
+```
+
+Runs only the named approved check for an already-installed package. It records the exact package and profile revisions, generation, and check result without installing, activating, repairing, or synchronizing packages. The required `--installation` ID must identify the current approved target root. This command does not probe the host version, so it records that status as `unknown`; automatic initial-load verification can run an approved version probe.
+
+### `target retire`
+
+```text
+agent-marketplace target retire <installation-id>
+```
+
+Retires the installation recorded in the current XDG state root, even if its target profile is no longer selected or its root override has changed. The command shows the recorded root, removable files, and ceded files on standard error and requires typing `yes` in a terminal; `--yes` is rejected. It removes only unchanged files whose recorded parent identity is still proven; edited files are preserved, and retirement refuses if a recorded parent directory cannot be proven. Ownership is updated transactionally. Target selection, approval receipts, deployed locks, caches, and directories are left intact. A still-enabled target can be installed again by a later sync.
 
 ## `telemetry`
 

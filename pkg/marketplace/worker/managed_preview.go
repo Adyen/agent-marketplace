@@ -97,6 +97,11 @@ func runManagedPreview(ctx context.Context, deps Deps, preview store.ManagedPrev
 	}
 	cfg, registry := managedInputs(deps, view, r)
 	limits := acquire.Limits{RepositoryBytes: cfg.Policy.Limits.RepositoryBytes, FileCount: cfg.Policy.Limits.FileCount, FileBytes: cfg.Policy.Limits.FileBytes}
+	exactPaths, err := ingest.PlaceCheckoutPaths(cfg, registry)
+	if err != nil {
+		return previewFailure("acquisition_failed", "Repository acquisition failed. Check the origin, ref, credential profile and that every root exists at that ref.")
+	}
+	limits.ExactPaths = exactPaths
 	roots := make([]string, len(r.Roots))
 	for i := range r.Roots {
 		roots[i] = r.Roots[i].Path

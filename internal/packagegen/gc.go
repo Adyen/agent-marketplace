@@ -16,6 +16,10 @@ import (
 var generationDirectoryName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func GarbageCollect(dryRun bool) ([]string, error) {
+	return garbageCollect(dryRun, ownership.ReadPendingPluginGenerationRefs)
+}
+
+func garbageCollect(dryRun bool, readPendingPlugins func() ([]ownership.PluginGenerationRef, error)) ([]string, error) {
 	stateRoot, err := StateRoot()
 	if err != nil {
 		return nil, err
@@ -36,16 +40,28 @@ func GarbageCollect(dryRun bool) ([]string, error) {
 			return err
 		}
 		removed = append(removed, stages...)
-		refs, err := ownership.ReadAllPluginGenerationRefs()
+		pendingPlace, err := dependencytxn.ReadPendingPlaceGenerationKeys(filepath.Join(stateRoot, "dependencies"))
 		if err != nil {
 			return err
 		}
-		pending, err := ownership.ReadPendingPluginGenerationRefs()
+		// Recovery publishes state before removing its journal. If it moves the
+		// staged plugin state during the pending scan, the committed scan sees it.
+		pending, err := readPendingPlugins()
 		if err != nil {
 			return err
 		}
-		live := make(map[string]bool, len(refs)+len(pending))
-		for _, ref := range append(refs, pending...) {
+		committed, err := ownership.ReadCommittedPackageGenerationKeys()
+		if err != nil {
+			return err
+		}
+		live := make(map[string]bool, len(committed)+len(pendingPlace)+len(pending))
+		for _, key := range committed {
+			live[key] = true
+		}
+		for _, key := range pendingPlace {
+			live[key] = true
+		}
+		for _, ref := range pending {
 			live[ref.GenerationKey] = true
 		}
 		entries, err := os.ReadDir(packagesDir)

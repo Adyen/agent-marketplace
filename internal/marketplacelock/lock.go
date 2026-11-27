@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 // A normalized v2 Marketplace resource consumes at least 300 encoded bytes:
@@ -36,20 +37,35 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 		}
 		type requestResult struct {
-			plan *marketplace.PreparedInstall
-			err  error
+			plan   *marketplace.PreparedInstall
+			entry  config.MarketplaceEntry
+			record *lockfile.MarketplaceResourceLock
+			err    error
 		}
 		budget := marketplace.NewPreparationBudget(remainingResources)
 		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
 			request := source.Requests[i]
-			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, marketplace.MarketplaceLocator{
+			locator := marketplace.MarketplaceLocator{
 				URL:      entry.URL,
 				Registry: request.Registry,
 				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
-			}, targets, budget, policy)
+			}
+			if locator.Kind == nameutil.TargetProfileKind {
+				acquired, record, err := marketplaceResolver.PrepareTargetProfileLock(ctx, entry, locator, budget)
+				return requestResult{entry: acquired, record: &record, err: err}
+			}
+			if _, _, scoped := nameutil.SplitPlaceKind(locator.Kind); scoped {
+				acquired, record, err := marketplaceResolver.PreparePlacePackageLock(ctx, entry, locator, budget)
+				return requestResult{entry: acquired, record: &record, err: err}
+			}
+			if locator.Kind == "collection" {
+				plan, err := marketplaceResolver.PrepareLocatorForLock(ctx, entry, locator, targets, budget, policy)
+				return requestResult{plan: plan, err: err}
+			}
+			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, locator, targets, budget, policy)
 			return requestResult{plan: plan, err: err}
 		})
 		for i, request := range source.Requests {
@@ -57,27 +73,42 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			if remainingResources < 1 {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 			}
-			plan, err := results[i].plan, results[i].err
-			if err != nil {
-				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, err)
+			result := results[i]
+			if result.err != nil {
+				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, result.err)
 			}
-			if i > 0 && plan.Entry.InstanceID != entry.InstanceID {
-				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, plan.Entry.InstanceID, entry.InstanceID)
+			acquired, work, count := result.entry, 1, 1
+			var plans []*marketplace.PreparedInstall
+			if result.plan != nil {
+				acquired, work = result.plan.Entry, result.plan.PreparationWork
+				plans = lockPlans(result.plan)
+				count = len(plans)
 			}
-			if plan.PreparationWork < 1 || plan.PreparationWork > remainingResources {
+			if i > 0 && acquired.InstanceID != entry.InstanceID {
+				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, acquired.InstanceID, entry.InstanceID)
+			}
+			if work < 1 || work > remainingResources {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock preparation work exceeds processing limit %d", maxMarketplaceLockResources)
 			}
-			preparationWork += plan.PreparationWork
-			entry = plan.Entry
-			pins := lockPins(plan)
-			if len(pins) > maxMarketplaceLockResources-processedPins {
+			preparationWork += work
+			entry = acquired
+			if count > maxMarketplaceLockResources-processedPins {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock records exceed processing limit %d", maxMarketplaceLockResources)
 			}
-			processedPins += len(pins)
-			for _, pin := range pins {
-				record, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)
-				if err != nil {
-					return lockfile.Document{}, fmt.Errorf("verify %s/%s/%s lock evidence: %w", pin.RegistryID, pin.Kind, pin.Name, err)
+			processedPins += count
+			for j := 0; j < count; j++ {
+				var record lockfile.MarketplaceResourceLock
+				if result.record != nil {
+					record = *result.record
+				} else if plans[j].PlaceLock != nil {
+					record = *plans[j].PlaceLock
+				} else {
+					pin := plans[j].Pin
+					verified, err := marketplaceResolver.Cache.VerifiedMarketplaceLockResource(entry, pin)
+					if err != nil {
+						return lockfile.Document{}, fmt.Errorf("verify %s/%s/%s lock evidence: %w", pin.RegistryID, pin.Kind, pin.Name, err)
+					}
+					record = verified
 				}
 				before := len(resources)
 				if err := mergeLockResource(resources, record); err != nil {
@@ -136,13 +167,10 @@ func lockTargets(names []string) []hcc.Target {
 	return targets
 }
 
-func lockPins(plan *marketplace.PreparedInstall) []config.MarketplaceResourcePin {
-	pins := make([]config.MarketplaceResourcePin, 1, len(plan.CollectionMembers)+1)
-	pins[0] = plan.Pin
-	for _, member := range plan.CollectionMembers {
-		pins = append(pins, member.Pin)
-	}
-	return pins
+func lockPlans(plan *marketplace.PreparedInstall) []*marketplace.PreparedInstall {
+	plans := make([]*marketplace.PreparedInstall, 1, len(plan.CollectionMembers)+1)
+	plans[0] = plan
+	return append(plans, plan.CollectionMembers...)
 }
 
 func mergeLockResource(resources map[string]lockfile.MarketplaceResourceLock, record lockfile.MarketplaceResourceLock) error {

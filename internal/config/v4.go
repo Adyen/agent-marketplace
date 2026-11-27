@@ -92,6 +92,9 @@ type V4ResourceRequest struct {
 }
 
 func (r V4ResourceRequest) MarketplaceKind() string {
+	if _, _, scoped := nameutil.SplitPlaceKind(r.Kind); scoped || r.Kind == nameutil.TargetProfileKind {
+		return r.Kind
+	}
 	return api.FromIR(v4KindToIR(r.Kind))
 }
 
@@ -153,6 +156,8 @@ type V4Config struct {
 	Requests   []V4ResourceRequest
 	Decisions  []V4SelectionDecision
 	Files      []string
+	// PlacePreapprovals are available only from a valid organization root.
+	PlacePreapprovals []PlacePreapproval
 
 	reads []ConfigRead
 
@@ -372,7 +377,7 @@ var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "targets": {}, "allowed_registries": {}, "allowed_marketplaces": {},
 	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
-	"requires": {},
+	"requires": {}, "target_preapprovals": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -514,6 +519,7 @@ type v4Document struct {
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
 	requires            *RequiresConfig
+	placePreapprovals   []PlacePreapproval
 	telemetryFields     v4TelemetryFields
 }
 
@@ -579,7 +585,23 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	doc := &v4Document{path: file, sources: map[string]V4Source{}, groups: map[string]V4ResourceGroup{}}
-	if err := decodeV4AuxiliaryFields(raw, doc); err != nil {
+	if n := mappingValue(raw, "target_preapprovals"); n != nil {
+		if !root || len(kinds) == 0 || kinds[0] != organizationLayer {
+			return nil, v4DocumentError(file, raw, v4err(
+				"v4.target-preapprovals-scope", "target_preapprovals", n.Line,
+				"target_preapprovals is allowed only in the organization root",
+			), !root)
+		}
+		entries, err := decodeV4PlacePreapprovals(n)
+		if err != nil {
+			return nil, v4DocumentError(file, raw, v4err(
+				"v4.target-preapprovals", "target_preapprovals", n.Line, "%v", err,
+			), !root)
+		}
+		doc.placePreapprovals = entries
+	}
+	allowPlaceIDs := len(kinds) > 0 && (kinds[0] == userLayer || kinds[0] == organizationLayer)
+	if err := decodeV4AuxiliaryFields(raw, doc, allowPlaceIDs); err != nil {
 		return nil, v4DocumentError(file, raw, err, !root)
 	}
 	if len(kinds) > 0 {
@@ -754,7 +776,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 	return nil
 }
 
-func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
+func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document, allowPlaceIDs bool) error {
 	decode := func(key string, dst any) error {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
@@ -785,9 +807,10 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 			return err
 		}
 		for i, harness := range doc.harnesses {
-			if !target.IsValid(harness) {
-				return v4err("v4.harness", fmt.Sprintf("%s[%d]", listKey, i), n.Line, "unknown target %q", harness)
+			if target.IsValid(harness) || allowPlaceIDs && nameutil.IsTargetIdentifier(harness) {
+				continue
 			}
+			return v4err("v4.harness", fmt.Sprintf("%s[%d]", listKey, i), n.Line, "unknown target %q", harness)
 		}
 	}
 	for _, auxiliary := range []struct {
@@ -1349,6 +1372,10 @@ func parseV4Includes(source string, n *yaml.Node, file string) ([]V4ResourceRequ
 			return nil, v4err("v4.duplicate-request", p, item.Line, "duplicate locator %q in one include list", locator)
 		}
 		seen[locator] = true
+		_, _, scoped := nameutil.SplitPlaceKind(kind)
+		if (scoped || kind == nameutil.TargetProfileKind) && opts.HasAs {
+			return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for scoped place packages and target profiles")
+		}
 		if kind == "plugin" {
 			if opts.HasAs {
 				return nil, v4err("v4.option-combination", p, item.Line, "as is invalid for plugins")
@@ -1479,7 +1506,18 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	if qualified {
 		registry, kind, name = first, second, last
 	}
-	if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
+	if scopedKind, ok := nameutil.DecodePlaceKindToken(kind); ok {
+		if !nameutil.IsPlacePackageName(name) {
+			return "", "", "", errors.New("marketplace.locator.invalid-name: invalid scoped package name")
+		}
+		kind = scopedKind
+	} else if strings.Contains(kind, "%") {
+		return "", "", "", errors.New("marketplace.locator.invalid-encoding: kind requires a single uppercase %2F escape")
+	} else if kind == nameutil.TargetProfileKind {
+		if !nameutil.IsTargetIdentifier(name) {
+			return "", "", "", errors.New("marketplace.locator.invalid-name: invalid target-profile name")
+		}
+	} else if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
 		return "", "", "", errors.New("has invalid kind or resource name")
 	}
 	if kind == "plugin" {
@@ -1521,7 +1559,8 @@ func validateV4Exclusion(value, source string) error {
 			return nil
 		}
 		if !strings.Contains(last, "/") && v4SlugRE.MatchString(first) {
-			if _, ok := v4Kinds[last]; !ok {
+			_, scoped := nameutil.DecodePlaceKindToken(last)
+			if _, ok := v4Kinds[last]; !ok && !scoped {
 				return v4err("v4.exclusion", value, 0, "invalid kind wildcard")
 			}
 			return nil
@@ -1559,7 +1598,8 @@ func validateV4ExclusionForSource(value string, kind V4SourceKind) error {
 			if strings.Contains(last, "/") || !v4SlugRE.MatchString(first) {
 				return v4err("v4.exclusion", value, 0, "Marketplace wildcard exclusion must be registry/kind/*, registry/*, or *")
 			}
-			if _, isKind := v4Kinds[last]; !isKind {
+			_, scoped := nameutil.DecodePlaceKindToken(last)
+			if _, isKind := v4Kinds[last]; !isKind && !scoped {
 				return v4err("v4.exclusion", value, 0, "invalid Marketplace kind wildcard")
 			}
 		}
@@ -2034,6 +2074,9 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
+	if doc.placePreapprovals != nil {
+		dst.PlacePreapprovals = clonePlacePreapprovals(doc.placePreapprovals)
+	}
 	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, Targets: doc.targets, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, Requires: doc.requires, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
@@ -2104,6 +2147,10 @@ func normalizeV4Tree(c *V4Config) error {
 		}
 		formatSource := src.Format != ""
 		for i := range g.Include {
+			_, _, scoped := nameutil.SplitPlaceKind(g.Include[i].Kind)
+			if (scoped || g.Include[i].Kind == nameutil.TargetProfileKind) && src.Kind != V4SourceMarketplace {
+				return v4err("v4.locator", "resources."+name+".include", 0, "scoped place packages and target profiles require a Marketplace source")
+			}
 			if g.Include[i].Kind == "plugin" && !formatSource {
 				return v4err("v4.locator", "resources."+name+".include", 0, "plugin requests are only valid for sources declaring a format")
 			}
@@ -2248,6 +2295,13 @@ func (c *V4Config) ToLegacyConfig(kind layerKind) (*Config, error) {
 // acquisition lock. Marketplace sources hydrate exact pins from normalized v2
 // lock records; a nil or non-v2 lock fails closed for Marketplace state.
 func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document) (*Config, error) {
+	if c != nil {
+		if err := c.validateScopedMarketplaceLayer(kind); err != nil {
+			attachV4ValidationContext(err, firstV4File(c), kind)
+			attachV4ValidationLockFile(err, firstV4File(c))
+			return nil, err
+		}
+	}
 	if doc != nil && doc.APIVersion == lockfile.APIVersionV2 {
 		normalized, err := lockfile.Normalize(*doc)
 		if err != nil {
@@ -2265,6 +2319,9 @@ func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document
 // the lock-free, adaptation-free half of toLegacyConfig's document checks, so
 // editors can refuse a layer-invalid document before writing any bytes.
 func (c *V4Config) validateLayerFields(kind layerKind) error {
+	if err := c.validateScopedMarketplaceLayer(kind); err != nil {
+		return err
+	}
 	if kind == localLayer && c.HasHarnesses {
 		return v4err("v4.layer-field", targetListKey(c.Targets), 0, "target lists are not valid in repository personal configuration")
 	}
@@ -2285,6 +2342,26 @@ func (c *V4Config) validateLayerFields(kind layerKind) error {
 	}
 	if kind == organizationLayer && c.Materialization != nil {
 		return v4err("v4.layer-field", "materialization", 0, "materialization is not valid in organization configuration")
+	}
+	return nil
+}
+
+func (c *V4Config) validateScopedMarketplaceLayer(kind layerKind) error {
+	if c == nil || kind != repoLayer && kind != localLayer {
+		return nil
+	}
+	groupNames := make([]string, 0, len(c.Groups))
+	for name := range c.Groups {
+		groupNames = append(groupNames, name)
+	}
+	sort.Strings(groupNames)
+	for _, name := range groupNames {
+		for _, request := range c.Groups[name].Include {
+			_, _, scoped := nameutil.SplitPlaceKind(request.Kind)
+			if scoped || request.Kind == nameutil.TargetProfileKind {
+				return v4RequestError("marketplace.profile.invalid-scope", request, "place selection %s requires user or organization scope", request.Locator)
+			}
+		}
 	}
 	return nil
 }
@@ -2622,6 +2699,13 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			LockArchiveDigest:            string(r.ArchiveDigest),
 			LockCollectionManifestDigest: string(r.CollectionManifestDigest),
 			LockSourcePath:               r.SourcePath,
+			LockAssessmentDigest:         string(r.AssessmentDigest),
+		}
+		if r.HostPackageIdentity != nil {
+			pin.LockHostPackageIdentity = *r.HostPackageIdentity
+		}
+		if r.ProfileIdentity != nil {
+			pin.LockProfileIdentity = *r.ProfileIdentity
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
 		var requiresEdges []MarketplaceRequirementEdge

@@ -1,6 +1,11 @@
 package lockfile
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+)
 
 const (
 	APIVersionV1 = "agent-marketplace-lock/v1"
@@ -59,8 +64,11 @@ type MarketplaceResourceLock struct {
 	Name                     string                     `yaml:"name"`
 	Revision                 string                     `yaml:"revision"`
 	ContentDigest            Digest                     `yaml:"content_digest"`
+	AssessmentDigest         Digest                     `yaml:"assessment_digest,omitempty"`
 	ArchiveDigest            Digest                     `yaml:"archive_digest,omitempty"`
 	CollectionManifestDigest Digest                     `yaml:"collection_manifest_digest,omitempty"`
+	ProfileIdentity          *targetprofile.Identity    `yaml:"profile_identity,omitempty"`
+	HostPackageIdentity      *targetprofile.Binding     `yaml:"host_package_identity,omitempty"`
 	Acquisition              string                     `yaml:"acquisition"`
 	RegistryCommit           string                     `yaml:"registry_commit,omitempty"`
 	RegistryManifestDigest   Digest                     `yaml:"registry_manifest_digest,omitempty"`
@@ -84,10 +92,34 @@ const (
 )
 
 type GitRegistry struct {
-	URL    string    `yaml:"url"`
-	Ref    string    `yaml:"ref"`
-	Commit GitOID    `yaml:"commit"`
-	Roots  []GitRoot `yaml:"roots,omitempty"`
+	URL            string    `yaml:"url"`
+	Ref            string    `yaml:"ref"`
+	Commit         GitOID    `yaml:"commit"`
+	Roots          []GitRoot `yaml:"roots,omitempty"`
+	suffixIdentity string
+}
+
+// NewGitRegistry constructs a Git lock record from a canonical registry URL.
+func NewGitRegistry(canonical, ref string, commit GitOID) GitRegistry {
+	registry := GitRegistry{Ref: ref, Commit: commit}
+	registry.setCanonicalURL(canonical)
+	return registry
+}
+
+// FetchURL returns the spelling needed to fetch this canonical registry.
+func (r GitRegistry) FetchURL() string {
+	if r.suffixIdentity != "" && r.URL == r.suffixIdentity {
+		return r.URL + ".git"
+	}
+	return r.URL
+}
+
+func (r *GitRegistry) setCanonicalURL(canonical string) {
+	r.URL = canonical
+	r.suffixIdentity = ""
+	if strings.HasSuffix(canonical, ".git") {
+		r.suffixIdentity = canonical
+	}
 }
 
 type GitRoot struct {

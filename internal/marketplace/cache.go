@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -202,10 +203,17 @@ func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, er
 			if acquisition == "" {
 				acquisition = config.MarketplaceAcquisitionMirror
 			}
-			if acquisition != config.MarketplaceAcquisitionMirror || pin.Kind == "collection" {
+			if acquisition != config.MarketplaceAcquisitionMirror || pin.Kind == "collection" || pin.Kind == nameutil.TargetProfileKind {
 				// Index-only pins and collection manifests are outside this
 				// artifact GC slice. Leave their cache entries untouched.
 				slog.Debug("marketplace cache garbage collection skipped non-artifact pin", "marketplace", entry.InstanceID, "pin_index", pinIndex, "kind", pin.Kind, "acquisition", acquisition)
+				continue
+			}
+			if _, _, scoped := nameutil.SplitPlaceKind(pin.Kind); scoped {
+				if err := validateSHA256Digest(pin.LockArchiveDigest); err != nil {
+					return nil, fmt.Errorf("active scoped marketplace %d pin %d has invalid locked archive digest: %w", entryIndex, pinIndex, err)
+				}
+				referenced[safeDigest(pin.LockArchiveDigest)] = struct{}{}
 				continue
 			}
 
@@ -231,7 +239,8 @@ func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, er
 	for entryIndex, locked := range roots.LockedResources {
 		for resourceIndex, resource := range locked.Resources {
 			acquisition := resource.Acquisition
-			if (acquisition != "" && acquisition != lockfile.MarketplaceAcquisitionMirror) || resource.Kind == "collection" {
+			if (acquisition != "" && acquisition != lockfile.MarketplaceAcquisitionMirror) ||
+				resource.Kind == "collection" || resource.Kind == nameutil.TargetProfileKind {
 				continue
 			}
 			if err := validateSHA256Digest(string(resource.ArchiveDigest)); err != nil {
@@ -548,15 +557,19 @@ func (c *Cache) WriteArtifact(digest string, raw []byte) (string, error) {
 
 func (c *Cache) writeArchive(form archiveForm, digest string, raw []byte) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
-		p := c.archivePath(form, digest)
-		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
-			return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
-		}
-		if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
-			return "", fmt.Errorf("write artifact cache %q: %w", p, err)
-		}
-		return p, nil
+		return c.writeArchiveLocked(form, digest, raw)
 	})
+}
+
+func (c *Cache) writeArchiveLocked(form archiveForm, digest string, raw []byte) (string, error) {
+	p := c.archivePath(form, digest)
+	if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+		return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
+	}
+	if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
+		return "", fmt.Errorf("write artifact cache %q: %w", p, err)
+	}
+	return p, nil
 }
 
 // ReadArtifact reads the legacy final-form artifact bytes and reports whether the
@@ -709,8 +722,15 @@ func (c *Cache) WriteResourceRevision(baseURL, registryID, kind, name, revision 
 }
 
 func (c *Cache) writeResourceRevision(baseURL, registryID, kind, name, revision string, rev store.AssessedResourceRevision) (string, error) {
-	p := c.MetadataPath(baseURL, registryID, kind, name, revision)
-	raw, err := json.Marshal(rev)
+	return c.writeResourceRevisionAt(c.MetadataPath(baseURL, registryID, kind, name, revision), rev)
+}
+
+func (c *Cache) writeResourceRevisionAt(p string, rev store.AssessedResourceRevision) (string, error) {
+	return c.writeMetadataAt(p, rev)
+}
+
+func (c *Cache) writeMetadataAt(p string, value any) (string, error) {
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return "", fmt.Errorf("marshal resource revision: %w", err)
 	}

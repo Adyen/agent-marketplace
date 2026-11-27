@@ -143,13 +143,19 @@ func (e *CommittedScopeError) Unwrap() error { return e.Err }
 type FaultStage string
 
 const (
-	FaultAfterLocks    FaultStage = "after-locks"
-	FaultAfterCAS      FaultStage = "after-cas"
-	FaultAfterStage    FaultStage = "after-stage"
-	FaultAfterJournal  FaultStage = "after-journal"
-	FaultBeforePublish FaultStage = "before-publish"
-	FaultAfterPublish  FaultStage = "after-publish"
-	FaultAfterFinalize FaultStage = "after-finalize"
+	FaultAfterLocks          FaultStage = "after-locks"
+	FaultAfterCAS            FaultStage = "after-cas"
+	FaultAfterStage          FaultStage = "after-stage"
+	FaultAfterJournal        FaultStage = "after-journal"
+	FaultBeforePublish       FaultStage = "before-publish"
+	FaultAfterPublish        FaultStage = "after-publish"
+	FaultAfterFinalize       FaultStage = "after-finalize"
+	FaultPlaceAfterStage     FaultStage = "place-after-stage"
+	FaultPlaceAfterDirectory FaultStage = "place-after-directory"
+	FaultPlaceBeforePublish  FaultStage = "place-before-publish"
+	FaultPlaceAfterPublish   FaultStage = "place-after-publish"
+	FaultPlaceAfterOwnership FaultStage = "place-after-ownership"
+	FaultPlaceAfterPrune     FaultStage = "place-after-prune"
 )
 
 type FaultPoint struct {
@@ -168,10 +174,11 @@ var defaultFault FaultHook
 type Option func(*options)
 
 type options struct {
-	fault   FaultHook
-	syncDir func(string) error
-	reads   []ReadAssertion
-	scope   CommitScope
+	fault           FaultHook
+	syncDir         func(string) error
+	syncPruneParent func(*fsboundary.Dir) error
+	reads           []ReadAssertion
+	scope           CommitScope
 }
 
 func WithCommitScope(scope CommitScope) Option {
@@ -204,6 +211,7 @@ type journal struct {
 	Files      []journalFile      `json:"files"`
 	Assertions []journalAssertion `json:"assertions,omitempty"`
 	Reads      []ReadAssertion    `json:"reads,omitempty"`
+	Place      *placeIntent       `json:"place,omitempty"`
 }
 
 type journalAssertion struct {
@@ -683,10 +691,38 @@ func CheckPending(stateDir string) error {
 	}
 	for _, entry := range entries {
 		if isJournalEntry(entry) {
-			return fmt.Errorf("%w: %s", ErrRecoveryRequired, filepath.Join(stateDir, entry.Name()))
+			path := filepath.Join(stateDir, entry.Name())
+			if hasPlace, _ := journalHasPlace(path); hasPlace {
+				journal, err := readJournal(path)
+				if err != nil {
+					return fmt.Errorf("%w: %s: %v", ErrRecoveryRequired, path, err)
+				}
+				if journal.Place != nil {
+					pending, problem := placeJournalProblem(filepath.Dir(stateDir), path, journal.Place)
+					if problem != nil {
+						return fmt.Errorf("%w: %s: %s: %v", ErrRecoveryRequired, path, pending, problem)
+					}
+					return fmt.Errorf("%w: %s: %s", ErrRecoveryRequired, path, pending)
+				}
+			}
+			return fmt.Errorf("%w: %s", ErrRecoveryRequired, path)
 		}
 	}
 	return nil
+}
+
+func journalHasPlace(path string) (bool, error) {
+	raw, _, err := readRegularFile(path, maxJournalSize)
+	if err != nil {
+		return false, err
+	}
+	var envelope struct {
+		Place json.RawMessage `json:"place"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return false, err
+	}
+	return len(envelope.Place) != 0 && string(envelope.Place) != "null", nil
 }
 
 func isJournalEntry(entry os.DirEntry) bool {
@@ -729,7 +765,10 @@ func readJournal(path string) (journal, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return j, fmt.Errorf("%w: trailing data in journal %s", ErrRecoveryBlocked, path)
 	}
-	return j, validateJournal(&j)
+	if err := validateJournalAt(&j, filepath.Dir(filepath.Dir(path))); err != nil {
+		return j, fmt.Errorf("validate dependency journal %s: %w", path, err)
+	}
+	return j, nil
 }
 
 func checkPendingDestinations(stateDir string, paths []string) error {
@@ -747,6 +786,14 @@ func checkPendingDestinations(stateDir string, paths []string) error {
 		}
 		if err != nil {
 			return err
+		}
+		if j.Place != nil {
+			journalPath := filepath.Join(stateDir, entry.Name())
+			pending, problem := placeJournalProblem(filepath.Dir(stateDir), journalPath, j.Place)
+			if problem != nil {
+				return fmt.Errorf("%w: %s: %s: %v", ErrRecoveryRequired, journalPath, pending, problem)
+			}
+			return fmt.Errorf("%w: %s: %s", ErrRecoveryRequired, journalPath, pending)
 		}
 		pending := make(map[string]bool, len(j.Files)+len(j.Assertions)+len(j.Reads))
 		for _, file := range j.Files {
@@ -774,6 +821,9 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 	}
 	if err != nil {
 		return err
+	}
+	if j.Place != nil {
+		return recoverPlaceJournal(ctx, path, stateDir, j, cfg)
 	}
 	paths := make([]string, 0, len(j.Files)+len(j.Assertions))
 	for i := range j.Files {
@@ -1185,10 +1235,21 @@ func stageFile(destination string, data []byte, mode fs.FileMode) (string, error
 	return path, nil
 }
 
-func persistJournal(stateDir string, j *journal, syncDir func(string) error) (string, error) {
+func marshalBoundedJournal(j *journal, description string) ([]byte, error) {
 	raw, err := json.Marshal(j)
 	if err != nil {
-		return "", fmt.Errorf("dependency transaction: marshal journal: %w", err)
+		return nil, fmt.Errorf("dependency transaction: marshal journal: %w", err)
+	}
+	if int64(len(raw)) > maxJournalSize {
+		return nil, fmt.Errorf("%w: %s requires %d bytes; limit is %d", ErrRecoveryBlocked, description, len(raw), maxJournalSize)
+	}
+	return raw, nil
+}
+
+func persistJournal(stateDir string, j *journal, syncDir func(string) error) (string, error) {
+	raw, err := marshalBoundedJournal(j, "journal")
+	if err != nil {
+		return "", err
 	}
 	path := filepath.Join(stateDir, ".dependencytxn-"+j.ID+".json")
 	temp, err := os.CreateTemp(stateDir, ".dependencytxn-journal-*.tmp")
@@ -1566,12 +1627,25 @@ func validateStaged(file journalFile) error {
 }
 
 func validateJournal(j *journal) error {
+	return validateJournalAt(j, "")
+}
+
+func validateJournalAt(j *journal, stateRoot string) error {
 	for _, read := range j.Reads {
 		if err := validateReadAssertion(read); err != nil {
 			return fmt.Errorf("%w: invalid read assertion: %w", ErrRecoveryBlocked, err)
 		}
 	}
-	if j.Version != journalVersion || j.ID == "" || len(j.Files) == 0 {
+	if j.Version != journalVersion || j.ID == "" {
+		return fmt.Errorf("%w: invalid journal header", ErrRecoveryBlocked)
+	}
+	if j.Place != nil {
+		if len(j.Files) != 0 || len(j.Assertions) != 0 || len(j.Reads) != 0 {
+			return fmt.Errorf("%w: place journal mixes transaction intents", ErrRecoveryBlocked)
+		}
+		return validatePlaceJournal(j, stateRoot)
+	}
+	if len(j.Files) == 0 {
 		return fmt.Errorf("%w: invalid journal header", ErrRecoveryBlocked)
 	}
 	destinations := make(map[string]struct{}, len(j.Files)+len(j.Assertions))
@@ -1723,7 +1797,7 @@ func sortedKeys(values map[string]struct{}) []string {
 }
 
 func applyOptions(opts []Option) options {
-	cfg := options{syncDir: fsyncDir, fault: defaultFault}
+	cfg := options{syncDir: fsyncDir, syncPruneParent: (*fsboundary.Dir).Sync, fault: defaultFault}
 	for _, opt := range opts {
 		opt(&cfg)
 	}

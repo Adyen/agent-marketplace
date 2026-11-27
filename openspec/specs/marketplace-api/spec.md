@@ -52,6 +52,16 @@ versions, artifact schema versions, selectable resource kinds, acquisition
 modes, and optional server features. The server, CLI, and generated clients
 SHALL share one wire vocabulary of selectable resource kinds.
 
+The `target-profile-place-v1` feature SHALL extend that vocabulary with the
+virtual `target-profile` kind and scoped package kinds whose target and local
+kind are declared in the exact assessed profile. Requests opt in with
+`X-Agent-Marketplace-Features: target-profile-place-v1`. The base
+`resource_kinds` enum SHALL remain unchanged. Without the opt-in, legacy
+discovery, search and selection MUST retain the base vocabulary: filter
+place-only records before pagination and refuse selection of those records
+instead of returning a manifest with unsupported member kinds. Cacheable
+responses that vary by opt-in MUST distinguish the two representations.
+
 #### Scenario: Capabilities document matches the OpenAPI contract
 
 - **WHEN** the capabilities document of a Marketplace instance is produced
@@ -69,11 +79,11 @@ SHALL share one wire vocabulary of selectable resource kinds.
 
 #### Scenario: Selectable resource kinds
 
-- **WHEN** the selectable resource kind vocabulary is inspected
+- **WHEN** the base selectable resource kind vocabulary is inspected
 - **THEN** it MUST contain `skill`, `command`, `subagent`, `hook`, `mcpserver`,
   `collection` in that order
-- **AND** exactly those values MUST be treated as Marketplace-selectable kinds
-  while non-selectable kinds such as `rule` MUST be rejected
+- **AND** exactly those values MUST be selectable without the place feature;
+  non-selectable kinds such as `rule` MUST be rejected
 
 #### Scenario: Bidirectional kind conversion
 
@@ -82,7 +92,16 @@ SHALL share one wire vocabulary of selectable resource kinds.
 - **THEN** the `skill`, `command`, `subagent`, `hook`, and `mcpserver` kinds
   MUST map in both directions
 - **AND** conversion into the harness-neutral representation MUST reject
-  the virtual `collection` kind and unknown values
+  virtual kinds, scoped place kinds and unknown values
+
+#### Scenario: Place discovery does not change legacy discovery
+
+- **WHEN** an instance advertises `target-profile-place-v1` and serves both
+  legacy and place resources
+- **THEN** a legacy request MUST see only the base kinds and compatible
+  selections, with totals and pages computed from that set
+- **AND** an opted-in request MUST also be able to discover and select the
+  virtual profile and packages assessed against it
 
 ### Requirement: Well-known discovery document
 
@@ -788,9 +807,10 @@ Verifying a resource archive by digest, verifying a final archive against its ve
 - **THEN** verification MUST fail with the limit that was exceeded
 - **AND** the later entry MUST NOT be decoded
 - **AND** an encoded archive with the maximum asset count and a member at the per-member limit MUST still verify
+
 ### Requirement: Resource detail exposes prerequisites
 
-The latest resource detail response SHALL include `requires` exactly when the revision is indexed: an empty array when it declares none, and omitted when it is unindexed. Each entry SHALL carry the declared kind and name and the stored, credential-redacted `registry` and `path` hints. An entry SHALL include `resolved` with the target's registry slug, kind, and name only when all of the following hold. The target registry is the requiring registry when there is no registry hint, or otherwise the registry of the same Marketplace whose slug, or failing that whose ID, equals the hint. The target has a current-head occurrence. When a `path` hint is present, the target's source root equals the normalized hint. The target's own resource detail request would succeed for the same caller. The source root is the single root of the target's registry occurrence that contains the target's source path. When no single root qualifies, the source path is unknown, or the hint is absolute, escaping, or otherwise unsafe, the path hint is unmatched. A hidden target MUST be indistinguishable from a missing one. Search, revision-list, and revision-by-digest responses MUST NOT gain these fields.
+The latest resource detail response SHALL include `requires` exactly when the revision is indexed: an empty array when it declares none, and omitted when it is unindexed. Each entry SHALL carry the declared kind and name and the stored, credential-redacted `registry` and `path` hints. An entry SHALL include `resolved` with the target's registry slug, kind, and name only when all of the following hold. The target registry is the requiring registry when there is no registry hint, or otherwise the registry of the same Marketplace whose slug, or failing that whose ID, equals the hint. The target has a current-head occurrence. When a `path` hint is present, the target's source root equals the normalized hint. The target's own resource detail request would succeed for the same caller. The source root is the single root of the target's registry occurrence that contains the target's source path. When no single root qualifies, the source path is unknown, or the hint is absolute, escaping, or otherwise unsafe, the path hint is unmatched. A hidden target MUST be indistinguishable from a missing one. In addition, an opted-in exact revision request for an available or operator-exposed, non-revoked Place package SHALL return only that revision's stored prerequisite kind and name declarations when indexed. Exact Place declarations MUST NOT be resolved against current heads or include registry, path, `resolved`, or `required_by` fields. An absent or `null` indexed value SHALL remain omitted. Search, revision-list, and ordinary revision-by-digest responses MUST NOT gain these fields.
 
 #### Scenario: Indexed revision lists its prerequisites
 
@@ -832,10 +852,36 @@ The latest resource detail response SHALL include `requires` exactly when the re
 - **WHEN** a path hint names a directory prefix of the target's source path that is not its source root, or nested roots make the source root ambiguous, or the source path is unknown
 - **THEN** the entry MUST omit `resolved`
 
+#### Scenario: Exact Place revision returns its stored declarations
+
+- **WHEN** a caller opts in to Place and requests an available, non-revoked scoped package revision by its exact digest
+- **THEN** `requires` MUST contain that revision's indexed kind and name declarations in declaration order, without hints, `resolved`, or `required_by`
+
+#### Scenario: Exact historical Place revision does not use the current head
+
+- **WHEN** an opted-in caller requests an older, available Place package revision after a newer revision with different prerequisites has become current
+- **THEN** `requires` MUST contain only the older exact revision's stored declarations
+- **AND** it MUST NOT contain `resolved` or `required_by`
+
+#### Scenario: Exact Place indexed-empty and unknown prerequisites stay distinct
+
+- **WHEN** an opted-in caller requests an available exact Place revision whose stored value is `[]`, absent, or `null`
+- **THEN** `requires` MUST be `[]` only for the explicitly indexed empty array, and MUST be omitted for absent or `null`
+
+#### Scenario: Ineligible exact Place revision does not expose prerequisites
+
+- **WHEN** an exact Place revision is revoked or not available to the caller
+- **THEN** the response MUST NOT expose its `requires`
+
 #### Scenario: Search and revision responses are unchanged
 
-- **WHEN** a caller searches resources, lists revisions, or requests a revision by digest
+- **WHEN** a caller searches resources, lists revisions, or requests an ordinary resource revision by digest, rather than an opted-in exact Place package revision
 - **THEN** those responses MUST NOT include `requires` or `required_by`
+
+#### Scenario: Invalid exact Place declarations are refused
+
+- **WHEN** an exact Place revision contains malformed declarations, registry or path hints, a foreign target, or a self-reference
+- **THEN** the API MUST refuse the response instead of exposing a successful prerequisite graph
 
 ### Requirement: Resource detail exposes dependents within the same Marketplace
 
@@ -870,3 +916,37 @@ The latest resource detail response SHALL include `required_by`: the current-hea
 
 - **WHEN** every in-scope visible revision is indexed and none requires the requested resource
 - **THEN** `required_by` MUST be an empty array
+
+### Requirement: Place package wire identity
+
+Scoped package kind values SHALL use `<target-id>/<local-kind>` in structured
+data. In a Marketplace API or browser route the kind-internal slash SHALL be
+the single literal escape `%2F`; split the escaped route before decoding and
+decode that token once. Other tokens and existing kind routes retain their
+existing syntax. An invalid, noncanonical, extra or ambiguous escape in the
+scoped kind MUST refuse before lookup.
+
+#### Scenario: Scoped package routes use a single kind escape
+
+- **WHEN** a profile-aware client requests a declared scoped kind using its
+  canonical escaped route
+- **THEN** the API MUST resolve the exact structured kind
+- **AND** lowercase, double-escaped and raw slash alternatives MUST refuse,
+  without changing matching for existing routes
+
+### Requirement: Place artifact binding
+
+The schema-v1 place artifact SHALL carry the exact payload and file map.
+The manifest and assessment SHALL agree on `host_package_identity`: the
+payload digest, mapping digest, full profile digest and exact profile
+identity. The canonical assessment digest MUST cover the binding; the
+place content digest is the payload tree digest. Compiled kinds retain
+their existing digest and encoding.
+
+#### Scenario: Place manifests and assessments agree on the exact binding
+
+- **WHEN** a scoped place package is exposed through the Marketplace
+- **THEN** its manifest and assessment MUST agree on the profile, payload
+  and mapping identities and verify against their canonical digests
+- **AND** an absent or mismatched binding MUST fail verification rather
+  than fall back to ordinary artifact acceptance

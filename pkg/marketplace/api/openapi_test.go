@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -88,6 +89,43 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
+	}
+}
+
+func TestOpenAPIResourceRelationKindsIncludeScopedPlaceKinds(t *testing.T) {
+	schemas := readOpenAPIDocument(t)["components"].(map[string]any)["schemas"].(map[string]any)
+	readKinds := func(name string, wantKinds []string) string {
+		t.Helper()
+		schema := schemas[name].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)
+		options, ok := schema["oneOf"].([]any)
+		if !ok || len(options) != 2 {
+			t.Fatalf("%s.kind oneOf = %#v, want ordinary enum and scoped pattern", name, schema["oneOf"])
+		}
+		ordinary := options[0].(map[string]any)
+		if ordinary["type"] != "string" || !sameAnyStrings(ordinary["enum"].([]any), wantKinds) {
+			t.Fatalf("%s.kind ordinary option = %#v, want string enum %v", name, ordinary, wantKinds)
+		}
+		scoped := options[1].(map[string]any)
+		if scoped["type"] != "string" {
+			t.Fatalf("%s.kind scoped option = %#v, want string pattern", name, scoped)
+		}
+		pattern, ok := scoped["pattern"].(string)
+		if !ok {
+			t.Fatalf("%s.kind scoped pattern = %#v", name, scoped["pattern"])
+		}
+		return pattern
+	}
+	relationPattern := readKinds("ResourceRelation", []string{"skill", "command", "subagent", "hook", "mcpserver", "collection"})
+	requirementPattern := readKinds("ResourceRequirement", []string{"skill", "command", "subagent", "hook", "mcpserver"})
+	if relationPattern != requirementPattern {
+		t.Fatalf("ResourceRelation pattern = %q, ResourceRequirement pattern = %q", relationPattern, requirementPattern)
+	}
+	compiled, err := regexp.Compile(relationPattern)
+	if err != nil {
+		t.Fatalf("compile scoped-kind pattern: %v", err)
+	}
+	if !compiled.MatchString("invented-app/mod") || compiled.MatchString("invented-app/mod/nested") {
+		t.Fatalf("scoped-kind pattern %q must accept one scoped kind and reject nested slashes", relationPattern)
 	}
 }
 

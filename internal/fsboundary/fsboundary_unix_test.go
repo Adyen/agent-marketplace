@@ -32,6 +32,44 @@ func captureRoot(t *testing.T, path string) (*Dir, string) {
 	return root, root.Path()
 }
 
+func TestOpenCanonicalDirTraversesUnlistableAncestor(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(base, "parent")
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o700); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("restore parent permissions: %v", err)
+		}
+	})
+	if err := os.Chmod(parent, 0o100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadDir(parent); err == nil {
+		t.Skip("directory listing succeeded with execute-only parent permissions")
+	} else if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("read execute-only parent: %v, want permission error", err)
+	}
+	dir, err := OpenCanonicalDir(target)
+	if err != nil {
+		t.Fatalf("OpenCanonicalDir(%q): %v", target, err)
+	}
+	if dir.Path() != target {
+		t.Errorf("OpenCanonicalDir path = %q, want %q", dir.Path(), target)
+	}
+	if err := dir.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func mustWrite(t *testing.T, path string, data []byte, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, data, mode); err != nil {

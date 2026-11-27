@@ -14,6 +14,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var ErrNonCanonicalDir = errors.New("directory path is not its canonical spelling")
+
 const (
 	// dirOpenFlags captures a directory. The root itself is authorized
 	// lexically once by the caller, so it may resolve through symlinks.
@@ -70,6 +72,29 @@ func OpenDir(path string) (*Dir, error) {
 		return nil, fmt.Errorf("%w: root is not a directory: %s", ErrUnsafePath, canonical)
 	}
 	return &Dir{file: file, path: canonical, id: id}, nil
+}
+
+// OpenCanonicalDir captures a directory only when every path component uses
+// its literal directory-entry spelling.
+func OpenCanonicalDir(path string) (*Dir, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, fmt.Errorf("%w: %s", ErrNonCanonicalDir, path)
+	}
+	dir, err := OpenDir(path)
+	if err != nil {
+		return nil, err
+	}
+	if dir.Path() != path {
+		return nil, errors.Join(fmt.Errorf("%w: %s", ErrNonCanonicalDir, path), dir.Close())
+	}
+	actual, err := descriptorDirPath(dir.file)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("read descriptor directory path %s: %w", path, err), dir.Close())
+	}
+	if actual != path {
+		return nil, errors.Join(fmt.Errorf("%w: %s", ErrNonCanonicalDir, path), dir.Close())
+	}
+	return dir, nil
 }
 
 // Path returns the canonical path captured at open time. It is recorded for

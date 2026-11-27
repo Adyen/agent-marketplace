@@ -413,7 +413,7 @@ func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]sto
 const assessedResourceColumns = `rr.marketplace_id, rr.registry_id, rr.kind, rr.name,
 	rr.content_digest, rr.archive_digest, rr.license, rr.description, COALESCE(rr.requires,''),
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
-	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
+	ra.findings, ra.inspection_manifest_digest, ra.assessed_at, ra.host_package_identity,
 	ro.revision_commit, ro.manifest_digest, ro.source_path,
 	rv.kind, rv.target_id, rv.reason, rv.applied_at,
 	rc.kind, rc.target_id, rc.reason, rc.applied_at,
@@ -480,6 +480,7 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	var archive, license, sourcePath sql.NullString
 	var findings string
 	var assessedAt int64
+	var binding sql.NullString
 	var revocationKind, targetID, reason sql.NullString
 	var appliedAt sql.NullInt64
 	var coordinateKind, coordinateTarget, coordinateReason sql.NullString
@@ -491,6 +492,7 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 		&out.ContentDigest, &archive, &license, &out.Description, &out.Requires,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
 		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
+		&binding,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath,
 		&revocationKind, &targetID, &reason, &appliedAt,
 		&coordinateKind, &coordinateTarget, &coordinateReason, &coordinateAt,
@@ -509,6 +511,9 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	out.Assessment.AssessedAt = microToTime(assessedAt)
 	if err := unmarshalJSON([]byte(findings), &out.Assessment.Findings); err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if err := store.RestoreAssessmentBinding(&out.Assessment, binding); err != nil {
+		return store.AssessedResourceRevision{}, err
 	}
 	out.Occurrence.Coordinate = out.Coordinate
 	out.Occurrence.ContentDigest = out.ContentDigest
@@ -708,29 +713,38 @@ func (s *Store) PutResourceAssessment(ctx context.Context, assessment store.Reso
 	if err != nil {
 		return err
 	}
+	var binding any
+	if finalized.HostPackageIdentity != nil {
+		encoded, err := marshalJSON(finalized.HostPackageIdentity)
+		if err != nil {
+			return err
+		}
+		binding = encoded
+	}
 	_, err = s.q.ExecContext(ctx, `INSERT INTO resource_assessments
 		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest,
-		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 analyzer_version, policy_digest, decision, findings, inspection_manifest_digest, assessed_at, host_package_identity)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest, assessment_digest) DO NOTHING`,
 		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind,
 		finalized.Coordinate.Name, finalized.ContentDigest, finalized.AssessmentDigest,
 		finalized.AnalyzerVersion, finalized.PolicyDigest, finalized.Decision, findings,
-		finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt))
+		finalized.InspectionManifestDigest, timeToMicro(finalized.AssessedAt), binding)
 	return err
 }
 
 func (s *Store) GetResourceAssessment(ctx context.Context, digest store.AssessmentDigest) (store.ResourceAssessment, error) {
 	row := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings,
-		inspection_manifest_digest, assessed_at FROM resource_assessments WHERE assessment_digest=$1`, digest)
+		inspection_manifest_digest, assessed_at, host_package_identity FROM resource_assessments WHERE assessment_digest=$1`, digest)
 	var assessment store.ResourceAssessment
 	var findings string
 	var assessedAt int64
+	var binding sql.NullString
 	err := row.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 		&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 		&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
-		&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt)
+		&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt, &binding)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceAssessment{}, store.ErrNotFound
 	}
@@ -740,6 +754,9 @@ func (s *Store) GetResourceAssessment(ctx context.Context, digest store.Assessme
 	assessment.AssessedAt = microToTime(assessedAt)
 	if err := unmarshalJSON([]byte(findings), &assessment.Findings); err != nil {
 		return store.ResourceAssessment{}, fmt.Errorf("unmarshal assessment findings: %w", err)
+	}
+	if err := store.RestoreAssessmentBinding(&assessment, binding); err != nil {
+		return store.ResourceAssessment{}, err
 	}
 	return assessment, nil
 }
@@ -752,25 +769,8 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 	if err := assessment.Validate(); err != nil {
 		return err
 	}
-	res, err := s.q.ExecContext(ctx, `INSERT INTO current_resource_assessments
-		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest)
-		SELECT marketplace_id, registry_id, kind, name, content_digest, assessment_digest
-		FROM resource_assessments
-		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4
-		  AND content_digest=$5 AND assessment_digest=$6
-		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest) DO UPDATE
-		SET assessment_digest=EXCLUDED.assessment_digest`,
-		assessment.Coordinate.Marketplace, assessment.Coordinate.Registry, assessment.Coordinate.Kind,
-		assessment.Coordinate.Name, assessment.ContentDigest, assessment.AssessmentDigest)
-	if err != nil {
+	if err := store.SelectCurrentAssessment(ctx, s.q, assessment); err != nil {
 		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return store.ErrNotFound
 	}
 	return s.advanceCatalogVersion(ctx)
 }
@@ -778,7 +778,7 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 func (s *Store) ListResourceAssessments(ctx context.Context, coord store.ResourceCoordinate, digest store.RevisionDigest) ([]store.ResourceAssessment, error) {
 	rows, err := s.q.QueryContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
 		assessment_digest, analyzer_version, policy_digest, decision, findings,
-		inspection_manifest_digest, assessed_at FROM resource_assessments
+		inspection_manifest_digest, assessed_at, host_package_identity FROM resource_assessments
 		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5
 		ORDER BY assessed_at DESC, assessment_digest DESC`,
 		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest)
@@ -791,15 +791,19 @@ func (s *Store) ListResourceAssessments(ctx context.Context, coord store.Resourc
 		var assessment store.ResourceAssessment
 		var findings string
 		var assessedAt int64
+		var binding sql.NullString
 		if err := rows.Scan(&assessment.Coordinate.Marketplace, &assessment.Coordinate.Registry,
 			&assessment.Coordinate.Kind, &assessment.Coordinate.Name, &assessment.ContentDigest,
 			&assessment.AssessmentDigest, &assessment.AnalyzerVersion, &assessment.PolicyDigest,
-			&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt); err != nil {
+			&assessment.Decision, &findings, &assessment.InspectionManifestDigest, &assessedAt, &binding); err != nil {
 			return nil, err
 		}
 		assessment.AssessedAt = microToTime(assessedAt)
 		if err := unmarshalJSON([]byte(findings), &assessment.Findings); err != nil {
 			return nil, fmt.Errorf("unmarshal assessment findings: %w", err)
+		}
+		if err := store.RestoreAssessmentBinding(&assessment, binding); err != nil {
+			return nil, err
 		}
 		out = append(out, assessment)
 	}

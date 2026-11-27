@@ -13,6 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	telemetryconfig "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
 
 type Intent struct {
@@ -113,6 +115,14 @@ func (l LayerIntent) Err() error {
 	return errors.Join(l.errors...)
 }
 
+// PlacePreapprovals returns the valid organization layer's exact target grants.
+func (l LayerIntent) PlacePreapprovals() []PlacePreapproval {
+	if l.Source != Organization || l.v4 == nil || l.Err() != nil {
+		return nil
+	}
+	return clonePlacePreapprovals(l.v4.PlacePreapprovals)
+}
+
 func (l LayerIntent) Settings() Settings {
 	if l.v4 != nil {
 		settings := Settings{
@@ -139,10 +149,12 @@ func (l LayerIntent) Settings() Settings {
 }
 
 func (s Settings) config() *Config {
+	harnesses, placeTargets := splitPlaceTargets(s.Harnesses)
 	return &Config{
 		APIVersion:          APIVersionV4,
-		Harnesses:           s.Harnesses,
-		HasTargets:          s.HasTargets,
+		Harnesses:           harnesses,
+		PlaceTargets:        placeTargets,
+		HasTargets:          s.HasTargets || len(placeTargets) > 0,
 		AllowedRegistries:   s.AllowedRegistries,
 		AllowedMarketplaces: s.AllowedMarketplaces,
 		Backup:              s.Backup,
@@ -151,6 +163,21 @@ func (s Settings) config() *Config {
 		Materialization:     s.Materialization,
 		Requires:            s.Requires,
 	}
+}
+
+func splitPlaceTargets(harnesses []string) (compiled, placeTargets []string) {
+	if harnesses == nil {
+		return nil, nil
+	}
+	compiled = make([]string, 0, len(harnesses))
+	for _, harness := range harnesses {
+		if target.IsValid(harness) {
+			compiled = append(compiled, harness)
+		} else if nameutil.IsTargetIdentifier(harness) {
+			placeTargets = append(placeTargets, harness)
+		}
+	}
+	return compiled, placeTargets
 }
 
 func (l LayerIntent) Sources() []SourceDecl {
@@ -309,24 +336,29 @@ func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Documen
 }
 
 func (i Intent) TargetHarnesses() ([]string, Source) {
-	if harnesses := i.Layers[RepoCommitted].Settings().Harnesses; len(harnesses) > 0 {
-		return append([]string(nil), harnesses...), RepoCommitted
+	repo := i.Layers[RepoCommitted].Settings().config()
+	if len(repo.Harnesses) > 0 {
+		return append([]string(nil), repo.Harnesses...), RepoCommitted
 	}
-	if settings := i.Layers[UserPersonal].Settings(); settings.HasTargets || len(settings.Harnesses) > 0 {
-		return append([]string{}, settings.Harnesses...), UserPersonal
+	user := i.Layers[UserPersonal].Settings().config()
+	if user.HasTargets || len(user.Harnesses) > 0 {
+		return append([]string{}, user.Harnesses...), UserPersonal
 	}
-	if harnesses := i.Layers[Organization].Settings().Harnesses; len(harnesses) > 0 {
-		return append([]string(nil), harnesses...), i.Layers[Organization].Source
+	organization := i.Layers[Organization].Settings().config()
+	if len(organization.Harnesses) > 0 || len(organization.PlaceTargets) > 0 {
+		return append([]string{}, organization.Harnesses...), i.Layers[Organization].Source
 	}
 	return nil, SourceUnset
 }
 
 func (i Intent) MachineTargetHarnesses() ([]string, Source) {
-	if harnesses := i.Layers[UserPersonal].Settings().Harnesses; len(harnesses) > 0 {
-		return append([]string(nil), harnesses...), UserPersonal
+	user := i.Layers[UserPersonal].Settings().config()
+	if len(user.Harnesses) > 0 || len(user.PlaceTargets) > 0 {
+		return append([]string{}, user.Harnesses...), UserPersonal
 	}
-	if harnesses := i.Layers[Organization].Settings().Harnesses; len(harnesses) > 0 {
-		return append([]string(nil), harnesses...), i.Layers[Organization].Source
+	organization := i.Layers[Organization].Settings().config()
+	if len(organization.Harnesses) > 0 || len(organization.PlaceTargets) > 0 {
+		return append([]string{}, organization.Harnesses...), i.Layers[Organization].Source
 	}
 	return i.TargetHarnesses()
 }
@@ -598,10 +630,68 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 		intent.Layers[RepoPersonal] = loadLayerIntent(RepoPersonal, localPath, localLayer, opts.FileOverlays)
 	}
 
+	validateEnabledPlaceIntent(&intent)
 	for _, source := range intentLayerOrder {
 		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
 	}
 	return intent
+}
+
+func validateEnabledPlaceIntent(intent *Intent) {
+	if intent == nil {
+		return
+	}
+	knownProfiles := make(map[string]struct{})
+	admittedProfiles := make(map[string]struct{})
+	allowed := intent.AllowedMarketplaces()
+	machineLayers := []Source{Organization, UserPersonal}
+	for _, source := range machineLayers {
+		layer := &intent.Layers[source]
+		if layer.Source != source || !layer.Present() || layer.Err() != nil {
+			continue
+		}
+		for _, marketplace := range layer.MarketplaceSources() {
+			var profileIDs []string
+			for _, request := range marketplace.Requests {
+				if request.Kind != nameutil.TargetProfileKind {
+					continue
+				}
+				knownProfiles[request.Name] = struct{}{}
+				profileIDs = append(profileIDs, request.Name)
+			}
+			if len(profileIDs) == 0 ||
+				ValidateMarketplaceURLs([]MarketplaceEntry{{URL: marketplace.URL, Source: source}}, allowed) != nil {
+				continue
+			}
+			for _, targetID := range profileIDs {
+				admittedProfiles[targetID] = struct{}{}
+			}
+		}
+	}
+	for _, source := range machineLayers {
+		layer := &intent.Layers[source]
+		if layer.Source != source || !layer.Present() || layer.Err() != nil || layer.v4 == nil {
+			continue
+		}
+		for index, targetID := range layer.v4.Harnesses {
+			if target.IsValid(targetID) {
+				continue
+			}
+			if _, admitted := admittedProfiles[targetID]; admitted {
+				continue
+			}
+			code := "v4.harness"
+			reason := "has no declared machine-scope Marketplace target-profile request"
+			if _, known := knownProfiles[targetID]; known {
+				code = "marketplace.profile.selection-invalid"
+				reason = "has no Marketplace target-profile request admitted by allowed_marketplaces"
+			}
+			path := fmt.Sprintf("%s[%d]", targetListKey(layer.v4.Targets), index)
+			err := v4err(code, path, 0, "target %q %s", targetID, reason)
+			attachV4ValidationContext(err, layer.Path, layerForIntentSource(source))
+			layer.errors = append(layer.errors, err)
+		}
+	}
 }
 
 func bindLayerResult(li LayerIntent, ev Evidence, source Source) LayerResult {
@@ -680,9 +770,16 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 	} else if ec.User.Config != nil && (ec.User.Config.HasTargets || len(ec.User.Config.Harnesses) > 0) {
 		ec.TargetHarnesses = append([]string(nil), ec.User.Config.Harnesses...)
 		ec.TargetHarnessSource = UserPersonal
-	} else if ec.Organization.Config != nil && len(ec.Organization.Config.Harnesses) > 0 {
+	} else if ec.Organization.Config != nil &&
+		(len(ec.Organization.Config.Harnesses) > 0 || len(ec.Organization.Config.PlaceTargets) > 0) {
 		ec.TargetHarnesses = append([]string(nil), ec.Organization.Config.Harnesses...)
 		ec.TargetHarnessSource = ec.Organization.Source
+	}
+	if ec.User.Config != nil &&
+		(len(ec.User.Config.Harnesses) > 0 || len(ec.User.Config.PlaceTargets) > 0 || ec.User.Config.HasTargets) {
+		ec.PlaceTargets = append([]string(nil), ec.User.Config.PlaceTargets...)
+	} else if ec.Organization.Config != nil {
+		ec.PlaceTargets = append([]string(nil), ec.Organization.Config.PlaceTargets...)
 	}
 
 	slog.Info("resolved target harness set",
@@ -736,6 +833,21 @@ func finishBind(intent Intent, ev Evidence, ec EffectiveConfig) EffectiveConfig 
 		err := errors.Join(errs...)
 		slog.Error("effective Marketplace entries rejected", "error", err)
 		ec.Errors = append(ec.Errors, err)
+	}
+	if len(ec.Errors) == 0 {
+		selected, err := merged.SelectedMarketplaceProfiles()
+		if err != nil {
+			ec.Errors = append(ec.Errors, err)
+		} else if len(ec.PlaceTargets) > 0 {
+			for _, targetID := range ec.PlaceTargets {
+				if _, ok := selected[targetID]; !ok {
+					ec.Errors = append(ec.Errors, fmt.Errorf(
+						"marketplace.profile.selection-invalid: enabled target %q has no selected Marketplace profile",
+						targetID,
+					))
+				}
+			}
+		}
 	}
 	ec.ConfigurationValidationFailed = ec.ConfigurationValidationFailed || len(ec.Errors) > bindingErrorCount
 

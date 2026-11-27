@@ -26,14 +26,14 @@ const (
 // LoadEffective loads configuration with explicit organization-lock semantics:
 // online acquisition, strict on-disk evidence, or reuse of verified cached evidence.
 func LoadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy) config.EffectiveConfig {
-	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil, nil)
+	ec, _ := loadEffective(ctx, mode, opts, policy, nil, nil, nil, nil)
 	return ec
 }
 
 // loadEffective also reports whether organization Marketplace state was acquired
 // or reused. Strict loads never consult the transient cache; cached loads never
 // contact the Marketplace.
-func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig), intentReady func(config.Intent)) (effective config.EffectiveConfig, lockUse transientOrganizationMarketplaceLockUse) {
+func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEffectiveOptions, policy resolver.MarketplaceRevocationPolicy, browsingReady func(*config.Config), provisionalReady func(*config.Config, *config.LocalConfig), intentReady func(config.Intent), deployed func(config.Intent, config.Evidence)) (effective config.EffectiveConfig, lockUse transientOrganizationMarketplaceLockUse) {
 	if mode != ConfigLoadOnline && mode != ConfigLoadStrict && mode != ConfigLoadCached {
 		return effectiveConfigError(config.EffectiveConfig{}, fmt.Errorf("invalid config load mode: %d", mode)), transientOrganizationMarketplaceLockUnused
 	}
@@ -50,6 +50,9 @@ func loadEffective(ctx context.Context, mode ConfigLoadMode, opts config.LoadEff
 	evidence, err := readDeployedLocks(ctx, intent, opts.FileOverlays, opts.RelockOrganization)
 	if err != nil && (mode != ConfigLoadOnline || !isMissingLockError(err)) {
 		return effectiveConfigError(config.Bind(intent, evidence), err), transientOrganizationMarketplaceLockUnused
+	}
+	if deployed != nil {
+		deployed(intent, evidence)
 	}
 	organization := intent.Layers[config.Organization]
 	if mode == ConfigLoadStrict || !organization.Present() || !organization.NeedsMarketplaceLock() || evidence.Locks[config.Organization] != nil {

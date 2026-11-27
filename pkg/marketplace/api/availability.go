@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/licensepolicy"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
@@ -154,7 +155,8 @@ func (s *Server) evaluateAvailability(view *availabilityView, rev store.Assessed
 	switch {
 	case result.AdminWithdrawal || result.DeploymentRevocation:
 		result.Availability = AvailabilityRevoked
-	case registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection && rev.ArchiveDigest == "":
+	case registry.Acquisition == store.AcquisitionMirror && rev.Coordinate.Kind != KindCollection &&
+		rev.Coordinate.Kind != nameutil.TargetProfileKind && rev.ArchiveDigest == "":
 		result.Availability = AvailabilityNoArtifact
 	case license.Outcome == "reject" || rev.Assessment.Decision == store.AssessmentDecisionReject:
 		if effectiveRejectedResources(view, registry) == config.RejectedResourcesExpose {
@@ -199,8 +201,8 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// resourceRevisionDTO is the resource detail wire shape. Requires and
-// RequiredBy stay nil on every endpoint except latest resource detail.
+// resourceRevisionDTO carries resolved requirements on latest detail and
+// exact declarations on opted-in Place revision detail only.
 type resourceRevisionDTO struct {
 	store.AssessedResourceRevision
 	CurrentAvailability availabilityDecision   `json:"current_availability"`
@@ -209,7 +211,7 @@ type resourceRevisionDTO struct {
 	RequiredBy          *[]ResourceRelation    `json:"required_by,omitempty"`
 }
 
-func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) any {
+func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) resourceRevisionDTO {
 	effective := s.applyEffectiveRevocation(rev)
 	source := resolveSource(rev)
 	if s.cfg.Management.Mode != "database" {

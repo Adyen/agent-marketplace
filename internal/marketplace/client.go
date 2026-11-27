@@ -20,6 +20,7 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -209,20 +210,23 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResponse,
 }
 
 func (c *Client) getJSON(ctx context.Context, requestURL string, dst any) error {
-	return c.getJSONMode(ctx, requestURL, dst, false)
+	return c.getJSONMode(ctx, requestURL, dst, false, "")
 }
 
 func (c *Client) getJSONStrict(ctx context.Context, requestURL string, dst any) error {
-	return c.getJSONMode(ctx, requestURL, dst, true)
+	return c.getJSONMode(ctx, requestURL, dst, true, "")
 }
 
-func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, strict bool) error {
+func (c *Client) getJSONMode(ctx context.Context, requestURL string, dst any, strict bool, feature string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
+	}
+	if feature != "" {
+		req.Header.Set("X-Agent-Marketplace-Features", feature)
 	}
 
 	resp, err := c.do(req)
@@ -375,26 +379,42 @@ func (c *Client) getResourceInspection(ctx context.Context, registry, kind, name
 	if err != nil {
 		return manifest, rev, err
 	}
+	manifest, err = decodeVerifiedInspectionManifest(raw, rev)
+	if err != nil {
+		return manifest, rev, err
+	}
+	return manifest, rev, nil
+}
+
+func decodeVerifiedInspectionManifest(raw []byte, rev store.AssessedResourceRevision) (inspection.Manifest, error) {
+	var manifest inspection.Manifest
+	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
+	if manifestDigest == "" {
+		return manifest, fmt.Errorf("resource revision has no inspection manifest assessment")
+	}
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return manifest, fmt.Errorf("inspection manifest provenance: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+		return manifest, fmt.Errorf("decode inspection manifest: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return manifest, rev, fmt.Errorf("inspection manifest has trailing JSON")
+			return manifest, fmt.Errorf("inspection manifest has trailing JSON")
 		}
-		return manifest, rev, fmt.Errorf("decode inspection manifest: %w", err)
+		return manifest, fmt.Errorf("decode inspection manifest: %w", err)
 	}
 	if err := inspection.Verify(manifest, raw, manifestDigest); err != nil {
-		return manifest, rev, fmt.Errorf("verify inspection manifest: %w", err)
+		return manifest, fmt.Errorf("verify inspection manifest: %w", err)
 	}
 	manifest.ManifestDigest = manifestDigest
 	if manifest.Coordinate != rev.Coordinate || manifest.RevisionDigest != string(rev.ContentDigest) {
-		return manifest, rev, fmt.Errorf("inspection manifest identity does not match resource revision")
+		return manifest, fmt.Errorf("inspection manifest identity does not match resource revision")
 	}
-	return manifest, rev, nil
+	return manifest, nil
 }
 
 func (c *Client) getResourceInspectionContent(ctx context.Context, registry, kind, name, revision, fileDigest string) (InspectionContent, error) {
@@ -543,7 +563,7 @@ func (c *Client) GetCollectionManifest(ctx context.Context, manifestDigest strin
 	if err := validateSHA256Digest(manifestDigest); err != nil {
 		return manifest, nil, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
 	}
-	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
+	raw, _, err := c.getRawResponseMode(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil), maxArtifactBytes, mpapi.TargetProfilePlaceFeature)
 	if err != nil {
 		return manifest, nil, err
 	}
@@ -620,12 +640,19 @@ func (c *Client) getRawLimited(ctx context.Context, requestURL string, limit int
 }
 
 func (c *Client) getRawResponseLimit(ctx context.Context, requestURL string, limit int64) ([]byte, http.Header, error) {
+	return c.getRawResponseMode(ctx, requestURL, limit, "")
+}
+
+func (c *Client) getRawResponseMode(ctx context.Context, requestURL string, limit int64, feature string) ([]byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marketplace request %s: %w", requestURL, err)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
+	}
+	if feature != "" {
+		req.Header.Set("X-Agent-Marketplace-Features", feature)
 	}
 
 	resp, err := c.do(req)
@@ -927,12 +954,27 @@ func validateAPIRegistry(registry mpapi.PublicRegistry) error {
 }
 
 func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
+	return validateAPIResourceRevisionFor(rev, false)
+}
+
+func validateAPIResourceRevisionFor(rev store.AssessedResourceRevision, allowPlace bool) error {
 	coord := rev.Coordinate
 	if strings.TrimSpace(string(coord.Marketplace)) == "" || strings.TrimSpace(string(coord.Registry)) == "" || strings.TrimSpace(coord.Kind) == "" || strings.TrimSpace(coord.Name) == "" {
 		return fmt.Errorf("resource coordinate is incomplete")
 	}
-	if !mpapi.IsMarketplaceKind(coord.Kind) {
+	_, _, scoped := nameutil.SplitPlaceKind(coord.Kind)
+	targetProfile := coord.Kind == nameutil.TargetProfileKind
+	validPlaceResource := allowPlace &&
+		((scoped && nameutil.IsPlacePackageName(coord.Name)) ||
+			(targetProfile && nameutil.IsTargetIdentifier(coord.Name)))
+	if !mpapi.IsMarketplaceKind(coord.Kind) && !validPlaceResource {
 		return fmt.Errorf("resource kind %q is invalid", coord.Kind)
+	}
+	if scoped && rev.ArchiveDigest == "" {
+		return fmt.Errorf("scoped resource revision has no archive digest")
+	}
+	if targetProfile && rev.ArchiveDigest != "" {
+		return fmt.Errorf("virtual target profile revision must not have an archive digest")
 	}
 	if err := validateSHA256Digest(string(rev.ContentDigest)); err != nil {
 		return fmt.Errorf("content digest: %w", err)
@@ -964,7 +1006,11 @@ func validateAPIResourceRevision(rev store.AssessedResourceRevision) error {
 }
 
 func validateAPIResourceRevisionMatches(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest) error {
-	if err := validateAPIResourceRevision(rev); err != nil {
+	return validateAPIResourceRevisionMatchesFor(rev, expected, expectedDigest, false)
+}
+
+func validateAPIResourceRevisionMatchesFor(rev store.AssessedResourceRevision, expected store.ResourceCoordinate, expectedDigest store.RevisionDigest, allowPlace bool) error {
+	if err := validateAPIResourceRevisionFor(rev, allowPlace); err != nil {
 		return err
 	}
 	if expected.Marketplace != "" && rev.Coordinate.Marketplace != expected.Marketplace {

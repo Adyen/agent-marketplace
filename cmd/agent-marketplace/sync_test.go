@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -13,6 +14,25 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+func TestSyncCheckKeepsDeployedProfileOutOfCompiledResolution(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newTargetApprovalFixture(t)
+	warmTargetApprovalProfileCache(t, fixture)
+	configBytes := bytes.Replace(fixture.userConfigBytes, []byte("apiVersion: agent-marketplace/v4\n"),
+		[]byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, invented-app]\n"), 1)
+	if err := os.WriteFile(fixture.userConfig, configBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.userConfigBytes = configBytes
+	output, err := executeCommand("sync", "--check", "--offline")
+	if err != nil || strings.Contains(output, "unsupported resource kind \"target-profile\"") {
+		t.Fatalf("sync --check place-only resolution = %v\n%s", err, output)
+	}
+	assertTargetApprovalFixtureUnchanged(t, fixture)
+}
 
 // spec: authored-configuration-reads/selection-labels-with-missing-acquisition-evidence
 func TestConfiguredSelectionLabelsReadsIntentWithoutLocks(t *testing.T) {

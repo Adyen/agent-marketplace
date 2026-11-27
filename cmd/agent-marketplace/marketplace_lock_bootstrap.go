@@ -15,7 +15,58 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 )
+
+func validateProspectiveMarketplacePlaceLocks(ctx context.Context, intent config.Intent, desired []dependencytxn.DesiredFile) ([]dependencytxn.ReadAssertion, error) {
+	if len(desired) == 0 {
+		return nil, nil
+	}
+	hasMachinePlaceRequest := false
+	for _, source := range []config.Source{config.UserPersonal, config.Organization} {
+		for _, marketplaceSource := range intent.Layers[source].MarketplaceSources() {
+			for _, request := range marketplaceSource.Requests {
+				kind := request.MarketplaceKind()
+				if kind == nameutil.TargetProfileKind {
+					hasMachinePlaceRequest = true
+					break
+				}
+				if _, _, scoped := nameutil.SplitPlaceKind(kind); scoped {
+					hasMachinePlaceRequest = true
+					break
+				}
+			}
+			if hasMachinePlaceRequest {
+				break
+			}
+		}
+		if hasMachinePlaceRequest {
+			break
+		}
+	}
+	if !hasMachinePlaceRequest {
+		return nil, nil
+	}
+	userLayer := intent.Layers[config.UserPersonal]
+	if !userLayer.Present() {
+		return nil, nil
+	}
+	paths, err := config.ResolveConfigLockPaths(userLayer.Path)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range desired {
+		if file.Path != paths.CanonicalLock {
+			continue
+		}
+		reads, err := pipeline.ValidateProspectivePlaceLocks(ctx, intent, map[string][]byte{file.Path: file.Bytes})
+		if err != nil {
+			return nil, fmt.Errorf("validate staged Marketplace place locks: %w", err)
+		}
+		return reads, nil
+	}
+	return nil, nil
+}
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
 	intent, desired, err := prepareMissingMarketplaceLockFiles(ctx, repoRoot, localDir, selected, policy)
@@ -28,6 +79,15 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	reads, err := pipeline.IntentReadAssertions(intent)
 	if err != nil {
 		return 0, err
+	}
+	placeReads, err := validateProspectiveMarketplacePlaceLocks(ctx, intent, desired)
+	if err != nil {
+		return 0, err
+	}
+	for _, read := range placeReads {
+		if !slices.Contains(reads, read) {
+			reads = append(reads, read)
+		}
 	}
 	stateDir, err := dependencyStateDir()
 	if err != nil {
@@ -46,8 +106,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 // pin replacements merge on top of these bytes exactly as they would merge on
 // top of the committed bootstrap during an applying update.
 func prepareMissingMarketplaceLockEdits(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) ([]pipeline.StagedLockEdit, error) {
-	_, desired, err := prepareMissingMarketplaceLockFiles(ctx, repoRoot, localDir, selected, policy)
+	intent, desired, err := prepareMissingMarketplaceLockFiles(ctx, repoRoot, localDir, selected, policy)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := validateProspectiveMarketplacePlaceLocks(ctx, intent, desired); err != nil {
 		return nil, err
 	}
 	edits := make([]pipeline.StagedLockEdit, 0, len(desired))

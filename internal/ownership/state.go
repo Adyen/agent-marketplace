@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -128,12 +129,14 @@ type FileState struct {
 
 // Record is the durable ownership record for one canonical target root.
 type Record struct {
-	Version       int                  `json:"version"`
-	CanonicalRoot string               `json:"canonical_root"`
-	RootKey       string               `json:"root_key"`
-	Generation    uint64               `json:"generation"`
-	UpdatedAt     string               `json:"updated_at"`
-	Files         map[string]FileState `json:"files"`
+	Version          int                            `json:"version"`
+	CanonicalRoot    string                         `json:"canonical_root"`
+	RootKey          string                         `json:"root_key"`
+	Generation       uint64                         `json:"generation"`
+	UpdatedAt        string                         `json:"updated_at"`
+	Files            map[string]FileState           `json:"files"`
+	PlacePackages    []PlacePackage                 `json:"place_packages,omitempty"`
+	PlaceDirectories []dependencytxn.PlaceDirectory `json:"place_directories,omitempty"`
 }
 
 // safeToken matches the only shapes allowed in a state or metadata string
@@ -373,6 +376,11 @@ func validateRecord(r *Record, canonicalRoot, rootKey string) error {
 			seenSatisfactions[key] = struct{}{}
 		}
 	}
+	if err := validatePlaceProjection(PlaceProjection{
+		Packages: r.PlacePackages, Directories: r.PlaceDirectories,
+	}); err != nil {
+		return errors.Join(ErrStateCorrupt, err)
+	}
 	return nil
 }
 
@@ -551,6 +559,8 @@ func (s *Store) nextRecordMeta(current *Record, rel string, contentDigest string
 	}
 	if current != nil {
 		next.Generation = current.Generation + 1
+		next.PlacePackages = clonePlacePackages(current.PlacePackages)
+		next.PlaceDirectories = append([]dependencytxn.PlaceDirectory(nil), current.PlaceDirectories...)
 		for k, v := range current.Files {
 			next.Files[k] = v
 		}

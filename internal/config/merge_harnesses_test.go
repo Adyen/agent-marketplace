@@ -37,3 +37,58 @@ func TestMergeLayersBackfillsMachineEntriesFromMachineHarnesses(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeLayersPlaceOnlyMachineTargetsDoNotInheritRepositoryDefaults(t *testing.T) {
+	for _, machineSource := range []Source{Organization, UserPersonal} {
+		t.Run(machineSource.String(), func(t *testing.T) {
+			machine := &Config{
+				PlaceTargets: []string{"invented-app"},
+				Registries:   []RegistryEntry{{URL: "machine", Ref: "main"}},
+			}
+			org, user := &Config{}, &Config{}
+			if machineSource == Organization {
+				org = machine
+			} else {
+				user = machine
+			}
+			repo := &Config{
+				Harnesses:  []string{"claude"},
+				Registries: []RegistryEntry{{URL: "repo", Ref: "main"}},
+			}
+			merged := MergeLayers([]Layer{
+				{Source: Organization, Config: org},
+				{Source: UserPersonal, Config: user},
+				{Source: RepoCommitted, Config: repo},
+			})
+			got := map[Source][]string{}
+			for _, registry := range merged.Registries {
+				got[registry.Source] = registry.Harnesses
+			}
+			if len(got[machineSource]) != 0 {
+				t.Fatalf("%s registry inherited repository targets: %v", machineSource, got[machineSource])
+			}
+			if !reflect.DeepEqual(got[RepoCommitted], []string{"claude"}) {
+				t.Fatalf("repository registry targets = %v, want [claude]", got[RepoCommitted])
+			}
+		})
+	}
+}
+
+func TestMergeLayersEmptyCompiledMachineDeclarationKeepsRepositoryFallback(t *testing.T) {
+	org := &Config{Registries: []RegistryEntry{{URL: "org", Ref: "main"}}}
+	user := &Config{HasTargets: true}
+	repo := &Config{
+		Harnesses:  []string{"claude"},
+		Registries: []RegistryEntry{{URL: "repo", Ref: "main"}},
+	}
+	merged := MergeLayers([]Layer{
+		{Source: Organization, Config: org},
+		{Source: UserPersonal, Config: user},
+		{Source: RepoCommitted, Config: repo},
+	})
+	for _, registry := range merged.Registries {
+		if registry.Source == Organization && !reflect.DeepEqual(registry.Harnesses, []string{"claude"}) {
+			t.Fatalf("organization registry targets = %v, want previous repository fallback", registry.Harnesses)
+		}
+	}
+}

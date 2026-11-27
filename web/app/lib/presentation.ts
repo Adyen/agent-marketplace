@@ -1,4 +1,5 @@
 import type { ResourceKind, ResourceListItem, ResourceRelation, ResourceRequirement, ResourceRevision, ResourceSource } from '~/types/marketplace'
+import { isResourceKind } from '~/lib/api'
 import { isSafeRouteToken, isSafeResourceRoute } from '~/lib/routes'
 import { isSha256Digest } from '~/lib/validation'
 
@@ -62,6 +63,7 @@ export function resourceLatestLocator(item: ResourceListItem, browserBase: strin
 }
 
 export function resourceRelationRoute(relation: ResourceRelation): string {
+  if (!isResourceKind(relation.kind)) return ''
   return resourceLatestRoute({ registry_id: relation.registry, kind: relation.kind, name: relation.name })
 }
 

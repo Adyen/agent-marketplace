@@ -1,0 +1,528 @@
+package marketplace
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+)
+
+// spec: target-profile-place/explicit-indexed-empty-prerequisites-allow-offline-acquisition
+func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
+	endpoint := "https://market.example"
+	instanceID := store.MarketplaceID("mp")
+	profileBytes := []byte(placeAcquireProfileYAML)
+	selected := placeAcquireProfileIdentity(profileBytes)
+	profile, err := targetprofile.Parse(profileBytes, selected)
+	if err != nil {
+		t.Fatalf("parse profile fixture: %v", err)
+	}
+	coordinate := store.ResourceCoordinate{Marketplace: instanceID, Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
+	files := []targetprofile.PackageFile{{
+		SourcePath: "payload/instructions.md", DestinationPath: "mods/sample/instructions.md",
+		Mode: 0o644, Bytes: []byte("locked place bytes\n"),
+	}}
+	artifact, err := hccartifact.NewPlaceArtifact(coordinate.Kind, coordinate.Name, selected, files)
+	if err != nil {
+		t.Fatalf("build place artifact: %v", err)
+	}
+	_, placeholder, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatalf("encode place artifact: %v", err)
+	}
+	revision := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	revision.Requires = "[]"
+	locked := lockedPlaceResource(revision)
+	root := t.TempDir()
+	cache := NewCache(root)
+	writeLockedPlaceCache(t, cache, endpoint, revision, placeholder)
+	before := snapshotPlaceCache(t, root)
+	assertFailure := func(read func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error), want string) {
+		t.Helper()
+		rev, files, err := read()
+		assertLockedPlaceFailure(t, rev, files, err, want)
+	}
+
+	got, gotFiles, err := cache.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+	if err != nil {
+		t.Fatalf("ReadLockedPlacePackage: %v", err)
+	}
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal read revision: %v", err)
+	}
+	wantJSON, err := json.Marshal(revision)
+	if err != nil {
+		t.Fatalf("marshal expected revision: %v", err)
+	}
+	if !bytes.Equal(gotJSON, wantJSON) {
+		t.Fatalf("read revision = %s, want %s", gotJSON, wantJSON)
+	}
+	if got.Requires != "[]" {
+		t.Fatalf("historical scoped cache prerequisites = %q, want explicit indexed empty", got.Requires)
+	}
+	if len(gotFiles) != 1 || gotFiles[0].SourcePath != files[0].SourcePath ||
+		gotFiles[0].DestinationPath != files[0].DestinationPath || gotFiles[0].Mode != files[0].Mode ||
+		!bytes.Equal(gotFiles[0].Bytes, files[0].Bytes) {
+		t.Fatalf("read files = %+v, want exact mapped payload", gotFiles)
+	}
+	if err := targetprofile.ValidatePackageDestinations(profile, coordinate.Kind, gotFiles); err != nil {
+		t.Fatalf("read destination validation: %v", err)
+	}
+	assertPlaceCacheUnchanged(t, root, before)
+
+	missingBinding := locked
+	missingBinding.HostPackageIdentity = nil
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.ReadLockedPlacePackage(endpoint, instanceID, missingBinding, selected, profileBytes)
+	}, "marketplace.cache.profile-binding-missing")
+	assertPlaceCacheUnchanged(t, root, before)
+
+	changedProfile := []byte(strings.Replace(placeAcquireProfileYAML, "evidence: fixture", "evidence: changed fixture", 1))
+	changedSelected := placeAcquireProfileIdentity(changedProfile)
+	missingRoot := NewCache(filepath.Join(t.TempDir(), "not-created"))
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return missingRoot.ReadLockedPlacePackage(endpoint, instanceID, locked, changedSelected, changedProfile)
+	}, "marketplace.profile.revision-mismatch")
+
+	changedAssessment := locked
+	changedAssessment.AssessmentDigest = lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.ReadLockedPlacePackage(endpoint, instanceID, changedAssessment, selected, profileBytes)
+	}, "")
+	assertPlaceCacheUnchanged(t, root, before)
+
+	changedMapping := locked
+	mappingBinding := *locked.HostPackageIdentity
+	mappingBinding.DeliveryMappingDigest = "sha256:" + strings.Repeat("c", 64)
+	changedMapping.HostPackageIdentity = &mappingBinding
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.ReadLockedPlacePackage(endpoint, instanceID, changedMapping, selected, profileBytes)
+	}, "")
+	assertPlaceCacheUnchanged(t, root, before)
+
+	metadataWithoutBinding := revision
+	metadataWithoutBinding.Assessment.HostPackageIdentity = nil
+	if err := seedPlaceResourceRevision(cache, endpoint, instanceID, locked, metadataWithoutBinding); err != nil {
+		t.Fatalf("write metadata without binding: %v", err)
+	}
+	metadataMissingSnapshot := snapshotPlaceCache(t, root)
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+	}, "marketplace.cache.profile-binding-missing")
+	assertPlaceCacheUnchanged(t, root, metadataMissingSnapshot)
+
+	writeLockedPlaceCache(t, cache, endpoint, revision, placeholder)
+	archivePath := cache.PlaceholderArchivePath(string(revision.ArchiveDigest))
+	if err := os.WriteFile(archivePath, append(bytes.Clone(placeholder), 'x'), 0o644); err != nil {
+		t.Fatalf("tamper placeholder: %v", err)
+	}
+	tamperedSnapshot := snapshotPlaceCache(t, root)
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+	}, "")
+	assertPlaceCacheUnchanged(t, root, tamperedSnapshot)
+
+	finalOnly := NewCache(t.TempDir())
+	if err := seedPlaceResourceRevision(finalOnly, endpoint, instanceID, locked, revision); err != nil {
+		t.Fatalf("write final-only metadata: %v", err)
+	}
+	if _, err := finalOnly.writeArchive(finalForm, string(revision.ArchiveDigest), placeholder); err != nil {
+		t.Fatalf("write final-form archive: %v", err)
+	}
+	finalRevision, returnedFiles, err := finalOnly.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+	assertLockedPlaceFailure(t, finalRevision, returnedFiles, err, "")
+}
+
+func TestCacheGarbageCollectRetainsLockedPlaceArchives(t *testing.T) {
+	identity := targetprofile.Identity{TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: "sha256:" + strings.Repeat("d", 64)}
+	binding := &targetprofile.Binding{
+		PackageContentDigest:  "sha256:" + strings.Repeat("a", 64),
+		DeliveryMappingDigest: "sha256:" + strings.Repeat("b", 64),
+		ProfileDigest:         identity.RevisionDigest, ProfileIdentity: identity,
+	}
+	archiveDigest := "sha256:" + strings.Repeat("1", 64)
+	orphanDigest := "sha256:" + strings.Repeat("2", 64)
+	contentDigest := "sha256:" + strings.Repeat("a", 64)
+	assessmentDigest := "sha256:" + strings.Repeat("c", 64)
+	packagePin := config.MarketplaceResourcePin{
+		RegistryID: "tools-id", RegistrySlug: "tools", Kind: "invented-app/mod", Name: "sample",
+		Revision: contentDigest, Digest: contentDigest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+		LockArchiveDigest: archiveDigest, LockAssessmentDigest: assessmentDigest, LockHostPackageIdentity: *binding,
+	}
+	profilePin := config.MarketplaceResourcePin{
+		RegistryID: "tools-id", RegistrySlug: "tools", Kind: "target-profile", Name: "invented-app",
+		Revision: identity.RevisionDigest, Digest: identity.RevisionDigest, Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
+		LockProfileIdentity: identity,
+	}
+	entry := config.MarketplaceEntry{
+		URL: "https://market.example", InstanceID: "market-id", Source: config.UserPersonal,
+		Resources: []config.MarketplaceResourcePin{packagePin, profilePin},
+	}
+	placeLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: packagePin.Kind, Name: packagePin.Name,
+		Revision: contentDigest, ContentDigest: lockfile.Digest(contentDigest), ArchiveDigest: lockfile.Digest(archiveDigest),
+		AssessmentDigest: lockfile.Digest(assessmentDigest), Acquisition: lockfile.MarketplaceAcquisitionMirror, HostPackageIdentity: binding,
+	}
+	profileLock := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "tools-id", Kind: "target-profile", Name: "invented-app",
+		Revision: identity.RevisionDigest, ContentDigest: lockfile.Digest(identity.RevisionDigest),
+		Acquisition: lockfile.MarketplaceAcquisitionMirror, ProfileIdentity: &identity,
+	}
+	locked := lockfile.MarketplaceLock{
+		URL: entry.URL, InstanceID: entry.InstanceID,
+		RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "tools-id"}},
+		Resources:        []lockfile.MarketplaceResourceLock{placeLock, profileLock},
+	}
+	for _, tc := range []struct {
+		name  string
+		roots GCRoots
+	}{
+		{name: "exact pins", roots: GCRoots{ExactPins: []config.MarketplaceEntry{entry}}},
+		{name: "locked resources", roots: GCRoots{LockedResources: []lockfile.MarketplaceLock{locked}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := NewCache(t.TempDir())
+			for _, digest := range []string{archiveDigest, orphanDigest} {
+				if _, err := cache.writeArchive(placeholderForm, digest, []byte(digest)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			referencedPath := filepath.Dir(cache.PlaceholderArchivePath(archiveDigest))
+			orphanPath := filepath.Dir(cache.PlaceholderArchivePath(orphanDigest))
+			result, err := cache.GarbageCollect(true, tc.roots)
+			if err != nil {
+				t.Fatalf("GarbageCollect: %v", err)
+			}
+			if len(result.Removed) != 1 || result.Removed[0] != orphanPath {
+				t.Fatalf("dry-run removals = %v, want only %q", result.Removed, orphanPath)
+			}
+			for _, path := range []string{referencedPath, orphanPath} {
+				if _, err := os.Stat(filepath.Join(path, "artifact.tar.gz")); err != nil {
+					t.Fatalf("dry-run removed %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestCacheGarbageCollectRefusesMalformedScopedArchiveDigest(t *testing.T) {
+	entry := config.MarketplaceEntry{
+		URL: "https://market.example", InstanceID: "market-id", Source: config.UserPersonal,
+		Resources: []config.MarketplaceResourcePin{{
+			RegistryID: "tools-id", RegistrySlug: "tools", Kind: "invented-app/mod", Name: "sample",
+			Revision: "sha256:" + strings.Repeat("a", 64), Digest: "sha256:" + strings.Repeat("a", 64),
+			Acquisition: config.MarketplaceAcquisitionMirror, Direct: true, LockArchiveDigest: "not-a-digest",
+			LockAssessmentDigest: "sha256:" + strings.Repeat("c", 64),
+			LockHostPackageIdentity: targetprofile.Binding{
+				PackageContentDigest:  "sha256:" + strings.Repeat("a", 64),
+				DeliveryMappingDigest: "sha256:" + strings.Repeat("b", 64),
+				ProfileDigest:         "sha256:" + strings.Repeat("d", 64),
+				ProfileIdentity:       targetprofile.Identity{TargetID: "invented-app", SourceID: "builtin:agent-marketplace", RevisionDigest: "sha256:" + strings.Repeat("d", 64)},
+			},
+		}},
+	}
+	cache := NewCache(t.TempDir())
+	digest := "sha256:" + strings.Repeat("2", 64)
+	if _, err := cache.writeArchive(placeholderForm, digest, []byte("orphan")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := cache.GarbageCollect(false, GCRoots{ExactPins: []config.MarketplaceEntry{entry}})
+	if err == nil || !strings.Contains(err.Error(), "invalid locked archive digest") {
+		t.Fatalf("GarbageCollect error = %v, want invalid locked archive digest", err)
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("failed GC reported removals: %v", result.Removed)
+	}
+	if _, err := os.Stat(cache.PlaceholderArchivePath(digest)); err != nil {
+		t.Fatalf("failed GC removed orphan archive: %v", err)
+	}
+}
+
+func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
+	const indexedRequires = `[{"kind":"invented-app/mod","name":"base"}]`
+	profileBytes := []byte(placeAcquireProfileYAML)
+	selected := placeAcquireProfileIdentity(profileBytes)
+	coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
+	files := []targetprofile.PackageFile{{SourcePath: "payload/instructions.md", DestinationPath: "mods/sample/instructions.md", Mode: 0o644, Bytes: []byte("online place\n")}}
+	artifact, err := hccartifact.NewPlaceArtifact(coordinate.Kind, coordinate.Name, selected, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, placeholder, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev1 := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	rev1.Requires = indexedRequires
+	rev2 := rev1
+	assessment := rev2.Assessment
+	assessment.AnalyzerVersion = "test/v2"
+	assessment.AssessmentDigest = ""
+	rev2.Assessment, err = store.FinalizeResourceAssessment(assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock1, lock2 := lockedPlaceResource(rev1), lockedPlaceResource(rev2)
+	revisionPath := "/api/v1/resources/reg/invented-app%2Fmod/sample/revisions/" + string(rev1.ContentDigest)
+	archivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(string(rev1.ArchiveDigest), "sha256:")
+	var response atomic.Pointer[store.AssessedResourceRevision]
+	response.Store(&rev1)
+	var revisionRequests, archiveRequests atomic.Int32
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case revisionPath:
+			revisionRequests.Add(1)
+			if values := r.Header.Values("X-Agent-Marketplace-Features"); len(values) != 1 || values[0] != mpapi.TargetProfilePlaceFeature {
+				t.Errorf("feature header = %q", values)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			responseRevision := response.Load()
+			_ = json.NewEncoder(w).Encode(struct {
+				store.AssessedResourceRevision
+				Availability struct {
+					Availability string `json:"availability"`
+				} `json:"current_availability"`
+				Requires json.RawMessage `json:"requires,omitempty"`
+			}{AssessedResourceRevision: *responseRevision, Availability: struct {
+				Availability string `json:"availability"`
+			}{Availability: "available"}, Requires: json.RawMessage(responseRevision.Requires)})
+		case archivePath:
+			archiveRequests.Add(1)
+			_, _ = w.Write(placeholder)
+		default:
+			t.Errorf("unexpected path %q", r.URL.EscapedPath())
+			http.NotFound(w, r)
+		}
+	}))
+	closed := false
+	defer func() {
+		if !closed {
+			peer.Close()
+		}
+	}()
+	client, err := NewClient(peer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := NewCache(t.TempDir())
+	ctx := context.Background()
+	got1, _, err := cache.FetchLockedPlacePackage(ctx, client, peer.URL, coordinate.Marketplace, lock1, selected, profileBytes)
+	if err != nil {
+		t.Fatalf("fetch first evidence: %v", err)
+	}
+	response.Store(&rev2)
+	got2, _, err := cache.FetchLockedPlacePackage(ctx, client, peer.URL, coordinate.Marketplace, lock2, selected, profileBytes)
+	if err != nil {
+		t.Fatalf("fetch second evidence: %v", err)
+	}
+	if got1.Assessment.AssessmentDigest != rev1.Assessment.AssessmentDigest ||
+		got2.Assessment.AssessmentDigest != rev2.Assessment.AssessmentDigest ||
+		rev1.ContentDigest != rev2.ContentDigest || rev1.ArchiveDigest != rev2.ArchiveDigest {
+		t.Fatalf("online evidence not isolated: first=%+v second=%+v", got1.Assessment, got2.Assessment)
+	}
+	if got1.Requires != indexedRequires || got2.Requires != indexedRequires {
+		t.Fatalf("online indexed prerequisites: first=%q second=%q, want %q", got1.Requires, got2.Requires, indexedRequires)
+	}
+	before := snapshotPlaceCache(t, cache.root)
+	assertFailure := func(read func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error), want string) {
+		rev, files, err := read()
+		assertLockedPlaceFailure(t, rev, files, err, want)
+	}
+	badLock := lock2
+	badLock.AssessmentDigest = lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	revisionsBefore, archivesBefore := revisionRequests.Load(), archiveRequests.Load()
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.FetchLockedPlacePackage(ctx, client, peer.URL, coordinate.Marketplace, badLock, selected, profileBytes)
+	}, "does not match lock evidence")
+	if revisionRequests.Load() != revisionsBefore+1 || archiveRequests.Load() != archivesBefore {
+		t.Fatalf("assessment mismatch requests: revisions=%d archives=%d", revisionRequests.Load()-revisionsBefore, archiveRequests.Load()-archivesBefore)
+	}
+	assertPlaceCacheUnchanged(t, cache.root, before)
+	wrongClient, err := NewClient(peer.URL + "/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionsBefore, archivesBefore = revisionRequests.Load(), archiveRequests.Load()
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.FetchLockedPlacePackage(ctx, wrongClient, peer.URL, coordinate.Marketplace, lock2, selected, profileBytes)
+	}, "")
+	if revisionRequests.Load() != revisionsBefore || archiveRequests.Load() != archivesBefore {
+		t.Fatal("endpoint mismatch issued an HTTP request")
+	}
+	revisionsBefore, archivesBefore = revisionRequests.Load(), archiveRequests.Load()
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.FetchLockedPlacePackage(ctx, client, peer.URL, coordinate.Marketplace, lock2, targetprofile.Identity{}, profileBytes)
+	}, "")
+	if revisionRequests.Load() != revisionsBefore || archiveRequests.Load() != archivesBefore {
+		t.Fatal("missing selected profile issued an HTTP request")
+	}
+	changedProfile := []byte(strings.Replace(placeAcquireProfileYAML, "evidence: fixture", "evidence: changed fixture", 1))
+	changedIdentity := placeAcquireProfileIdentity(changedProfile)
+	revisionsBefore = revisionRequests.Load()
+	archivesBefore = archiveRequests.Load()
+	assertFailure(func() (store.AssessedResourceRevision, []targetprofile.PackageFile, error) {
+		return cache.FetchLockedPlacePackage(ctx, client, peer.URL, coordinate.Marketplace, lock2, changedIdentity, changedProfile)
+	}, "marketplace.profile.revision-mismatch")
+	if revisionRequests.Load() != revisionsBefore || archiveRequests.Load() != archivesBefore {
+		t.Fatal("profile mismatch issued an HTTP request")
+	}
+	assertPlaceCacheUnchanged(t, cache.root, before)
+	peer.Close()
+	closed = true
+	offline1, _, err := cache.ReadLockedPlacePackage(peer.URL, coordinate.Marketplace, lock1, selected, profileBytes)
+	if err != nil {
+		t.Fatalf("read first evidence offline: %v", err)
+	}
+	offline2, _, err := cache.ReadLockedPlacePackage(peer.URL, coordinate.Marketplace, lock2, selected, profileBytes)
+	if err != nil {
+		t.Fatalf("read second evidence offline: %v", err)
+	}
+	if offline1.Assessment.AssessmentDigest != rev1.Assessment.AssessmentDigest ||
+		offline2.Assessment.AssessmentDigest != rev2.Assessment.AssessmentDigest ||
+		offline1.Requires != indexedRequires || offline2.Requires != indexedRequires {
+		t.Fatalf("offline records did not coexist with prerequisites %q: first=%+v requires=%q second=%+v requires=%q",
+			indexedRequires, offline1.Assessment, offline1.Requires, offline2.Assessment, offline2.Requires)
+	}
+}
+
+// spec: target-profile-place/cache-only-unknown-prerequisites-refuse-before-archive-reads
+func TestReadLockedPlacePackageRefusesUnknownPrerequisitesBeforeArchive(t *testing.T) {
+	endpoint := "https://market.example"
+	instanceID := store.MarketplaceID("mp")
+	profileBytes := []byte(placeAcquireProfileYAML)
+	selected := placeAcquireProfileIdentity(profileBytes)
+	coordinate := store.ResourceCoordinate{Marketplace: instanceID, Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
+	artifact, err := hccartifact.NewPlaceArtifact(coordinate.Kind, coordinate.Name, selected, []targetprofile.PackageFile{{
+		SourcePath: "payload/instructions.md", DestinationPath: "mods/sample/instructions.md", Mode: 0o644, Bytes: []byte("place\n"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	for _, unknown := range []string{"", "null"} {
+		t.Run(map[bool]string{true: "null", false: "absent"}[unknown == "null"], func(t *testing.T) {
+			revision := base
+			revision.Requires = unknown
+			locked := lockedPlaceResource(revision)
+			root := t.TempDir()
+			cache := NewCache(root)
+			if err := seedPlaceResourceRevision(cache, endpoint, instanceID, locked, revision); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotPlaceCache(t, root)
+			got, files, err := cache.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+			assertLockedPlaceFailure(t, got, files, err, "marketplace.cache.place-prerequisites-missing")
+			assertPlaceCacheUnchanged(t, root, before)
+		})
+	}
+}
+
+func lockedPlaceResource(revision store.AssessedResourceRevision) lockfile.MarketplaceResourceLock {
+	return lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: string(revision.Coordinate.Registry),
+		Kind: revision.Coordinate.Kind, Name: revision.Coordinate.Name,
+		Revision: string(revision.ContentDigest), ContentDigest: lockfile.Digest(revision.ContentDigest),
+		ArchiveDigest:       lockfile.Digest(revision.ArchiveDigest),
+		AssessmentDigest:    lockfile.Digest(revision.Assessment.AssessmentDigest),
+		Acquisition:         lockfile.MarketplaceAcquisitionMirror,
+		HostPackageIdentity: revision.Assessment.HostPackageIdentity,
+	}
+}
+
+func writeLockedPlaceCache(t *testing.T, cache *Cache, endpoint string, revision store.AssessedResourceRevision, placeholder []byte) {
+	t.Helper()
+	locked := lockedPlaceResource(revision)
+	if err := seedPlaceResourceRevision(cache, endpoint, revision.Coordinate.Marketplace, locked, revision); err != nil {
+		t.Fatalf("write cached place revision: %v", err)
+	}
+	if _, err := cache.writeArchive(placeholderForm, string(revision.ArchiveDigest), placeholder); err != nil {
+		t.Fatalf("write cached placeholder archive: %v", err)
+	}
+}
+
+func seedPlaceResourceRevision(cache *Cache, endpoint string, instanceID store.MarketplaceID, locked lockfile.MarketplaceResourceLock, rev store.AssessedResourceRevision) error {
+	_, err := cache.writeMetadataAt(
+		cache.placeMetadataPath(endpoint, instanceID, locked),
+		cachedPlaceRevision{
+			AssessedResourceRevision: rev,
+			IndexedRequires:          json.RawMessage(rev.Requires),
+		},
+	)
+	return err
+}
+
+type placeCacheEntrySnapshot struct {
+	IsDir   bool
+	Bytes   []byte
+	ModTime time.Time
+}
+
+func snapshotPlaceCache(t *testing.T, root string) map[string]placeCacheEntrySnapshot {
+	t.Helper()
+	snapshot := make(map[string]placeCacheEntrySnapshot)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			snapshot[relative] = placeCacheEntrySnapshot{IsDir: true}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		snapshot[relative] = placeCacheEntrySnapshot{Bytes: content, ModTime: info.ModTime()}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot cache: %v", err)
+	}
+	return snapshot
+}
+
+func assertPlaceCacheUnchanged(t *testing.T, root string, before map[string]placeCacheEntrySnapshot) {
+	t.Helper()
+	after := snapshotPlaceCache(t, root)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("cache changed during read:\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func assertLockedPlaceFailure(t *testing.T, rev store.AssessedResourceRevision, files []targetprofile.PackageFile, err error, want string) {
+	t.Helper()
+	if err == nil || !reflect.DeepEqual(rev, store.AssessedResourceRevision{}) || files != nil {
+		t.Fatalf("failure result = (%+v, %+v, %v), want zero revision and nil files", rev, files, err)
+	}
+	if want != "" && !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}

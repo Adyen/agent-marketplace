@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRegistryObservation, migrationRequires}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRegistryObservation, migrationRequires, migrationHostPackageIdentity}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -275,3 +275,5 @@ CREATE INDEX idx_host_budget_leases_expiry ON host_budget_leases(host, lease_unt
 const migrationRequires = `
 ALTER TABLE resource_revisions ADD COLUMN requires TEXT;
 `
+
+const migrationHostPackageIdentity = `ALTER TABLE resource_assessments ADD COLUMN host_package_identity TEXT;`

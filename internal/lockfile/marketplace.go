@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/nameutil"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/urlutil"
@@ -11,7 +12,7 @@ import (
 
 func normalizeMarketplaces(doc *Document) error {
 	for i := range doc.Marketplaces {
-		if err := normalizeMarketplace(&doc.Marketplaces[i], i); err != nil {
+		if err := normalizeMarketplace(&doc.Marketplaces[i], i, doc.Scope); err != nil {
 			return err
 		}
 	}
@@ -28,7 +29,7 @@ func normalizeMarketplaces(doc *Document) error {
 	return err
 }
 
-func normalizeMarketplace(mp *MarketplaceLock, index int) error {
+func normalizeMarketplace(mp *MarketplaceLock, index int, scope Scope) error {
 	canonical, err := urlutil.NormalizeEndpointURL(mp.URL)
 	if err != nil {
 		return fmt.Errorf("marketplaces[%d].url: %w", index, err)
@@ -70,8 +71,18 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 	collections := make(map[string]MarketplaceResourceLock)
 	for j := range mp.Resources {
 		resource := &mp.Resources[j]
-		if err := normalizeMarketplaceResource(resource, index, j); err != nil {
+		if err := normalizeMarketplaceResource(resource, index, j, scope); err != nil {
 			return err
+		}
+		if identity := resource.ProfileIdentity; identity != nil {
+			profileSource, err := targetprofile.ParseSourceID(identity.SourceID)
+			if err != nil {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].profile_identity.source_id: %w", index, j, err)
+			}
+			if profileSource.Kind == "marketplace" &&
+				(profileSource.Origin != mp.URL || profileSource.InstanceID != mp.InstanceID || profileSource.RegistryID != resource.RegistryID) {
+				return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].profile_identity.source_id Marketplace endpoint, instance, or registry does not match the lock", index, j)
+			}
 		}
 		if boundID, exists := bindings[resource.RegistryName]; !exists {
 			return coded(CodeInvalidDocument, "marketplaces[%d].resources[%d].registry_name %q has no registry binding", index, j, resource.RegistryName)
@@ -140,7 +151,7 @@ func normalizeMarketplace(mp *MarketplaceLock, index int) error {
 	return nil
 }
 
-func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j int) error {
+func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j int, scope Scope) error {
 	field := func(name string) string {
 		return fmt.Sprintf("marketplaces[%d].resources[%d].%s", index, j, name)
 	}
@@ -150,8 +161,28 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 	if err := validateSegment(resource.RegistryID, field("registry_id")); err != nil {
 		return err
 	}
-	if !api.IsMarketplaceKind(resource.Kind) {
+	_, _, scoped := nameutil.SplitPlaceKind(resource.Kind)
+	virtualProfile := resource.Kind == nameutil.TargetProfileKind
+	if !api.IsMarketplaceKind(resource.Kind) && !scoped && !virtualProfile {
 		return coded(CodeInvalidDocument, "%s %q is not a selectable Marketplace kind", field("kind"), resource.Kind)
+	}
+	if scoped || virtualProfile {
+		if scope != ScopeUser && scope != ScopeOrganization {
+			return coded(CodeInvalidScope, "%s scoped and virtual profile resources require user or organization scope", field("kind"))
+		}
+	}
+	if scoped {
+		if !nameutil.IsPlacePackageName(resource.Name) {
+			return coded(CodeInvalidDocument, "%s %q is not a valid scoped place package name", field("name"), resource.Name)
+		}
+		if resource.AssessmentDigest == "" {
+			return coded(CodeInvalidDocument, "marketplace.cache.profile-binding-missing: %s is required", field("assessment_digest"))
+		}
+		if resource.HostPackageIdentity == nil {
+			return coded(CodeInvalidDocument, "marketplace.cache.profile-binding-missing: %s is required", field("host_package_identity"))
+		}
+	} else if resource.AssessmentDigest != "" || resource.HostPackageIdentity != nil {
+		return coded(CodeInvalidDocument, "%s and %s are only valid for scoped place resources", field("assessment_digest"), field("host_package_identity"))
 	}
 	if err := validateSegment(resource.Name, field("name")); err != nil {
 		return err
@@ -161,6 +192,46 @@ func normalizeMarketplaceResource(resource *MarketplaceResourceLock, index, j in
 	}
 	if err := validateDigest(resource.ContentDigest, field("content_digest")); err != nil {
 		return err
+	}
+	if scoped {
+		if resource.Revision != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s must equal %s for scoped place resources", field("revision"), field("content_digest"))
+		}
+		if err := validateDigest(resource.AssessmentDigest, field("assessment_digest")); err != nil {
+			return err
+		}
+		if err := resource.HostPackageIdentity.ValidateFor(resource.Kind, string(resource.ContentDigest)); err != nil {
+			return coded(CodeInvalidDocument, "%s: %w", field("host_package_identity"), err)
+		}
+	}
+	if virtualProfile {
+		if resource.ProfileIdentity == nil {
+			return coded(CodeInvalidDocument, "%s is required for target-profile resources", field("profile_identity"))
+		}
+		if err := resource.ProfileIdentity.Validate(); err != nil {
+			return coded(CodeInvalidDocument, "%s: %w", field("profile_identity"), err)
+		}
+		if resource.ProfileIdentity.TargetID != resource.Name {
+			return coded(CodeInvalidDocument, "%s target_id must equal %s", field("profile_identity"), field("name"))
+		}
+		if resource.ProfileIdentity.RevisionDigest != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s revision_digest must equal %s", field("profile_identity"), field("content_digest"))
+		}
+		if resource.Revision != string(resource.ContentDigest) {
+			return coded(CodeInvalidDocument, "%s must equal %s for target-profile resources", field("revision"), field("content_digest"))
+		}
+		if resource.Acquisition != MarketplaceAcquisitionMirror {
+			return coded(CodeInvalidDocument, "%s target-profile resources require mirror acquisition", field("acquisition"))
+		}
+		if resource.ArchiveDigest != "" || resource.CollectionManifestDigest != "" ||
+			resource.RegistryCommit != "" || resource.RegistryManifestDigest != "" || resource.SourcePath != "" ||
+			len(resource.SelectedBy) != 0 {
+			return coded(CodeInvalidDocument, "%s target-profile resources forbid archive, collection, occurrence, and selection fields", field("kind"))
+		}
+		return nil
+	}
+	if resource.ProfileIdentity != nil {
+		return coded(CodeInvalidDocument, "%s is only valid for target-profile resources", field("profile_identity"))
 	}
 	collection := resource.Kind == api.KindCollection
 	switch resource.Acquisition {

@@ -90,6 +90,7 @@ type statusView struct {
 	diag                config.ManagedInstallationDiagnostics
 	warnings            []error
 	statusRows          []statusRow
+	placePackages       []pipeline.PlaceStatusRow
 	pluginRevisions     []pluginRevisionRow
 	locallyExcluded     []excludedRow
 	localRegistries     []localRegistryRow
@@ -145,6 +146,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			// downloading artifacts or writing files.
 			MarketplaceArtifactsFromCache: true,
 			ReportDeclaredHarnesses:       true,
+			EnablePlaceSync:               true,
 		},
 		DryRun:                         runStatusMaterialize,
 		SkipMaterializeOnResolveErrors: true,
@@ -152,6 +154,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	defer releaseExactLease()
 	result := inspection.ResolveResult
 	dryRunReport := inspection.Report
+	placePackages, placeWarnings := pipeline.InspectDeployedPlaceStatus(ctx, result)
 
 	catalogEntries := make(map[string][]catalog.Entry, len(result.CatalogLoad.Catalogs))
 	for k, v := range result.CatalogLoad.Catalogs {
@@ -202,6 +205,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			} else if result.MarketplaceInspection != nil {
 				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
 			}
+			withoutLocalExcludes = pipeline.StatusCompiledMarketplaceConfig(withoutLocalExcludes)
 			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(withoutLocalExcludes, catalogEntries, localCfg, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
 				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) &&
@@ -295,11 +299,13 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			statusWarnings = append(statusWarnings, issue.Err)
 		}
 	}
+	statusWarnings = append(statusWarnings, placeWarnings...)
 
 	if err := writeStatusSections(out, statusView{
 		diag:                result.Diagnostics,
 		warnings:            statusWarnings,
 		statusRows:          statusRows,
+		placePackages:       placePackages,
 		pluginRevisions:     pluginRevisions,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
@@ -933,6 +939,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	harnessTargets := view.harnessTargets
 	lockMetadata := view.lockMetadata
 	marketplaceStatuses := view.marketplaceStatuses
+	placePackages := view.placePackages
 
 	if diag.Managed() {
 		if _, err := fmt.Fprintln(out, "MANAGED INSTALLATION"); err != nil {
@@ -981,6 +988,14 @@ func writeStatusSections(out io.Writer, view statusView) error {
 
 	if err := writeStatusTable(out, "SYNCED RESOURCES", []string{"KIND", "NAME", "HARNESS", "SOURCE", "VIA", "TARGET", "REGISTRY", "REF", "CACHE"}, statusRowsToCells(statusRows)); err != nil {
 		return err
+	}
+
+	if len(placePackages) > 0 {
+		if err := writeStatusTable(out, "PLACE PACKAGES",
+			[]string{"TARGET", "PACKAGE", "INSTALLATION", "VERIFICATION", "DRIFT"},
+			placeStatusRowsToCells(placePackages)); err != nil {
+			return err
+		}
 	}
 
 	if len(pluginRevisions) > 0 {
@@ -1081,6 +1096,29 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	}
 
 	return nil
+}
+
+func placeStatusRowsToCells(rows []pipeline.PlaceStatusRow) [][]string {
+	cells := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		verification := row.Verification
+		if row.HostVersion != "" || row.HostVersionStatus != "" {
+			details := row.HostVersion
+			if details != "" && row.HostVersionStatus != "" {
+				details += ", "
+			}
+			details += row.HostVersionStatus
+			verification += " (" + details + ")"
+		}
+		drift := "in-sync"
+		if len(row.Drift) > 0 {
+			drift = strings.Join(row.Drift, ", ")
+		}
+		cells = append(cells, []string{
+			row.TargetID, row.Kind + "/" + row.Name, row.InstallationID, verification, drift,
+		})
+	}
+	return cells
 }
 
 func writeStatusWarnings(out io.Writer, warnings []error) error {
