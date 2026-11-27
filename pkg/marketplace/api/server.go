@@ -1176,11 +1176,7 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	dto, ok := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())).(resourceRevisionDTO)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "failed to load resource")
-		return
-	}
+	dto := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context()))
 	allowPlace := placeRequested(r)
 	requires, err := s.resourceRequires(r.Context(), rev, allowPlace)
 	if err != nil {
@@ -1437,7 +1433,44 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
+	dto := s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context()))
+	if targetID, _, scoped := nameutil.SplitPlaceKind(kind); scoped && placeRequested(r) &&
+		dto.Revocation == nil &&
+		(dto.CurrentAvailability.Availability == AvailabilityAvailable ||
+			dto.CurrentAvailability.Availability == AvailabilityOperatorExposed) {
+		requires, err := exactPlaceResourceRequirements(rev, targetID)
+		if err != nil {
+			slog.Error("exact Place prerequisites invalid", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+			writeError(w, http.StatusInternalServerError, "failed to load revision")
+			return
+		}
+		dto.Requires = requires
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func exactPlaceResourceRequirements(rev store.AssessedResourceRevision, targetID string) (*[]ResourceRequirement, error) {
+	if strings.TrimSpace(rev.Requires) == "" {
+		return nil, nil
+	}
+	var stored []store.ResourceRequirement
+	if err := json.Unmarshal([]byte(rev.Requires), &stored); err != nil {
+		return nil, fmt.Errorf("decode stored prerequisites: %w", err)
+	}
+	if stored == nil {
+		return nil, nil
+	}
+	out := make([]ResourceRequirement, 0, len(stored))
+	for _, entry := range stored {
+		requiredTarget, _, scoped := nameutil.SplitPlaceKind(entry.Kind)
+		if entry.Registry != "" || entry.Path != "" || !scoped || requiredTarget != targetID ||
+			!nameutil.IsPlacePackageName(entry.Name) ||
+			(entry.Kind == rev.Coordinate.Kind && entry.Name == rev.Coordinate.Name) {
+			return nil, fmt.Errorf("stored Place prerequisites are not canonical")
+		}
+		out = append(out, ResourceRequirement{Kind: entry.Kind, Name: entry.Name})
+	}
+	return &out, nil
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {

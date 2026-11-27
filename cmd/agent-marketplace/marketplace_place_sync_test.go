@@ -764,6 +764,9 @@ func hostedLifecycleRevision(
 	inspectionDigest string,
 ) store.AssessedResourceRevision {
 	t.Helper()
+	if strings.Contains(revision.Coordinate.Kind, "/") && revision.Requires == "" {
+		revision.Requires = "[]"
+	}
 	assessment, err := store.FinalizeResourceAssessment(store.ResourceAssessment{
 		Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest,
 		AnalyzerVersion: "hosted-lifecycle-fixture", PolicyDigest: store.PolicyDigest("sha256:" + strings.Repeat("a", 64)),

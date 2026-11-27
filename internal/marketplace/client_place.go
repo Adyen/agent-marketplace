@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -50,6 +51,21 @@ func (c *Client) AcquirePlacePackage(ctx context.Context, coordinate store.Resou
 	return rev, files, nil
 }
 
+func decodeIndexedPlaceRequirements(raw string) ([]store.ResourceRequirement, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil, false, nil
+	}
+	var requirements []store.ResourceRequirement
+	if err := json.Unmarshal([]byte(raw), &requirements); err != nil {
+		return nil, false, err
+	}
+	if requirements == nil {
+		return nil, false, nil
+	}
+	return requirements, true, nil
+}
+
 func fetchPlaceRevision(ctx context.Context, c *Client, coordinate store.ResourceCoordinate, revision store.RevisionDigest, profileIdentity targetprofile.Identity) (store.AssessedResourceRevision, error) {
 	rev, err := fetchPlaceRevisionMetadata(ctx, c, coordinate, revision)
 	if err != nil {
@@ -92,6 +108,9 @@ func fetchPlaceRevisionMetadata(ctx context.Context, c *Client, coordinate store
 }
 
 func fetchPlaceArchive(ctx context.Context, c *Client, rev store.AssessedResourceRevision, profile targetprofile.Profile) ([]targetprofile.PackageFile, []byte, error) {
+	if rev.Requires == "" {
+		return nil, nil, fmt.Errorf("marketplace.place.prerequisites-missing: package %s has no indexed prerequisites", rev.Coordinate.Name)
+	}
 	raw, err := c.GetPlaceholderArchive(ctx, string(rev.ArchiveDigest))
 	if err != nil {
 		return nil, nil, err

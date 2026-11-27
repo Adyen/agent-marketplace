@@ -33,6 +33,7 @@ func TestResolvePlacePackagesUsesExactOfflineEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	revision.Requires = "[]"
 	locked := lockedPlaceResource(revision)
 	pin := config.MarketplaceResourcePin{
 		RegistryID: "tools-id", RegistrySlug: "tools", Kind: locked.Kind, Name: locked.Name,

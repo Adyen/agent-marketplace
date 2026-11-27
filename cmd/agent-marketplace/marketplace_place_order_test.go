@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -23,8 +23,12 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
+	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
 // spec: target-profile-place/dependent-packages-publish-in-order
@@ -55,19 +59,31 @@ func testHostedPlaceOrder(t *testing.T, keepServerLive bool) {
 	const marketplaceID = store.MarketplaceID("market-id")
 	const registryID = store.RegistryID("tools-id")
 
-	routes := make(map[string]http.HandlerFunc)
 	var requests, archiveRequests atomic.Int32
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		if route, ok := routes[r.URL.EscapedPath()]; ok {
-			route(w, r)
-			return
-		}
-		t.Errorf("unexpected hosted route %q", r.URL.EscapedPath())
-		http.NotFound(w, r)
-	}))
+	server := httptest.NewUnstartedServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	endpoint := "http://" + server.Listener.Addr().String()
+	meta := sqlite.New(filepath.Join(t.TempDir(), "marketplace.sqlite"))
+	if err := meta.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	blobs := fsblob.New(t.TempDir())
+	if err := meta.PutMarketplace(context.Background(), store.Marketplace{
+		ID: marketplaceID, Name: "Test", CanonicalURL: endpoint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registry := store.Registry{
+		ID: registryID, Slug: "tools", Ref: "main", Origins: []string{"https://git.example.com/tools"},
+		Roots:       []store.RegistryRoot{{Path: "profiles", SourceHarness: "factory"}},
+		Acquisition: store.AcquisitionMirror, Listed: true, License: "MIT",
+		CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
+	}
+	if err := meta.PutRegistry(context.Background(), registry); err != nil {
+		t.Fatal(err)
+	}
+
 	packageID := func(kind, name string) string {
 		return dependencytxn.Digest([]byte(strings.Join([]string{
 			"agent-marketplace/place-package/v1", endpoint, string(marketplaceID), string(registryID), kind, name,
@@ -120,13 +136,13 @@ func testHostedPlaceOrder(t *testing.T, keepServerLive bool) {
 		SourcePath: "payload/layout.yaml", DestinationPath: filepath.ToSlash(filepath.Join("layouts", layoutName+".yaml")),
 		Mode: 0o644, Bytes: layoutBytes,
 	}
-	buildPackage := func(kind, name string, file targetprofile.PackageFile, requires string) (store.AssessedResourceRevision, []byte) {
+	buildPackage := func(kind, name string, file targetprofile.PackageFile, requires string) (store.AssessedResourceRevision, []byte, inspection.Projection) {
 		t.Helper()
 		artifact, err := hccartifact.NewPlaceArtifact(kind, name, fixture.identity, []targetprofile.PackageFile{file})
 		if err != nil {
 			t.Fatalf("build hosted %s/%s artifact: %v", kind, name, err)
 		}
-		_, placeholder, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+		finalArchive, _, archiveDigest, err := hccartifact.EncodeArchives(artifact)
 		if err != nil {
 			t.Fatalf("encode hosted %s/%s artifact: %v", kind, name, err)
 		}
@@ -136,6 +152,10 @@ func testHostedPlaceOrder(t *testing.T, keepServerLive bool) {
 		coordinate := store.ResourceCoordinate{
 			Marketplace: marketplaceID, Registry: registryID, Kind: kind, Name: name,
 		}
+		projection, err := inspection.Build(coordinate, artifact.Manifest.ContentDigest, []byte(`{}`), nil, 8, 1024*1024, 2*1024*1024)
+		if err != nil {
+			t.Fatalf("build hosted %s/%s inspection: %v", kind, name, err)
+		}
 		revision := hostedLifecycleRevision(
 			t,
 			store.ResourceRevision{
@@ -143,68 +163,35 @@ func testHostedPlaceOrder(t *testing.T, keepServerLive bool) {
 				ArchiveDigest: store.ArchiveDigest(archiveDigest), Requires: requires,
 			},
 			artifact.Manifest.HostPackageIdentity,
-			inspection.Digest(placeholder),
+			inspection.Digest(projection.Payload),
 		)
-		return revision, placeholder
+		return revision, finalArchive, projection
 	}
-	modRevision, modPlaceholder := buildPackage("invented-app/mod", modName, modFile, "")
+	modRevision, modArchive, modInspection := buildPackage("invented-app/mod", modName, modFile, "[]")
 	layoutRequires := fmt.Sprintf(`[{"kind":"invented-app/mod","name":%q}]`, modName)
-	layoutRevision, layoutPlaceholder := buildPackage("invented-app/layout", layoutName, layoutFile, layoutRequires)
+	layoutRevision, layoutArchive, layoutInspection := buildPackage("invented-app/layout", layoutName, layoutFile, layoutRequires)
 	modDigest := string(modRevision.ContentDigest)
 	layoutDigest := string(layoutRevision.ContentDigest)
-	profileRevisionPath := "/api/v1/resources/tools-id/target-profile/" + fixture.identity.TargetID +
-		"/revisions/" + fixture.identity.RevisionDigest
-	modRevisionPath := "/api/v1/resources/tools-id/" + url.PathEscape("invented-app/mod") +
-		"/" + modName + "/revisions/" + modDigest
-	layoutRevisionPath := "/api/v1/resources/tools-id/" + url.PathEscape("invented-app/layout") +
-		"/" + layoutName + "/revisions/" + layoutDigest
-	modArchivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(string(modRevision.ArchiveDigest), "sha256:")
-	layoutArchivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(string(layoutRevision.ArchiveDigest), "sha256:")
-
-	routes["/.well-known/agent-marketplace.json"] = func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(string(marketplaceID), endpoint))
+	publishHostedPlaceFixture(
+		t, meta, blobs, registry, profileRevision, modRevision, layoutRevision,
+		profileProjection.Payload, fixture.profileBytes, modArchive, layoutArchive,
+		modInspection, layoutInspection,
+	)
+	persisted, err := meta.GetResourceRevision(context.Background(), layoutRevision.Coordinate, layoutRevision.ContentDigest)
+	if err != nil || persisted.Requires != layoutRequires {
+		t.Fatalf("persisted layout prerequisites = %q, %v; want exact %q", persisted.Requires, err, layoutRequires)
 	}
-	routes["/api/v1/registries/tools"] = func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{
-			ID: registryID, Slug: "tools", Origins: []string{"https://git.example.com/tools"},
-			Ref: "main", Roots: []store.RegistryRoot{{Path: "profiles"}},
-			Acquisition: store.AcquisitionMirror, Listed: true,
-		})
-	}
-	routes[profileRevisionPath] = func(w http.ResponseWriter, r *http.Request) {
-		assertHostedProfileFeature(t, r)
-		writeHostedLifecycleRevision(w, profileRevision)
-	}
-	profileInspectionPath := profileRevisionPath + "/inspection"
-	routes[profileInspectionPath] = func(w http.ResponseWriter, r *http.Request) {
-		assertHostedProfileFeature(t, r)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(profileProjection.Payload)
-	}
-	profileContentPath := profileInspectionPath + "/content"
-	routes[profileContentPath] = func(w http.ResponseWriter, r *http.Request) {
-		assertHostedProfileFeature(t, r)
-		w.Header().Set("Content-Type", inspection.MediaYAML)
-		_, _ = w.Write(fixture.profileBytes)
-	}
-	routes[modRevisionPath] = func(w http.ResponseWriter, r *http.Request) {
-		assertHostedProfileFeature(t, r)
-		writeHostedLifecycleRevision(w, modRevision)
-	}
-	routes[layoutRevisionPath] = func(w http.ResponseWriter, r *http.Request) {
-		assertHostedProfileFeature(t, r)
-		writeHostedLifecycleRevision(w, layoutRevision)
-	}
-	routes[modArchivePath] = func(w http.ResponseWriter, _ *http.Request) {
-		archiveRequests.Add(1)
-		_, _ = w.Write(modPlaceholder)
-	}
-	routes[layoutArchivePath] = func(w http.ResponseWriter, _ *http.Request) {
-		archiveRequests.Add(1)
-		_, _ = w.Write(layoutPlaceholder)
-	}
+	apiServer := mpapi.NewServer(mpconfig.Config{
+		Instance: mpconfig.Instance{ID: string(marketplaceID), Name: "Test", CanonicalURL: endpoint},
+	}, meta, blobs)
+	publicHandler := apiServer.PublicHandler()
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/archives/") {
+			archiveRequests.Add(1)
+		}
+		publicHandler.ServeHTTP(w, r)
+	})
 	server.Start()
 	if server.URL != endpoint {
 		t.Fatalf("hosted fixture endpoint = %q, listener-derived endpoint = %q", server.URL, endpoint)
@@ -347,7 +334,7 @@ func runHostedPlacePipelineSync(t *testing.T, fixture targetApprovalFixture, off
 		CatalogOption: []catalog.LoadOption{exactOption}, ExactLockLease: lease,
 	})
 	if len(result.Errors) != 0 {
-		t.Fatalf("pipeline sync offline=%t errors: %v", offline, result.Errors)
+		t.Errorf("pipeline sync offline=%t errors: %v", offline, result.Errors)
 	}
 	return result
 }
@@ -356,7 +343,8 @@ func assertHostedPlaceChangedOrder(t *testing.T, result pipeline.SyncResult, tar
 	t.Helper()
 	committed, ok := result.PlaceSync.Committed[targetID]
 	if !ok {
-		t.Fatalf("%s has no committed place result for %s: %+v", phase, targetID, result.PlaceSync)
+		t.Errorf("%s has no committed place result for %s: %+v", phase, targetID, result.PlaceSync)
+		return
 	}
 	var got []string
 	for _, changed := range committed.Changed {
@@ -365,7 +353,7 @@ func assertHostedPlaceChangedOrder(t *testing.T, result pipeline.SyncResult, tar
 		}
 	}
 	if !slices.Equal(got, want) {
-		t.Fatalf("%s changed paths = %v; want package file order %v (all changes %v)", phase, got, want, committed.Changed)
+		t.Errorf("%s changed paths = %v; want package file order %v (all changes %v)", phase, got, want, committed.Changed)
 	}
 }
 
@@ -378,15 +366,18 @@ func assertHostedPlacePackages(
 	t.Helper()
 	owner, err := ownership.Open(root, ownership.WithStateRoot(stateRoot))
 	if err != nil {
-		t.Fatalf("open hosted place ownership for %s: %v", root, err)
+		t.Errorf("open hosted place ownership for %s: %v", root, err)
+		return
 	}
 	snapshot, err := owner.SnapshotState()
 	if err != nil {
-		t.Fatalf("snapshot hosted place ownership for %s: %v", root, err)
+		t.Errorf("snapshot hosted place ownership for %s: %v", root, err)
+		return
 	}
 	projection, err := owner.PlaceFromSnapshot(snapshot)
 	if err != nil {
-		t.Fatalf("read hosted place projection for %s: %v", root, err)
+		t.Errorf("read hosted place projection for %s: %v", root, err)
+		return
 	}
 	var mod, layout *ownership.PlacePackage
 	for i := range projection.Packages {
@@ -400,7 +391,7 @@ func assertHostedPlacePackages(
 	if len(projection.Packages) != 2 || mod == nil || layout == nil ||
 		mod.Name != modName || mod.ID != modID || layout.Name != layoutName || layout.ID != layoutID ||
 		len(layout.Requires) != 1 || layout.Requires[0] != mod.ID {
-		t.Fatalf("hosted place projection at %s = %#v; want exact layout -> mod dependency", root, projection)
+		t.Errorf("hosted place projection at %s = %#v; want exact layout -> mod dependency", root, projection)
 	}
 	for _, file := range []struct {
 		path string
@@ -411,7 +402,7 @@ func assertHostedPlacePackages(
 	} {
 		data, err := os.ReadFile(file.path)
 		if err != nil || !bytes.Equal(data, file.want) {
-			t.Fatalf("hosted place file %s = %q, %v; want %q", file.path, data, err, file.want)
+			t.Errorf("hosted place file %s = %q, %v; want %q", file.path, data, err, file.want)
 		}
 	}
 }
@@ -420,15 +411,87 @@ func assertHostedPlaceEmpty(t *testing.T, root, stateRoot string) {
 	t.Helper()
 	owner, err := ownership.Open(root, ownership.WithStateRoot(stateRoot))
 	if err != nil {
-		t.Fatalf("open deselected place ownership for %s: %v", root, err)
+		t.Errorf("open deselected place ownership for %s: %v", root, err)
+		return
 	}
 	snapshot, err := owner.SnapshotState()
 	if err != nil {
-		t.Fatalf("snapshot deselected place ownership for %s: %v", root, err)
+		t.Errorf("snapshot deselected place ownership for %s: %v", root, err)
+		return
 	}
 	projection, err := owner.PlaceFromSnapshot(snapshot)
 	if err != nil || len(projection.Packages) != 0 {
-		t.Fatalf("deselected place projection at %s = %#v, %v; want no packages", root, projection, err)
+		t.Errorf("deselected place projection at %s = %#v, %v; want no packages", root, projection, err)
+	}
+}
+
+func publishHostedPlaceFixture(
+	t *testing.T,
+	meta *sqlite.Store,
+	blobs store.BlobStore,
+	registry store.Registry,
+	profile, mod, layout store.AssessedResourceRevision,
+	profileInspection []byte,
+	profileBytes, modArchive, layoutArchive []byte,
+	modProjection, layoutProjection inspection.Projection,
+) {
+	t.Helper()
+	const commit = "2222222222222222222222222222222222222222"
+	resources := []store.ResourceRevision{profile.ResourceRevision, mod.ResourceRevision, layout.ResourceRevision}
+	revisionManifest := marketplaceartifact.RegistryRevisionManifest{
+		SchemaVersion: marketplaceartifact.RegistryRevisionSchemaV1,
+		Generator:     "hosted Place prerequisite order fixture",
+	}
+	occurrences := make([]store.ResourceOccurrence, 0, len(resources))
+	assessments := []store.ResourceAssessment{profile.Assessment, mod.Assessment, layout.Assessment}
+	for _, revision := range resources {
+		revisionManifest.Resources = append(revisionManifest.Resources, marketplaceartifact.RevisionResource{
+			Kind: revision.Coordinate.Kind, Name: revision.Coordinate.Name,
+			ContentDigest: string(revision.ContentDigest), ArchiveDigest: string(revision.ArchiveDigest),
+		})
+		occurrences = append(occurrences, store.ResourceOccurrence{
+			Coordinate: revision.Coordinate, ContentDigest: revision.ContentDigest,
+			Commit: commit, SourcePath: "profiles/" + revision.Coordinate.Name,
+		})
+	}
+	payload, digest, err := marketplaceartifact.CanonicalRegistryRevisionPayload(revisionManifest)
+	if err != nil {
+		t.Fatalf("encode hosted registry revision manifest: %v", err)
+	}
+	manifestDigest := store.RevisionDigest(digest)
+	for i := range occurrences {
+		occurrences[i].ManifestDigest = manifestDigest
+	}
+	occurrence := store.RegistryOccurrence{
+		RegistryID: registry.ID, Ref: registry.Ref, Roots: registry.Roots, Commit: commit,
+		RegistryRevisionManifestDigest: manifestDigest, Acquisition: registry.Acquisition,
+	}
+	inspectionBlobs := []store.BlobUpload{
+		{Digest: store.ArchiveDigest(profile.Assessment.InspectionManifestDigest), Data: profileInspection},
+		{Digest: store.ArchiveDigest(inspection.Digest(profileBytes)), Data: profileBytes},
+	}
+	addProjection := func(revision store.AssessedResourceRevision, projection inspection.Projection) {
+		inspectionBlobs = append(inspectionBlobs,
+			store.BlobUpload{Digest: store.ArchiveDigest(revision.Assessment.InspectionManifestDigest), Data: projection.Payload})
+		for _, body := range projection.Bodies {
+			inspectionBlobs = append(inspectionBlobs, store.BlobUpload{
+				Digest: store.ArchiveDigest(inspection.Digest(body)), Data: body,
+			})
+		}
+	}
+	addProjection(mod, modProjection)
+	addProjection(layout, layoutProjection)
+	if err := store.PublishRegistryRevision(context.Background(), meta, blobs, store.RegistryRevisionPublication{
+		Occurrence: occurrence, Resources: resources, ResourceOccurrences: occurrences,
+		Assessments: assessments, ManifestPayload: payload,
+		ExtraBlobs: []store.BlobUpload{
+			{Digest: mod.ArchiveDigest, Data: modArchive},
+			{Digest: layout.ArchiveDigest, Data: layoutArchive},
+			{Digest: store.ArchiveDigest(profile.ContentDigest), Data: profileBytes},
+		},
+		InspectionBlobs: inspectionBlobs,
+	}); err != nil {
+		t.Fatalf("publish hosted Place registry revision: %v", err)
 	}
 }
 

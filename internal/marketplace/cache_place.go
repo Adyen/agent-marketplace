@@ -76,6 +76,11 @@ func (c *Cache) ReadLockedPlacePackage(endpoint string, instanceID store.Marketp
 	if rev.Assessment.Decision == store.AssessmentDecisionReject {
 		return fail(fmt.Errorf("cached place revision assessment is rejected"))
 	}
+	if _, known, err := decodeIndexedPlaceRequirements(rev.Requires); err != nil {
+		return fail(fmt.Errorf("marketplace.cache.place-prerequisites-invalid: cached package %s has invalid indexed prerequisites: %w", locked.Name, err))
+	} else if !known {
+		return fail(fmt.Errorf("marketplace.cache.place-prerequisites-missing: cached package %s has no indexed prerequisites; re-fetch online before using cached package bytes", locked.Name))
+	}
 	archivePath, err := filepath.Rel(c.root, c.PlaceholderArchivePath(string(locked.ArchiveDigest)))
 	if err != nil {
 		return fail(fmt.Errorf("resolve cached placeholder path: %w", err))

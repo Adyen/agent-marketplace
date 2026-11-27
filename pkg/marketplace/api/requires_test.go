@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -166,6 +167,41 @@ func (f requiresFixture) detail(t *testing.T, slug, kind, name string, features 
 	return decoded
 }
 
+func (f requiresFixture) exactRevision(t *testing.T, slug, kind, name, revision string, features ...string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, f.public.URL+"/api/v1/resources/"+slug+"/"+url.PathEscape(kind)+"/"+name+"/revisions/"+revision, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range features {
+		req.Header.Add(placeFeaturesHeader, value)
+	}
+	resp, err := f.public.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := mustRead(t, resp)
+	varyCount := 0
+	for _, value := range resp.Header.Values("Vary") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.TrimSpace(token) == placeFeaturesHeader {
+				varyCount++
+			}
+		}
+	}
+	if strings.Contains(kind, "/") && varyCount != 1 {
+		t.Fatalf("scoped exact Vary count = %d, want one; values %v", varyCount, resp.Header.Values("Vary"))
+	}
+	if !strings.Contains(kind, "/") && varyCount != 0 {
+		t.Fatalf("ordinary exact response unexpectedly varies on Place features: %v", resp.Header.Values("Vary"))
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("exact revision body: %v", err)
+	}
+	return resp.StatusCode, decoded
+}
+
 func detailRequires(body map[string]any) ([]any, bool) {
 	raw, present := body["requires"]
 	if !present {
@@ -278,6 +314,111 @@ func TestResourceDetailRequires(t *testing.T) {
 	legacy := f.detail(t, "source-a", "skill", "legacy")
 	if _, present := detailRequires(legacy); present {
 		t.Fatalf("unindexed revision carried requires: %v", legacy["requires"])
+	}
+}
+
+// spec: marketplace-api/exact-place-revision-returns-its-stored-declarations
+// spec: marketplace-api/exact-historical-place-revision-does-not-use-the-current-head
+// spec: marketplace-api/exact-place-indexed-empty-and-unknown-prerequisites-stay-distinct
+// spec: marketplace-api/ineligible-exact-place-revision-does-not-expose-prerequisites
+// spec: marketplace-api/invalid-exact-place-declarations-are-refused
+func TestExactPlaceRevisionPrerequisites(t *testing.T) {
+	f := newRequiresFixture(t)
+	reg := f.addRegistry(t, "src-a", "source-a", true, "profiles")
+	oldRequires := `[{"kind":"invented-app/mod","name":"old-mod"}]`
+	newRequires := `[{"kind":"invented-app/mod","name":"new-mod"}]`
+	old := f.seed(t, reg, "invented-app/layout", "sample", oldRequires, "profiles/sample", true)
+	f.seed(t, reg, "invented-app/layout", "sample", newRequires, "profiles/sample", true)
+
+	status, body := f.exactRevision(t, reg.Slug, old.Coordinate.Kind, old.Coordinate.Name, string(old.ContentDigest), TargetProfilePlaceFeature)
+	if status != http.StatusOK {
+		t.Fatalf("historical exact Place revision status = %d", status)
+	}
+	requires, present := detailRequires(body)
+	if !present || len(requires) != 1 {
+		t.Fatalf("historical exact requires = %v", body["requires"])
+	}
+	entry, _ := requires[0].(map[string]any)
+	if entry["kind"] != "invented-app/mod" || entry["name"] != "old-mod" || len(entry) != 2 {
+		t.Fatalf("historical exact prerequisite = %v; want kind/name only from the old revision", entry)
+	}
+	if _, ok := body["required_by"]; ok {
+		t.Fatalf("exact Place revision carried required_by: %v", body["required_by"])
+	}
+	ordinary := f.seed(t, reg, "skill", "ordinary", "[]", ".agents/skills/ordinary/SKILL.md", true)
+	ordinaryStatus, ordinaryExact := f.exactRevision(t, reg.Slug, "skill", "ordinary", string(ordinary.ContentDigest), TargetProfilePlaceFeature)
+	if ordinaryStatus != http.StatusOK {
+		t.Fatalf("ordinary exact status = %d, want 200", ordinaryStatus)
+	}
+	if _, ok := ordinaryExact["requires"]; ok {
+		t.Fatalf("ordinary exact revision carried requires: %v", ordinaryExact["requires"])
+	}
+	unoptedStatus, unopted := f.exactRevision(t, reg.Slug, old.Coordinate.Kind, old.Coordinate.Name, string(old.ContentDigest))
+	if unoptedStatus != http.StatusBadRequest {
+		t.Fatalf("unopted exact Place status = %d, want 400", unoptedStatus)
+	}
+	if _, ok := unopted["requires"]; ok {
+		t.Fatalf("unopted exact Place revision carried requires: %v", unopted["requires"])
+	}
+
+	empty := f.seed(t, reg, "invented-app/mod", "empty", "[]", "profiles/empty", true)
+	emptyStatus, emptyBody := f.exactRevision(t, reg.Slug, empty.Coordinate.Kind, empty.Coordinate.Name, string(empty.ContentDigest), TargetProfilePlaceFeature)
+	if emptyStatus != http.StatusOK {
+		t.Fatalf("known-empty exact Place status = %d, want 200", emptyStatus)
+	}
+	if requires, present := detailRequires(emptyBody); !present || requires == nil || len(requires) != 0 {
+		t.Fatalf("indexed-empty exact requires = %v, present %v", emptyBody["requires"], present)
+	}
+	for i, value := range []string{"", "null"} {
+		unknown := f.seed(t, reg, "invented-app/layout", fmt.Sprintf("unknown-%d", i), value, "profiles/unknown", true)
+		unknownStatus, unknownBody := f.exactRevision(t, reg.Slug, unknown.Coordinate.Kind, unknown.Coordinate.Name, string(unknown.ContentDigest), TargetProfilePlaceFeature)
+		if unknownStatus != http.StatusOK {
+			t.Fatalf("unknown exact Place status = %d, want 200", unknownStatus)
+		}
+		if _, present := detailRequires(unknownBody); present {
+			t.Fatalf("unknown exact prerequisites %q were exposed: %v", value, unknownBody["requires"])
+		}
+	}
+
+	unavailable := f.seed(t, reg, "invented-app/layout", "blocked", oldRequires, "profiles/blocked", true)
+	current, err := f.meta.GetResourceRevision(context.Background(), unavailable.Coordinate, unavailable.ContentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := current.Assessment
+	rejected.Decision = store.AssessmentDecisionReject
+	rejected.AssessmentDigest = ""
+	rejected, err = store.FinalizeResourceAssessment(rejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.meta.PutResourceAssessment(context.Background(), rejected); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.meta.SetCurrentResourceAssessment(context.Background(), rejected); err != nil {
+		t.Fatal(err)
+	}
+	blockedStatus, blockedBody := f.exactRevision(t, reg.Slug, unavailable.Coordinate.Kind, unavailable.Coordinate.Name, string(unavailable.ContentDigest), TargetProfilePlaceFeature)
+	if blockedStatus != http.StatusOK {
+		t.Fatalf("blocked Place exact status = %d, want 200", blockedStatus)
+	}
+	if _, ok := blockedBody["requires"]; ok {
+		t.Fatalf("unavailable Place revision carried requires: %v", blockedBody["requires"])
+	}
+
+	for i, invalid := range []string{
+		`[{"kind":"invented-app/mod","name":"other","registry":"source-a"}]`,
+		`[{"kind":"invented-app/mod","name":"other","path":"profiles"}]`,
+		`[{"kind":"another-app/mod","name":"other"}]`,
+		`[{"kind":"invented-app/layout","name":"invalid-3"}]`,
+		`not-json`,
+	} {
+		name := fmt.Sprintf("invalid-%d", i)
+		revision := f.seed(t, reg, "invented-app/layout", name, invalid, "profiles/"+name, true)
+		status, _ := f.exactRevision(t, reg.Slug, revision.Coordinate.Kind, name, string(revision.ContentDigest), TargetProfilePlaceFeature)
+		if status != http.StatusInternalServerError {
+			t.Fatalf("invalid exact Place declaration %d status = %d, want 500", i, status)
+		}
 	}
 }
 
