@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	ansi "github.com/charmbracelet/x/ansi"
 
@@ -111,6 +112,86 @@ func TestRenderDetailShowsResourceKindAndName(t *testing.T) {
 	}
 	if contains(out, "Artifact:") {
 		t.Fatalf("renderDetail should not label every resource as Artifact:\n%s", out)
+	}
+}
+
+// spec: tui-rendering/optional-organization-default-and-collection-selected-resource-show-provenance
+func TestRenderDetailShowsSelectionLayerProvenance(t *testing.T) {
+	cases := []struct {
+		name         string
+		source       config.Source
+		required     bool
+		organization bool
+		user         bool
+		scope        func(*row)
+		want         string
+	}{
+		{name: "optional organization", source: config.Organization, organization: true, scope: withGlobal, want: "organization default (optional)"},
+		{name: "required organization", source: config.Organization, required: true, organization: true, scope: withGlobal, want: "organization (required)"},
+		{name: "user", source: config.UserPersonal, user: true, scope: withGlobal, want: "user"},
+		{name: "project", source: config.RepoCommitted, scope: withProject, want: "project"},
+		{name: "local", source: config.RepoPersonal, scope: withLocal, want: "local"},
+		{name: "organization and user", source: config.Organization, organization: true, user: true, scope: withGlobal, want: "organization default (optional), user"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mkRow("provenance", tc.scope)
+			r.Artifact.Source = tc.source
+			r.Artifact.Required = tc.required
+			r.EnabledOrganization = tc.organization
+			r.EnabledUser = tc.user
+			out := ansi.Strip(renderDetail(modelWithSelectedRow(t, r)))
+			if !strings.Contains(out, "Source layer: "+tc.want) {
+				t.Fatalf("detail missing source layer %q:\n%s", tc.want, out)
+			}
+		})
+	}
+
+	t.Run("user selection from organization registry", func(t *testing.T) {
+		r := mkRow("provenance", withGlobal)
+		r.Artifact.Source = config.Organization
+		r.EnabledUser = true
+		out := ansi.Strip(renderDetail(modelWithSelectedRow(t, r)))
+		if !strings.Contains(out, "Source layer: user") || strings.Contains(out, "organization default") {
+			t.Fatalf("detail used the source registry instead of the selecting layer:\n%s", out)
+		}
+	})
+}
+
+func TestRenderDetailShowsGitCollectionProvenanceOnce(t *testing.T) {
+	r := mkRow("from-git-collection", withGlobal)
+	r.Artifact.Via = "collection:starter@sha256:one > collection:nested@sha256:two > collection:starter@sha256:three"
+	out := ansi.Strip(renderDetail(modelWithSelectedRow(t, r)))
+
+	if !strings.Contains(out, "Included via: starter, nested") {
+		t.Fatalf("detail missing Git collection provenance:\n%s", out)
+	}
+	if strings.Count(out, "starter") != 1 {
+		t.Fatalf("Git collection parent was not listed exactly once:\n%s", out)
+	}
+}
+
+func TestRenderDetailShowsMarketplaceCollectionProvenanceOnceAndSafely(t *testing.T) {
+	selectedBy := config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{
+		{RegistryID: "collections", Name: "bundle", Revision: "sha256:one"},
+		{RegistryID: "collections", Name: "bundle", Revision: "sha256:two"},
+		{RegistryID: "collections", Name: "plugins", Revision: "sha256:three"},
+		{RegistryID: "collections", Name: "hostile\x1b[2J", Revision: "sha256:four"},
+	})
+	r := mkRow("from-marketplace-collection", withGlobal)
+	r.Artifact.Source = config.Organization
+	r.MarketplaceSelections = map[config.Source]session.MarketplaceSelection{
+		config.Organization: {Pin: config.MarketplaceResourcePin{SelectedBy: selectedBy}},
+		config.UserPersonal: {Pin: config.MarketplaceResourcePin{SelectedBy: selectedBy}},
+	}
+	out := ansi.Strip(renderDetail(modelWithSelectedRow(t, r)))
+
+	if !strings.Contains(out, "Included via: bundle, plugins, hostile\\x1B[2J") {
+		t.Fatalf("detail missing sanitized Marketplace collection provenance:\n%s", out)
+	}
+	if strings.Count(out, "bundle") != 1 || strings.Contains(out, "\x1b") {
+		t.Fatalf("Marketplace parent names must be unique and terminal-safe:\n%s", out)
 	}
 }
 

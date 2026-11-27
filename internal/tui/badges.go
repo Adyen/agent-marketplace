@@ -10,6 +10,7 @@ import (
 // configuration file(s) enable this skill. The alphabet is:
 //
 //	R     Required (org-mandated; scopes don't apply).
+//	O     Optional organization default.
 //	G     Enabled in global config only.
 //	P     Enabled in project config only.
 //	L     Enabled in local config only.
@@ -34,7 +35,11 @@ func originBadge(r row) string {
 	}
 	var b strings.Builder
 	if r.EnabledGlobal {
-		b.WriteByte('G')
+		if r.EnabledOrganization {
+			b.WriteByte('O')
+		} else {
+			b.WriteByte('G')
+		}
 	}
 	if r.EnabledProject {
 		b.WriteByte('P')

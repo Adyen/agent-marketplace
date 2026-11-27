@@ -2,6 +2,9 @@ package tui
 
 import (
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	ansi "github.com/charmbracelet/x/ansi"
 )
 
 func TestOriginBadgeSingleScopeLetters(t *testing.T) {
@@ -18,6 +21,45 @@ func TestOriginBadgeSingleScopeLetters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := originBadge(tc.r); got != tc.want {
 				t.Fatalf("originBadge(%s) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: tui-rendering/aligned-safe-labels-at-normal-and-narrow-sizes
+func TestOriginBadgeOptionalOrganizationUsesOWithinThreeCells(t *testing.T) {
+	organization := mkRow("s", withGlobal)
+	organization.Artifact.Source = config.Organization
+	organization.EnabledOrganization = true
+	multipleLayers := mkRow("s", withGlobal, withProject, withLocal)
+	multipleLayers.Artifact.Source = config.Organization
+	multipleLayers.EnabledOrganization = true
+	user := mkRow("s", withGlobal)
+	user.Artifact.Source = config.UserPersonal
+	user.EnabledUser = true
+	marketplace := mkRow("s", withGlobal)
+	marketplace.Artifact.Source = config.Organization
+	marketplace.Artifact.IsMarketplace = true
+	marketplace.EnabledOrganization = true
+	userFromOrganizationRegistry := mkRow("s", withGlobal)
+	userFromOrganizationRegistry.Artifact.Source = config.Organization
+	userFromOrganizationRegistry.EnabledUser = true
+
+	for _, tc := range []struct {
+		name string
+		row  row
+		want string
+	}{
+		{name: "organization default", row: organization, want: "O"},
+		{name: "organization Marketplace default", row: marketplace, want: "O"},
+		{name: "user global", row: user, want: "G"},
+		{name: "user selection from organization registry", row: userFromOrganizationRegistry, want: "G"},
+		{name: "organization with every other scope", row: multipleLayers, want: "OPL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := originBadge(tc.row)
+			if got != tc.want {
+				t.Fatalf("originBadge = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -40,6 +82,26 @@ func TestOriginBadgeMultiScopeLettersPreserveOrder(t *testing.T) {
 				t.Fatalf("originBadge(%s) = %q, want %q", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRenderListShowsOptionalOrganizationBadgeAtSupportedWidths(t *testing.T) {
+	r := mkRow("alpha\x1b[2J", withGlobal, withRegistry("https://example.invalid/org.git", "org"))
+	r.Artifact.Source = config.Organization
+	r.EnabledOrganization = true
+	m := NewModel("/repo", "/home")
+	m.rows = []row{r}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+
+	for _, width := range []int{80, 50} {
+		out := ansi.Strip(renderList(m, width))
+		if !contains(out, "[x] O   skill") || !contains(out, `alpha\x1B[2J`) {
+			t.Fatalf("renderList(%d) should align the O badge and visibly escape the name, got:\n%s", width, out)
+		}
+		if contains(out, "\x1b") {
+			t.Fatalf("renderList(%d) emitted a terminal control byte, got:\n%s", width, out)
+		}
 	}
 }
 

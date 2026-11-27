@@ -781,7 +781,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	if pending.Glyph() != "[x]" || pending.StatusText() != "enabled in config, waiting for verification" {
 		t.Fatalf("provisional row did not show configuration separately from verification: glyph=%q status=%q", pending.Glyph(), pending.StatusText())
 	}
-	if badge := originBadge(pending); badge != "G" {
+	if badge := originBadge(pending); badge != "O" {
 		t.Fatalf("provisional row lost its configured scope badge %q", badge)
 	}
 
@@ -824,11 +824,11 @@ func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 	}
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.Active(requestSnapshot), provisionalCfg: cfg, provisionalRows: session.BuildProvisionalRows(cfg, nil, nil)})
 	m = updated.(Model)
-	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "G" {
+	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "O" {
 		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
 	}
 	excluded := m.rows[1]
-	if excluded.Artifact.Name != "review" || !excluded.PendingVerification || excluded.Glyph() != "[ ]" || excluded.StatusText() != "excluded, waiting for verification" || originBadge(excluded) != "G" {
+	if excluded.Artifact.Name != "review" || !excluded.PendingVerification || excluded.Glyph() != "[ ]" || excluded.StatusText() != "excluded, waiting for verification" || originBadge(excluded) != "O" {
 		t.Fatalf("excluded organization pin should hold its unchecked Global position while pending: glyph=%q status=%q badge=%q row=%#v", excluded.Glyph(), excluded.StatusText(), originBadge(excluded), excluded)
 	}
 	mi, _ := m.applyRowSpaceEligibility(excluded)
@@ -879,7 +879,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 		t.Fatalf("verified inventory reshuffles the provisional layout:\nprovisional: %q\nverified:    %q", provisional, verified)
 	}
 	for _, want := range []string{
-		"  [x] G   skill market.example/audit",
+		"  [x] O   skill market.example/audit",
 		"  [ ]     skill market.example/review",
 		"  [x] P   collection local/bundle",
 	} {
@@ -1104,7 +1104,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	if !strings.Contains(view, "verifying resources...") || strings.Contains(view, "loading resources...") {
 		t.Fatalf("rendered view lacks verification progress while acquisition is blocked:\n%s", view)
 	}
-	if m.rows[pendingRow].Glyph() != "[x]" || originBadge(m.rows[pendingRow]) != "G" {
+	if m.rows[pendingRow].Glyph() != "[x]" || originBadge(m.rows[pendingRow]) != "O" {
 		t.Fatalf("configured remote selection should show an early enabled check and scope badge: glyph=%q badge=%q", m.rows[pendingRow].Glyph(), originBadge(m.rows[pendingRow]))
 	}
 	if status := m.rows[pendingRow].StatusText(); !strings.Contains(status, "waiting for verification") || !strings.Contains(status, "enabled in config") {
@@ -1116,7 +1116,7 @@ func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 			remoteLine = l
 		}
 	}
-	if !strings.Contains(remoteLine, "[x]") || !strings.Contains(remoteLine, " G ") {
+	if !strings.Contains(remoteLine, "[x]") || !strings.Contains(remoteLine, " O ") {
 		t.Fatalf("configured selection does not render an early checked badge and scope: %q", remoteLine)
 	}
 }
@@ -1365,7 +1365,7 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 		"deploy": ir.KindCommand,
 		"remote": ir.KindSkill,
 	}
-	badges := map[string]string{"alpha": "G", "beta": "G", "sigma": "P", "deploy": "P", "remote": "G"}
+	badges := map[string]string{"alpha": "G", "beta": "G", "sigma": "P", "deploy": "P", "remote": "O"}
 	for _, r := range m.rows {
 		if !r.PendingVerification {
 			t.Fatalf("pre-verification row %#v is not marked pending", r.Artifact)
