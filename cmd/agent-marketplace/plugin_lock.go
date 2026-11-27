@@ -277,5 +277,7 @@ func acquireExternalPluginRegistry(ctx context.Context, ext sourcerevision.Plugi
 		return lockfile.GitRegistry{}, err
 	}
 	root := lockfile.GitRoot{Path: rootPath, SourceHarness: built.SourceHarness, RevisionSchema: "plugin-v1", RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest), Resources: revisionResources(built)}
-	return lockfile.GitRegistry{URL: canonical, Ref: ref, Commit: commit, Roots: []lockfile.GitRoot{root}}, nil
+	registry := lockfile.NewGitRegistry(canonical, ref, commit)
+	registry.Roots = []lockfile.GitRoot{root}
+	return registry, nil
 }

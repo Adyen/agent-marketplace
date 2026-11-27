@@ -75,6 +75,150 @@ func TestRegistryRepeatedGitSuffix(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/repeated-suffix-identities-round-trip-through-v1-and-v2
+func TestRepeatedSuffixGitIdentitiesRoundTrip(t *testing.T) {
+	for _, version := range []string{APIVersionV1, APIVersionV2} {
+		t.Run(version, func(t *testing.T) {
+			const base = "https://git.example/team/tools"
+			wireURLs := []string{base + ".git", base + ".git.git", base + ".git.git.git"}
+			encodedURLs := []string{base, base + ".git.git", base + ".git.git.git"}
+			wantURLs := []string{base, base + ".git", base + ".git.git"}
+			var input strings.Builder
+			fmt.Fprintf(&input, "apiVersion: %s\nscope: repo\nregistries:\n", version)
+			for _, raw := range wireURLs {
+				fmt.Fprintf(&input, "  - url: %s\n    ref: main\n    commit: %s\n", raw, sha1a)
+			}
+
+			doc, err := Decode([]byte(input.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRegistryURLs := func(doc Document) {
+				t.Helper()
+				if len(doc.Registries) != len(wantURLs) {
+					t.Fatalf("registry count = %d, want %d: %#v", len(doc.Registries), len(wantURLs), doc.Registries)
+				}
+				for i, want := range wantURLs {
+					if got := doc.Registries[i].URL; got != want {
+						t.Fatalf("registry %d identity = %q, want %q", i, got, want)
+					}
+				}
+			}
+			assertRegistryURLs(doc)
+
+			var canonicalBytes []byte
+			for pass := 0; pass < 3; pass++ {
+				normalized, err := Normalize(doc)
+				if err != nil {
+					t.Fatalf("normalize pass %d: %v", pass, err)
+				}
+				assertRegistryURLs(normalized)
+				before := cloneDocument(doc)
+				encoded, err := Encode(doc)
+				if err != nil {
+					t.Fatalf("encode pass %d: %v", pass, err)
+				}
+				if !reflect.DeepEqual(doc, before) {
+					t.Fatalf("encode pass %d mutated its input", pass)
+				}
+				for _, want := range encodedURLs {
+					if !strings.Contains(string(encoded), "url: "+want+"\n") {
+						t.Fatalf("encode pass %d lost wire URL %q:\n%s", pass, want, encoded)
+					}
+				}
+				if canonicalBytes == nil {
+					canonicalBytes = encoded
+				} else if !reflect.DeepEqual(encoded, canonicalBytes) {
+					t.Fatalf("encode pass %d changed canonical bytes:\nbefore:\n%s\nafter:\n%s", pass, canonicalBytes, encoded)
+				}
+				decoded, err := Decode(encoded)
+				if err != nil {
+					t.Fatalf("decode pass %d: %v", pass, err)
+				}
+				if !reflect.DeepEqual(decoded, normalized) {
+					t.Fatalf("decode pass %d = %#v, want normalized %#v", pass, decoded, normalized)
+				}
+				doc = decoded
+			}
+		})
+	}
+}
+
+// spec: acquisition-lock-codec/repeated-suffix-identities-round-trip-through-v1-and-v2
+func TestNewGitRegistryPreservesCanonicalSuffixIdentity(t *testing.T) {
+	const canonical = "https://git.example/team/tools.git"
+	registry := NewGitRegistry(canonical, "main", mustOIDForGolden(sha1a))
+	if got, want := registry.FetchURL(), canonical+".git"; got != want {
+		t.Fatalf("fetch URL = %q, want %q", got, want)
+	}
+	encoded, err := Encode(Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{registry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "url: "+canonical+".git\n") {
+		t.Fatalf("encoded lock lost canonical suffix identity:\n%s", encoded)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Registries) != 1 || decoded.Registries[0].URL != canonical {
+		t.Fatalf("decoded registry = %#v, want canonical URL %q", decoded.Registries, canonical)
+	}
+}
+
+// spec: acquisition-lock-codec/a-changed-normalized-url-is-validated-independently
+func TestChangedNormalizedGitURLIsRevalidated(t *testing.T) {
+	const raw = "https://git.example/team/tools.git.git"
+	doc, err := Decode([]byte("apiVersion: " + APIVersionV2 + "\nscope: repo\nregistries:\n  - url: " + raw + "\n    ref: main\n    commit: " + sha1a + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := doc.Registries[0].URL, "https://git.example/team/tools.git"; got != want {
+		t.Fatalf("decoded URL = %q, want %q", got, want)
+	}
+
+	doc.Registries[0].URL = "https://git.example/team/other.git"
+	normalized, err := Normalize(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := normalized.Registries[0].URL, "https://git.example/team/other"; got != want {
+		t.Fatalf("changed URL normalized to %q, want %q", got, want)
+	}
+
+	normalized.Registries[0].URL = "https://git.example/team/tools.git"
+	revalidated, err := Normalize(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := revalidated.Registries[0].URL, "https://git.example/team/tools"; got != want {
+		t.Fatalf("URL matching a stale suffix identity normalized to %q, want %q", got, want)
+	}
+
+	revalidated.Registries[0].URL = "://invalid"
+	if _, err := Normalize(revalidated); err == nil {
+		t.Fatal("Normalize accepted an invalid URL after a repeated-suffix identity change")
+	}
+}
+
+// spec: acquisition-lock-codec/ordinary-single-suffix-lock-bytes-remain-stable
+func TestOrdinaryGitURLLockBytesRemainStable(t *testing.T) {
+	doc := Document{
+		APIVersion: APIVersionV1,
+		Scope:      ScopeRepo,
+		Registries: []GitRegistry{{URL: "https://git.example/team/tools.git", Ref: "main", Commit: mustOIDForGolden(sha1a)}},
+	}
+	got, err := Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries:\n  - url: https://git.example/team/tools\n    ref: main\n    commit: " + sha1a + "\n"
+	if string(got) != want {
+		t.Fatalf("ordinary Git lock bytes:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestCanonicalGitURLSharedNonEquivalentFixtures(t *testing.T) {
 	for _, tc := range testutil.NonEquivalentGitURLPairs {
 		left, err := CanonicalGitURL(tc.Left)
