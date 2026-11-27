@@ -1,5 +1,3 @@
-//go:build unix
-
 package fsboundary
 
 import (
@@ -12,46 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
-// stagedCreateFlags creates a brand-new staged file: it must not exist, it
-// is never a symlink, and it starts owner-only until the caller chmods it.
-const stagedCreateFlags = unix.O_RDWR | unix.O_CREAT | unix.O_EXCL | unix.O_NOFOLLOW | unix.O_CLOEXEC
-
+// OpenPersistentFile opens name below the captured directory for reading
+// and writing, creating it with mode when absent. The leaf must be a singly
+// linked regular file and is never a followed link.
 func (d *Dir) OpenPersistentFile(name string, mode fs.FileMode) (*os.File, error) {
 	if err := validLeafName(name); err != nil {
 		return nil, err
 	}
-	flags := unix.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
-	fd, err := unix.Openat(int(d.file.Fd()), name, flags|unix.O_CREAT, uint32(mode.Perm()))
-	if errors.Is(err, unix.ENOENT) {
-		fd, err = unix.Openat(int(d.file.Fd()), name, flags, 0)
-	}
-	if err != nil {
-		return nil, err
-	}
-	// Validate and restore blocking I/O on the raw descriptor before wrapping
-	// it, so a refused leaf never reaches os.NewFile and an admitted one is
-	// not registered as a nonblocking descriptor.
-	var st unix.Stat_t
-	err = unix.Fstat(fd, &st)
-	if err == nil && (st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1) {
-		err = ErrUnsafeFile
-	}
-	if err == nil {
-		if blockErr := unix.SetNonblock(fd, false); blockErr != nil {
-			err = fmt.Errorf("restore blocking I/O on %s: %w", name, blockErr)
-		}
-	}
-	if err != nil {
-		if closeErr := unix.Close(fd); closeErr != nil {
-			return nil, errors.Join(err, closeErr)
-		}
-		return nil, err
-	}
-	return os.NewFile(uintptr(fd), filepath.Join(d.path, name)), nil
+	return openPersistentAt(d.file, name, mode, filepath.Join(d.path, name))
 }
 
 // CreateTemp creates a new regular file directly below the captured
@@ -74,14 +42,13 @@ func (d *Dir) CreateTemp(pattern string) (*os.File, string, error) {
 			return nil, "", fmt.Errorf("generate staged name: %w", err)
 		}
 		name := prefix + hex.EncodeToString(token[:]) + suffix
-		fd, err := unix.Openat(int(d.file.Fd()), name, stagedCreateFlags, 0o600)
-		if errors.Is(err, unix.EEXIST) {
+		file, err := createExclusiveAt(d.file, name)
+		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return nil, "", fmt.Errorf("create staged file below %s: %w", d.path, err)
 		}
-		file := os.NewFile(uintptr(fd), name)
 		return file, name, nil
 	}
 	return nil, "", fmt.Errorf("create staged file below %s: name collision exhaustion", d.path)
@@ -95,8 +62,8 @@ func (d *Dir) Mkdir(name string, mode os.FileMode) error {
 	if err := validLeafName(name); err != nil {
 		return err
 	}
-	if err := unix.Mkdirat(int(d.file.Fd()), name, uint32(mode.Perm())); err != nil {
-		if errors.Is(err, unix.EEXIST) {
+	if err := mkdirAt(d.file, name, mode); err != nil {
+		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("create directory %s below %s: %w", name, d.path, fs.ErrExist)
 		}
 		return fmt.Errorf("create directory %s below %s: %w", name, d.path, err)
@@ -108,7 +75,7 @@ func (d *Dir) Rmdir(name string) error {
 	if err := validLeafName(name); err != nil {
 		return err
 	}
-	if err := unix.Unlinkat(int(d.file.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+	if err := rmdirAt(d.file, name); err != nil {
 		return fmt.Errorf("remove empty captured directory %s: %w", name, err)
 	}
 	return nil
@@ -121,20 +88,11 @@ func (d *Dir) Unlink(name string) error {
 	if err := validLeafName(name); err != nil {
 		return err
 	}
-	if err := unix.Unlinkat(int(d.file.Fd()), name, 0); err != nil {
-		if errors.Is(err, unix.ENOENT) {
+	if err := unlinkAt(d.file, name); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove %s below %s: %w", name, d.path, fs.ErrNotExist)
 		}
 		return fmt.Errorf("remove %s below %s: %w", name, d.path, err)
-	}
-	return nil
-}
-
-// validLeafName rejects anything that is not a single relative path
-// component.
-func validLeafName(name string) error {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, 0) {
-		return fmt.Errorf("%w: invalid leaf name %q", ErrUnsafePath, name)
 	}
 	return nil
 }

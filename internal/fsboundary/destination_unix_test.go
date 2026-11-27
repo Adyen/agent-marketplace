@@ -12,20 +12,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func mustMkdir(t *testing.T, path string) {
-	t.Helper()
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-}
-
-func mustSymlink(t *testing.T, target, link string) {
-	t.Helper()
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("symlink %s -> %s: %v", link, target, err)
-	}
-}
-
 func TestCaptureDestinationDirectFile(t *testing.T) {
 	root, rootPath := tempRoot(t)
 

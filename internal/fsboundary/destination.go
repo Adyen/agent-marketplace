@@ -1,5 +1,3 @@
-//go:build unix
-
 package fsboundary
 
 import (
@@ -9,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 // maxLinkHops bounds symlink chain resolution during capture. A chain
@@ -229,7 +225,7 @@ func (d *Destination) captureTarget(root *Dir, policy LinkPolicy) error {
 		case leafErr == nil:
 			_ = leaf.Close()
 			_ = parentFd.Close()
-			if policy == LinkPolicyUser && id.UID != uint32(os.Geteuid()) {
+			if policy == LinkPolicyUser && !ownedByCurrentUser(id) {
 				_ = targetRoot.Close()
 				return fmt.Errorf("%w: link target owned by uid %d: %s", ErrUnsafeFile, id.UID, canonical)
 			}
@@ -425,7 +421,7 @@ func (d *Destination) Publish(stagedParent *Dir, stagedName string) error {
 		return fmt.Errorf("staged file: %w", err)
 	}
 	defer func() { _ = staged.Close() }()
-	if err := staged.Sync(); err != nil {
+	if err := syncFile(staged); err != nil {
 		return fmt.Errorf("sync staged file %s: %w", stagedName, err)
 	}
 
@@ -438,10 +434,7 @@ func (d *Destination) Publish(stagedParent *Dir, stagedName string) error {
 		return err
 	}
 
-	if err := unix.Renameat(
-		int(stagedParent.file.Fd()), stagedName,
-		int(targetParent.Fd()), d.effectiveName(),
-	); err != nil {
+	if err := renameAt(stagedParent.file, stagedName, targetParent, d.effectiveName()); err != nil {
 		return fmt.Errorf("publish %s: %w", d.Path(), err)
 	}
 	if err := fsyncMutation(targetParent); err != nil {
@@ -487,7 +480,7 @@ func (d *Destination) RemoveLeaf() error {
 			return err
 		}
 		_ = targetParent.Close()
-		if err := unix.Unlinkat(int(logicalFd.Fd()), d.leafName, 0); err != nil {
+		if err := unlinkAt(logicalFd, d.leafName); err != nil {
 			return fmt.Errorf("remove link %s: %w", d.leafName, err)
 		}
 		return fsyncMutation(logicalFd)
@@ -499,7 +492,7 @@ func (d *Destination) RemoveLeaf() error {
 	if !d.exists {
 		return nil
 	}
-	if err := unix.Unlinkat(int(logicalFd.Fd()), d.leafName, 0); err != nil {
+	if err := unlinkAt(logicalFd, d.leafName); err != nil {
 		return fmt.Errorf("remove %s: %w", d.leafName, err)
 	}
 	return fsyncMutation(logicalFd)
@@ -598,32 +591,6 @@ func verifyChain(rootFd *os.File, chain []ancestor) (*os.File, error) {
 	return current, nil
 }
 
-// readLink reads the raw text of the symlink name below parent. A leaf that
-// stopped being a symlink since the no-follow open is a generation conflict.
-func readLink(parent *os.File, name string) (string, error) {
-	buf := make([]byte, 256)
-	for {
-		n, err := unix.Readlinkat(int(parent.Fd()), name, buf)
-		if err != nil {
-			switch {
-			case errors.Is(err, unix.EINVAL):
-				return "", fmt.Errorf("%w: link %s replaced by a non-link during capture", ErrGenerationConflict, name)
-			case errors.Is(err, unix.ENOENT):
-				return "", fmt.Errorf("read link %s: %w", name, fs.ErrNotExist)
-			default:
-				return "", fmt.Errorf("read link %s: %w", name, err)
-			}
-		}
-		if n < len(buf) {
-			return string(buf[:n]), nil
-		}
-		if len(buf) >= maxLinkText {
-			return "", fmt.Errorf("%w: link text over %d bytes: %s", ErrUnsafePath, maxLinkText, name)
-		}
-		buf = make([]byte, len(buf)*2)
-	}
-}
-
 // containedRelative returns candidate's path relative to rootPath, or
 // ErrUnsafePath when candidate escapes rootPath after normalization.
 func containedRelative(rootPath, candidate string) (string, error) {
@@ -654,17 +621,6 @@ func joinUnder(base string, parts []string) string {
 	return filepath.Join(elements...)
 }
 
-// openFilesystemRoot opens "/" as a walk root for user-policy targets that
-// live outside the captured root.
-func openFilesystemRoot() (*os.File, error) {
-	fd, err := unix.Open("/", dirOpenFlags, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open filesystem root: %w", err)
-	}
-	file := os.NewFile(uintptr(fd), "/")
-	return file, nil
-}
-
 func fsyncMutation(file *os.File) error {
 	if err := fsyncFd(file); err != nil {
 		return fmt.Errorf("%w: %w", ErrDurabilityUncertain, err)
@@ -674,7 +630,7 @@ func fsyncMutation(file *os.File) error {
 
 // fsyncFd flushes a directory descriptor's metadata to stable storage.
 func fsyncFd(file *os.File) error {
-	if err := file.Sync(); err != nil {
+	if err := syncDir(file); err != nil {
 		return fmt.Errorf("sync %s: %w", file.Name(), err)
 	}
 	return nil
