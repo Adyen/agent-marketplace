@@ -28,126 +28,14 @@ func TestMarketplacePlaceCollectionSkipsUnavailableMember(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	fixture := newTargetApprovalFixtureWithProfile(t, []byte(targetApproveProfileYAML+
-		"host: {executable: collection-host, version_probe: {argv: [--version], pattern: '(.*)'}}\n"))
-	bin := t.TempDir()
-	executable := filepath.Join(bin, "collection-host")
-	if err := os.WriteFile(executable, []byte("#!/bin/sh\necho 1.0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	profileCoordinate := store.ResourceCoordinate{
-		Marketplace: "market-id", Registry: "tools-id", Kind: "target-profile", Name: fixture.identity.TargetID,
-	}
-	profileProjection, err := inspection.BuildTargetProfile(
-		profileCoordinate, fixture.identity, fixture.profileBytes, 1,
-		targetprofile.MaxProfileBytes, targetprofile.MaxProfileBytes,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profileRevision := hostedLifecycleRevision(t, store.ResourceRevision{
-		Coordinate: profileCoordinate, ContentDigest: store.RevisionDigest(fixture.identity.RevisionDigest),
-	}, nil, inspection.Digest(profileProjection.Payload))
-
-	files := []targetprofile.PackageFile{{
-		SourcePath: "payload/mod.md", DestinationPath: "mods/sample.md", Mode: 0o644, Bytes: []byte("scoped leaf\n"),
-	}}
-	artifact, err := hccartifact.NewPlaceArtifact("invented-app/mod", "sample", fixture.identity, files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, placeholderArchive, archiveDigest, err := hccartifact.EncodeArchives(artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding := artifact.Manifest.HostPackageIdentity
-	packageRevision := hostedLifecycleRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "market-id", Registry: "tools-id", Kind: "invented-app/mod", Name: "sample"},
-		ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	}, binding, "sha256:"+strings.Repeat("d", 64))
-	member := hccartifact.CollectionMemberEntry{
-		Kind: "invented-app/mod", Name: "sample", RegistryID: "tools-id",
-		Revision: string(packageRevision.ContentDigest),
-	}
-	leaf := member
-	leaf.InclusionPaths = [][]string{{"bundle"}}
-	manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
-		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle",
-		Members: []hccartifact.CollectionMemberEntry{member}, Leaves: []hccartifact.CollectionMemberEntry{leaf},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	collectionRevision := hostedLifecycleRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: "market-id", Registry: "tools-id", Kind: "collection", Name: "bundle"},
-		ContentDigest: store.RevisionDigest(manifestDigest),
-	}, nil, "sha256:"+strings.Repeat("e", 64))
-
-	var manifestRequests, scopedRevisionRequests, archiveRequests atomic.Int32
-	archivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(archiveDigest, "sha256:")
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.EscapedPath() {
-		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("market-id", server.URL))
-		case "/api/v1/registries/tools", "/api/v1/registries/tools-id":
-			_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{
-				ID: "tools-id", Slug: "tools", Origins: []string{"https://git.example/tools"},
-				Ref: "main", Roots: []store.RegistryRoot{{Path: "profiles"}},
-				Acquisition: store.AcquisitionMirror, Listed: true,
-			})
-		case "/api/v1/resources/tools-id/target-profile/invented-app/revisions/" + fixture.identity.RevisionDigest:
-			assertHostedProfileFeature(t, r)
-			writeHostedLifecycleRevision(w, profileRevision)
-		case "/api/v1/resources/tools-id/target-profile/invented-app/revisions/" + fixture.identity.RevisionDigest + "/inspection":
-			assertHostedProfileFeature(t, r)
-			_, _ = w.Write(profileProjection.Payload)
-		case "/api/v1/resources/tools-id/target-profile/invented-app/revisions/" + fixture.identity.RevisionDigest + "/inspection/content":
-			assertHostedProfileFeature(t, r)
-			w.Header().Set("Content-Type", "application/yaml")
-			_, _ = w.Write(fixture.profileBytes)
-		case "/api/v1/resources/tools/collection/bundle/revisions/" + manifestDigest,
-			"/api/v1/resources/tools-id/collection/bundle/revisions/" + manifestDigest:
-			writeHostedLifecycleRevision(w, collectionRevision)
-		case "/api/v1/manifests/" + manifestDigest:
-			manifestRequests.Add(1)
-			assertHostedProfileFeature(t, r)
-			_, _ = w.Write(manifestPayload)
-		case "/api/v1/resources/tools-id/" + url.PathEscape("invented-app/mod") + "/sample/revisions/" + string(packageRevision.ContentDigest):
-			scopedRevisionRequests.Add(1)
-			assertHostedProfileFeature(t, r)
-			writeHostedLifecycleRevision(w, packageRevision)
-		case archivePath:
-			archiveRequests.Add(1)
-			_, _ = w.Write(placeholderArchive)
-		default:
-			if strings.HasPrefix(r.URL.EscapedPath(), "/api/v1/archives/") {
-				archiveRequests.Add(1)
-			}
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	configBytes := fmt.Sprintf(`apiVersion: agent-marketplace/v4
-targets: [factory, invented-app]
-sources:
-  profile: {git: %q, ref: main, path: profiles, source_harness: factory}
-  hosted: {marketplace: %q}
-resources:
-  hosted:
-    include:
-      - tools/target-profile/invented-app: {revision: %s}
-      - tools/collection/bundle: {revision: %s}
-`, fixture.rawGitURL, server.URL, fixture.identity.RevisionDigest, manifestDigest)
-	if err := os.WriteFile(fixture.userConfig, []byte(configBytes), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(fixture.userLock); err != nil {
-		t.Fatal(err)
-	}
+	hosted := newHostedPlaceSelection(t)
+	fixture, executable, manifestDigest := hosted.targetApprovalFixture, hosted.executable, hosted.manifestDigest
+	manifestRequests, scopedRevisionRequests, archiveRequests := &hosted.manifests, &hosted.revisions, &hosted.archives
+	packageRevision, files := hosted.revision, hosted.files
+	archiveDigest := string(packageRevision.ArchiveDigest)
+	binding := packageRevision.Assessment.HostPackageIdentity
 	workspace := mustTargetWorkspace(t, fixture)
-	_, _, _, err = prepareRuntimeLocks(context.Background(), workspace.RepoRoot(), workspace.LocalConfigDir(), lockMode{})
+	_, _, _, err := prepareRuntimeLocks(context.Background(), workspace.RepoRoot(), workspace.LocalConfigDir(), lockMode{})
 	if err != nil {
 		t.Fatalf("hosted collection lock bootstrap: %v", err)
 	}
@@ -256,7 +144,7 @@ resources:
 			!strings.Contains(output, "target.approval.executable-unavailable") {
 			t.Fatalf("collection sync with unreadable executable: %v\n%s", err, output)
 		}
-		output, err = executeCommand("install", "--scope", "user", server.URL+"/r/tools/invented-app%2Fmod/sample")
+		output, err = executeCommand("install", "--scope", "user", hosted.endpoint+"/r/tools/invented-app%2Fmod/sample")
 		if !errors.Is(err, os.ErrPermission) || !errors.Is(err, targetprofile.ErrPlaceTargetUnavailable) {
 			t.Fatalf("direct install with unreadable executable: %v\n%s", err, output)
 		}
@@ -336,4 +224,143 @@ func assertCollectionLockConfigUnchanged(t *testing.T, fixture targetApprovalFix
 	if err != nil || string(gotLock) != string(lockBytes) {
 		t.Fatalf("collection user lock changed: err=%v", err)
 	}
+}
+
+type hostedPlaceSelection struct {
+	targetApprovalFixture
+	endpoint, executable, manifestDigest string
+	revision                             store.AssessedResourceRevision
+	files                                []targetprofile.PackageFile
+	manifests, revisions, archives       atomic.Int32
+}
+
+func newHostedPlaceSelection(t *testing.T) *hostedPlaceSelection {
+	t.Helper()
+	fixture := newTargetApprovalFixtureWithProfile(t, []byte(targetApproveProfileYAML+
+		"host: {executable: collection-host, version_probe: {argv: [--version], pattern: '(.*)'}}\n"))
+	bin := t.TempDir()
+	executable := filepath.Join(bin, "collection-host")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\necho 1.0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	hosted := serveHostedPlaceSelection(t, fixture, "market-id", "mods/sample.md")
+	hosted.executable = executable
+	configBytes := fmt.Sprintf(`apiVersion: agent-marketplace/v4
+targets: [factory, invented-app]
+sources:
+  profile: {git: %q, ref: main, path: profiles, source_harness: factory}
+  hosted: {marketplace: %q}
+resources:
+  hosted:
+    include:
+      - tools/target-profile/invented-app: {revision: %s}
+      - tools/collection/bundle: {revision: %s}
+`, fixture.rawGitURL, hosted.endpoint, fixture.identity.RevisionDigest, hosted.manifestDigest)
+	if err := os.WriteFile(fixture.userConfig, []byte(configBytes), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fixture.userLock); err != nil {
+		t.Fatal(err)
+	}
+	return hosted
+}
+
+func serveHostedPlaceSelection(t *testing.T, fixture targetApprovalFixture, marketID store.MarketplaceID, destination string) *hostedPlaceSelection {
+	t.Helper()
+	kind := fixture.identity.TargetID + "/mod"
+	profileCoordinate := store.ResourceCoordinate{
+		Marketplace: marketID, Registry: "tools-id", Kind: "target-profile", Name: fixture.identity.TargetID,
+	}
+	profileProjection, err := inspection.BuildTargetProfile(
+		profileCoordinate, fixture.identity, fixture.profileBytes, 1,
+		targetprofile.MaxProfileBytes, targetprofile.MaxProfileBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileRevision := hostedLifecycleRevision(t, store.ResourceRevision{
+		Coordinate: profileCoordinate, ContentDigest: store.RevisionDigest(fixture.identity.RevisionDigest),
+	}, nil, inspection.Digest(profileProjection.Payload))
+	files := []targetprofile.PackageFile{{
+		SourcePath: "payload/mod.md", DestinationPath: destination, Mode: 0o644, Bytes: []byte("scoped leaf\n"),
+	}}
+	artifact, err := hccartifact.NewPlaceArtifact(kind, "sample", fixture.identity, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, placeholderArchive, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageRevision := hostedLifecycleRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: marketID, Registry: "tools-id", Kind: kind, Name: "sample"},
+		ContentDigest: store.RevisionDigest(artifact.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	}, artifact.Manifest.HostPackageIdentity, "sha256:"+strings.Repeat("d", 64))
+	member := hccartifact.CollectionMemberEntry{
+		Kind: kind, Name: "sample", RegistryID: "tools-id", Revision: string(packageRevision.ContentDigest),
+	}
+	leaf := member
+	leaf.InclusionPaths = [][]string{{"bundle"}}
+	manifestPayload, manifestDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle",
+		Members: []hccartifact.CollectionMemberEntry{member}, Leaves: []hccartifact.CollectionMemberEntry{leaf},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectionRevision := hostedLifecycleRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: marketID, Registry: "tools-id", Kind: "collection", Name: "bundle"},
+		ContentDigest: store.RevisionDigest(manifestDigest),
+	}, nil, "sha256:"+strings.Repeat("e", 64))
+	hosted := &hostedPlaceSelection{
+		targetApprovalFixture: fixture, revision: packageRevision, manifestDigest: manifestDigest, files: files,
+	}
+	profilePath := "/api/v1/resources/tools-id/target-profile/" + fixture.identity.TargetID + "/revisions/" + fixture.identity.RevisionDigest
+	archivePath := "/api/v1/archives/sha256/" + strings.TrimPrefix(archiveDigest, "sha256:")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(string(marketID), server.URL))
+		case "/api/v1/registries/tools", "/api/v1/registries/tools-id":
+			_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{
+				ID: "tools-id", Slug: "tools", Origins: []string{"https://git.example/tools"},
+				Ref: "main", Roots: []store.RegistryRoot{{Path: "profiles"}},
+				Acquisition: store.AcquisitionMirror, Listed: true,
+			})
+		case profilePath:
+			assertHostedProfileFeature(t, r)
+			writeHostedLifecycleRevision(w, profileRevision)
+		case profilePath + "/inspection":
+			assertHostedProfileFeature(t, r)
+			_, _ = w.Write(profileProjection.Payload)
+		case profilePath + "/inspection/content":
+			assertHostedProfileFeature(t, r)
+			w.Header().Set("Content-Type", "application/yaml")
+			_, _ = w.Write(fixture.profileBytes)
+		case "/api/v1/resources/tools/collection/bundle/revisions/" + manifestDigest,
+			"/api/v1/resources/tools-id/collection/bundle/revisions/" + manifestDigest:
+			writeHostedLifecycleRevision(w, collectionRevision)
+		case "/api/v1/manifests/" + manifestDigest:
+			hosted.manifests.Add(1)
+			assertHostedProfileFeature(t, r)
+			_, _ = w.Write(manifestPayload)
+		case "/api/v1/resources/tools-id/" + url.PathEscape(kind) + "/sample/revisions/" + string(packageRevision.ContentDigest):
+			hosted.revisions.Add(1)
+			assertHostedProfileFeature(t, r)
+			writeHostedLifecycleRevision(w, packageRevision)
+		case archivePath:
+			hosted.archives.Add(1)
+			_, _ = w.Write(placeholderArchive)
+		default:
+			if strings.HasPrefix(r.URL.EscapedPath(), "/api/v1/archives/") {
+				hosted.archives.Add(1)
+			}
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	hosted.endpoint = server.URL
+	return hosted
 }

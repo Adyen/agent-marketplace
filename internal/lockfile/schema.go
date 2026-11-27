@@ -2,6 +2,7 @@ package lockfile
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
 )
@@ -91,10 +92,34 @@ const (
 )
 
 type GitRegistry struct {
-	URL    string    `yaml:"url"`
-	Ref    string    `yaml:"ref"`
-	Commit GitOID    `yaml:"commit"`
-	Roots  []GitRoot `yaml:"roots,omitempty"`
+	URL            string    `yaml:"url"`
+	Ref            string    `yaml:"ref"`
+	Commit         GitOID    `yaml:"commit"`
+	Roots          []GitRoot `yaml:"roots,omitempty"`
+	suffixIdentity string
+}
+
+// NewGitRegistry constructs a Git lock record from a canonical registry URL.
+func NewGitRegistry(canonical, ref string, commit GitOID) GitRegistry {
+	registry := GitRegistry{Ref: ref, Commit: commit}
+	registry.setCanonicalURL(canonical)
+	return registry
+}
+
+// FetchURL returns the spelling needed to fetch this canonical registry.
+func (r GitRegistry) FetchURL() string {
+	if r.suffixIdentity != "" && r.URL == r.suffixIdentity {
+		return r.URL + ".git"
+	}
+	return r.URL
+}
+
+func (r *GitRegistry) setCanonicalURL(canonical string) {
+	r.URL = canonical
+	r.suffixIdentity = ""
+	if strings.HasSuffix(canonical, ".git") {
+		r.suffixIdentity = canonical
+	}
 }
 
 type GitRoot struct {

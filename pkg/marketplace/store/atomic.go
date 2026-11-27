@@ -67,9 +67,7 @@ type RegistryRevisionPublication struct {
 	InspectionBlobs []BlobUpload
 }
 
-// PublishRegistryRevision uploads all required blobs, then writes the metadata in
-// a single transaction. It returns an error if any blob upload fails, without
-// writing metadata.
+// PublishRegistryRevision stores a registry occurrence and its immutable blobs.
 func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs BlobStore, req RegistryRevisionPublication) error {
 	if err := validateRegistryRevisionPublication(req); err != nil {
 		return err
@@ -85,13 +83,16 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 		return err
 	}
 
-	for _, u := range uploads {
-		if err := putImmutableBlob(ctx, blobs, u); err != nil {
-			return fmt.Errorf("upload immutable blob %s: %w", u.Digest, err)
+	upload := func(ctx context.Context) error {
+		for _, u := range uploads {
+			if err := putImmutableBlob(ctx, blobs, u); err != nil {
+				return fmt.Errorf("upload immutable blob %s: %w", u.Digest, err)
+			}
 		}
+		return nil
 	}
 
-	return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
+	stageMetadata := func(txCtx context.Context, tx MetadataStore) error {
 		if req.PublicationID != "" || req.ManagedFence != nil {
 			publisher, ok := tx.(PublicationStore)
 			if !ok {
@@ -144,7 +145,28 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 			return err
 		}
 		return recordPublicationBlobOwners(txCtx, tx, req, uploads)
-	})
+	}
+	fileManagedProfile := false
+	if req.ManagedFence == nil {
+		for _, rev := range req.Resources {
+			if rev.Coordinate.Kind == nameutil.TargetProfileKind {
+				fileManagedProfile = true
+				break
+			}
+		}
+	}
+	if fileManagedProfile {
+		return meta.WithTx(ctx, func(txCtx context.Context, tx MetadataStore) error {
+			if err := stageMetadata(txCtx, tx); err != nil {
+				return err
+			}
+			return upload(txCtx)
+		})
+	}
+	if err := upload(ctx); err != nil {
+		return err
+	}
+	return meta.WithTx(ctx, stageMetadata)
 }
 
 // ResourceRevisionPublication groups a single resource revision with its archive blob.

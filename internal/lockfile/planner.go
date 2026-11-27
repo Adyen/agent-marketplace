@@ -26,8 +26,7 @@ func (s UpgradeSelection) SelectsGit(r GitRequirement) bool {
 		return true
 	}
 	for _, target := range s.Git {
-		url, err := CanonicalGitURL(target.URL)
-		if err != nil || url != r.URL || target.Ref != "" && target.Ref != r.Ref {
+		if target.URL != r.URL || target.Ref != "" && target.Ref != r.Ref {
 			continue
 		}
 		if target.Path == "" {

@@ -357,14 +357,7 @@ func (s *Store) setCurrentResourceAssessment(ctx context.Context, assessment sto
 	if !existing.Equal(finalized) {
 		return fmt.Errorf("%w: current assessment does not match stored assessment %q", store.ErrConflict, finalized.AssessmentDigest)
 	}
-	_, err = s.q.ExecContext(ctx, `INSERT INTO current_resource_assessments
-		(marketplace_id, registry_id, kind, name, content_digest, assessment_digest)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(marketplace_id, registry_id, kind, name, content_digest)
-		DO UPDATE SET assessment_digest=excluded.assessment_digest`,
-		finalized.Coordinate.Marketplace, finalized.Coordinate.Registry, finalized.Coordinate.Kind, finalized.Coordinate.Name,
-		finalized.ContentDigest, finalized.AssessmentDigest)
-	if err != nil {
+	if err := store.SelectCurrentAssessment(ctx, s.q, finalized); err != nil {
 		return err
 	}
 	return s.advanceCatalogVersion(ctx)

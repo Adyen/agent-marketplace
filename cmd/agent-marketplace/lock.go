@@ -1842,7 +1842,7 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		return acquiredRegistry{}, err
 	}
 	result := acquiredRegistry{snapshots: make(map[string]string), oid: oid}
-	registry := lockfile.GitRegistry{URL: canonical, Ref: ref, Commit: commit}
+	registry := lockfile.NewGitRegistry(canonical, ref, commit)
 	seen := map[string]bool{}
 	builtRequirements := map[lockfile.GitRootRequirement]bool{}
 	for _, entry := range entries {
@@ -2222,7 +2222,7 @@ func canonicalRegistryURL(raw string) (string, error) {
 // exact (canonical, ref) key can miss while the same repository remains
 // configured. Any entry for the canonical URL provides a valid fetch URL for
 // the recorded commit. External plugin records with no configured entry fall
-// back to the locked canonical URL, already a reachable origin.
+// back to the wire spelling preserved by the lock.
 func newFetchURLResolver(entries []config.RegistryEntry) (func(lockfile.GitRegistry) string, error) {
 	byIdentity := map[string]string{}
 	byCanonical := map[string]string{}
@@ -2243,7 +2243,7 @@ func newFetchURLResolver(entries []config.RegistryEntry) (func(lockfile.GitRegis
 		if url, ok := byCanonical[registry.URL]; ok {
 			return url
 		}
-		return registry.URL
+		return registry.FetchURL()
 	}, nil
 }
 

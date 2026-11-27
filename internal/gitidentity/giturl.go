@@ -11,7 +11,17 @@ import (
 
 var scpOrigin = regexp.MustCompile(`^([^/@:[:space:]]+)@([^/:[:space:]]+):(.+)$`)
 
+// CanonicalV1 returns a stable Git origin for exact target profile identity.
 func CanonicalV1(raw string) (string, error) {
+	origin, err := CanonicalRegistryV1(raw)
+	if err == nil && strings.HasSuffix(origin, ".git") {
+		return "", fmt.Errorf("unstable repository name after stripping .git")
+	}
+	return origin, err
+}
+
+// CanonicalRegistryV1 normalizes config and lock URLs, removing one .git suffix.
+func CanonicalRegistryV1(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	isFileSpelling := strings.HasPrefix(strings.ToLower(raw), "file://")
 	if raw == "" || HasASCIIControl(raw) {
@@ -159,8 +169,7 @@ func canonicalRepositoryPath(escaped string, absolute bool) (string, error) {
 	segments := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
 	last := len(segments) - 1
 	if name, ok := strings.CutSuffix(segments[last], ".git"); ok {
-		// A second normalization must not remove another suffix or path segment.
-		if name == "" || name == "." || name == ".." || strings.HasSuffix(name, ".git") {
+		if name == "" || name == "." || name == ".." {
 			return "", fmt.Errorf("unstable repository name after stripping .git")
 		}
 		segments[last] = name

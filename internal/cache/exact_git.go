@@ -1416,19 +1416,16 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 		sources = make(map[string]struct{})
 	}
 	for i, doc := range locks {
-		if err := lockfile.Validate(doc); err != nil {
-			return result, reachable, fmt.Errorf("validate exact git reachability lock %d: %w", i, err)
+		normalized, err := lockfile.Normalize(doc)
+		if err != nil {
+			return result, reachable, fmt.Errorf("normalize exact git reachability lock %d: %w", i, err)
 		}
-		for _, registry := range doc.Registries {
+		for _, registry := range normalized.Registries {
 			oid, err := ParseGitOID(registry.Commit.String())
 			if err != nil {
 				return result, reachable, err
 			}
-			source, err := lockfile.CanonicalGitURL(registry.URL)
-			if err != nil {
-				return result, reachable, err
-			}
-			sources[sourceKey(source)] = struct{}{}
+			sources[sourceKey(registry.URL)] = struct{}{}
 			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
 			for _, root := range registry.Roots {
 				rootPath, err := NormalizeExactGitRoot(root.Path)
