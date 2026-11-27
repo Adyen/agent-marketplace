@@ -446,6 +446,144 @@ func (f *bulkFixture) projectEnableActions(t *testing.T) []toggleAction {
 	return acts
 }
 
+// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
+func TestBulkGlobalCombinesSelectionAndOrganizationExclusionAtomically(t *testing.T) {
+	for _, userExclusionFirst := range []bool{false, true} {
+		name := "selection-first"
+		if userExclusionFirst {
+			name = "user-exclusion-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBulkFixture(t)
+			userPath, err := config.GlobalConfigPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			regular := f.snap.rows[0]
+			if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			userConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    directory: %s\nresources:\n  fixture:\n    include:\n      - skill/%s\n", regular.RegistryURL, regular.Artifact.Name)
+			if err := os.WriteFile(userPath, []byte(userConfig), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			regular.EnabledGlobal = true
+			regular.IsAvailable = false
+			org := mkRow("org-review", withGlobal)
+			org.Artifact.IsMarketplace = true
+			org.Artifact.Source = config.Organization
+			org.MarketplaceSelections = map[config.Source]marketplaceSelection{
+				config.Organization: {
+					Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization},
+					Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "org-review"},
+				},
+			}
+			m := newViewModel(t, []row{regular, org})
+			m.workspace = f.workspace
+			m.bulkModal = bulkModalState{sectionPath: "status:enabled", scope: scopeGlobal, scopeSet: true, direction: bulkDirDisable}
+
+			acts, reasons, err := m.evaluateBulkActions(m.bulkModal)
+			if err != nil {
+				t.Fatalf("evaluate global batch: %v", err)
+			}
+			if len(acts) != 2 {
+				t.Fatalf("global key must include both the ordinary selection and optional organization exclusion, acts=%+v skips=%v", acts, reasons)
+			}
+			if (acts[0].scope == scopeUserExclude) != userExclusionFirst {
+				acts[0], acts[1] = acts[1], acts[0]
+			}
+			msg, ok := runBulkDependencyToggle(context.Background(), f.workspace, acts, f.mutate())().(configWrittenMsg)
+			if !ok || msg.err != nil {
+				t.Fatalf("mixed global batch = %#v", msg)
+			}
+			if f.mutations != 1 || f.reconciles != 1 {
+				t.Fatalf("mixed global batch must publish in one mutation and reconcile, got %d/%d", f.mutations, f.reconciles)
+			}
+			updated, err := config.LoadConfigFromPath(userPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			foundSelectionExclude := false
+			for _, entry := range updated.Registries {
+				if entry.URL == regular.RegistryURL && containsString(entry.Skills.Exclude, regular.Artifact.Name) {
+					foundSelectionExclude = true
+				}
+			}
+			if !foundSelectionExclude {
+				t.Fatalf("ordinary global selection was not disabled: %#v", updated.Registries)
+			}
+			if len(updated.MarketplaceExclusions) != 1 || updated.MarketplaceExclusions[0].Locator != "tools/skill/org-review" {
+				t.Fatalf("optional organization default was not excluded in the same user config: %#v", updated.MarketplaceExclusions)
+			}
+			assertNoConfigStaging(t)
+		})
+	}
+}
+
+// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
+func TestBulkLocalKeyUsesEligibleLocalExclusion(t *testing.T) {
+	f := newBulkFixture(t)
+	selected := f.snap.rows[0]
+	project := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local:\n    directory: %q\nresources:\n  local:\n    include:\n      - skill/%s\n", selected.RegistryURL, selected.Artifact.Name)
+	if err := os.WriteFile(f.projectPath, []byte(project), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := readSnapshot(context.Background(), f.repo, f.home, catalogLoadRefresh)
+	if len(snapshot.errs) > 0 {
+		t.Fatalf("snapshot errors: %v", snapshot.errs)
+	}
+	m := newViewModel(t, snapshot.rows)
+	m.workspace = f.workspace
+	m.bulkModal = bulkModalState{sectionPath: classifyStatus(snapshot.rows[0]).path(), scope: scopeLocal, scopeSet: true, direction: bulkDirDisable}
+	acts, reasons, err := m.evaluateBulkActions(m.bulkModal)
+	if err != nil {
+		t.Fatalf("evaluate local batch: %v", err)
+	}
+	if len(acts) != 1 || acts[0].scope != scopeLocalExclude || !acts[0].enable {
+		t.Fatalf("local key must exclude the enabled project resource, acts=%+v skips=%v", acts, reasons)
+	}
+	msg, ok := runBulkDependencyToggle(context.Background(), f.workspace, acts, f.mutate())().(configWrittenMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("local batch = %#v", msg)
+	}
+	local, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(f.repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	excluded := false
+	for _, entry := range local.Registries {
+		if entry.URL == selected.RegistryURL {
+			excluded = containsString(entry.Skills.Exclude, selected.Artifact.Name)
+		}
+	}
+	if !excluded {
+		t.Fatalf("local key did not exclude the project resource: %#v", local.Registries)
+	}
+	if got, err := os.ReadFile(f.projectPath); err != nil || string(got) != project {
+		t.Fatalf("local bulk action changed project config: %v\n%s", err, got)
+	}
+
+	pin := mkRow("market-review", withProject)
+	pin.Artifact.IsMarketplace = true
+	pin.Artifact.Source = config.RepoCommitted
+	pin.MarketplaceSelections = map[config.Source]marketplaceSelection{
+		config.RepoCommitted: {
+			Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.RepoCommitted},
+			Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "market-review", Direct: true},
+		},
+	}
+	m = newViewModel(t, []row{pin})
+	m.workspace = f.workspace
+	m.bulkModal = bulkModalState{sectionPath: classifyStatus(pin).path(), scope: scopeLocal, scopeSet: true, direction: bulkDirEnable}
+	acts, reasons, err = m.evaluateBulkActions(m.bulkModal)
+	if err != nil {
+		t.Fatalf("evaluate project Marketplace local install: %v", err)
+	}
+	if len(acts) != 1 || acts[0].scope != scopeLocal || !acts[0].enable {
+		t.Fatalf("local key must keep project Marketplace installation scope, acts=%+v skips=%v", acts, reasons)
+	}
+}
+
 // mutate routes staged edits through the real dependencytxn.Commit seam.
 func (f *bulkFixture) mutate() DependencyMutationFunc {
 	return func(ctx context.Context, ws pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {

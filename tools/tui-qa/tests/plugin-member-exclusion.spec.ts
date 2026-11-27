@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, type TestTerminal, waitForExit } from "./helpers.js";
 
 // spec: plugin-packages/toggling-a-member-row-edits-exclusion
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
 const journey = defineFixture("plugin-member-exclusion", ["tui"], 80, 24, { pluginSource: true });
 before(journey.setup);
 after(journey.cleanup);
@@ -28,6 +29,9 @@ journey.test("member toggles edit only the selected plugin exclusion", async (te
   await selectReviewMember(terminal);
   await step("open member toggle options", () => terminal.write(" "), async () => {
     await locate(terminal, "toggle project").expect();
+    await locate(terminal, "toggle local").expect();
+    await locate(terminal, "disable locally").expect({ not: true });
+    await locate(terminal, "[e]").expect({ not: true });
   });
   await step("exclude member from selected plugin", () => terminal.write("p"), async () => {
     await locate(terminal, /○.*skill t\/review/).first().expect();

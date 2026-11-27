@@ -7,11 +7,12 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-interactions/personal-local-writes-are-git-ignored-at-once
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
 const journey = defineFixture("local-exclude", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
 
-journey.test("the toggle modal's local exclude removes a project skill only locally and can be undone", async (terminal) => {
+journey.test("the toggle modal's local key excludes a project skill only locally and can be undone", async (terminal) => {
   const fixture = journey.current();
   const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");
@@ -33,7 +34,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
     await locate(terminal, /Project ✓/).unique().expect();
     await locate(terminal, "Local exclude: no").unique().expect();
   });
-  await step("e excludes it locally and selects the next row", () => terminal.write("e"), async () => {
+  await step("l excludes it locally and selects the next row", () => terminal.write("l"), async () => {
     await locate(terminal, /Available\s+\(2\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
@@ -60,7 +61,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
   await step("the toggle modal shows the local exclude", () => terminal.write(" "), async () => {
     await locate(terminal, "Local exclude: yes").unique().expect();
   });
-  await step("e again removes the exclude", () => terminal.write("e"), async () => {
+  await step("l again removes the exclude", () => terminal.write("l"), async () => {
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
     await locate(terminal, /Status:\s+enabled, waiting for sync/).unique().expect();

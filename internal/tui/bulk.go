@@ -146,8 +146,7 @@ func (m Model) bulkScopeAvailable(s scope) bool {
 	return true
 }
 
-// bulkScopeForKey maps the scope-stage accelerators to scopes, matching the
-// single-row toggle modal's letters.
+// bulkScopeForKey maps the bulk-modal accelerators to scopes.
 func bulkScopeForKey(msg tea.KeyPressMsg) (scope, bool) {
 	switch msg.Code {
 	case 'g':
@@ -162,25 +161,12 @@ func bulkScopeForKey(msg tea.KeyPressMsg) (scope, bool) {
 	return 0, false
 }
 
-// bulkScopeForRow resolves the exclude accelerator per row: Marketplace rows
-// the user can override take the user exclusion, everything else the local
-// exclusion — the same split the single-row modal applies for 'e'.
 func bulkScopeForRow(r row, s scope) (scope, string) {
-	if s != scopeLocalExclude {
-		if r.CanOverrideMarketplace() {
-			return s, "organization Marketplace items can only be disabled through the user override"
-		}
-		return s, ""
+	resolved, supported, reason := resolveToggleScope(r, s)
+	if !supported {
+		return s, reason
 	}
-	switch {
-	case r.CanOverrideMarketplace():
-		return scopeUserExclude, ""
-	case r.Artifact.IsMarketplace:
-		return s, "Marketplace items must be toggled by installation scope"
-	case r.Artifact.Source.IsMachineScope():
-		return s, "org/user resources cannot be excluded locally"
-	}
-	return s, ""
+	return resolved, ""
 }
 
 // evaluateBulkActions re-evaluates the section's members against the
@@ -295,6 +281,11 @@ func (m Model) bulkActions(bm bulkModalState) (acts []toggleAction, targeted, sk
 // an exclude choice may resolve per row to the user exclusion layer.
 func resolvedBulkScope(bm bulkModalState, acts []toggleAction) scope {
 	if len(acts) > 0 {
+		for _, act := range acts {
+			if act.scope == scopeUserExclude {
+				return scopeUserExclude
+			}
+		}
 		return acts[0].scope
 	}
 	return bm.scope
@@ -337,11 +328,6 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 		if err != nil {
 			return configWrittenMsg{skillName: label, enabled: enabled, err: err}
 		}
-		local := len(acts) > 0 && (acts[0].scope == scopeLocal || acts[0].scope == scopeLocalExclude)
-		writeRoot := ws.RepoRoot()
-		if local {
-			writeRoot = ws.LocalConfigDir()
-		}
 		for _, act := range acts {
 			if !act.isMarketplace && act.scope != scopeLocalExclude && strings.TrimSpace(act.registryURL) == "" {
 				return configWrittenMsg{skillName: label, enabled: enabled, err: fmt.Errorf("resource %q has no source registry to toggle", act.skillName)}
@@ -352,8 +338,13 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 		}
 		destPath := ""
 		var destSource config.Source
-		userExcludes := false
+		local := false
 		for _, act := range acts {
+			writeRoot := ws.RepoRoot()
+			if act.scope == scopeLocal || act.scope == scopeLocalExclude {
+				writeRoot = ws.LocalConfigDir()
+				local = true
+			}
 			path, err := bulkTargetPath(writeRoot, act.scope)
 			if err != nil {
 				return configWrittenMsg{skillName: label, enabled: enabled, err: err}
@@ -361,7 +352,6 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 			source := bulkLayerSource(act.scope)
 			if destPath == "" {
 				destPath, destSource = path, source
-				userExcludes = act.scope == scopeUserExclude
 				continue
 			}
 			if path != destPath || source != destSource {
@@ -373,17 +363,22 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 			if err != nil {
 				return err
 			}
-			if userExcludes {
-				for _, act := range acts {
-					selection := act.marketplaceSelection
-					if err := config.SetUserMarketplaceExclusion(mapped, selection.Entry.URL, selection.Pin.RegistrySlug, act.kind, selection.Pin.Name, act.enable); err != nil {
-						return err
-					}
+			var layerActions []toggleAction
+			for _, act := range acts {
+				if act.scope != scopeUserExclude {
+					layerActions = append(layerActions, act)
+					continue
 				}
+				selection := act.marketplaceSelection
+				if err := config.SetUserMarketplaceExclusion(mapped, selection.Entry.URL, selection.Pin.RegistrySlug, act.kind, selection.Pin.Name, act.enable); err != nil {
+					return err
+				}
+			}
+			if len(layerActions) == 0 {
 				return nil
 			}
 			return pipeline.EditLayerAtPath(config.LayerTarget{Source: destSource, StagedPath: mapped, DeclaringPath: destPath}, func(m *pipeline.LayerMutation) error {
-				for _, act := range acts {
+				for _, act := range layerActions {
 					if err := applyToggleAction(m, act); err != nil {
 						return err
 					}

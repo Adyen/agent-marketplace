@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -107,6 +106,7 @@ func TestSpaceOnRequiredMarketplaceCollectionLeafShowsRequiredToast(t *testing.T
 	}
 }
 
+// spec: tui-interactions/required-resources-and-machine-scope-local-boundaries-remain-enforced
 func TestSpaceOnRequiredSkillShowsToastNotModal(t *testing.T) {
 	r := mkRow("req-skill", withRequired, withProject)
 	m := helperFlatCursorOnSkill(t, r)
@@ -146,7 +146,6 @@ func TestRenderToggleModalShowsPerScopeState(t *testing.T) {
 		"[g]",
 		"[p]",
 		"[l]",
-		"[e]",
 		"esc cancel",
 	} {
 		if !contains(out, want) {
@@ -168,6 +167,64 @@ func TestModalGkeyTogglesGlobalByCurrentState(t *testing.T) {
 	}
 	if m.pane != paneList {
 		t.Fatalf("modal should close on action, got pane=%v", m.pane)
+	}
+}
+
+// spec: tui-interactions/global-key-disables-and-restores-an-optional-organization-default
+func TestModalGKeyDisablesAndRestoresOptionalOrganizationDefault(t *testing.T) {
+	repoRoot, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	userPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := mkRow("review", withGlobal)
+	r.Artifact.IsMarketplace = true
+	r.Artifact.Source = config.Organization
+	r.MarketplaceSelections = map[config.Source]marketplaceSelection{
+		config.Organization: {
+			Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization},
+			Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "review"},
+		},
+	}
+	if !r.CanOverrideMarketplace() {
+		t.Fatalf("optional organization fixture cannot be overridden: %#v", r.Artifact)
+	}
+
+	for _, excluded := range []bool{false, true} {
+		r.ExcludedByUser = excluded
+		m := NewModel(repoRoot, home)
+		m.pane = paneToggleModal
+		m.modalSkill = r
+		_, cmd := m.Update(keyPress('g'))
+		if cmd == nil {
+			t.Fatal("global key did not start an organization default toggle")
+		}
+		written, ok := cmd().(configWrittenMsg)
+		if !ok || written.err != nil {
+			t.Fatalf("global key result = %#v", written)
+		}
+
+		user, err := config.LoadConfigFromPath(userPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if excluded {
+			if len(user.MarketplaceExclusions) != 0 {
+				t.Fatalf("restoring the organization default kept user exclusions: %#v", user.MarketplaceExclusions)
+			}
+		} else if len(user.MarketplaceExclusions) != 1 || user.MarketplaceExclusions[0].Locator != "tools/skill/review" {
+			t.Fatalf("global key did not write the user exclusion: %#v", user.MarketplaceExclusions)
+		}
+	}
+	if _, err := os.Stat(config.ProjectConfigPath(repoRoot)); !os.IsNotExist(err) {
+		t.Fatalf("global override created or changed project config: %v", err)
 	}
 }
 
@@ -208,25 +265,21 @@ func TestModalGlobalRepoRelativeSelectionFailsBeforeWrite(t *testing.T) {
 }
 
 func TestModalLocalCollisionDoesNotScheduleUnsupportedFollowUp(t *testing.T) {
-	for _, key := range []rune{'l', 'e'} {
-		t.Run(string(key), func(t *testing.T) {
-			selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
-			competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
-			m := NewModel(t.TempDir(), t.TempDir())
-			m.pane = paneToggleModal
-			m.modalSkill = selected
-			m.rows = []row{selected, competitor}
-			m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
+	selected := mkRow("audit", withAvailable, withRegistry("https://example.com/remote.git", "remote"))
+	competitor := mkRow("audit", withAvailable, withRegistry("./local-registry", "local"))
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = selected
+	m.rows = []row{selected, competitor}
+	m.errs = []error{fmt.Errorf(`skill "audit" is provided by multiple registries`)}
 
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
-			m = updated.(Model)
-			if cmd == nil {
-				t.Fatal("expected local toggle command")
-			}
-			if m.pendingExcludeAction != nil {
-				t.Fatal("unsupported local collision follow-up was scheduled")
-			}
-		})
+	updated, cmd := m.Update(keyPress('l'))
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected local toggle command")
+	}
+	if m.pendingExcludeAction != nil {
+		t.Fatal("unsupported local collision follow-up was scheduled")
 	}
 }
 
@@ -279,18 +332,140 @@ func TestModalLkeyTogglesLocal(t *testing.T) {
 	}
 }
 
-func TestModalEkeyTogglesLocalExclude(t *testing.T) {
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
+func TestModalLKeyDisablesAndRestoresProjectResourceLocally(t *testing.T) {
+	repoRoot, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	projectPath := config.ProjectConfigPath(repoRoot)
+	projectBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectPath, projectBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := mkRow("review", withProject, withRegistry("https://example.invalid/team.git", "team"))
+	r.RegistryRef = "main"
+	for _, excluded := range []bool{false, true} {
+		r.ExcludedLocally = excluded
+		m := NewModel(repoRoot, home)
+		m.pane = paneToggleModal
+		m.modalSkill = r
+		updated, cmd := m.Update(keyPress('l'))
+		m = updated.(Model)
+		if cmd == nil {
+			t.Fatal("local key did not start a toggle")
+		}
+		result, ok := cmd().(configWrittenMsg)
+		if !ok || result.err != nil {
+			t.Fatalf("local key result = %#v", result)
+		}
+
+		localConfig, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
+		if err != nil {
+			t.Fatal(err)
+		}
+		excludedNow := false
+		for _, entry := range localConfig.Registries {
+			excludedNow = excludedNow || containsString(entry.Skills.Exclude, "review")
+		}
+		if excluded {
+			if excludedNow {
+				t.Fatalf("restoring the project resource kept its local exclusion: %#v", localConfig.Registries)
+			}
+		} else if !excludedNow {
+			t.Fatalf("local key did not exclude the project resource: %#v", localConfig.Registries)
+		}
+		if got, err := os.ReadFile(projectPath); err != nil || string(got) != string(projectBytes) {
+			t.Fatalf("local override changed project config: %v\n%s", err, got)
+		}
+	}
+}
+
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
+// spec: tui-interactions/project-marketplace-pins-keep-local-installation-controls
+func TestProjectMarketplaceLocalKeyKeepsInstallationControls(t *testing.T) {
+	r := mkRow("review", withProject)
+	r.Artifact.IsMarketplace = true
+	r.Artifact.Source = config.RepoCommitted
+	r.MarketplaceSelections = map[config.Source]marketplaceSelection{
+		config.RepoCommitted: {
+			Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.RepoCommitted},
+			Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true},
+		},
+	}
+	options := toggleModalActionOptions(r)
+	if len(options) != 3 {
+		t.Fatalf("project Marketplace pin actions = %d, want the three installation scopes", len(options))
+	}
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = r
+	out := ansi.Strip(renderToggleModal(m))
+	if !strings.Contains(out, "[l]") ||
+		!strings.Contains(out, "toggle local installation") ||
+		strings.Contains(out, "disable locally") ||
+		strings.Contains(out, "Local exclude") ||
+		strings.Contains(out, "[e]") {
+		t.Fatalf("project Marketplace pin must retain local installation controls without an ineffective exclude:\n%s", out)
+	}
+}
+
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
+func TestPluginMemberLocalKeyKeepsOwnerSelectionControl(t *testing.T) {
+	r := mkRow("review", withProject, withLocal)
+	r.Artifact.PluginPackage = &resolver.PluginPackage{Name: "kit"}
+	r.PluginSelectedLocal = true
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.pane = paneToggleModal
+	m.modalSkill = r
+
+	out := ansi.Strip(renderToggleModal(m))
+	if !strings.Contains(out, "toggle local") || strings.Contains(out, "disable locally") || strings.Contains(out, "Local exclude") {
+		t.Fatalf("plugin member must keep its owner-selection control:\n%s", out)
+	}
+}
+
+// spec: tui-interactions/required-resources-and-machine-scope-local-boundaries-remain-enforced
+func TestMachineScopeLocalKeyDoesNotCreatePersonalLocalExclude(t *testing.T) {
+	repoRoot, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	r := mkRow("audit", withGlobal, withRegistry("https://example.invalid/team.git", "team"))
+	r.RegistryRef = "main"
+	r.Artifact.Source = config.UserPersonal
+	m := NewModel(repoRoot, home)
+	m.pane = paneToggleModal
+	m.modalSkill = r
+
+	_, cmd := m.Update(keyPress('l'))
+	if cmd == nil {
+		t.Fatal("local key did not start the local selection toggle")
+	}
+	result, ok := cmd().(configWrittenMsg)
+	if !ok || result.err != nil {
+		t.Fatalf("machine-scope local selection = %#v", result)
+	}
+	localConfig, err := config.LoadLocalConfigFromPath(config.LocalConfigPath(repoRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range localConfig.Registries {
+		if len(entry.Skills.Exclude) > 0 {
+			t.Fatalf("machine-scope local key wrote an ineffective exclusion: %#v", localConfig.Registries)
+		}
+	}
+}
+
+func TestModalEKeyDoesNotOfferASeparateExcludeAction(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneToggleModal
-	m.modalSkill = mkRow("audit")
+	m.modalSkill = mkRow("audit", withProject, withRegistry("r.git", "r"))
 
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
-	if cmd == nil {
-		t.Fatalf("expected a cmd for modal 'e'")
-	}
-	if m.pane != paneList {
-		t.Fatalf("modal should close on action")
+	if cmd != nil || m.pane != paneToggleModal {
+		t.Fatalf("e must not dispatch a toggle: pane=%v cmd=%v", m.pane, cmd)
 	}
 }
 
@@ -303,8 +478,8 @@ func TestRenderToggleModalDisablesLocalExcludeForMachineScopeSkill(t *testing.T)
 	m.modalSkill = r
 
 	out := renderToggleModal(m)
-	if !contains(out, "toggle skill exclude (use [g] to toggle at user level)") {
-		t.Fatalf("expected disabled local exclude hint in modal output, got:\n%s", out)
+	if !contains(out, "[l]") || contains(out, "[e]") {
+		t.Fatalf("machine-scope modal must omit local excludes but keep local selection:\n%s", out)
 	}
 }
 
@@ -330,13 +505,17 @@ func TestRenderOptionalOrganizationMarketplaceModalShowsOnlyOverrideAction(t *te
 	m.modalSkill = mkRow("audit", withGlobal)
 	m.modalSkill.Artifact.IsMarketplace = true
 	m.modalSkill.Artifact.Source = config.Organization
-	out := renderToggleModal(m)
-	if !strings.Contains(out, "user override") || strings.Contains(out, "toggle global") {
+	m.modalSkill.MarketplaceSelections = map[config.Source]marketplaceSelection{config.Organization: {
+		Entry: config.MarketplaceEntry{URL: "https://market.example", Source: config.Organization},
+		Pin:   config.MarketplaceResourcePin{RegistrySlug: "tools", Kind: "skill", Name: "audit"},
+	}}
+	out := ansi.Strip(renderToggleModal(m))
+	if !strings.Contains(out, "User override") || !strings.Contains(out, "disable for me") || strings.Contains(out, "toggle global") || strings.Contains(out, "[e]") {
 		t.Fatalf("organization Marketplace modal advertised an ineffective scope action: %s", out)
 	}
 }
 
-func TestModalEkeyExcludesOptionalOrganizationMarketplaceLeaf(t *testing.T) {
+func TestModalEKeyDoesNotExcludeOptionalOrganizationMarketplaceLeaf(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withGlobal)
@@ -345,12 +524,12 @@ func TestModalEkeyExcludesOptionalOrganizationMarketplaceLeaf(t *testing.T) {
 	m.modalSkill.MarketplaceCollectionOnly = true
 
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
-	if mi.(Model).pane != paneList || cmd == nil {
-		t.Fatal("optional organization Marketplace leaf must offer an exclude operation")
+	if mi.(Model).pane != paneToggleModal || cmd != nil {
+		t.Fatal("optional organization Marketplace leaf must not offer a separate e action")
 	}
 }
 
-func TestModalEkeyShowsToastForMarketplaceItem(t *testing.T) {
+func TestModalEKeyDoesNotExcludeProjectMarketplacePin(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withProject)
@@ -359,19 +538,12 @@ func TestModalEkeyShowsToastForMarketplaceItem(t *testing.T) {
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
 
-	if m.pane != paneToggleModal {
-		t.Fatal("Marketplace modal should stay open when local exclude is blocked")
-	}
-	if cmd == nil {
-		t.Fatal("expected toast cmd for Marketplace local exclude")
-	}
-	toast, ok := cmd().(toastMsg)
-	if !ok || toast.text != "Marketplace items must be toggled by installation scope" {
-		t.Fatalf("unexpected Marketplace exclude result: %#v", toast)
+	if m.pane != paneToggleModal || cmd != nil {
+		t.Fatalf("project Marketplace pin accepted a separate exclude action: pane=%v cmd=%v", m.pane, cmd)
 	}
 }
 
-func TestModalEkeyShowsToastForMachineScopeSkill(t *testing.T) {
+func TestModalEKeyDoesNotExcludeMachineScopeSkill(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneToggleModal
 	m.modalSkill = mkRow("audit", withGlobal)
@@ -379,22 +551,8 @@ func TestModalEkeyShowsToastForMachineScopeSkill(t *testing.T) {
 
 	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	m = mi.(Model)
-	if cmd == nil {
-		t.Fatalf("expected toast cmd for blocked local exclude")
-	}
-	if m.pane != paneToggleModal {
-		t.Fatalf("modal should stay open when local exclude is blocked")
-	}
-	msg := cmd()
-	toast, ok := msg.(toastMsg)
-	if !ok {
-		t.Fatalf("expected toastMsg, got %T", msg)
-	}
-	if toast.text != "Cannot exclude org/user skill at local level — use [g] instead" {
-		t.Fatalf("unexpected toast text: %q", toast.text)
-	}
-	if toast.duration != 2*time.Second {
-		t.Fatalf("unexpected toast duration: %v", toast.duration)
+	if cmd != nil || m.pane != paneToggleModal {
+		t.Fatalf("machine-scope row accepted a separate e action: pane=%v cmd=%v", m.pane, cmd)
 	}
 }
 
@@ -881,7 +1039,7 @@ func TestRunScopedToggleLocalScopeWritesRegistryScoped(t *testing.T) {
 }
 
 // TestRunScopedToggleLocalExcludeIsRegistryScoped reproduces the bug where
-// toggling the local exclude ([e]) on a skill that was locally enabled wrote a
+// applying a local exclude to a skill that was locally enabled wrote a
 // top-level skills.exclude AND left the registry-scoped include in place,
 // producing a contradictory include+exclude pair. The exclude must now be
 // registry-scoped and must remove the include.
@@ -1022,7 +1180,7 @@ func TestCompactToggleModalDoesNotAdvertiseMachineExclude(t *testing.T) {
 	m.modalSkill = r
 
 	out := renderToggleModal(m)
-	if !contains(out, "[e] unavailable") || contains(out, "[e] exclude") {
+	if !contains(out, "[l]") || contains(out, "[e]") {
 		t.Fatalf("machine-scoped compact actions are misleading:\n%s", out)
 	}
 }

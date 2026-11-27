@@ -50,13 +50,137 @@ type toggleAction struct {
 	hasMarketplaceSelection bool
 }
 
+type toggleModalAction struct {
+	key   string
+	scope scope
+	label string
+}
+
+func localExcludeSupported(r row) bool {
+	return !r.Artifact.Required &&
+		!r.Artifact.IsMarketplace &&
+		!r.Artifact.Source.IsMachineScope() &&
+		r.Artifact.PluginPackage == nil &&
+		(r.EnabledProject || r.ExcludedLocally)
+}
+
+func userExcludeSupported(r row) bool {
+	selection, ok := r.MarketplaceSelections[config.Organization]
+	return r.CanOverrideMarketplace() &&
+		r.Artifact.Kind != ir.KindCollection &&
+		ok &&
+		selection.Pin.RegistrySlug != ""
+}
+
+func toggleScopeForKey(r row, key string) (scope, bool, string) {
+	var s scope
+	switch key {
+	case "g":
+		s = scopeGlobal
+	case "p":
+		s = scopeProject
+	case "l":
+		s = scopeLocal
+	case "e":
+		s = scopeLocalExclude
+	default:
+		return 0, false, ""
+	}
+	return resolveToggleScope(r, s)
+}
+
+func resolveToggleScope(r row, s scope) (scope, bool, string) {
+	if s == scopeLocalExclude {
+		switch {
+		case r.CanOverrideMarketplace():
+			return scopeUserExclude, true, ""
+		case r.Artifact.IsMarketplace:
+			return scopeLocalExclude, false, "Marketplace items must be toggled by installation scope"
+		case r.Artifact.Source.IsMachineScope():
+			return scopeLocalExclude, false, "org/user resources cannot be excluded locally"
+		default:
+			return scopeLocalExclude, true, ""
+		}
+	}
+	if r.CanOverrideMarketplace() {
+		if s == scopeGlobal {
+			if userExcludeSupported(r) {
+				return scopeUserExclude, true, ""
+			}
+			return 0, false, "organization Marketplace item has no user exclusion pin"
+		}
+		if s == scopeProject || s == scopeLocal {
+			return 0, false, "organization Marketplace items can be disabled with [g]"
+		}
+	}
+	switch s {
+	case scopeGlobal, scopeProject:
+		return s, true, ""
+	case scopeLocal:
+		if localExcludeSupported(r) {
+			return scopeLocalExclude, true, ""
+		}
+		return scopeLocal, true, ""
+	default:
+		return 0, false, ""
+	}
+}
+
+func toggleActionLabel(r row, key string, s scope, compact bool) string {
+	switch s {
+	case scopeUserExclude:
+		if r.ExcludedByUser {
+			return "restore org default"
+		}
+		if compact {
+			return "disable for me"
+		}
+		return "disable for me (overrides org default)"
+	case scopeLocalExclude:
+		if r.ExcludedLocally {
+			if compact {
+				return "restore project"
+			}
+			return "restore project default"
+		}
+		if compact {
+			return "disable locally"
+		}
+		return "disable locally (overrides project)"
+	}
+	switch key {
+	case "g":
+		return "toggle global"
+	case "p":
+		return "toggle project"
+	case "l":
+		if r.Artifact.IsMarketplace {
+			return "toggle local installation"
+		}
+		return "toggle local"
+	default:
+		return ""
+	}
+}
+
+func toggleModalActions(r row, compact bool) []toggleModalAction {
+	var actions []toggleModalAction
+	for _, key := range []string{"g", "p", "l"} {
+		s, supported, _ := toggleScopeForKey(r, key)
+		if supported {
+			actions = append(actions, toggleModalAction{key: key, scope: s, label: toggleActionLabel(r, key, s, compact)})
+		}
+	}
+	return actions
+}
+
 // scopedToggleAction returns the action (add or remove) for pressing the
 // given scope key on a modal. The decision is driven entirely by the row's
 // current flags:
 //   - scopeGlobal: enable when !EnabledGlobal, disable otherwise.
 //   - scopeProject: enable when !EnabledProject, disable otherwise.
 //   - scopeLocal: enable when !EnabledLocal, disable otherwise.
-//   - scopeLocalExclude: add exclude when !ExcludedLocally, remove otherwise.
+//   - scopeLocalExclude: toggle a local exclusion; plugin members use owner exclusions.
 func marketplaceSourceForScope(s scope) config.Source {
 	switch s {
 	case scopeGlobal:
@@ -562,17 +686,17 @@ func renderToggleModal(m Model) string {
 		}
 		body = append(body,
 			fmt.Sprintf("Global %s  Project %s  Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)),
-			fmt.Sprintf("Excluded %s", yesno(r.ExcludedLocally || r.ExcludedByUser)))
-		switch {
-		case r.CanOverrideMarketplace():
-			body = append(body, keyStyle.Render("[e]")+" user override")
-		case r.Artifact.Source.IsMachineScope():
-			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
-				styleDim.Render("[e] unavailable"))
-		default:
-			body = append(body, keyStyle.Render("[g]")+" global  "+keyStyle.Render("[p]")+" project  "+keyStyle.Render("[l]")+" local",
-				keyStyle.Render("[e]")+" exclude")
+		)
+		if r.CanOverrideMarketplace() {
+			body = append(body, fmt.Sprintf("User override %s", yesno(r.ExcludedByUser)))
+		} else if localExcludeSupported(r) {
+			body = append(body, fmt.Sprintf("Local exclude %s", yesno(r.ExcludedLocally)))
 		}
+		var controls []string
+		for _, action := range toggleModalActions(r, true) {
+			controls = append(controls, keyStyle.Render("["+action.key+"]")+" "+action.label)
+		}
+		body = append(body, strings.Join(controls, "  "))
 		return modalFrame(m, t.accent, title, body, []footerHint{{"esc", "cancel"}})
 	}
 
@@ -583,7 +707,7 @@ func renderToggleModal(m Model) string {
 	body = append(body, fmt.Sprintf("Global %s   Project %s   Local %s", check(r.EnabledGlobal), check(r.EnabledProject), check(r.EnabledLocal)))
 	if r.CanOverrideMarketplace() {
 		body = append(body, fmt.Sprintf("User override: %s  (%s)", yesno(r.ExcludedByUser), skill.KindLabel(r.Artifact.Kind)))
-	} else {
+	} else if localExcludeSupported(r) {
 		body = append(body, fmt.Sprintf("Local exclude: %s  (%s)", yesno(r.ExcludedLocally), skill.KindLabel(r.Artifact.Kind)))
 	}
 	m.ensureToggleForm()
@@ -661,7 +785,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 }
 
 // handleToggleModalKey routes modal key presses. Letter accelerators
-// (g/p/l/e/esc) dispatch directly; remaining keys drive the modal's Huh
+// (g/p/l/esc) dispatch directly; remaining keys drive the modal's Huh
 // action-select form, whose completion dispatches the same action.
 func (m Model) handleToggleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.ensureToggleForm()
@@ -680,8 +804,8 @@ func (m Model) handleToggleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.runToggleModalAction("p")
 	case key.Matches(msg, m.keys.ToggleLocal):
 		return m.runToggleModalAction("l")
-	case key.Matches(msg, m.keys.ToggleExclude):
-		return m.runToggleModalAction("e")
+	case msg.Code == 'e':
+		return m, nil
 	default:
 		m.toggleForm = updateModalForm(m.toggleForm, msg)
 		if m.toggleForm != nil && m.toggleForm.State == huh.StateCompleted && m.toggleChoice != nil && *m.toggleChoice != "" {
@@ -694,44 +818,30 @@ func (m Model) handleToggleModalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // runToggleModalAction performs one per-scope toggle action identified by
-// its accelerator letter (g/p/l/e).
+// its accelerator letter (g/p/l).
 func (m Model) runToggleModalAction(letter string) (tea.Model, tea.Cmd) {
-	if m.modalSkill.CanOverrideMarketplace() && (letter == "g" || letter == "p" || letter == "l") {
+	s, supported, reason := toggleScopeForKey(m.modalSkill, letter)
+	if !supported {
+		if reason == "" {
+			return m, nil
+		}
 		return m, func() tea.Msg {
-			return toastMsg{text: "organization Marketplace items can be disabled with [e] user override", duration: 2 * time.Second}
+			return toastMsg{text: reason, duration: 2 * time.Second}
 		}
 	}
-	switch letter {
-	case "g":
+	switch s {
+	case scopeGlobal:
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeGlobal)
 		}
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeGlobal))
-	case "p":
+	case scopeProject:
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeProject)
 		}
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeProject))
-	case "l":
+	case scopeLocal:
 		if m.modalSkill.MarketplaceDiscovery != nil {
 			return m.startDiscoveryInstall(m.modalSkill, scopeLocal)
 		}
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocal))
-	case "e":
-		if m.modalSkill.Artifact.IsMarketplace && !m.modalSkill.CanOverrideMarketplace() {
-			return m, func() tea.Msg {
-				return toastMsg{text: "Marketplace items must be toggled by installation scope", duration: 2 * time.Second}
-			}
-		}
-		if m.modalSkill.Artifact.Source.IsMachineScope() && !m.modalSkill.CanOverrideMarketplace() {
-			return m, func() tea.Msg {
-				return toastMsg{text: "Cannot exclude org/user skill at local level — use [g] instead", duration: 2 * time.Second}
-			}
-		}
-		if m.modalSkill.CanOverrideMarketplace() {
-			return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeUserExclude))
-		}
-		return m.startToggleOperation(scopedToggleAction(m.modalSkill, scopeLocalExclude))
 	}
-	return m, nil
+	return m.startToggleOperation(scopedToggleAction(m.modalSkill, s))
 }

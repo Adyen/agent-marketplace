@@ -6,8 +6,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-
-	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
 // drainFormCmd executes the commands a Huh form returns synchronously so
@@ -235,24 +233,12 @@ func updateHarnessMulti(form *huh.Form, multi *huh.MultiSelect[string], value *[
 // toggleModalActionOptions lists the per-scope actions the toggle form
 // offers for a row, keyed by the same letters the modal accelerators use.
 func toggleModalActionOptions(r row) []huh.Option[string] {
-	kindLabel := skill.KindLabel(r.Artifact.Kind)
-	if r.CanOverrideMarketplace() {
-		return []huh.Option[string]{huh.NewOption("[e]  toggle user override", "e")}
+	actions := toggleModalActions(r, false)
+	options := make([]huh.Option[string], 0, len(actions))
+	for _, action := range actions {
+		options = append(options, huh.NewOption("["+action.key+"]  "+action.label, action.key))
 	}
-	excludeLabel := fmt.Sprintf("toggle %s exclude", kindLabel)
-	if r.Artifact.Source.IsMachineScope() || r.Artifact.IsMarketplace {
-		hint := " (use [g] to toggle at user level)"
-		if r.Artifact.IsMarketplace {
-			hint = " (use installation scopes)"
-		}
-		excludeLabel += hint
-	}
-	return []huh.Option[string]{
-		huh.NewOption("[g]  toggle global", "g"),
-		huh.NewOption("[p]  toggle project", "p"),
-		huh.NewOption("[l]  toggle local", "l"),
-		huh.NewOption("[e]  "+excludeLabel, "e"),
-	}
+	return options
 }
 
 func (m *Model) buildToggleForm() {

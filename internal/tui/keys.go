@@ -52,7 +52,6 @@ type keyMap struct {
 	ToggleGlobal  key.Binding
 	ToggleProject key.Binding
 	ToggleLocal   key.Binding
-	ToggleExclude key.Binding
 	ToggleCancel  key.Binding
 
 	HarnessGlobal  key.Binding
@@ -124,7 +123,6 @@ var defaultKeyMap = keyMap{
 	ToggleGlobal:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "toggle global")),
 	ToggleProject: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle project")),
 	ToggleLocal:   key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "toggle local")),
-	ToggleExclude: key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "toggle local exclude")),
 	ToggleCancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 
 	HarnessGlobal:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "edit global")),
@@ -183,7 +181,7 @@ func (k keyMap) actionBindings() []key.Binding {
 
 // toggleModalBindings returns the toggle-modal key bindings.
 func (k keyMap) toggleModalBindings() []key.Binding {
-	return []key.Binding{k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleExclude, k.ToggleCancel}
+	return []key.Binding{k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleCancel}
 }
 
 func (k keyMap) harnessModalBindings() []key.Binding {

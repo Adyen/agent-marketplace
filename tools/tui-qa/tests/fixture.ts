@@ -25,6 +25,7 @@ export interface FixtureOptions {
   //    The initial fixture sync is skipped to keep the TUI's first load cold.
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
+  optionalOrganization?: boolean;
   userMarketplaceDrift?: boolean;
   userMarketplaceRemoved?: boolean;
   // The stub serves placeholder archives that do not hash to their digest.
@@ -107,8 +108,8 @@ const git = (cwd: string, env: Record<string, string>, args: string[]): void => 
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`;
 
-const orgConfigContent = (marketplaceURL: string): string =>
-  `apiVersion: agent-marketplace/v4\nsources:\n  org-market:\n    marketplace: ${marketplaceURL}\nresources:\n  org-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`;
+const orgConfigContent = (marketplaceURL: string, required: boolean): string =>
+  `apiVersion: agent-marketplace/v4\nsources:\n  org-market:\n    marketplace: ${marketplaceURL}\nresources:\n  org-market:\n    include:\n      - tools/skill/org-review\n${required ? "    required: true\n" : ""}`;
 
 const orgLockContent = (stub: MarketplaceStub): string =>
   `apiVersion: agent-marketplace-lock/v2\nscope: organization\nmarketplaces:\n  - url: ${stub.url}\n    instance_id: ${stub.instanceID}\n    registry_bindings:\n      - name: ${stub.registrySlug}\n        registry_id: ${stub.registryID}\n    resources:\n      - registry_name: ${stub.registrySlug}\n        registry_id: ${stub.registryID}\n        kind: skill\n        name: ${stub.resourceName}\n        revision: ${stub.contentDigest}\n        content_digest: ${stub.contentDigest}\n        archive_digest: ${stub.archiveDigest}\n        acquisition: mirror\n`;
@@ -152,7 +153,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     }
     if (options.organization && stub) {
       const configPath = path.join(root, "etc", "agent-marketplace", "config.yaml");
-      const config = orgConfigContent(stub.url);
+      const config = orgConfigContent(stub.url, !options.optionalOrganization);
       write(configPath, config);
       // The runtime derives the lock path from the canonical (symlink-free)
       // config path and names that path in its errors, so compute the expected

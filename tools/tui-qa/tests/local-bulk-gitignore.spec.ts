@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 // spec: tui-interactions/personal-local-writes-are-git-ignored-at-once
+// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
 const journey = defineFixture("local-bulk-gitignore", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -14,6 +15,8 @@ journey.test("a local bulk toggle git-ignores the personal-local layer before an
   const fixture = journey.current();
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");
   const gitignorePath = path.join(fixture.repo, ".gitignore");
+  const projectConfig = path.join(fixture.repo, ".agents", "config.yaml");
+  const projectBefore = fs.readFileSync(projectConfig);
 
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
@@ -44,6 +47,32 @@ journey.test("a local bulk toggle git-ignores the personal-local layer before an
   for (const entry of [".agents/config.local.yaml", ".agents/lock.local.yaml"]) {
     assert.ok(gitignore.includes(entry), `the local bulk toggle did not git-ignore ${entry}:\n${gitignore.join("\n")}`);
   }
+
+  await step("search for project-selected beta-skill", () => terminal.write("/beta-skill"), async () => {
+    await locate(terminal, /Name:\s+beta-skill/).unique().expect();
+  });
+  await step("apply the beta-skill filter", () => terminal.write("\r"), async () => {
+    await locate(terminal, /Name:\s+beta-skill/).unique().expect();
+  });
+  await step("select the Enabled header", () => terminal.write("k"), async () => {
+    await locate(terminal, "Select a resource to see details").unique().expect();
+  });
+  await step("open the filtered Enabled bulk modal", () => terminal.write(" "), async () => {
+    await locate(terminal, "Toggle all in Enabled").unique().expect();
+    await locate(terminal, /1 matching of 1 in section · 1 eligible · 0 skipped/).unique().expect();
+  });
+  await step("choose local scope for beta-skill", () => terminal.write("l"), async () => {
+    await locate(terminal, /scope: local/).unique().expect();
+  });
+  await step("choose disable for beta-skill", () => terminal.write("-"), async () => {
+    await locate(terminal, /disable 1 resources in the local_exclude layer/).unique().expect();
+  });
+  await step("confirm the local exclusion", () => terminal.write("\r"), async () => {
+    await locate(terminal, "Disabled 1 resources").expect();
+    await locate(terminal, "~ 2 out of sync").unique().expect({ timeout: 30_000 });
+  });
+  assert.match(fs.readFileSync(localConfig, "utf8"), /exclude:\s*\n\s+- skill\/beta-skill/);
+  assert.deepEqual(fs.readFileSync(projectConfig), projectBefore, "the local bulk exclusion changed the project config");
 
   await step("offer sync before quitting with pending drift", () => terminal.write("q"), async () => {
     await locate(terminal, "pending changes not synced").expect();

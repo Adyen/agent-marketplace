@@ -115,6 +115,7 @@ func TestHelpAndErrorsScrollAtSupportedMinimum(t *testing.T) {
 }
 
 // spec: tui-rendering/colorless-and-narrow-rendering
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
 func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 	base := modelWithSelectedRow(t, mkRow("resource", withProject))
 	base.width = 50
@@ -136,7 +137,7 @@ func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 		{name: "errors", prepare: func(m Model) Model { m.pane = paneErrors; return m }, required: []string{"esc/e close", "Ctrl+C quit"}},
 		{name: "confirm", prepare: func(m Model) Model { m.pane = paneConfirm; m.confirmMsg = "Sync before quitting?"; return m }, required: []string{"y sync+quit", "n quit", "esc cancel"}},
 		{name: "detail", prepare: func(m Model) Model { m.pane = paneDetail; return m }, required: []string{"esc/q back", "Ctrl+C quit"}},
-		{name: "toggle", prepare: func(m Model) Model { m.pane = paneToggleModal; m.modalSkill = mkRow("resource", withProject); return m }, required: []string{"[g]", "[p]", "[l]", "[e]", "esc cancel"}},
+		{name: "toggle", prepare: func(m Model) Model { m.pane = paneToggleModal; m.modalSkill = mkRow("resource", withProject); return m }, required: []string{"[g]", "[p]", "[l]", "esc cancel"}},
 		{name: "harness", prepare: func(m Model) Model { m.pane = paneHarnessModal; m.openHarnessModal(); return m }, required: []string{"space toggle", "enter save", "esc cancel"}},
 		{name: "first run", prepare: func(m Model) Model {
 			m.pane = paneInitModal

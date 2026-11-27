@@ -136,7 +136,6 @@ func TestKeyMapToggleModalBindingsMatch(t *testing.T) {
 		{"g matches ToggleGlobal", keyPress('g'), k.ToggleGlobal, true},
 		{"p matches ToggleProject", keyPress('p'), k.ToggleProject, true},
 		{"l matches ToggleLocal", keyPress('l'), k.ToggleLocal, true},
-		{"e matches ToggleExclude", keyPress('e'), k.ToggleExclude, true},
 		{"esc matches ToggleCancel", keyNamed("esc"), k.ToggleCancel, true},
 	}
 	for _, tt := range tests {
@@ -273,7 +272,7 @@ func TestKeyMapHelpTextConsistency(t *testing.T) {
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
 		k.FoldPrefix, k.FoldToggle, k.FoldAll, k.ExpandAll,
 		k.Help, k.Errors, k.Quit,
-		k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleExclude, k.ToggleCancel,
+		k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleCancel,
 		k.HarnessGlobal, k.HarnessProject, k.HarnessSave, k.HarnessCancel,
 		k.EditConfigGlobal, k.EditConfigProject, k.EditConfigLocal, k.EditConfigCancel,
 		k.DetailBack,
@@ -299,7 +298,7 @@ func TestKeyMapAllBindingsEnabled(t *testing.T) {
 		k.Reload, k.Sync, k.Update, k.Harness, k.EditConfig,
 		k.FoldPrefix, k.FoldToggle, k.FoldAll, k.ExpandAll,
 		k.Help, k.Errors, k.Quit,
-		k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleExclude, k.ToggleCancel,
+		k.ToggleGlobal, k.ToggleProject, k.ToggleLocal, k.ToggleCancel,
 		k.HarnessGlobal, k.HarnessProject, k.HarnessSave, k.HarnessCancel,
 		k.EditConfigGlobal, k.EditConfigProject, k.EditConfigLocal, k.EditConfigCancel,
 		k.DetailBack,

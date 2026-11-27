@@ -246,7 +246,7 @@ func TestBrokenSnapshotRowsCanOpenMutationModal(t *testing.T) {
 		t.Fatal("opening the toggle modal must not emit a command")
 	}
 	out := renderToggleModal(m)
-	for _, action := range []string{"toggle global", "toggle project", "toggle local", "toggle skill exclude"} {
+	for _, action := range []string{"toggle global", "toggle project", "disable locally"} {
 		if !strings.Contains(out, action) {
 			t.Fatalf("toggle modal omits %q: %q", action, out)
 		}
