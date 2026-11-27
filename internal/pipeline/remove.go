@@ -100,7 +100,7 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 		if err != nil {
 			return err
 		}
-		if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
+		if err := preflightHookRemoval(ctx, ws, edits, nil, nil); err != nil {
 			return err
 		}
 		extra = append(extra, withConfigStaging(opts.configStaging))
@@ -696,11 +696,11 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 			return nil, true, errors.Join(effective.Errors...)
 		}
 	}
-	scope := inferMarketplaceRemoveScope(match.source)
+	scope := inferMarketplaceRemoveScope(match.Source)
 	if opts.ScopeSpecified {
 		scope = opts.Scope
 	}
-	if err := config.ValidateScopeBoundary(match.source, scopeToConfigSource(scope)); err != nil {
+	if err := config.ValidateScopeBoundary(match.Source, scopeToConfigSource(scope)); err != nil {
 		return nil, true, err
 	}
 
@@ -715,7 +715,7 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 	if createdStaging {
 		defer closeConfigStaging(opts.configStaging, "remove", &retErr)
 	}
-	entry := config.MarketplaceEntry{URL: match.url, Alias: match.sourceName, Source: match.source}
+	entry := config.MarketplaceEntry{URL: match.URL, Alias: match.SourceName, Source: match.Source}
 	if err := editRemovalLayer(opts.RepoRoot, scope, opts.configStaging, func(m *LayerMutation) error {
 		binding, found, err := m.editor.LookupMarketplaceSource(entry.URL)
 		if err != nil {
@@ -742,7 +742,7 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 	if err := MarketplaceAllowlistError(stagedIntent); err != nil {
 		return nil, true, err
 	}
-	if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
+	if err := preflightHookRemoval(ctx, ws, edits, nil, match); err != nil {
 		return nil, true, err
 	}
 	if _, err := commitRemovalConfig(ctx, ws.RepoRoot(), ws.LocalConfigDir(), false, edits); err != nil {
@@ -756,10 +756,8 @@ func removeMissingMarketplaceSelection(ctx context.Context, opts RemoveOptions, 
 }
 
 type missingMarketplaceSelection struct {
-	source     config.Source
-	sourceName string
-	url        string
-	request    config.V4ResourceRequest
+	config.MarketplaceSelectionToSkip
+	request config.V4ResourceRequest
 }
 
 func missingMarketplaceRemovalCandidates(intent config.Intent, name string) ([]resolver.ResolvedArtifact, []missingMarketplaceSelection, []config.MarketplaceSelectionToSkip, error) {
@@ -820,15 +818,14 @@ func missingMarketplaceRemovalCandidates(intent config.Intent, name string) ([]r
 					continue
 				}
 				if !present {
-					missing = append(missing, missingMarketplaceSelection{
-						source: source, sourceName: marketplaceSource.Name, url: marketplaceSource.URL, request: request,
-					})
+					identity := config.MarketplaceSelectionToSkip{
+						Source: source, SourceName: marketplaceSource.Name, Locator: request.Locator,
+						URL: marketplaceSource.URL, Registry: request.Registry, Kind: request.MarketplaceKind(),
+						Name: request.Name, InstalledName: installedName,
+					}
+					missing = append(missing, missingMarketplaceSelection{MarketplaceSelectionToSkip: identity, request: request})
 					if !request.Required {
-						skipped = append(skipped, config.MarketplaceSelectionToSkip{
-							Source: source, SourceName: marketplaceSource.Name, Locator: request.Locator,
-							URL: marketplaceSource.URL, Registry: request.Registry, Kind: request.MarketplaceKind(),
-							Name: request.Name, InstalledName: installedName,
-						})
+						skipped = append(skipped, identity)
 					}
 				}
 				if kind, ok := skill.ParseKind(request.Kind); ok {
@@ -865,15 +862,10 @@ func missingMarketplaceSelectionForTarget(target *resolver.ResolvedArtifact, mis
 	}
 	for i := range missing {
 		selection := &missing[i]
-		installedName := selection.request.Name
-		if selection.request.Options.HasAs {
-			installedName = selection.request.Options.As
-		}
-		if selection.source == target.Source &&
-			selection.url == target.RegistryURL &&
-			selection.request.MarketplaceKind() == skill.KindLabel(target.Kind) &&
-			selection.request.Name == target.MarketplaceResourceName &&
-			installedName == target.Name {
+		if selection.Source == target.Source && selection.SourceName == target.MarketplaceAlias &&
+			selection.URL == target.RegistryURL && selection.Registry == target.RegistryPath &&
+			marketplaceKindMatches(target.Kind, selection.Kind) &&
+			selection.Name == target.MarketplaceResourceName && selection.InstalledName == target.Name {
 			return selection
 		}
 	}

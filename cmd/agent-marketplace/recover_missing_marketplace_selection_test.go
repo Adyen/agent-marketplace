@@ -102,6 +102,44 @@ func TestRecoverMissingMarketplaceSelectionWithoutLock(t *testing.T) {
 		}
 	})
 
+	// spec: deployed-acquisition-locks/skipping-a-root-selection-does-not-restore-a-fragment-pin
+	t.Run("sync does not revive a shadowed fragment pin", func(t *testing.T) {
+		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone", "keep"}, false)
+		writeConfig(t, filepath.Join(filepath.Dir(fixture.configPath), "pins.yaml"), `resources:
+  hosted:
+    include:
+      - tools/skill/gone: {as: fragment-copy, revision: sha256:`+strings.Repeat("a", 64)+`}
+      - tools/skill/keep
+`)
+		writeConfig(t, fixture.configPath, `apiVersion: agent-marketplace/v4
+include: pins.yaml
+harnesses: [factory]
+sources:
+  hosted: {marketplace: `+fixture.endpoint+`}
+resources:
+  hosted: [tools/skill/gone]
+`)
+
+		output, err := executeCommand("sync")
+		if err != nil {
+			t.Fatalf("sync after skipping the root request: %v\n%s", err, output)
+		}
+		if !strings.Contains(output, "agent-marketplace remove gone") {
+			t.Fatalf("missing warning for the root request:\n%s", output)
+		}
+		if got := fixture.goneLookups.Load(); got != 1 {
+			t.Errorf("latest lookups for gone = %d, want 1", got)
+		}
+		if got := fixture.goneRevisionLookups.Load(); got != 0 {
+			t.Errorf("lookups for the shadowed revision = %d, want 0", got)
+		}
+		assertRemainingMarketplaceLock(t, fixture)
+		assertFactorySkillExists(t, fixture.repoRoot, "keep")
+		for _, name := range []string{"gone", "fragment-copy"} {
+			assertPathAbsent(t, filepath.Join(fixture.repoRoot, ".factory", "skills", name))
+		}
+	})
+
 	t.Run("strict sync reports optional 404 after installing remaining resources", func(t *testing.T) {
 		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone", "keep"}, false)
 		beforeConfig, err := os.ReadFile(fixture.configPath)
@@ -265,6 +303,9 @@ resources:
 		}
 		if got := fixture.goneLookups.Load(); got != 0 {
 			t.Fatalf("explicit revision performed a latest lookup %d times", got)
+		}
+		if got := fixture.goneRevisionLookups.Load(); got != 1 {
+			t.Fatalf("lookups for the selected revision = %d, want 1", got)
 		}
 	})
 
@@ -780,11 +821,12 @@ func newRecoverRecordedMarketplaceFixture(t *testing.T) (recoverMissingMarketpla
 }
 
 type recoverMissingMarketplaceFixture struct {
-	repoRoot    string
-	configPath  string
-	lockPath    string
-	endpoint    string
-	goneLookups *atomic.Int32
+	repoRoot            string
+	configPath          string
+	lockPath            string
+	endpoint            string
+	goneLookups         *atomic.Int32
+	goneRevisionLookups *atomic.Int32
 }
 
 func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected []string, required bool, goneResponseJSON ...string) recoverMissingMarketplaceFixture {
@@ -797,7 +839,11 @@ func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected 
 	backend := newV4MarketplaceServerWithResources(t, "mp", []string{"keep", "aardvark"}, false, nil, nil)
 	t.Cleanup(backend.Close)
 	goneLookups := &atomic.Int32{}
+	goneRevisionLookups := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/skill/gone/revisions/") {
+			goneRevisionLookups.Add(1)
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/resources/tools/skill/gone" {
 			goneLookups.Add(1)
 			if len(goneResponseJSON) == 0 {
@@ -818,11 +864,12 @@ func newRecoverMissingMarketplaceFixture(t *testing.T, goneStatus int, selected 
 	writeRecoverMissingMarketplaceConfig(t, configPath, server.URL, selected, required)
 	withWorkingDir(t, repo)
 	return recoverMissingMarketplaceFixture{
-		repoRoot:    repo,
-		configPath:  configPath,
-		lockPath:    filepath.Join(repo, ".agents", "lock.yaml"),
-		endpoint:    server.URL,
-		goneLookups: goneLookups,
+		repoRoot:            repo,
+		configPath:          configPath,
+		lockPath:            filepath.Join(repo, ".agents", "lock.yaml"),
+		endpoint:            server.URL,
+		goneLookups:         goneLookups,
+		goneRevisionLookups: goneRevisionLookups,
 	}
 }
 

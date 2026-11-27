@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,6 +116,7 @@ func TestRemoveHookRefusalPreservesConfiguration(t *testing.T) {
 	}
 }
 
+// spec: resource-removal/missing-hook-evidence-prevents-removal-with-active-native-hooks
 func TestRemoveMarketplaceHookRefusalPreservesPins(t *testing.T) {
 	for _, collection := range []bool{false, true} {
 		t.Run(fmt.Sprintf("collection=%v", collection), func(t *testing.T) {
@@ -160,7 +162,8 @@ func TestRemoveMarketplaceHookRefusalPreservesPins(t *testing.T) {
 			if len(result.Errors) != 0 {
 				t.Fatal(result.Errors)
 			}
-			paths := []string{configPath, filepath.Join(repo, ".agents", "lock.yaml"), filepath.Join(repo, ".claude", "settings.json")}
+			lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+			paths := []string{configPath, lockPath, filepath.Join(repo, ".claude", "settings.json")}
 			before := make(map[string][]byte)
 			for _, path := range paths {
 				data, err := os.ReadFile(path)
@@ -170,20 +173,82 @@ func TestRemoveMarketplaceHookRefusalPreservesPins(t *testing.T) {
 				before[path] = data
 			}
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "teammate-state"))
+			teammate, err := ownership.Open(filepath.Join(repo, ".claude"))
+			if err != nil {
+				t.Fatal(err)
+			}
 			resourceKind := ir.KindHook
 			if collection {
 				resourceKind = ir.KindCollection
 			}
-			_, err = Remove(context.Background(), RemoveOptions{
+			opts := RemoveOptions{
 				RepoRoot: repo, ResourceName: name, Kind: resourceKind, HasKind: true, Scope: ScopeRepo, ScopeSpecified: true,
-			})
-			if err == nil || !strings.Contains(err.Error(), "hook.remove-unowned") {
-				t.Fatalf("remove = %v, want ownership refusal", err)
 			}
-			for path, original := range before {
-				data, err := os.ReadFile(path)
-				if err != nil || string(data) != string(original) {
-					t.Fatalf("refused Marketplace removal changed %s: %v", path, err)
+			for _, missingLock := range []bool{false, true} {
+				if missingLock {
+					if err := os.Remove(lockPath); err != nil {
+						t.Fatal(err)
+					}
+					delete(before, lockPath)
+				}
+				_, err := Remove(context.Background(), opts)
+				if missingLock {
+					var validation *config.V4ValidationError
+					if !errors.As(err, &validation) || validation.Code != "v4.marketplace-lock-required" {
+						t.Fatalf("remove without lock = %v, want missing hook evidence", err)
+					}
+					if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
+						t.Fatalf("refused removal created a lock: %v", err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "hook.remove-unowned") {
+					t.Fatalf("remove = %v, want ownership refusal", err)
+				}
+				if _, err := os.Lstat(teammate.StateFile()); !os.IsNotExist(err) {
+					t.Fatalf("refused removal created ownership state: %v", err)
+				}
+				for path, original := range before {
+					data, err := os.ReadFile(path)
+					if err != nil || string(data) != string(original) {
+						t.Fatalf("refused Marketplace removal changed %s: %v", path, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+// spec: resource-removal/remove-an-unrecorded-non-hook-selection-with-an-unrelated-active-hook
+func TestRemoveMissingMarketplaceLeafWithUnrelatedNativeHook(t *testing.T) {
+	for _, kind := range []string{"skill", "command", "subagent", "mcp"} {
+		t.Run(kind, func(t *testing.T) {
+			home := isolateConsumerPipeline(t)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			repo := t.TempDir()
+			t.Chdir(repo)
+			fake := newLayerMarketplaceServer(t)
+			fake.addRegistry(t, "source")
+			configPath := config.ProjectConfigPath(repo)
+			locator := "source/" + kind + "/gone"
+			writeFile(t, configPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  hosted: {marketplace: %q}\nresources:\n  hosted: [%s]\n", fake.URL, locator))
+			nativePath := filepath.Join(repo, ".claude", "settings.json")
+			const handwritten = `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo unrelated"}]}]}}`
+			writeFile(t, nativePath, handwritten)
+
+			result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repo, ResourceName: "gone", Scope: ScopeRepo, ScopeSpecified: true})
+			if err != nil || result == nil || result.RemovedName != "gone" {
+				t.Fatalf("remove = %+v, %v", result, err)
+			}
+			if data, err := os.ReadFile(configPath); err != nil || strings.Contains(string(data), locator) || !strings.Contains(string(data), fake.URL) {
+				t.Fatalf("remove did not remove only the request: %s, %v", data, err)
+			}
+			if data, err := os.ReadFile(nativePath); err != nil || string(data) != handwritten {
+				t.Fatalf("remove changed unrelated native hooks: %s, %v", data, err)
+			}
+			fake.pathsMu.Lock()
+			defer fake.pathsMu.Unlock()
+			for _, request := range fake.paths {
+				if strings.Contains(request, "/gone") {
+					t.Errorf("remove fetched missing resource: %s", request)
 				}
 			}
 		})

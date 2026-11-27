@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -2686,34 +2688,34 @@ func withoutMarketplaceSelections(v4 *V4Config, source Source, skipped []Marketp
 		}
 		return false
 	}
-	filterRequests := func(requests []V4ResourceRequest) []V4ResourceRequest {
-		filtered := make([]V4ResourceRequest, 0, len(requests))
-		for _, request := range requests {
-			if !skip(request) {
-				filtered = append(filtered, request)
-			}
+	// Match only current winners. A skip from acquisition cannot suppress a
+	// newly pinned, required or renamed request when the config is reread.
+	removed := make(map[string]map[string]bool)
+	for _, request := range v4.Requests {
+		if !skip(request) {
+			continue
 		}
-		return filtered
+		if removed[request.SourceName] == nil {
+			removed[request.SourceName] = make(map[string]bool)
+		}
+		removed[request.SourceName][request.Locator] = true
 	}
-	filterDecisions := func(decisions []V4SelectionDecision) []V4SelectionDecision {
-		filtered := make([]V4SelectionDecision, 0, len(decisions))
-		for _, decision := range decisions {
-			if decision.Request == nil || !skip(*decision.Request) {
-				filtered = append(filtered, decision)
-			}
-		}
-		return filtered
+	if len(removed) == 0 {
+		return v4
 	}
 
+	// Omit the winner's history as well: binding replays these decisions and
+	// would otherwise restore a shadowed include or exact exclusion.
 	filtered := *v4
-	filtered.Requests = filterRequests(v4.Requests)
-	filtered.Decisions = filterDecisions(v4.Decisions)
-	filtered.Groups = make(map[string]V4ResourceGroup, len(v4.Groups))
-	for name, group := range v4.Groups {
-		group.Include = filterRequests(group.Include)
-		group.Decisions = filterDecisions(group.Decisions)
+	filtered.Groups = maps.Clone(v4.Groups)
+	for name, locators := range removed {
+		group := filtered.Groups[name]
+		group.Include = slices.DeleteFunc(slices.Clone(group.Include), func(r V4ResourceRequest) bool { return locators[r.Locator] })
+		group.Exclude = slices.DeleteFunc(slices.Clone(group.Exclude), func(locator string) bool { return locators[locator] })
+		group.Decisions = slices.DeleteFunc(slices.Clone(group.Decisions), func(d V4SelectionDecision) bool { return locators[d.Locator] })
 		filtered.Groups[name] = group
 	}
+	filtered.rebuildRequests()
 	return &filtered
 }
 

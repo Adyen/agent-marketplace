@@ -217,7 +217,7 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 		return nil, errors.Join(finalEC.Errors...)
 	}
 	if m.removesPins {
-		if err := preflightHookRemoval(ctx, ws, edits, overlays); err != nil {
+		if err := preflightHookRemoval(ctx, ws, edits, overlays, nil); err != nil {
 			return nil, err
 		}
 	}
