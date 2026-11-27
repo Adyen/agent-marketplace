@@ -17,4 +17,4 @@
 
 ## 4. Archive
 
-- [ ] 4.1 After lead authorization, run `openspec archive deliver-exact-place-prerequisites --yes` and verify the archived canonical deltas with `make spec-check`.
+- [x] 4.1 Archive `deliver-exact-place-prerequisites` and verify both canonical spec deltas with `make spec-check`.
