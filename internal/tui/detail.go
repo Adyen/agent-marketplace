@@ -18,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	ltable "charm.land/lipgloss/v2/table"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -178,8 +179,12 @@ func abbreviateDigest(value string) string {
 
 func selectionLayerLabels(r row) []string {
 	var layers []string
-	if r.EnabledOrganization || r.Artifact.Required {
-		if r.Artifact.Required {
+	if r.EnabledOrganization {
+		required := r.Artifact.Source == config.Organization && r.Artifact.Required
+		if selection, ok := r.MarketplaceSelections[config.Organization]; ok {
+			required = selection.Entry.Required
+		}
+		if required {
 			layers = append(layers, "organization (required)")
 		} else {
 			layers = append(layers, "organization default (optional)")

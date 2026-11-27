@@ -157,6 +157,22 @@ func TestRenderDetailShowsSelectionLayerProvenance(t *testing.T) {
 			t.Fatalf("detail used the source registry instead of the selecting layer:\n%s", out)
 		}
 	})
+
+	t.Run("user-required marketplace selection keeps organization optional", func(t *testing.T) {
+		r := mkRow("provenance", withGlobal)
+		r.Artifact.Source = config.Organization
+		r.Artifact.Required = true
+		r.EnabledOrganization = true
+		r.EnabledUser = true
+		r.MarketplaceSelections = map[config.Source]session.MarketplaceSelection{
+			config.Organization: {Entry: config.MarketplaceEntry{Source: config.Organization}},
+			config.UserPersonal: {Entry: config.MarketplaceEntry{Source: config.UserPersonal, Required: true}},
+		}
+		out := ansi.Strip(renderDetail(modelWithSelectedRow(t, r)))
+		if !strings.Contains(out, "Source layer: organization default (optional), user") {
+			t.Fatalf("detail attributed user-required policy to the optional organization selection:\n%s", out)
+		}
+	})
 }
 
 func TestRenderDetailShowsGitCollectionProvenanceOnce(t *testing.T) {
