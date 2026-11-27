@@ -102,6 +102,7 @@ func TestRecoverMissingMarketplaceSelectionWithoutLock(t *testing.T) {
 		}
 	})
 
+	// spec: deployed-acquisition-locks/skipping-a-root-selection-does-not-restore-a-fragment-pin
 	t.Run("sync does not revive a shadowed fragment pin", func(t *testing.T) {
 		fixture := newRecoverMissingMarketplaceFixture(t, http.StatusNotFound, []string{"gone", "keep"}, false)
 		writeConfig(t, filepath.Join(filepath.Dir(fixture.configPath), "pins.yaml"), `resources:

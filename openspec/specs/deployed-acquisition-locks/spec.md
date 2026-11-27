@@ -182,6 +182,8 @@ them. Plain `sync` records and installs the remaining selections and exits 0
 when no other work fails. `sync --strict` performs the same synchronization,
 reports the skip warning as an error, and exits 1.
 
+Skipping an effective selection MUST NOT restore a superseded selection of the same locator from the same source.
+
 #### Scenario: Optional removed selection is skipped while the rest is locked
 
 - **WHEN** a repository configuration selects two unrecorded optional direct Marketplace resources, one resource's latest-revision lookup reports that the resource is missing with HTTP 404, and a writing `lock` or `sync` runs online
@@ -208,3 +210,10 @@ reports the skip warning as an error, and exits 1.
 
 - **WHEN** a Marketplace lookup fails because a registry is missing, an explicit revision is unavailable, or the server returns an error
 - **THEN** `sync` MUST exit 1 and no repository acquisition lock MUST be written
+
+#### Scenario: Skipping a root selection does not restore a fragment pin
+
+- **GIVEN** an included fragment selects a Marketplace revision and the root overrides it with an unrecorded optional direct selection of the same locator without an explicit revision
+- **WHEN** plain `sync` receives a resource-level 404 for that selection's latest revision
+- **THEN** it MUST NOT request the superseded revision or install either form of the skipped selection
+- **AND** it MUST report the removal remedy and lock and install the available sibling

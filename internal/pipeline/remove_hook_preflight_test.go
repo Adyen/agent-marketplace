@@ -116,6 +116,7 @@ func TestRemoveHookRefusalPreservesConfiguration(t *testing.T) {
 	}
 }
 
+// spec: resource-removal/missing-hook-evidence-prevents-removal-with-active-native-hooks
 func TestRemoveMarketplaceHookRefusalPreservesPins(t *testing.T) {
 	for _, collection := range []bool{false, true} {
 		t.Run(fmt.Sprintf("collection=%v", collection), func(t *testing.T) {
@@ -216,6 +217,7 @@ func TestRemoveMarketplaceHookRefusalPreservesPins(t *testing.T) {
 	}
 }
 
+// spec: resource-removal/remove-an-unrecorded-non-hook-selection-with-an-unrelated-active-hook
 func TestRemoveMissingMarketplaceLeafWithUnrelatedNativeHook(t *testing.T) {
 	for _, kind := range []string{"skill", "command", "subagent", "mcp"} {
 		t.Run(kind, func(t *testing.T) {
