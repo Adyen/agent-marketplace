@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/base64"
 	"fmt"
 	"path/filepath"
@@ -533,7 +534,7 @@ func collectionMemberRow(parent row, member ir.CollectionMember, knownRows []row
 				candidate.Artifact.MarketplaceInstanceID == instanceID &&
 				candidate.Artifact.MarketplaceRegistryID == member.Registry &&
 				candidate.Artifact.MarketplaceDigest == member.Ref &&
-				firstNonEmpty(candidate.Artifact.MarketplaceResourceName, candidate.Artifact.Name) == member.Name {
+				cmp.Or(candidate.Artifact.MarketplaceResourceName, candidate.Artifact.Name) == member.Name {
 				return candidate, true
 			}
 			continue
@@ -576,15 +577,6 @@ func collectionMemberRow(parent row, member ir.CollectionMember, knownRows []row
 		return row{}, false
 	}
 	return chosen, true
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis groupingAxis, prefix string, depth int, foldState map[string]bool, knownRows []row) []flatItem {
