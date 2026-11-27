@@ -81,11 +81,13 @@ func TestSyncPlaceUpsertsOnlineThenOffline(t *testing.T) {
 				CurrentAvailability struct {
 					Availability string `json:"availability"`
 				} `json:"current_availability"`
+				Requires []store.ResourceRequirement `json:"requires"`
 			}{
 				AssessedResourceRevision: pkg.Revision,
 				CurrentAvailability: struct {
 					Availability string `json:"availability"`
 				}{Availability: "available"},
+				Requires: []store.ResourceRequirement{},
 			})
 		case archivePath:
 			archiveRequests.Add(1)

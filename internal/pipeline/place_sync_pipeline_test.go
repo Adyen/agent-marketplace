@@ -171,11 +171,13 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}`,
 				CurrentAvailability struct {
 					Availability string `json:"availability"`
 				} `json:"current_availability"`
+				Requires []store.ResourceRequirement `json:"requires"`
 			}{
 				AssessedResourceRevision: revision,
 				CurrentAvailability: struct {
 					Availability string `json:"availability"`
 				}{Availability: "available"},
+				Requires: []store.ResourceRequirement{},
 			})
 		case archivePath:
 			archiveRequests.Add(1)
