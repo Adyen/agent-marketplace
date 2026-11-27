@@ -532,7 +532,7 @@ func TestTUIStaleUpdateKeepsSharedGateUntilSupersedingReloadSettles(t *testing.T
 
 // spec: session-interactions/confirmation-retains-all-user-choices
 // spec: gui-local-api/concurrent-mutation-is-rejected-as-busy
-func TestConfirmedSyncQuitReleasesSharedGateOnCompletion(t *testing.T) {
+func TestConfirmedSyncQuitReleasesSharedGateAfterReload(t *testing.T) {
 	for _, syncErr := range []error{nil, errors.New("sync failed")} {
 		name := "successful sync"
 		if syncErr != nil {
@@ -570,11 +570,35 @@ func TestConfirmedSyncQuitReleasesSharedGateOnCompletion(t *testing.T) {
 			}
 			updated, quitCmd := model.Update(done)
 			model = updated.(Model)
-			if !cmdProducesQuitMsg(quitCmd) {
-				t.Fatal("sync+quit completion did not quit")
+			if syncErr == nil {
+				if cmdProducesQuitMsg(quitCmd) {
+					t.Fatal("successful sync+quit exited before its authoritative reload")
+				}
+				if !model.syncing || !model.quitAfterSync || model.syncReload == 0 {
+					t.Fatalf("successful sync+quit did not wait for reload: syncing=%t quit=%t reload=%d", model.syncing, model.quitAfterSync, model.syncReload)
+				}
+				assertGateActive(t, fixture.gate, session.OperationSync)
+				assertAPIBusy(t, fixture, "sync")
+				updated, quitCmd = model.Update(snapshotLoadedMsg{
+					generation:      model.syncReload,
+					stage:           snapshotStageFinal,
+					mergedCfg:       &config.Config{},
+					driftAssessment: driftReady,
+				})
+				model = updated.(Model)
+				if !cmdProducesQuitMsg(quitCmd) {
+					t.Fatal("healthy authoritative reload did not quit")
+				}
+			} else {
+				if !cmdProducesQuitMsg(quitCmd) {
+					t.Fatal("hard sync error did not quit")
+				}
+				if model.syncQuitErr != syncErr {
+					t.Fatalf("syncQuitErr = %v, want original error identity %v", model.syncQuitErr, syncErr)
+				}
 			}
 			if _, _, active := fixture.gate.Active(); active {
-				t.Fatal("sync+quit completion left shared gate active")
+				t.Fatal("settled sync+quit left the shared gate active")
 			}
 			if model.syncing || model.quitAfterSync || calls.Load() != 1 {
 				t.Fatalf("sync+quit completion state: syncing=%t quit=%t calls=%d", model.syncing, model.quitAfterSync, calls.Load())
