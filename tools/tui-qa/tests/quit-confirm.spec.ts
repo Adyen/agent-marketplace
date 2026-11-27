@@ -7,6 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-interactions/cancel-or-stale-completion
+// spec: tui-feedback/quit-confirmation-lists-pending-installs-and-removals
 const journey = defineFixture("quit-confirm", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -39,6 +40,7 @@ journey.test("quit confirmation cancels with esc and syncs before quitting with 
   const confirm = async (attempt: string): Promise<void> => {
     await step(`${attempt}: quitting with pending drift asks to sync first`, () => terminal.write("q"), async () => {
       await locate(terminal, "1 pending changes not synced. Sync+quit?").unique().expect();
+      await locate(terminal, "+ install skill/alpha-skill").unique().expect();
       await locate(terminal, "y sync+quit · n quit · esc cancel").unique().expect();
     });
   };
@@ -66,4 +68,35 @@ journey.test("quit confirmation cancels with esc and syncs before quitting with 
   const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
   if (check.error) throw check.error;
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+});
+
+const brokenJourney = defineFixture("quit-broken-only", ["tui"]);
+before(brokenJourney.setup);
+after(brokenJourney.cleanup);
+
+// spec: tui-feedback/broken-only-drift-does-not-loop-on-quit
+brokenJourney.test("quitting with only Broken diagnostics does not ask to sync", async (terminal) => {
+  const fixture = brokenJourney.current();
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
+
+  await step("settled fixture baseline", () => {}, async () => {
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+
+  fs.writeFileSync(
+    repoConfig,
+    fixture.expectedRepoConfig.replace("      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/gamma-skill\n"),
+    { encoding: "utf8", mode: 0o600 }
+  );
+  await step("reload establishes Broken-only diagnostics", () => terminal.write("r"), async () => {
+    await locate(terminal, /Broken\s+\(1\)/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ in sync").unique().expect();
+    await locate(terminal, "⚠ 1 warnings").unique().expect();
+  });
+  await step("q exits without prompting for an impossible sync", () => terminal.write("q"), async () => {
+    const exit = await waitForExit(terminal);
+    assert.equal(exit.exitCode, 0);
+    assert.doesNotMatch(await terminal.text(), /Sync\+quit\?/);
+  });
 });

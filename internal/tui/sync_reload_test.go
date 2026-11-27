@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -178,26 +179,76 @@ func TestSyncPipelineErrorPreservedThroughReload(t *testing.T) {
 	}
 }
 
-// TestSyncQuitStillWaitsForCompletionWithoutFakeSuccess proves sync+quit
-// still quits at pipeline completion without recording an on-screen success
-// claim the absent reload could never verify.
-func TestSyncQuitStillWaitsForCompletionWithoutFakeSuccess(t *testing.T) {
+func TestSyncQuitWaitsForAuthoritativeReload(t *testing.T) {
 	m := beginSyncOperation(t)
 	m.quitAfterSync = true
 
 	next, cmd := m.Update(syncDoneMsg{err: nil})
 	m = next.(Model)
-	if m.syncing {
-		t.Fatal("sync+quit left the operation flagged after pipeline completion")
+	if !m.syncing {
+		t.Fatal("sync+quit finished before the authoritative reload")
 	}
-	if m.quitAfterSync {
-		t.Fatal("sync+quit did not consume quitAfterSync")
+	if !m.quitAfterSync {
+		t.Fatal("sync+quit cleared its request before the authoritative reload")
 	}
-	if !cmdProducesQuitMsg(cmd) {
-		t.Fatal("sync+quit did not emit tea.Quit at pipeline completion")
+	if cmdProducesQuitMsg(cmd) {
+		t.Fatal("sync+quit emitted tea.Quit at pipeline completion")
+	}
+	reload := m.requests.Active(requestSnapshot)
+	if reload == 0 {
+		t.Fatal("pipeline completion did not schedule the authoritative reload")
 	}
 	if strings.Contains(m.toast, "Sync complete") {
 		t.Fatalf("sync+quit claimed an unverifiable success: %q", m.toast)
+	}
+	next, cmd = m.Update(healthyAuthoritativeSnapshot(reload))
+	m = next.(Model)
+	if m.syncing || m.quitAfterSync {
+		t.Fatalf("healthy authoritative reload did not finish sync+quit: syncing %t quitAfterSync %t", m.syncing, m.quitAfterSync)
+	}
+	if !cmdProducesQuitMsg(cmd) {
+		t.Fatal("healthy authoritative reload did not emit tea.Quit for sync+quit")
+	}
+}
+
+// spec: tui-feedback/remaining-drift-after-sync-keeps-tui-open-with-diagnostics
+func TestSyncQuitWithRemainingDriftStaysOpenWithDiagnostics(t *testing.T) {
+	m := beginSyncOperation(t)
+	m.quitAfterSync = true
+
+	next, cmd := m.Update(syncDoneMsg{err: nil})
+	m = next.(Model)
+	if cmdProducesQuitMsg(cmd) {
+		t.Fatal("sync+quit emitted tea.Quit before the authoritative reload")
+	}
+	reload := m.requests.Active(requestSnapshot)
+	if reload == 0 {
+		t.Fatal("pipeline completion did not schedule the authoritative reload")
+	}
+
+	next, cmd = m.Update(snapshotLoadedMsg{
+		generation:      reload,
+		mergedCfg:       &config.Config{},
+		driftAssessment: driftReady,
+		driftReport: materialize.DriftReport{
+			Missing: []materialize.DriftItem{{Name: "skill/alpha-skill", Reason: materialize.DriftMissing}},
+		},
+	})
+	m = next.(Model)
+	if cmdProducesQuitMsg(cmd) {
+		t.Fatal("sync+quit exited while the authoritative snapshot still had syncable drift")
+	}
+	if m.syncing || m.quitAfterSync {
+		t.Fatalf("unresolved sync+quit did not settle back into the TUI: syncing %t quitAfterSync %t", m.syncing, m.quitAfterSync)
+	}
+	if m.driftReport.PendingCount() != 1 {
+		t.Fatalf("authoritative drift report = %+v, want the unresolved resource", m.driftReport)
+	}
+	if len(m.warnings) == 0 {
+		t.Fatal("unresolved post-sync drift was not surfaced as a diagnostic")
+	}
+	if want := "sync complete with 1 changes still pending"; m.toast != want {
+		t.Fatalf("unresolved post-sync drift toast = %q, want %q", m.toast, want)
 	}
 }
 

@@ -1,15 +1,18 @@
 package tui
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -35,6 +38,74 @@ func assertFooterFits(t *testing.T, footer string, width int, want ...string) {
 		if !strings.Contains(plain, s) {
 			t.Fatalf("footer at %d columns is missing %q: %q", width, s, plain)
 		}
+	}
+}
+
+func assertFooterHintStyle(t *testing.T, footer, key, desc string, colored bool) {
+	t.Helper()
+	want := key + " " + desc
+	if colored {
+		want = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(14)).Render(key) +
+			" " + lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8)).Render(desc)
+	} else {
+		footer = ansi.Strip(footer)
+	}
+	if !strings.Contains(footer, want) {
+		t.Fatalf("footer hint %q does not use the expected key and description styles: %q", key+" "+desc, footer)
+	}
+}
+
+// spec: tui-feedback/primary-and-floor-footer-hints-share-key-emphasis
+func TestFooterShortcutKeyEmphasis(t *testing.T) {
+	m := footerFixture(160)
+	hints := [][2]string{
+		{"/", "search"},
+		{"space", "toggle"},
+		{"s", "sync"},
+		{"H", "harnesses"},
+		{"E", "config"},
+		{"v", "view"},
+		{"i", "install from source"},
+		{":", "commands"},
+		{"?", "help"},
+		{"q", "quit"},
+	}
+	for _, profile := range []struct {
+		name    string
+		profile colorprofile.Profile
+		colored bool
+	}{
+		{name: "color", profile: colorprofile.ANSI256, colored: true},
+		{name: "colorless", profile: colorprofile.Ascii},
+	} {
+		t.Run(profile.name, func(t *testing.T) {
+			var output bytes.Buffer
+			writer := colorprofile.NewWriter(&output, nil)
+			writer.Profile = profile.profile
+			if _, err := writer.Write([]byte(renderFooter(m))); err != nil {
+				t.Fatal(err)
+			}
+			footer := output.String()
+			for _, hint := range hints {
+				assertFooterHintStyle(t, footer, hint[0], hint[1], profile.colored)
+			}
+			if !profile.colored && strings.Contains(footer, "\x1b[38;") {
+				t.Fatalf("colorless footer contains ANSI color: %q", footer)
+			}
+		})
+	}
+}
+
+// spec: tui-feedback/narrow-widths-retain-floor-priority-order
+func TestFooterNarrowRetainsFloorPriority(t *testing.T) {
+	wide := renderFooter(footerFixture(120))
+	assertFooterFits(t, wide, 120, "v view")
+	m := footerFixture(50)
+	m.height = 12
+	footer := renderFooter(m)
+	assertFooterFits(t, footer, 50, ": commands", "? help", "q quit")
+	if strings.Contains(ansi.Strip(footer), "v view") {
+		t.Fatalf("narrow footer kept the lowest-priority action hint: %q", ansi.Strip(footer))
 	}
 }
 
