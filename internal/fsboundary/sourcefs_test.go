@@ -59,6 +59,7 @@ func TestSourceFSSubKeepsCapturedAuthorityAndOwnsItsLifetime(t *testing.T) {
 
 // spec: registry-symlink-containment/source-directory-alias-reads-retain-captured-root-authority
 func TestSourceFSContainedDirectoryAliases(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	root, outside := t.TempDir(), t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "authored", "nested"), 0o755); err != nil {
 		t.Fatal(err)
@@ -149,6 +150,7 @@ func TestSourceFSContainedDirectoryAliases(t *testing.T) {
 
 // spec: registry-symlink-containment/source-directory-alias-refusals-retain-payload-shape-checks
 func TestSourceFSUnsafeDirectoryAliases(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	for _, shape := range []string{"escaped", "dangling", "cycle", "external-return", "hardlink"} {
 		t.Run(shape, func(t *testing.T) {
 			root, outside := t.TempDir(), t.TempDir()
@@ -223,6 +225,7 @@ func TestSourceFSUnsafeDirectoryAliases(t *testing.T) {
 
 // spec: registry-symlink-containment/source-directory-alias-refusals-retain-payload-shape-checks
 func TestSourceFSStatRefusals(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	for _, shape := range []string{"escaping", "dangling", "hardlink"} {
 		t.Run(shape, func(t *testing.T) {
 			root, outside := t.TempDir(), t.TempDir()
@@ -270,6 +273,7 @@ func TestSourceFSStatRefusals(t *testing.T) {
 
 // spec: registry-symlink-containment/source-directory-alias-reads-retain-captured-root-authority
 func TestSourceFSStatMetadataControls(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "authored", "directory.json"), 0o755); err != nil {
 		t.Fatal(err)
@@ -359,6 +363,7 @@ func TestSourceFSStatMetadataControls(t *testing.T) {
 }
 
 func TestSourceFSStatCapturedGeneration(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	for _, shape := range []string{"payload", "alias"} {
 		t.Run(shape, func(t *testing.T) {
 			root := t.TempDir()

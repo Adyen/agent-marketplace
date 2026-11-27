@@ -28,8 +28,11 @@ var (
 // descriptor itself (fstat), so it describes the object the operation is
 // bound to regardless of how the path changes afterwards.
 type Identity struct {
-	Device       uint64
-	Inode        uint64
+	Device uint64
+	Inode  uint64
+	// InodeHigh is the upper half of a 128-bit file ID. It is zero on Unix
+	// and on Windows file systems with 64-bit file IDs.
+	InodeHigh    uint64
 	Size         int64
 	ModTimeNS    int64
 	ChangeTimeNS int64
@@ -41,7 +44,7 @@ type Identity struct {
 // SameObject reports whether both identities name the same filesystem
 // object, ignoring size, timestamps, links, mode, and owner.
 func (id Identity) SameObject(other Identity) bool {
-	return id.Device == other.Device && id.Inode == other.Inode
+	return id.Device == other.Device && id.Inode == other.Inode && id.InodeHigh == other.InodeHigh
 }
 
 // SameState reports whether both identities describe one unchanged object:

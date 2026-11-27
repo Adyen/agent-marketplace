@@ -40,6 +40,7 @@ func TestTargetPrefixReadRejectsPostReadRewrite(t *testing.T) {
 }
 
 func TestTargetPrefixReadRejectsAliasRetargetDuringCallback(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	rootPath := t.TempDir()
 	for _, name := range []string{"original.txt", "replacement.txt"} {
 		if err := os.WriteFile(filepath.Join(rootPath, name), []byte("inert body"), 0o640); err != nil {

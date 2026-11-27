@@ -42,6 +42,12 @@ func (d *Dir) CreateTemp(pattern string) (*os.File, string, error) {
 			return nil, "", fmt.Errorf("generate staged name: %w", err)
 		}
 		name := prefix + hex.EncodeToString(token[:]) + suffix
+		// A pattern can smuggle platform syntax into the name (on Windows,
+		// "file:stream" would create a stream on an existing file), so the
+		// generated name gets the same check as every other leaf.
+		if err := validLeafName(name); err != nil {
+			return nil, "", err
+		}
 		file, err := createExclusiveAt(d.file, name)
 		if errors.Is(err, fs.ErrExist) {
 			continue

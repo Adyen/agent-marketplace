@@ -1,7 +1,10 @@
 package fsboundary
 
 import (
+	"errors"
 	"os"
+	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -53,9 +56,27 @@ func mustMkdir(t *testing.T, path string) {
 	}
 }
 
+// mustSymlink creates a symbolic link. Windows allows it only with Developer
+// Mode or administrator rights; a host without that privilege cannot exercise
+// symlink behavior, so the test is skipped there. Link refusal is also proved
+// with junctions, which need no privilege (see junction_windows_test.go).
 func mustSymlink(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
+		if errors.Is(err, syscall.Errno(1314)) { // ERROR_PRIVILEGE_NOT_HELD
+			t.Skipf("symbolic links need Developer Mode or administrator rights: %v", err)
+		}
 		t.Fatalf("symlink %s -> %s: %v", link, target, err)
+	}
+}
+
+// skipWhereLinksAreNotHonored skips a test that exercises behavior built on
+// honored symbolic links. Windows refuses every link instead (see
+// openspec platform-support "Filesystem boundaries on Windows"); its refusals
+// are proved by the Windows-specific tests.
+func skipWhereLinksAreNotHonored(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links are not honored on Windows; link refusal is covered by the Windows boundary tests")
 	}
 }
