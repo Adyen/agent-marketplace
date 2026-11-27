@@ -12,12 +12,20 @@ const frameBottom = /╰─+╯/;
 const footerFloor = /: (commands|cmds) · \? help · q quit/;
 
 // spec: tui-rendering/modal-at-common-sizes
+// spec: tui-feedback/primary-and-floor-footer-hints-share-key-emphasis
+// spec: tui-feedback/narrow-widths-retain-floor-priority-order
 journey.test("footer, palette and modals stay framed and discoverable", async (terminal) => {
   await step("footer keeps the palette, help and quit hints", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();
     await locate(terminal, "~ in sync").unique().expect();
     await locate(terminal, footerFloor).unique().expect();
     await locate(terminal, "/ search").expect();
+    await locate(terminal, "/ search").getByText("/").getByStyle({ foreground: "14" }).expect();
+    await locate(terminal, "/ search").getByText("search").getByStyle({ foreground: "8" }).expect();
+    await locate(terminal, "space toggle").getByText("space").getByStyle({ foreground: "14" }).expect();
+    await locate(terminal, "space toggle").getByText("toggle").getByStyle({ foreground: "8" }).expect();
+    await locate(terminal, footerFloor).getByText(":").getByStyle({ foreground: "14" }).expect();
+    await locate(terminal, footerFloor).getByText("commands").getByStyle({ foreground: "8" }).expect();
   });
 
   // v view is the lowest-priority footer hint: shown when the footer has
@@ -69,6 +77,8 @@ journey.test("footer, palette and modals stay framed and discoverable", async (t
 
   await step("minimum-size footer", () => terminal.resize(50, 12), async () => {
     await locate(terminal, footerFloor).unique().expect();
+    await locate(terminal, "/ search").expect();
+    await locate(terminal, "v view").expect({ not: true });
   });
 
   await step("palette fits the minimum size", () => terminal.write(":"), async () => {

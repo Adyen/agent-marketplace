@@ -1,11 +1,9 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 
 export async function focusedDescription(page: Page): Promise<string> {
-  const focused = page.locator(':focus')
-  if ((await focused.count()) === 0) {
-    return '<none>'
-  }
-  return focused.evaluate((element) => {
+  return page.evaluate(() => {
+    const element = document.querySelector(':focus')
+    if (element == null) return '<none>'
     const labels = element instanceof HTMLInputElement
       ? Array.from(element.labels ?? []).map((label) => label.textContent ?? '').join(' ')
       : ''

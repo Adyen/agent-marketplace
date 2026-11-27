@@ -59,6 +59,13 @@ func (r DriftReport) InSync() bool {
 	return len(r.Missing)+len(r.Orphaned)+len(r.Broken) == 0
 }
 
+// SyncableCount returns the number of missing or orphaned items that a sync
+// can resolve. Broken items remain part of the full drift report but are not
+// actionable by sync.
+func (r DriftReport) SyncableCount() int {
+	return len(r.Missing) + len(r.Orphaned)
+}
+
 // PendingCount returns the total number of items that need attention.
 func (r DriftReport) PendingCount() int {
 	return len(r.Missing) + len(r.Orphaned) + len(r.Broken)

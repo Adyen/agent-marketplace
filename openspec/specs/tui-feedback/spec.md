@@ -107,3 +107,41 @@ The detail pane's `space = toggle` hint and the list footer's `space toggle` hin
 - **WHEN** the selected resource row is required, collection-only, pending verification or an uninstallable Marketplace discovery row
 - **THEN** the detail pane MUST NOT offer `space = toggle` and MUST still offer `enter = full view`, and the footer MUST NOT offer `space toggle`
 - **AND** an eligible enabled row, an available row, an installable Marketplace discovery row and a selected section header MUST keep the toggle hints
+
+### Requirement: Uniform footer shortcut key emphasis
+
+Every active keyboard shortcut hint rendered in the resource list footer SHALL style its key token with the same emphasized key role and its description with the muted description role, rather than highlighting only floor hints (`:`, `?`, `q`) while dimming primary action hints (`/`, `space`, `s`, `H`, `E`, `v`, `i`, `r`, `e`). Priority admission order, narrow-width floor retention, search-input hints, and colorless readability SHALL remain unchanged.
+
+#### Scenario: Primary and floor footer hints share key emphasis
+
+- **WHEN** the resource list footer renders on a color-capable terminal with both primary action hints and floor hints (`:`, `?`, `q`) visible
+- **THEN** primary action keys such as `/` and `space` MUST use the same emphasized key styling as `:`, `?`, and `q`
+- **AND** hint descriptions MUST remain in the muted style while colorless terminals keep readable plain labels
+
+#### Scenario: Narrow widths retain floor priority order
+
+- **WHEN** the terminal narrows to 50×12 with status segments and active hints
+- **THEN** the footer MUST continue to drop lower-priority hints whole while keeping `:`, `?`, and `q` visible within physical bounds
+
+### Requirement: Quit-sync confirmation lists syncable changes
+
+When the user presses `q` with syncable drift (`Missing` or `Orphaned`), the confirmation modal SHALL list affected resources with `+` (install/update) and `-` (remove) indicators bounded to terminal height with `+ <n> more` overflow. Unfixable `Broken` diagnostics alone SHALL NOT trigger `Sync+quit?`.
+
+#### Scenario: Quit confirmation lists pending installs and removals
+
+- **WHEN** a workspace has missing and orphaned resources and the user presses `q`
+- **THEN** the confirmation modal MUST list those resource names with install/remove indicators within bounded terminal dimensions (50×12, 80×24, 120×34)
+
+#### Scenario: Broken-only drift does not loop on quit
+
+- **WHEN** a workspace has only `Broken` diagnostics and zero `Missing` or `Orphaned` items and the user presses `q`
+- **THEN** the TUI MUST NOT prompt `Sync+quit?`
+
+### Requirement: Post-sync check prevents silent quit on unresolved drift
+
+After `sync+quit` completes without a hard synchronization error, the TUI SHALL verify the authoritative post-sync snapshot before exiting and SHALL remain open with diagnostics if syncable drift still remains. Hard synchronization errors SHALL continue propagating with their original error identity after terminal restoration.
+
+#### Scenario: Remaining drift after sync keeps TUI open with diagnostics
+
+- **WHEN** the user confirms `sync+quit`, synchronization completes without a hard error, and the authoritative post-sync check still reports unresolved syncable drift
+- **THEN** the TUI MUST stay open and surface the unresolved state rather than exiting silently

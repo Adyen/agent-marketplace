@@ -96,6 +96,28 @@ func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testin
 	}
 }
 
+// spec: tui-rendering/summary-pane-abbreviates-sha-256-digests-and-deduplicates-identical-revision
+func TestMarketplaceDiscoveryFullDetailKeepsFullDigest(t *testing.T) {
+	r := marketplaceDiscoveryRow("collection", "review", mpapi.AvailabilityAvailable)
+	digest := r.MarketplaceDiscovery.Item.ContentDigest
+	r.MarketplaceDiscovery.Item.Revision = digest
+	m := modelWithSelectedRow(t, r)
+	m.width = 120
+	m.height = 34
+
+	m, cmd := enterDetail(t, m)
+	if m.pane != paneDetail {
+		t.Fatalf("enter did not open full detail: %v", m.pane)
+	}
+	if cmd != nil {
+		t.Fatalf("discovery-only detail scheduled content loading: %v", cmd)
+	}
+	out := ansi.Strip(m.detailViewport.View())
+	if got := strings.Count(out, digest); got != 2 {
+		t.Fatalf("full detail digest count = %d, want the complete revision and digest:\n%s", got, out)
+	}
+}
+
 func TestMarketplaceUnavailableDiscoveryDetailIsActionable(t *testing.T) {
 	m := modelWithSelectedRow(t, marketplaceDiscoveryRow("skill", "revoked-skill", mpapi.Availability("revoked")))
 	m, _ = enterDetail(t, m)

@@ -8,12 +8,14 @@ import { defineFixture, expectSearchOpen, locate, step } from "./helpers.js";
 // spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 // spec: tui-navigation/other-kinds-retain-additive-text-matching
 // spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
+// spec: tui-rendering/summary-pane-abbreviates-sha-256-digests-and-deduplicates-identical-revision
 const journey = defineFixture("marketplace-kind-search", ["tui"], 80, 24, { marketplaceDiscovery: "mixed-denial", neutralConfiguredSkill: true });
 before(journey.setup);
 after(journey.cleanup);
 
 journey.test("kind queries discover opaque Marketplace resources and clear back to browse", async (terminal) => {
   const fixture = journey.current();
+  const fullDigest = "sha256:" + "a0".repeat(32);
   const watched = [
     path.join(fixture.home, ".agents", "config.yaml"),
     path.join(fixture.repo, ".agents", "config.yaml"),
@@ -62,6 +64,23 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
     await locate(terminal, /2 matches.*esc clear/).unique().expect();
     await locate(terminal, "market/tools/atlas").unique().expect();
     await locate(terminal, "market/tools/beacon").unique().expect();
+    await locate(terminal, "sha256:a0a0a0a0a0a0…").expect();
+    await locate(terminal, "Revision:").expect({ not: true });
+  });
+  await step("widen the summary before opening full detail", () => terminal.resize(160, 24), async () => {
+    await locate(terminal, "sha256:a0a0a0a0a0a0…").expect();
+    await locate(terminal, "Revision:").expect({ not: true });
+  });
+  await step("Enter opens full detail with the complete digest", () => terminal.write("\r"), async () => {
+    await locate(terminal, "Discovery metadata only").expect();
+    assert.ok(
+      (await terminal.text()).replace(/\s/g, "").includes(fullDigest),
+      "full detail did not show the complete content digest"
+    );
+  });
+  await step("Escape returns to the abbreviated summary", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "sha256:a0a0a0a0a0a0…").expect();
+    await locate(terminal, "Revision:").expect({ not: true });
   });
   await clearSearch();
 
