@@ -82,14 +82,26 @@ func inspectionModelDirs(t *testing.T, r row, repoRoot, homeDir string, opts ...
 
 // spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
 func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.T) {
-	for _, tamper := range []bool{false, true} {
-		name := "verified"
-		if tamper {
-			name = "digest mismatch"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tamper       bool
+		fetchFailure bool
+	}{
+		{name: "verified"},
+		{name: "digest mismatch", tamper: true},
+		{name: "manifest 404", fetchFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			manifest, payload, digest := marketplaceCollectionManifest(t)
-			if tamper {
+			if tc.name == "verified" {
+				manifest.Members[0].Name = "genai-psx\u202e"
+				var err error
+				payload, digest, err = hccartifact.EncodeCollectionManifest(manifest)
+				if err != nil {
+					t.Fatalf("encode hostile collection member: %v", err)
+				}
+			}
+			if tc.tamper {
 				payload = append(append([]byte(nil), payload...), ' ')
 			}
 			var requests []string
@@ -100,6 +112,10 @@ func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("instance-1", "https://market.example"))
 				case "/api/v1/manifests/" + digest:
+					if tc.fetchFailure {
+						http.Error(w, "manifest unavailable", http.StatusNotFound)
+						return
+					}
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write(payload)
 				default:
@@ -136,11 +152,20 @@ func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.
 			updated, _ := m.Update(cmd())
 			m = updated.(Model)
 			out := ansi.Strip(m.detailViewport.View())
-			if tamper {
+			if tc.tamper || tc.fetchFailure {
 				for _, want := range []string{"unavailable", "No verified members", "space to install"} {
 					if !strings.Contains(out, want) {
 						t.Fatalf("unverified collection detail missing %q:\n%s", want, out)
 					}
+				}
+				if !strings.Contains(out, "Marketplace collection inspection unavailable:") {
+					t.Fatalf("failed inspection omitted its actionable error:\n%s", out)
+				}
+				if !strings.Contains(out, "No verified members were loaded. Press space to install this exact revision, or esc to go back.") {
+					t.Fatalf("failed inspection error was not actionable:\n%s", out)
+				}
+				if tc.fetchFailure && !strings.Contains(out, "404") {
+					t.Fatalf("fetch failure omitted its HTTP status:\n%s", out)
 				}
 				for _, want := range []string{"genai-suite", "Revision:", "Digest:", digest} {
 					if !strings.Contains(out, want) {
@@ -150,16 +175,42 @@ func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.
 				if got := strings.Count(out, digest); got != 2 {
 					t.Fatalf("failed inspection digest count = %d, want complete revision and digest:\n%s", got, out)
 				}
-				for _, forbidden := range []string{"genai-psx", "code-review"} {
+				for _, forbidden := range []string{"mcpserver:", "skill:", "genai-psx", "code-review"} {
 					if strings.Contains(out, forbidden) {
-						t.Fatalf("digest failure exposed unverified member %q:\n%s", forbidden, out)
+						t.Fatalf("failed inspection exposed unverified member %q:\n%s", forbidden, out)
 					}
 				}
 			} else {
-				for _, want := range []string{"Contains (2):", "mcpserver: genai-psx", "skill: code-review"} {
-					if !strings.Contains(out, want) {
-						t.Fatalf("verified collection detail missing %q:\n%s", want, out)
+				if !strings.Contains(out, "Collection manifest verified.") || strings.Contains(out, "Discovery metadata only") {
+					t.Fatalf("verified collection detail has incorrect verification status:\n%s", out)
+				}
+				lines := strings.Split(out, "\n")
+				memberLines := []string{
+					"Contains (2):",
+					"  • mcpserver: genai-psx\\u202E",
+					"  • skill: code-review",
+				}
+				foundMembers := false
+				for i, line := range lines {
+					if strings.TrimRight(line, " ") != memberLines[0] || i+len(memberLines) > len(lines) {
+						continue
 					}
+					foundMembers = true
+					for j, want := range memberLines[1:] {
+						if got := strings.TrimRight(lines[i+j+1], " "); got != want {
+							foundMembers = false
+							break
+						}
+					}
+					if foundMembers {
+						break
+					}
+				}
+				if !foundMembers {
+					t.Fatalf("verified collection members were not rendered on separate lines:\n%s", out)
+				}
+				if strings.Contains(out, `\x0A`) || strings.ContainsRune(out, '\u202e') {
+					t.Fatalf("verified collection member summary was not safely rendered:\n%s", out)
 				}
 				current, found := m.rowByKey(m.detailKey)
 				if !found {

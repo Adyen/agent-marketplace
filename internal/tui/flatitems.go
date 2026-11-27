@@ -158,6 +158,9 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 		for i := m.cursor - 1; i >= 0; i-- {
 			prev := m.flatItems[i]
 			if prev.PluginParent || prev.CollectionParent {
+				if prev.CollectionParent && prev.Depth >= it.Depth {
+					continue
+				}
 				if collapsed {
 					fs[prev.SectionPath] = true
 					m.cursor = i
