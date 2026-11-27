@@ -26,6 +26,8 @@ func TestBuildFlags(t *testing.T) {
 		{target: "darwin-amd64", release: true, builds: 1},
 		{target: "linux-amd64", release: true, builds: 1},
 		{target: "linux-arm64", release: true, builds: 1},
+		{target: "windows-amd64", release: true, builds: 1},
+		{target: "windows-arm64", release: true, builds: 1},
 		{target: "build-release", release: true, telemetry: true, builds: 1},
 		{target: "script", release: true, telemetry: true, builds: 1},
 	} {
@@ -95,8 +97,11 @@ func TestBuildFlags(t *testing.T) {
 	}
 }
 
-// spec: install-script/release-build-writes-checksums-for-the-four-binaries
-func TestReleaseWritesChecksums(t *testing.T) {
+// runRelease runs `make release` against a fake Go toolchain and returns the
+// output directory and the lines of the SHA256SUMS it wrote. The directory
+// starts with a stale asset, which must never be listed.
+func runRelease(t *testing.T, makeArgs ...string) (string, []string) {
+	t.Helper()
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +118,7 @@ func TestReleaseWritesChecksums(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(fakeGo), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("make", "-s", "-f", filepath.Join(root, "Makefile"), "release")
+	cmd := exec.Command("make", append([]string{"-s", "-f", filepath.Join(root, "Makefile"), "release"}, makeArgs...)...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin", "VERSION=v1.2.3", "DIST_DIR=" + dist}
 	var stdout, stderr strings.Builder
@@ -121,27 +126,17 @@ func TestReleaseWritesChecksums(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("make release: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
-
 	checksums, err := os.ReadFile(filepath.Join(dist, "SHA256SUMS"))
 	if err != nil {
 		t.Fatalf("read SHA256SUMS: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(checksums)), "\n")
-	want := []string{
-		"agent-marketplace-v1.2.3-darwin-arm64",
-		"agent-marketplace-v1.2.3-darwin-amd64",
-		"agent-marketplace-v1.2.3-linux-amd64",
-		"agent-marketplace-v1.2.3-linux-arm64",
-	}
-	if len(lines) != len(want) {
-		t.Fatalf("SHA256SUMS has %d entries, want %d: %q", len(lines), len(want), checksums)
-	}
-	for i, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[1] != want[i] {
-			t.Errorf("SHA256SUMS line %d = %q, want bare entry for %s", i+1, line, want[i])
-		}
-	}
+	return dist, strings.Split(strings.TrimSpace(string(checksums)), "\n")
+}
+
+// requireChecksumsVerify checks every SHA256SUMS entry against the file in dist
+// with the host's checksum tool.
+func requireChecksumsVerify(t *testing.T, dist string) {
+	t.Helper()
 	checker := "sha256sum"
 	args := []string{"--check", filepath.Join(dist, "SHA256SUMS")}
 	if _, err := exec.LookPath(checker); err != nil {
@@ -153,4 +148,66 @@ func TestReleaseWritesChecksums(t *testing.T) {
 	if output, err := check.CombinedOutput(); err != nil {
 		t.Fatalf("%s checksum verification: %v\n%s", checker, err, output)
 	}
+}
+
+// requireBareEntries asserts that lines are sha256sum entries naming exactly
+// the given bare file names, in order.
+func requireBareEntries(t *testing.T, lines, want []string) {
+	t.Helper()
+	if len(lines) != len(want) {
+		t.Fatalf("SHA256SUMS has %d entries, want %d: %q", len(lines), len(want), lines)
+	}
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[1] != want[i] {
+			t.Errorf("SHA256SUMS line %d = %q, want bare entry for %s", i+1, line, want[i])
+		}
+	}
+}
+
+// spec: install-script/release-build-writes-checksums-for-the-four-binaries
+func TestReleaseWritesChecksums(t *testing.T) {
+	dist, lines := runRelease(t)
+	// The four macOS and Linux names are a stable contract: unchanged names, in
+	// their established order. Windows is opt-in until the CLI compiles there.
+	requireBareEntries(t, lines, []string{
+		"agent-marketplace-v1.2.3-darwin-arm64",
+		"agent-marketplace-v1.2.3-darwin-amd64",
+		"agent-marketplace-v1.2.3-linux-amd64",
+		"agent-marketplace-v1.2.3-linux-arm64",
+	})
+	requireChecksumsVerify(t, dist)
+}
+
+// spec: install-script/release-build-writes-checksums-for-the-windows-binaries
+// spec: platform-support/release-build-produces-windows-binaries
+func TestReleaseBuildsWindowsBinaries(t *testing.T) {
+	dist, lines := runRelease(t, "WINDOWS_RELEASE=1")
+	want := []string{
+		"agent-marketplace-v1.2.3-darwin-arm64",
+		"agent-marketplace-v1.2.3-darwin-amd64",
+		"agent-marketplace-v1.2.3-linux-amd64",
+		"agent-marketplace-v1.2.3-linux-arm64",
+		"agent-marketplace-v1.2.3-windows-amd64.exe",
+		"agent-marketplace-v1.2.3-windows-arm64.exe",
+	}
+	requireBareEntries(t, lines, want)
+	for _, name := range want {
+		if _, err := os.Stat(filepath.Join(dist, name)); err != nil {
+			t.Errorf("release asset %s missing: %v", name, err)
+		}
+	}
+	// No Windows asset is published without its .exe suffix, and no other
+	// platform gains one.
+	for _, name := range []string{
+		"agent-marketplace-v1.2.3-windows-amd64",
+		"agent-marketplace-v1.2.3-windows-arm64",
+		"agent-marketplace-v1.2.3-linux-amd64.exe",
+		"agent-marketplace-v1.2.3-darwin-arm64.exe",
+	} {
+		if _, err := os.Stat(filepath.Join(dist, name)); err == nil {
+			t.Errorf("unexpected release asset %s", name)
+		}
+	}
+	requireChecksumsVerify(t, dist)
 }
