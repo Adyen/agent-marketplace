@@ -14,6 +14,19 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func collectionTestRow() row {
+	collection := ir.NewCollection("genai-suite", "", "A verified toolkit",
+		[]ir.CollectionMember{
+			{Name: "genai-psx", Kind: ir.KindMcpServer},
+			{Name: "code-review", Kind: ir.KindSkill},
+		},
+		[]string{"genai-base"}, nil, ir.SourceRef{})
+	parent := mkRow(collection.Name(), withAvailable, withKind(ir.KindCollection))
+	parent.Artifact.Description = collection.Description
+	parent.Artifact.Resource = collection
+	return parent
+}
+
 // mkRow creates a row populated with the given skill name + scope flags for tests.
 func mkRow(name string, opts ...func(*row)) row {
 	r := row{
@@ -117,6 +130,41 @@ func TestBuildStatusTreeGroupsByStatus(t *testing.T) {
 		got := skillNamesUnder(items, path)
 		if len(got) != 1 || got[0] != wantName {
 			t.Fatalf("%s should contain %s, got %v", path, wantName, got)
+		}
+	}
+}
+
+// spec: tui-navigation/expanding-a-collection-shows-its-mcp-servers-and-skills
+func TestCollectionMembersAppearUnderParentAcrossStatusAndKind(t *testing.T) {
+	parent := collectionTestRow()
+	want := []string{"genai-suite", "genai-psx", "code-review", "genai-base"}
+	for _, settings := range []viewSettings{
+		{GroupBy: axisStatus},
+		{GroupBy: axisSource},
+		{GroupBy: axisKind},
+	} {
+		items := buildGroupedTree([]row{parent}, settings, nil)
+		var rows []flatItem
+		for _, item := range items {
+			if item.Kind == flatArtifact {
+				rows = append(rows, item)
+			}
+		}
+		if len(rows) != len(want) {
+			t.Fatalf("%s grouping rows = %d, want %d: %#v", settings.GroupBy, len(rows), len(want), rows)
+		}
+		for i, name := range want {
+			if rows[i].Row.Artifact.Name != name {
+				t.Fatalf("%s grouping row %d = %q, want %q", settings.GroupBy, i, rows[i].Row.Artifact.Name, name)
+			}
+		}
+		if rows[1].Row.Artifact.Kind != ir.KindMcpServer || rows[2].Row.Artifact.Kind != ir.KindSkill || rows[3].Row.Artifact.Kind != ir.KindCollection {
+			t.Fatalf("%s grouping member kinds = %v, %v, %v", settings.GroupBy, rows[1].Row.Artifact.Kind, rows[2].Row.Artifact.Kind, rows[3].Row.Artifact.Kind)
+		}
+		for _, child := range rows[1:] {
+			if child.Depth != rows[0].Depth+1 {
+				t.Errorf("%s grouping child %q depth = %d, want %d", settings.GroupBy, child.Row.Artifact.Name, child.Depth, rows[0].Depth+1)
+			}
 		}
 	}
 }

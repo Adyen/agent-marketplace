@@ -43,6 +43,7 @@ export interface FixtureOptions {
   // Seeds the Git registry with collection "starter", whose only member is
   // alpha-skill.
   collection?: boolean;
+  transparentCollection?: boolean;
   // Seeds the Git registry with hostile-skill, whose description and body
   // carry terminal control bytes, and a skill folder whose name carries an
   // erase-display sequence, which makes it malformed.
@@ -198,7 +199,11 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       );
       write(path.join(source, "skills", "evil\x1b[2Jname", "SKILL.md"), "---\nname: evil\x1b[2Jname\ndescription: Evil name\n---\n");
     }
-    if (options.collection) {
+    if (options.transparentCollection) {
+      write(path.join(source, ".mcp.json"), `{"mcpServers":{"genai-psx":{"command":"node","args":["mcp.js"]}}}`);
+      write(path.join(source, "collections", "suite", "COLLECTION.yaml"),
+        "name: suite\nresources:\n  - name: alpha-skill\n    kind: skill\n  - name: genai-psx\n    kind: mcpserver\n");
+    } else if (options.collection) {
       write(path.join(source, "skills", "collections", "starter", "COLLECTION.yaml"), "name: starter\nversion: 1.0.0\nresources:\n  - name: alpha-skill\n    kind: skill\n");
     }
     const overflowSkills = options.overflowStatus ? Array.from({ length: 30 }, (_, index) => `skill-${String(index).padStart(2, "0")}`) : [];
@@ -242,7 +247,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       const neutralSource = options.neutralConfiguredSkill ? `  quiet:\n    git: ${registryURL}\n    ref: main\n    path: helpers\n` : "";
       const neutralResource = options.neutralConfiguredSkill ? "  quiet:\n    include:\n      - skill/quiet-helper\n" : "";
       // The removed-pin journey adds a Factory rule beside the skills after its successful updates.
-      const sourceLayout = options.userMarketplaceRemoved ? "    source_harness: factory\n" : "    path: skills\n";
+      const sourceLayout = options.userMarketplaceRemoved ? "    source_harness: factory\n" : options.transparentCollection ? "" : "    path: skills\n";
       expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n${sourceLayout}${neutralSource}resources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}${neutralResource}`;
       if ((options.userMarketplaceDrift || options.userMarketplaceRemoved) && stub) {
         const required = options.userMarketplaceDrift ? "    required: true\n" : "";

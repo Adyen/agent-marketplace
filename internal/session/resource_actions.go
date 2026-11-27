@@ -52,6 +52,8 @@ func RowToggleDenialFor(r Row) RowToggleDenial {
 		return RowToggleRequired
 	case r.MarketplaceCollectionOnly && !r.CanOverrideMarketplace():
 		return RowToggleCollectionOnly
+	case !r.Artifact.IsMarketplace && !r.IsAvailable && r.Artifact.Via != "":
+		return RowToggleCollectionOnly
 	}
 	return RowToggleEligible
 }

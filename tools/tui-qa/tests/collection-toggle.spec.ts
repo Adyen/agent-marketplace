@@ -26,7 +26,10 @@ journey.test("enabling a collection lists it as installed and installs its membe
     await locate(terminal, "fixture/starter").unique().expect();
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  await step("select the collection", () => terminal.write("G"), async () => {
+  await step("select the collection", async () => {
+    await terminal.write("G");
+    await terminal.write("k");
+  }, async () => {
     await locate(terminal, /Kind:\s+collection/).unique().expect();
     await locate(terminal, /Name:\s+starter/).unique().expect();
   });
@@ -63,7 +66,10 @@ journey.test("after a restart the installed collection starts enabled, and disab
     await locate(terminal, /Available\s+\(/).expect({ not: true });
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  await step("select the collection", () => terminal.write("G"), async () => {
+  await step("select the collection", async () => {
+    await terminal.write("G");
+    await terminal.write("k");
+  }, async () => {
     await locate(terminal, /Kind:\s+collection/).unique().expect();
     await locate(terminal, /Status:\s+enabled/).unique().expect();
   });

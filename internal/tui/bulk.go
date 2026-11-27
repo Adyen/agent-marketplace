@@ -102,7 +102,9 @@ func (m Model) sectionMembersIn(rows []row, sectionPath string) []row {
 			continue
 		}
 		if depth >= 0 {
-			out = append(out, it.Row)
+			if !it.CollectionMember && it.Row.Artifact.Via == "" {
+				out = append(out, it.Row)
+			}
 		}
 	}
 	return out

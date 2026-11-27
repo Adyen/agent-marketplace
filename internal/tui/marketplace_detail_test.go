@@ -67,6 +67,7 @@ func TestMarketplaceDiscoveryDetailShowsOperatorExposedRejection(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
 func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testing.T) {
 	for _, kind := range []string{"collection", "command"} {
 		t.Run(kind, func(t *testing.T) {
@@ -77,8 +78,11 @@ func TestMarketplaceDiscoveryDetailShowsMetadataWithoutSourcePathError(t *testin
 			if m.pane != paneDetail {
 				t.Fatalf("enter did not open the detail pane: %v", m.pane)
 			}
-			if cmd != nil {
-				t.Fatal("discovery-only detail must not schedule content loading")
+			if kind == "collection" && cmd == nil {
+				t.Fatal("eligible discovery collection did not schedule manifest inspection")
+			}
+			if kind == "command" && cmd != nil {
+				t.Fatal("discovery-only command detail must not schedule content loading")
 			}
 			if m.bundle != nil || m.detailSelectedPath != "" {
 				t.Fatalf("discovery-only detail must not open a filesystem bundle: %+v", m.bundle)
@@ -109,8 +113,8 @@ func TestMarketplaceDiscoveryFullDetailKeepsFullDigest(t *testing.T) {
 	if m.pane != paneDetail {
 		t.Fatalf("enter did not open full detail: %v", m.pane)
 	}
-	if cmd != nil {
-		t.Fatalf("discovery-only detail scheduled content loading: %v", cmd)
+	if cmd == nil {
+		t.Fatal("eligible discovery collection did not schedule manifest inspection")
 	}
 	out := ansi.Strip(m.detailViewport.View())
 	if got := strings.Count(out, digest); got != 2 {

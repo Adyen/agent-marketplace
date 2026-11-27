@@ -291,6 +291,12 @@ func renderDetail(m Model) string {
 		// Word-wrap the description
 		writeLine(value(safe(r.Artifact.Description)))
 	}
+	if collection, ok := r.Artifact.Resource.(*ir.Collection); ok {
+		if summary := collectionDetailSummary(collection); summary != "" {
+			b.WriteString("\n")
+			writeLine(summary)
+		}
+	}
 
 	if r.IsMalformed {
 		b.WriteString("\n")
@@ -625,6 +631,11 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 	if r.Artifact.Description != "" {
 		b.WriteString("\n" + value(safe(r.Artifact.Description)) + "\n")
 	}
+	if collection, ok := r.Artifact.Resource.(*ir.Collection); ok {
+		if summary := collectionDetailSummary(collection); summary != "" {
+			b.WriteString("\n" + value(safe(summary)) + "\n")
+		}
+	}
 	b.WriteString("\n")
 	switch {
 	case r.MarketplaceDiscovery == nil:
@@ -637,6 +648,18 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 		b.WriteString(value("This Marketplace resource is not currently installable."))
 	}
 	return b.String()
+}
+
+func collectionDetailSummary(collection *ir.Collection) string {
+	members := collectionEntries(collection)
+	if len(members) == 0 {
+		return ""
+	}
+	lines := []string{fmt.Sprintf("Contains (%d):", len(members))}
+	for _, member := range members {
+		lines = append(lines, "  • "+member.Kind.String()+": "+sanitizeTerminalData(member.Name, terminalSingleLine))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderBundleEntry renders one selected bundle member. Archive-backed trees

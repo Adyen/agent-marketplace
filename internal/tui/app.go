@@ -958,6 +958,34 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailViewport.GotoTop()
 		return m, nil
 
+	case marketplaceCollectionDetailMsg:
+		if m.pane != paneDetail || msg.key == "" || msg.key != m.detailKey || !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
+		}
+		m.previewSel = previewSelection{}
+		if msg.err != nil {
+			content := marketplaceCollectionInspectionError(msg.err)
+			if current, found := m.rowByKey(msg.key); found {
+				content = renderMarketplaceDetailContent(m.currentTheme(), current) + "\n\n" + content
+			}
+			m.detailViewport.SetContent(content)
+			m.detailViewport.GotoTop()
+			return m, nil
+		}
+		for i := range m.rows {
+			if rowKey(m.rows[i]) == msg.key {
+				m.rows[i].Artifact.Resource = msg.collection
+			}
+		}
+		m.filteredRows = m.applyFilter()
+		m.rebuildFlatItems()
+		m.restoreSelectionKey("row\x00" + msg.key)
+		if current, found := m.rowByKey(msg.key); found {
+			m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), current))
+		}
+		m.detailViewport.GotoTop()
+		return m, nil
+
 	case detailContentMsg:
 		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
@@ -1369,6 +1397,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 			if marketplaceInspectableSkill(r) {
 				return m, loadMarketplaceSkillDetail(m.observedContext(ctxOrBackground(m.ctx)), m.currentTheme(), r, generation, m.previewWidth())
 			}
+			if marketplaceInspectableCollection(r) && r.Artifact.Resource == nil {
+				return m, loadMarketplaceCollectionDetail(m.observedContext(ctxOrBackground(m.ctx)), r, generation)
+			}
 			return m, nil
 		}
 		return m, nil
@@ -1680,7 +1711,10 @@ func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
 	case toggleRequired:
 		return m, toast("required items cannot be toggled")
 	case toggleCollectionOnly:
-		return m, toast("collection-selected Marketplace items must be toggled through their collection")
+		if r.Artifact.IsMarketplace {
+			return m, toast("collection-selected Marketplace items must be toggled through their collection")
+		}
+		return m, toast("collection-selected resources must be toggled through their collection")
 	}
 	m.pane = paneToggleModal
 	m.modalSkill = r
@@ -1833,6 +1867,8 @@ func (m *Model) enterDetailPane() {
 			m.bundle = nil
 			if marketplaceInspectableSkill(r) {
 				m.detailViewport.SetContent("Loading verified Marketplace preview…")
+			} else if marketplaceInspectableCollection(r) && r.Artifact.Resource == nil {
+				m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r) + "\n\nLoading verified Marketplace collection members…")
 			} else {
 				m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r))
 			}
