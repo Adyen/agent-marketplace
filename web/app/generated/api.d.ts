@@ -1121,8 +1121,7 @@ export interface components {
             manifest_digest: string;
         };
         ResourceRelation: {
-            /** @enum {string} */
-            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
+            kind: ("skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection") | string;
             name: string;
             /** @description Registry slug within this Marketplace. */
             registry: string;

@@ -650,6 +650,7 @@ describe('ResourceDetailView', () => {
           required_by: [
             { kind: 'skill', name: 'lint', registry: 'team-tools' },
             { kind: 'collection', name: 'bundle', registry: 'other-registry' },
+            { kind: 'invented-app/mod', name: 'scoped-package', registry: 'tools' },
           ],
         },
         registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
@@ -660,6 +661,10 @@ describe('ResourceDetailView', () => {
     expect(requiredBy.get('h2').text()).toBe('Required by')
     expect(requiredBy.get('a[href="/r/team-tools/skill/lint"]').text()).toContain('lint')
     expect(requiredBy.get('a[href="/r/other-registry/collection/bundle"]').text()).toContain('bundle')
+    expect(requiredBy.findAll('li')).toHaveLength(3)
+    expect(requiredBy.findAll('a')).toHaveLength(2)
+    expect(requiredBy.findAll('li')[2].text()).toContain('invented-app/mod')
+    expect(requiredBy.findAll('li')[2].text()).toContain('scoped-package')
 
     const empty = mount(ResourceDetailView, {
       props: {
