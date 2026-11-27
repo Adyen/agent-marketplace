@@ -1128,8 +1128,7 @@ export interface components {
             registry: string;
         };
         ResourceRequirement: {
-            /** @enum {string} */
-            kind: "skill" | "command" | "subagent" | "hook" | "mcpserver";
+            kind: ("skill" | "command" | "subagent" | "hook" | "mcpserver") | string;
             name: string;
             /** @description Credential-redacted source-root path hint. */
             path?: string;
@@ -1154,7 +1153,7 @@ export interface components {
             occurrence: components["schemas"]["ResourceOccurrence"];
             /** @description Optional; populated only by the latest resource detail response. The visible, in-scope current-head resources of this Marketplace whose indexed prerequisites resolve to this resource, sorted by registry slug, kind, and name. Absent when a visible in-scope unindexed revision leaves the dependent set unknown. */
             required_by?: components["schemas"]["ResourceRelation"][];
-            /** @description Optional; populated only by the latest resource detail response. The prerequisites this revision declared at publication, in declaration order. Registry and path hints are credential-redacted before storage and are echoed redacted. An absent field means the revision predates prerequisite indexing; an empty array means it was indexed and declares none. */
+            /** @description Optional; populated by the latest resource detail response. For an opted-in exact Place package revision, it instead contains that exact revision's stored kind/name declarations only; it never includes hints or resolved targets. The prerequisites this revision declared at publication, in declaration order. Registry and path hints are credential-redacted before storage and are echoed redacted. An absent field means the revision predates prerequisite indexing; an empty array means it was indexed and declares none. */
             requires?: components["schemas"]["ResourceRequirement"][];
             revocation?: components["schemas"]["Revocation"];
             /** @description Immutable source provenance. It is omitted when the occurrence lacks trustworthy source provenance. */

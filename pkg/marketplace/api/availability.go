@@ -201,8 +201,8 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-// resourceRevisionDTO is the resource detail wire shape. Requires and
-// RequiredBy stay nil on every endpoint except latest resource detail.
+// resourceRevisionDTO carries resolved requirements on latest detail and
+// exact declarations on opted-in Place revision detail only.
 type resourceRevisionDTO struct {
 	store.AssessedResourceRevision
 	CurrentAvailability availabilityDecision   `json:"current_availability"`
@@ -211,7 +211,7 @@ type resourceRevisionDTO struct {
 	RequiredBy          *[]ResourceRelation    `json:"required_by,omitempty"`
 }
 
-func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) any {
+func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) resourceRevisionDTO {
 	effective := s.applyEffectiveRevocation(rev)
 	source := resolveSource(rev)
 	if s.cfg.Management.Mode != "database" {

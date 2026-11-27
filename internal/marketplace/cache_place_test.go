@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: target-profile-place/explicit-indexed-empty-prerequisites-allow-offline-acquisition
 func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
 	endpoint := "https://market.example"
 	instanceID := store.MarketplaceID("mp")
@@ -45,6 +46,7 @@ func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
 		t.Fatalf("encode place artifact: %v", err)
 	}
 	revision := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	revision.Requires = "[]"
 	locked := lockedPlaceResource(revision)
 	root := t.TempDir()
 	cache := NewCache(root)
@@ -71,8 +73,8 @@ func TestReadLockedPlacePackageVerifiesAllEvidence(t *testing.T) {
 	if !bytes.Equal(gotJSON, wantJSON) {
 		t.Fatalf("read revision = %s, want %s", gotJSON, wantJSON)
 	}
-	if got.Requires != "" {
-		t.Fatalf("historical scoped cache prerequisites = %q, want empty when the field is absent", got.Requires)
+	if got.Requires != "[]" {
+		t.Fatalf("historical scoped cache prerequisites = %q, want explicit indexed empty", got.Requires)
 	}
 	if len(gotFiles) != 1 || gotFiles[0].SourcePath != files[0].SourcePath ||
 		gotFiles[0].DestinationPath != files[0].DestinationPath || gotFiles[0].Mode != files[0].Mode ||
@@ -399,6 +401,42 @@ func TestFetchLockedPlacePackageCachesExactEvidence(t *testing.T) {
 	}
 }
 
+// spec: target-profile-place/cache-only-unknown-prerequisites-refuse-before-archive-reads
+func TestReadLockedPlacePackageRefusesUnknownPrerequisitesBeforeArchive(t *testing.T) {
+	endpoint := "https://market.example"
+	instanceID := store.MarketplaceID("mp")
+	profileBytes := []byte(placeAcquireProfileYAML)
+	selected := placeAcquireProfileIdentity(profileBytes)
+	coordinate := store.ResourceCoordinate{Marketplace: instanceID, Registry: "reg", Kind: "invented-app/mod", Name: "sample"}
+	artifact, err := hccartifact.NewPlaceArtifact(coordinate.Kind, coordinate.Name, selected, []targetprofile.PackageFile{{
+		SourcePath: "payload/instructions.md", DestinationPath: "mods/sample/instructions.md", Mode: 0o644, Bytes: []byte("place\n"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, archiveDigest, err := hccartifact.EncodeArchives(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	for _, unknown := range []string{"", "null"} {
+		t.Run(map[bool]string{true: "null", false: "absent"}[unknown == "null"], func(t *testing.T) {
+			revision := base
+			revision.Requires = unknown
+			locked := lockedPlaceResource(revision)
+			root := t.TempDir()
+			cache := NewCache(root)
+			if err := seedPlaceResourceRevision(cache, endpoint, instanceID, locked, revision); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotPlaceCache(t, root)
+			got, files, err := cache.ReadLockedPlacePackage(endpoint, instanceID, locked, selected, profileBytes)
+			assertLockedPlaceFailure(t, got, files, err, "marketplace.cache.place-prerequisites-missing")
+			assertPlaceCacheUnchanged(t, root, before)
+		})
+	}
+}
+
 func lockedPlaceResource(revision store.AssessedResourceRevision) lockfile.MarketplaceResourceLock {
 	return lockfile.MarketplaceResourceLock{
 		RegistryName: "tools", RegistryID: string(revision.Coordinate.Registry),
@@ -423,7 +461,13 @@ func writeLockedPlaceCache(t *testing.T, cache *Cache, endpoint string, revision
 }
 
 func seedPlaceResourceRevision(cache *Cache, endpoint string, instanceID store.MarketplaceID, locked lockfile.MarketplaceResourceLock, rev store.AssessedResourceRevision) error {
-	_, err := cache.writeResourceRevisionAt(cache.placeMetadataPath(endpoint, instanceID, locked), rev)
+	_, err := cache.writeMetadataAt(
+		cache.placeMetadataPath(endpoint, instanceID, locked),
+		cachedPlaceRevision{
+			AssessedResourceRevision: rev,
+			IndexedRequires:          json.RawMessage(rev.Requires),
+		},
+	)
 	return err
 }
 

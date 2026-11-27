@@ -29,6 +29,7 @@ kinds: {mod: {deliver: place, into: [mods/], verify: initial-load}}
 `
 
 // spec: marketplace-api/place-manifests-and-assessments-agree-on-the-exact-binding
+// spec: target-profile-place/online-package-acquisition-requires-indexed-prerequisites
 func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 	profileBytes := []byte(placeAcquireProfileYAML)
 	profileIdentity := placeAcquireProfileIdentity(profileBytes)
@@ -50,6 +51,7 @@ func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 		t.Fatalf("encode place archives: %v", err)
 	}
 	revision := placeAcquireRevision(t, coordinate, artifact, archiveDigest)
+	revision.Requires = "[]"
 	var responseRevision atomic.Pointer[store.AssessedResourceRevision]
 	responseRevision.Store(&revision)
 	revisionPath := "/api/v1/resources/reg/invented-app%2Fmod/sample/revisions/" + string(revision.ContentDigest)
@@ -70,9 +72,10 @@ func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 				CurrentAvailability struct {
 					Availability string `json:"availability"`
 				} `json:"current_availability"`
+				Requires json.RawMessage `json:"requires,omitempty"`
 			}{AssessedResourceRevision: *responseRevision.Load(), CurrentAvailability: struct {
 				Availability string `json:"availability"`
-			}{Availability: "available"}})
+			}{Availability: "available"}, Requires: json.RawMessage(responseRevision.Load().Requires)})
 		case archivePath:
 			archiveRequests.Add(1)
 			_, _ = w.Write(placeholder)
@@ -111,10 +114,21 @@ func TestAcquirePlacePackageRequiresExactProfileBeforeArchive(t *testing.T) {
 		t.Fatalf("valid acquisition requests: revision=%d archive=%d, want 1 each", revisionRequests.Load(), archiveRequests.Load())
 	}
 
+	unknown := revision
+	unknown.Requires = ""
+	responseRevision.Store(&unknown)
+	beforeArchives := archiveRequests.Load()
+	failedRevision, failedFiles, err := client.AcquirePlacePackage(context.Background(), coordinate, revision.ContentDigest, profileIdentity, profileBytes)
+	assertPlaceAcquisitionFailure(t, failedRevision, failedFiles, err, "marketplace.place.prerequisites-missing")
+	if archiveRequests.Load() != beforeArchives {
+		t.Fatalf("unknown prerequisites fetched %d archives", archiveRequests.Load()-beforeArchives)
+	}
+	responseRevision.Store(&revision)
+
 	beforeRevisionRequests := revisionRequests.Load()
 	beforeArchiveRequests := archiveRequests.Load()
 	staleProfile := []byte(strings.Replace(placeAcquireProfileYAML, "label: Invented App", "label: Stale App", 1))
-	failedRevision, failedFiles, err := client.AcquirePlacePackage(context.Background(), coordinate, revision.ContentDigest, profileIdentity, staleProfile)
+	failedRevision, failedFiles, err = client.AcquirePlacePackage(context.Background(), coordinate, revision.ContentDigest, profileIdentity, staleProfile)
 	assertPlaceAcquisitionFailure(t, failedRevision, failedFiles, err, "")
 	if revisionRequests.Load() != beforeRevisionRequests || archiveRequests.Load() != beforeArchiveRequests {
 		t.Fatalf("stale profile issued requests: revision=%d archive=%d", revisionRequests.Load()-beforeRevisionRequests, archiveRequests.Load()-beforeArchiveRequests)

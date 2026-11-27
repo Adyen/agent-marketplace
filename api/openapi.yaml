@@ -1703,7 +1703,10 @@ components:
           items:
             $ref: "#/components/schemas/ResourceRequirement"
           description: >-
-            Optional; populated only by the latest resource detail response.
+            Optional; populated by the latest resource detail response. For
+            an opted-in exact Place package revision, it instead contains
+            that exact revision's stored kind/name declarations only; it
+            never includes hints or resolved targets.
             The prerequisites this revision declared at publication, in
             declaration order. Registry and path hints are credential-redacted
             before storage and are echoed redacted. An absent field means the
@@ -1740,8 +1743,11 @@ components:
       required: [kind, name]
       properties:
         kind:
-          type: string
-          enum: [skill, command, subagent, hook, mcpserver]
+          oneOf:
+            - type: string
+              enum: [skill, command, subagent, hook, mcpserver]
+            - type: string
+              pattern: "^[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}$"
         name:
           type: string
         registry:
