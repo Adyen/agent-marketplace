@@ -199,6 +199,8 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 	marketplaceSelectionsByArtifact := IndexMarketplaceSelections(cfg)
 
 	globalEnabled := make(map[string]map[string]struct{}, len(resolved))
+	organizationEnabled := make(map[string]map[string]struct{}, len(resolved))
+	userEnabled := make(map[string]map[string]struct{}, len(resolved))
 	projectEnabled := make(map[string]map[string]struct{}, len(resolved))
 	// Local selections are registry-scoped (resource key → set of catalog
 	// keys) just like global/project, so the same resource name from two
@@ -262,6 +264,12 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 						target[key] = make(map[string]struct{})
 					}
 					target[key][entry.CatalogKey] = struct{}{}
+					switch entry.Source {
+					case config.Organization:
+						addScopedLocalSelection(organizationEnabled, key, entry.CatalogKey)
+					case config.UserPersonal:
+						addScopedLocalSelection(userEnabled, key, entry.CatalogKey)
+					}
 				}
 			}
 			for _, s := range cat.Entries {
@@ -353,6 +361,8 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 		}
 
 		_, enabledGlobal := globalEnabled[key][s.CatalogKey]
+		enabledOrganization := localScopedContains(organizationEnabled, nil, key, s.CatalogKey)
+		enabledUser := localScopedContains(userEnabled, nil, key, s.CatalogKey)
 		_, enabledProject := projectEnabled[key][s.CatalogKey]
 		enabledLocal := localScopedContains(localEnabled, localEnabledAny, key, s.CatalogKey)
 		excludedLocally := localScopedContains(localExcluded, localExcludedAny, key, s.CatalogKey)
@@ -360,17 +370,38 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 		if s.IsMarketplace {
 			marketplaceSelections = marketplaceSelectionsByArtifact[MarketplaceSelectionKey(s.CatalogKey, MarketplaceProtocolKind(s.Kind), s.Name)]
 			enabledGlobal, enabledProject, enabledLocal = marketplaceScopeFlags(marketplaceSelections)
+			_, enabledOrganization = marketplaceSelections[config.Organization]
+			_, enabledUser = marketplaceSelections[config.UserPersonal]
 		}
 
 		// When a resource comes from a collection (Via is set), it inherits
 		// the collection's per-scope enablement. The collection itself is
 		// what the entry explicitly selects; the expanded members are implicit.
-		if s.Via != "" {
+		if len(s.CollectionParents) > 0 {
+			for _, parent := range s.CollectionParents {
+				switch parent.Source {
+				case config.Organization:
+					enabledGlobal, enabledOrganization = true, true
+				case config.UserPersonal:
+					enabledGlobal, enabledUser = true, true
+				case config.RepoCommitted:
+					enabledProject = true
+				case config.RepoPersonal:
+					enabledLocal = true
+				}
+			}
+		} else if s.Via != "" {
 			// Extract the collection name from the Via annotation
 			// (format: "collection:<name>" or "collection:<name>@<ver>").
 			collectionKey := skill.ResourceKey(ir.KindCollection, collectionNameFromVia(s.Via))
 			if len(globalEnabled[collectionKey]) > 0 && !enabledGlobal {
 				enabledGlobal = true
+			}
+			if !enabledOrganization && localScopedContains(organizationEnabled, nil, collectionKey, s.CatalogKey) {
+				enabledOrganization = true
+			}
+			if !enabledUser && localScopedContains(userEnabled, nil, collectionKey, s.CatalogKey) {
+				enabledUser = true
 			}
 			if len(projectEnabled[collectionKey]) > 0 && !enabledProject {
 				enabledProject = true
@@ -393,12 +424,14 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 			harnessSource = harnessSourceByKeyURL[key+"\x01"+s.RegistryURL]
 		}
 
-		rows = append(rows, Row{
+		row := Row{
 			Artifact:                  s,
 			IsAvailable:               false,
 			IsExcluded:                excludedLocally,
 			DriftItem:                 driftItem,
 			EnabledGlobal:             enabledGlobal,
+			EnabledOrganization:       enabledOrganization,
+			EnabledUser:               enabledUser,
 			EnabledProject:            enabledProject,
 			EnabledLocal:              enabledLocal,
 			ExcludedLocally:           excludedLocally,
@@ -410,7 +443,8 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 			HarnessSource:             harnessSource,
 			MarketplaceSelections:     marketplaceSelections,
 			MarketplaceCollectionOnly: MarketplaceCollectionOnly(marketplaceSelections),
-		})
+		}
+		rows = append(rows, row)
 	}
 
 	forEachUserExcludedOrganizationPin(cfg, func(pin config.MarketplaceResourcePin, excluded Row) {
@@ -526,6 +560,7 @@ func forEachUserExcludedOrganizationPin(cfg *config.Config, visit func(config.Ma
 					MarketplaceAlias: entry.Alias, MarketplaceInstanceID: entry.InstanceID, MarketplaceRegistryID: pin.RegistryID, MarketplaceResourceName: pin.Name,
 				},
 				IsAvailable: true, IsExcluded: true, ExcludedByUser: true, EnabledGlobal: true,
+				EnabledOrganization:     true,
 				MarketplaceRegistrySlug: pin.RegistrySlug,
 				RegistryURL:             entry.URL, RegistryName: RegistryDisplayName(entry.URL),
 			})
@@ -656,12 +691,24 @@ func BuildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 			seen[key] = i
 			rows = append(rows, r)
 		}
+		if len(r.MarketplaceSelections) > 0 {
+			if rows[i].MarketplaceSelections == nil {
+				rows[i].MarketplaceSelections = make(map[config.Source]MarketplaceSelection, len(r.MarketplaceSelections))
+			}
+			for source, selection := range r.MarketplaceSelections {
+				rows[i].MarketplaceSelections[source] = selection
+			}
+		}
 		if r.IsAvailable {
 			return
 		}
 		switch r.Artifact.Source {
-		case config.Organization, config.UserPersonal:
+		case config.Organization:
 			rows[i].EnabledGlobal = true
+			rows[i].EnabledOrganization = true
+		case config.UserPersonal:
+			rows[i].EnabledGlobal = true
+			rows[i].EnabledUser = true
 		case config.RepoCommitted:
 			rows[i].EnabledProject = true
 		case config.RepoPersonal:
@@ -716,9 +763,12 @@ func BuildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 				Artifact:                  artifact,
 				PendingVerification:       true,
 				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
-				MarketplaceRegistrySlug:   pin.RegistrySlug,
-				RegistryURL:               entry.URL,
-				RegistryName:              RegistryDisplayName(entry.URL),
+				MarketplaceSelections: map[config.Source]MarketplaceSelection{
+					entry.Source: {Entry: *entry, Pin: pin},
+				},
+				MarketplaceRegistrySlug: pin.RegistrySlug,
+				RegistryURL:             entry.URL,
+				RegistryName:            RegistryDisplayName(entry.URL),
 			})
 		}
 	}
@@ -771,7 +821,7 @@ func AppendUnavailableSelectionRows(rows []Row, cfg *config.Config, localCfg *co
 			return
 		}
 		var first, firstSelecting *config.RegistryEntry
-		var enabledGlobal, enabledProject, enabledLocal bool
+		var enabledGlobal, enabledOrganization, enabledUser, enabledProject, enabledLocal bool
 		direct := false
 		if cfg != nil {
 			for i := range cfg.Registries {
@@ -789,12 +839,16 @@ func AppendUnavailableSelectionRows(rows []Row, cfg *config.Config, localCfg *co
 					}
 					direct = true
 					required = required || entry.Required
-					switch {
-					case entry.Source.IsMachineScope():
+					switch entry.Source {
+					case config.Organization:
 						enabledGlobal = true
-					case entry.Source == config.RepoCommitted:
+						enabledOrganization = true
+					case config.UserPersonal:
+						enabledGlobal = true
+						enabledUser = true
+					case config.RepoCommitted:
 						enabledProject = true
-					case entry.Source == config.RepoPersonal:
+					case config.RepoPersonal:
 						enabledLocal = true
 					}
 				}
@@ -843,20 +897,22 @@ func AppendUnavailableSelectionRows(rows []Row, cfg *config.Config, localCfg *co
 				Required:       required,
 				CatalogKey:     meta.CatalogKey,
 			},
-			UnavailableReason: reason,
-			UnavailableSoft:   soft && !required,
-			DriftItem:         &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
-			IsExcluded:        excludedLocally,
-			ExcludedLocally:   excludedLocally,
-			EnabledGlobal:     enabledGlobal,
-			EnabledProject:    enabledProject,
-			EnabledLocal:      enabledLocal,
-			RegistryURL:       meta.URL,
-			RegistryName:      RegistryDisplayName(meta.URL),
-			RegistryPath:      meta.Path,
-			RegistryRef:       meta.Ref,
-			Harnesses:         append([]string(nil), harnesses...),
-			HarnessSource:     harnessSourceLabel(*meta, layerHarnesses[meta.Source]),
+			UnavailableReason:   reason,
+			UnavailableSoft:     soft && !required,
+			DriftItem:           &materialize.DriftItem{Name: key, Reason: materialize.DriftBroken},
+			IsExcluded:          excludedLocally,
+			ExcludedLocally:     excludedLocally,
+			EnabledGlobal:       enabledGlobal,
+			EnabledOrganization: enabledOrganization,
+			EnabledUser:         enabledUser,
+			EnabledProject:      enabledProject,
+			EnabledLocal:        enabledLocal,
+			RegistryURL:         meta.URL,
+			RegistryName:        RegistryDisplayName(meta.URL),
+			RegistryPath:        meta.Path,
+			RegistryRef:         meta.Ref,
+			Harnesses:           append([]string(nil), harnesses...),
+			HarnessSource:       harnessSourceLabel(*meta, layerHarnesses[meta.Source]),
 		})
 	}
 	for _, err := range resolveErrs {

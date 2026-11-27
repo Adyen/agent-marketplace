@@ -40,6 +40,9 @@ type ResolvedArtifact struct {
 	// directly configured. Format: "collection:<name>@<version>".
 	// Empty string for directly-configured artifacts.
 	Via string
+	// CollectionParents records collection paths and the layers that selected
+	// them. It is display metadata and is not serialized.
+	CollectionParents []CollectionParent `json:"-"`
 
 	// Harnesses lists the target harnesses this artifact should be compiled
 	// into. Inherited from the top-level config by default; overridden by
@@ -86,6 +89,12 @@ type ResolvedArtifact struct {
 	// plugin package. It remains attached through materialization so package
 	// roots, data roots, ownership, and instance blocking use the plugin.
 	PluginPackage *PluginPackage `json:"-"`
+}
+
+// CollectionParent identifies a selected collection path and its config layer.
+type CollectionParent struct {
+	Path   string
+	Source config.Source
 }
 
 type PluginPackage struct {
@@ -1354,10 +1363,11 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	// displaces a member in the other. A required member still displaces a
 	// non-required selection in its own scope.
 	admissions := &scopeAdmissions{
-		required:    make(map[scopedSelection]bool),
-		displaced:   make(map[scopedSelection]skillOccurrence),
-		pluginEdges: make(map[scopedSelection][]PluginEdge),
-		plan:        planSink,
+		required:          make(map[scopedSelection]bool),
+		displaced:         make(map[scopedSelection]skillOccurrence),
+		pluginEdges:       make(map[scopedSelection][]PluginEdge),
+		collectionParents: make(map[collectionMemberIdentity][]CollectionParent),
+		plan:              planSink,
 	}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
@@ -1481,22 +1491,59 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 	}
 
 	if !expanded {
+		admissions.attachCollectionParents(out)
 		return out, append(errs, expandErrs...)
 	}
 	reconciled, reconcileErrs := reconcileExpandedHooks(out)
 	expandErrs = append(expandErrs, reconcileErrs...)
 	errs = append(errs, suppressResolvedMemberMisses(expandErrs, admissions.required)...)
-	return removeDisplacedSelections(reconciled, admissions.displaced, errs, admissions.plan)
+	expandedArtifacts, errs := removeDisplacedSelections(reconciled, admissions.displaced, errs, admissions.plan)
+	admissions.attachCollectionParents(expandedArtifacts)
+	return expandedArtifacts, errs
 }
 
 // scopeAdmissions records, per install scope, which installed names are
 // already selected, whether a required selection holds each one, and the
 // required collection members that displaced a non-required selection there.
 type scopeAdmissions struct {
-	required    map[scopedSelection]bool
-	displaced   map[scopedSelection]skillOccurrence
-	pluginEdges map[scopedSelection][]PluginEdge
-	plan        *pluginPlanSink
+	required          map[scopedSelection]bool
+	displaced         map[scopedSelection]skillOccurrence
+	pluginEdges       map[scopedSelection][]PluginEdge
+	collectionParents map[collectionMemberIdentity][]CollectionParent
+	plan              *pluginPlanSink
+}
+
+type collectionMemberIdentity struct {
+	selection  scopedSelection
+	catalogKey string
+	source     config.Source
+}
+
+func collectionIdentity(kind ir.ResourceKind, name, catalogKey string, source config.Source) collectionMemberIdentity {
+	return collectionMemberIdentity{
+		selection:  newScopedSelection(kind, name, source),
+		catalogKey: catalogKey,
+		source:     source,
+	}
+}
+
+func (a *scopeAdmissions) addCollectionParent(identity collectionMemberIdentity, parent CollectionParent) {
+	parents := a.collectionParents[identity]
+	if !slices.Contains(parents, parent) {
+		a.collectionParents[identity] = append(parents, parent)
+	}
+}
+
+func (a *scopeAdmissions) attachCollectionParents(artifacts []ResolvedArtifact) {
+	for i := range artifacts {
+		artifact := &artifacts[i]
+		identity := collectionIdentity(artifact.Kind, artifact.Name, artifact.CatalogKey, artifact.Source)
+		for _, parent := range a.collectionParents[identity] {
+			if !slices.Contains(artifact.CollectionParents, parent) {
+				artifact.CollectionParents = append(artifact.CollectionParents, parent)
+			}
+		}
+	}
 }
 
 func reconcileExpandedHooks(artifacts []ResolvedArtifact) ([]ResolvedArtifact, []error) {
@@ -2032,12 +2079,20 @@ func expandMembersRecursive(
 		// duplicates).
 		memberKey := ViaMapKey(member.Kind, memberName)
 		scopedKey := newScopedSelection(member.Kind, memberName, memberSource)
+		identity := collectionIdentity(member.Kind, memberName, memberCatalogKey, memberSource)
+		_, collectionExcluded := excludedResources[memberKey]
+		collectionExcluded = collectionExcluded && !memberRequired
+		locallyExcluded := localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, memberRequired, memberSource)
+		parent := CollectionParent{Path: viaLabel, Source: edgeSource}
 		existingRequired, selected := admissions.required[scopedKey]
 		displacing := false
 		if selected && !HasAdditiveSources(member.Kind) {
 			// A direct selection or an earlier expansion keeps precedence
 			// unless required policy outranks a non-required selection.
 			if !memberRequired || existingRequired {
+				if !collectionExcluded && !locallyExcluded {
+					admissions.addCollectionParent(identity, parent)
+				}
 				if member.Kind == ir.KindPlugin {
 					edge := PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}
 					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], edge)
@@ -2048,12 +2103,11 @@ func expandMembersRecursive(
 			displacing = true
 		}
 
-		if _, excluded := excludedResources[memberKey]; excluded && !memberRequired {
+		if collectionExcluded || locallyExcluded {
 			continue
 		}
-		if localResourceExcluded(localExcludes, localExcludeAllKinds, member.Kind, memberName, memberRequired, memberSource) {
-			continue
-		}
+
+		admissions.addCollectionParent(identity, parent)
 
 		// Mark as resolved to prevent duplicates from other collections.
 		admissions.required[scopedKey] = existingRequired || memberRequired

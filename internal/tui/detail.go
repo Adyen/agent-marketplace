@@ -18,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	ltable "charm.land/lipgloss/v2/table"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -176,6 +177,31 @@ func abbreviateDigest(value string) string {
 	return "sha256:" + match[1][:12] + "…"
 }
 
+func selectionLayerLabels(r row) []string {
+	var layers []string
+	if r.EnabledOrganization {
+		required := r.Artifact.Source == config.Organization && r.Artifact.Required
+		if selection, ok := r.MarketplaceSelections[config.Organization]; ok {
+			required = selection.Entry.Required
+		}
+		if required {
+			layers = append(layers, "organization (required)")
+		} else {
+			layers = append(layers, "organization default (optional)")
+		}
+	}
+	if r.EnabledUser {
+		layers = append(layers, "user")
+	}
+	if r.EnabledProject {
+		layers = append(layers, "project")
+	}
+	if r.EnabledLocal {
+		layers = append(layers, "local")
+	}
+	return layers
+}
+
 func renderDetail(m Model) string {
 	r, ok := m.selectedRow()
 	if !ok {
@@ -230,6 +256,12 @@ func renderDetail(m Model) string {
 				harnessValue += " (" + r.HarnessSource + ")"
 			}
 			fields = append(fields, [2]string{harnessLabel, safe(harnessValue)})
+		}
+		if layers := selectionLayerLabels(r); len(layers) > 0 {
+			fields = append(fields, [2]string{"Source layer:", safe(strings.Join(layers, ", "))})
+		}
+		if collections := r.CollectionNames(); len(collections) > 0 {
+			fields = append(fields, [2]string{"Included via:", safe(strings.Join(collections, ", "))})
 		}
 	}
 	fields = append(fields, [2]string{"Status:", safe(r.StatusText())})

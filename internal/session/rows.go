@@ -59,11 +59,13 @@ type Row struct {
 
 	// Per-scope enablement: which config file(s) enable this skill.
 	// A skill may be enabled in multiple scopes simultaneously.
-	EnabledGlobal   bool
-	EnabledProject  bool
-	EnabledLocal    bool
-	ExcludedLocally bool
-	ExcludedByUser  bool
+	EnabledGlobal       bool
+	EnabledOrganization bool
+	EnabledUser         bool
+	EnabledProject      bool
+	EnabledLocal        bool
+	ExcludedLocally     bool
+	ExcludedByUser      bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.
@@ -104,6 +106,46 @@ type Row struct {
 	// stores its width-dependent label memo here). The session never reads
 	// or interprets it.
 	LabelMemo any
+}
+
+// CollectionNames returns each collection parent once.
+func (r Row) CollectionNames() []string {
+	var names []string
+	addPath := func(path string) {
+		for _, parent := range strings.Split(path, " > ") {
+			parent = strings.TrimSpace(parent)
+			if strings.HasPrefix(parent, "collection:") {
+				names = append(names, collectionNameFromVia(parent))
+			}
+		}
+	}
+	addPath(r.Artifact.Via)
+	for _, parent := range r.Artifact.CollectionParents {
+		addPath(parent.Path)
+	}
+	for _, source := range []config.Source{config.Organization, config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		selection, ok := r.MarketplaceSelections[source]
+		if !ok {
+			continue
+		}
+		for _, parent := range selection.Pin.SelectedBy.List() {
+			names = append(names, parent.Name)
+		}
+	}
+	unique := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		unique = append(unique, name)
+	}
+	return unique
 }
 
 // SourceLabel is the display label for a source section: the registry display
