@@ -313,6 +313,16 @@ func TestDisablingInstalledRegistryCollectionRemovesSelection(t *testing.T) {
 			}
 			m := newViewModel(t, snap.rows)
 			m.workspace = f.workspace
+			if tc.name == "git" {
+				m.bulkModal = bulkModalState{sectionPath: "status:pending", scope: scopeProject, scopeSet: true, direction: bulkDirDisable}
+				_, skipReasons, err := m.evaluateBulkActions(m.bulkModal)
+				if err != nil {
+					t.Fatalf("evaluate collection-member bulk section: %v", err)
+				}
+				if skipReasons["collection-selected"] != 1 {
+					t.Fatalf("Git collection member must be counted once as skipped, reasons=%v", skipReasons)
+				}
+			}
 			m.bulkModal = bulkModalState{sectionPath: "status:enabled", scope: scopeProject, scopeSet: true, direction: bulkDirDisable}
 			acts, reasons, err := m.evaluateBulkActions(m.bulkModal)
 			if err != nil {

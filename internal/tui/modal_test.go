@@ -472,7 +472,6 @@ func TestScopedToggleActionPopulatesRegistryMetadata(t *testing.T) {
 	}
 }
 
-// spec: tui-interactions/installing-a-single-member-from-an-available-collection
 func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
