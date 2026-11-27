@@ -6,7 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 // spec: tui-interactions/personal-local-writes-are-git-ignored-at-once
-// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
+// spec: tui-interactions/scope-direction-confirmation-and-cancellation
 const journey = defineFixture("local-bulk-gitignore", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);

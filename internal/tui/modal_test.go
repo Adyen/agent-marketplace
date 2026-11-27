@@ -384,7 +384,6 @@ func TestModalLKeyDisablesAndRestoresProjectResourceLocally(t *testing.T) {
 }
 
 // spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
-// spec: tui-interactions/project-marketplace-pins-keep-local-installation-controls
 func TestProjectMarketplaceLocalKeyKeepsInstallationControls(t *testing.T) {
 	r := mkRow("review", withProject)
 	r.Artifact.IsMarketplace = true

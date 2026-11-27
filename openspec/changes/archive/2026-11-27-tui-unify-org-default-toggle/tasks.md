@@ -9,3 +9,7 @@
 - [x] 2.1 Update and add spec-annotated Go tests in `internal/tui/modal_test.go`, `internal/tui/terminal_size_contract_test.go`, and `internal/tui/bulk_toggle_test.go`.
 - [x] 2.2 Add or extend real-terminal TUI QA journeys under `tools/tui-qa/tests/` proving `[g]` org-default disable/restore and `[l]` local project override, and update `tools/tui-qa/README.md`.
 - [x] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
+
+## Revision note
+
+- 2026-11-27: Archive reconciled with planning revision `b32475ae04ecda4d1ffd45dfa10fd3fe63bd53a6`; approved AC2: "personal-local overrides only where supported; project Marketplace pins keep installation-scope controls; do not advertise ineffective overrides." Resolver behavior and plugin owner controls do not change. Bulk atomicity, scope availability, and the bulk `e` action remain preserved; `[g]`/`[l]` alignment follows original task 1.2.

@@ -446,7 +446,7 @@ func (f *bulkFixture) projectEnableActions(t *testing.T) []toggleAction {
 	return acts
 }
 
-// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
+// spec: tui-interactions/atomic-batch-success-and-failure
 func TestBulkGlobalCombinesSelectionAndOrganizationExclusionAtomically(t *testing.T) {
 	for _, userExclusionFirst := range []bool{false, true} {
 		name := "selection-first"
@@ -520,7 +520,7 @@ func TestBulkGlobalCombinesSelectionAndOrganizationExclusionAtomically(t *testin
 	}
 }
 
-// spec: tui-interactions/bulk-global-and-local-keys-use-row-eligible-exclusions
+// spec: tui-interactions/filtered-folded-descendants-and-skipped-rows
 func TestBulkLocalKeyUsesEligibleLocalExclusion(t *testing.T) {
 	f := newBulkFixture(t)
 	selected := f.snap.rows[0]
