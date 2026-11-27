@@ -21,8 +21,4 @@
 
 ## 4. Review
 
-- [ ] 4.1 Obtain lead approval that the current delta is ready to archive; verify no further scope corrections are requested.
-
-## Workflow follow-up
-
-- Archive `git-lock-suffix-identity-roundtrip` after review authorization; do not archive as part of this implementation handoff.
+- [x] 4.1 Review the final lock identity changes and verify the package tests, lint and build before archiving.
