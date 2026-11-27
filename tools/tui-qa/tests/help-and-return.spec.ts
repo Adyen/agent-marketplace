@@ -91,7 +91,7 @@ narrow.test("every help binding is reachable at 50x12 and reopening retains the 
       "H harness defaults", "E edit config", "s sync pending", "u update caches", "ctrl+k/: command palette"
     ] },
     { title: "Toggle Modal", bindings: [
-      "g toggle global", "p toggle project", "l toggle local", "e toggle local exclude", "esc cancel"
+      "g toggle global", "p toggle project", "l toggle local", "esc cancel"
     ] },
     { title: "Harness Modal", bindings: [
       "g edit global", "p edit project", "space toggle resource / all in section", "enter save", "esc cancel"
@@ -106,6 +106,9 @@ narrow.test("every help binding is reachable at 50x12 and reopening retains the 
     const visible = content.slice(start, end).replace(/\s+/g, " ");
     for (const binding of group.bindings) {
       assert.ok(visible.includes(binding), `unreachable ${group.title} binding: ${binding}`);
+    }
+    if (group.title === "Toggle Modal") {
+      assert.ok(!visible.includes("e toggle local exclude"), "obsolete Toggle Modal exclude binding remains");
     }
   }
   await step("close narrow help", () => terminal.write("\x1b"), async () => {

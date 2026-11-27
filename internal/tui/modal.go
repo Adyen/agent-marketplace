@@ -150,12 +150,21 @@ func toggleActionLabel(r row, key string, s scope, compact bool) string {
 	}
 	switch key {
 	case "g":
+		if compact {
+			return "global"
+		}
 		return "toggle global"
 	case "p":
+		if compact {
+			return "project"
+		}
 		return "toggle project"
 	case "l":
 		if r.Artifact.IsMarketplace {
 			return "toggle local installation"
+		}
+		if compact {
+			return "local"
 		}
 		return "toggle local"
 	default:

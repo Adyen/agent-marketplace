@@ -31,7 +31,7 @@ journey.test("enabling a collection lists it as installed and installs its membe
     await locate(terminal, /Name:\s+starter/).unique().expect();
   });
   await step("open its toggle modal", () => terminal.write(" "), async () => {
-    await locate(terminal, "Local exclude: no  (collection)").unique().expect();
+    await locate(terminal, /\[p\]\s+toggle project/).unique().expect();
   });
   await step("enable it in the project", () => terminal.write("p"), async () => {
     await locate(terminal, /Enabled\s+\(2\)/).unique().expect({ timeout: 30_000 });

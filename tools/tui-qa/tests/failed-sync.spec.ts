@@ -25,7 +25,7 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
   });
   await step("open its toggle modal", () => terminal.write(" "), async () => {
-    await locate(terminal, "Local exclude: no").unique().expect();
+    await locate(terminal, /\[p\]\s+toggle project/).unique().expect();
   });
   await step("enable it in the project", () => terminal.write("p"), async () => {
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
