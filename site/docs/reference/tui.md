@@ -125,7 +125,8 @@ While the TUI is on screen, logs go to the log file and are never printed to the
 
 ## Exit
 
-- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. If sync produces a new hook review or materialization warning, it opens diagnostics before leaving; review it, press `esc`, then `q` to quit. None of these undoes config edits already saved.
+- `q` lists pending installs (`+ install`) and removals (`- remove`) by name. Press `y` to sync before quitting, `n` to quit without syncing, or `esc` to stay. If only broken diagnostics remain, `q` exits without prompting. Quitting does not undo saved config edits.
+- After sync, the TUI reloads from disk. If changes still need a sync, it stays open with a warning; press `q` to see what remains. If sync produces a new hook review or materialization warning, the TUI opens diagnostics before leaving.
 - `ctrl+c`, `SIGINT`, and `SIGTERM` exit immediately. Finished filesystem work is not rolled back; the next launch shows the result.
 
 ## Related documentation
