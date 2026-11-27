@@ -8,4 +8,4 @@
 
 - [x] 2.1 Update and add spec-annotated Go tests in `internal/tui/modal_test.go`, `internal/tui/terminal_size_contract_test.go`, and `internal/tui/bulk_toggle_test.go`.
 - [x] 2.2 Add or extend real-terminal TUI QA journeys under `tools/tui-qa/tests/` proving `[g]` org-default disable/restore and `[l]` local project override, and update `tools/tui-qa/README.md`.
-- [ ] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.
+- [x] 2.3 Run `make validate`, `make spec-check`, and `make tui-qa`.

@@ -41,7 +41,7 @@ For `tags` and `all: true` selections the CLI prints `Removed legacy-review`, ev
 
 A resource from a group with `required: true` ignores every exclusion. `remove` refuses it with an error such as `skill "code-review" is required and cannot be removed`. To stop installing it, change the configuration that declares `required: true`. That is often the organization configuration, which your administrators manage.
 
-An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `e` in the scope modal. The TUI adds a user exclusion to `~/.agents/config.yaml`, which must already be v4, like every consumer root. [Convert older roots before upgrading](./migrate-configuration.md). The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, which is managed outside the CLI.
+An organization Marketplace collection without `required: true` is optional. To turn off one of its members on your machine, open the TUI, select the member, and press `g` in the scope modal. Pressing `g` again restores the organization default. The TUI adds a user exclusion to `~/.agents/config.yaml`, which must already be v4, like every consumer root. [Convert older roots before upgrading](./migrate-configuration.md). The collection stays selected and its other members stay enabled. The CLI cannot remove a pin from the organization file, which is managed outside the CLI.
 
 ## 4. Target a specific scope
 

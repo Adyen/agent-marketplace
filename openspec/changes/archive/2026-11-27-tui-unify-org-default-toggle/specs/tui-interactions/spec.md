@@ -2,7 +2,7 @@
 
 ### Requirement: Unified scope toggles for organization defaults and local overrides
 
-In the toggle modal, `[g]` on an optional organization Marketplace resource with an overridable pin SHALL toggle its user exclusion transparently without a separate `[e]` action. On a non-required, non-machine-scope, non-Marketplace resource enabled in project config that supports personal-local exclusion, `[l]` SHALL toggle its personal-local exclusion transparently; otherwise `[l]` SHALL retain personal-local selection toggling. Project Marketplace pins SHALL keep `[l]` as a local installation-scope control, and the modal SHALL NOT offer an ineffective local exclusion. Required resources and machine-scope local boundaries SHALL stay enforced.
+In the toggle modal, `[g]` on an optional organization Marketplace resource with an overridable pin SHALL toggle its user exclusion transparently without a separate `[e]` action. On an eligible project-enabled resource, `[l]` SHALL toggle its personal-local exclusion transparently; otherwise `[l]` SHALL retain its existing behavior. The modal SHALL NOT offer an ineffective local exclusion, and required and machine-scope boundaries SHALL stay enforced.
 
 #### Scenario: Global key disables and restores an optional organization default
 
