@@ -182,6 +182,8 @@ resources:
 
 	writeSkill(t, repeatedWorking, "review", "Repeated v2", nil)
 	commitAndPushAll(t, repeatedWorking, "repeated v2")
+	writeSkill(t, ordinaryWorking, "ordinary", "Ordinary v2", nil)
+	commitAndPushAll(t, ordinaryWorking, "ordinary v2")
 	if output, err := executeCommand("lock", "--upgrade", "--scope", "repo", "--registry", repeatedURL); err != nil {
 		t.Fatalf("targeted repeated-suffix lock upgrade: %v\n%s", err, output)
 	}
