@@ -52,7 +52,6 @@ type toggleAction struct {
 
 type toggleModalAction struct {
 	key   string
-	scope scope
 	label string
 }
 
@@ -81,8 +80,6 @@ func toggleScopeForKey(r row, key string) (scope, bool, string) {
 		s = scopeProject
 	case "l":
 		s = scopeLocal
-	case "e":
-		s = scopeLocalExclude
 	default:
 		return 0, false, ""
 	}
@@ -177,7 +174,7 @@ func toggleModalActions(r row, compact bool) []toggleModalAction {
 	for _, key := range []string{"g", "p", "l"} {
 		s, supported, _ := toggleScopeForKey(r, key)
 		if supported {
-			actions = append(actions, toggleModalAction{key: key, scope: s, label: toggleActionLabel(r, key, s, compact)})
+			actions = append(actions, toggleModalAction{key: key, label: toggleActionLabel(r, key, s, compact)})
 		}
 	}
 	return actions

@@ -520,7 +520,7 @@ func TestBulkGlobalCombinesSelectionAndOrganizationExclusionAtomically(t *testin
 	}
 }
 
-// spec: tui-interactions/filtered-folded-descendants-and-skipped-rows
+// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
 func TestBulkLocalKeyUsesEligibleLocalExclusion(t *testing.T) {
 	f := newBulkFixture(t)
 	selected := f.snap.rows[0]

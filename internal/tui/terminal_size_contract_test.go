@@ -115,7 +115,6 @@ func TestHelpAndErrorsScrollAtSupportedMinimum(t *testing.T) {
 }
 
 // spec: tui-rendering/colorless-and-narrow-rendering
-// spec: tui-interactions/local-key-disables-and-restores-a-project-committed-resource-locally
 func TestCoreViewsFitSupportedMinimumWithRecoveryActions(t *testing.T) {
 	base := modelWithSelectedRow(t, mkRow("resource", withProject))
 	base.width = 50
