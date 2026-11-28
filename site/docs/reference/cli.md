@@ -624,6 +624,23 @@ Unreadable configuration does not stop the teardown. The command prints a warnin
 
 Manage local approval receipts for exact deployed target profiles.
 
+### `target dry-run`
+
+Validate a local `target-import/v1` manifest against its profile and source directory:
+
+```text
+agent-marketplace target dry-run --profile <file> --source <directory> --import <file> [--destination <directory>]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--profile` | string | yes | none | Path to the local target profile. |
+| `--source` | string | yes | none | Directory containing mapped payload and excluded source files. |
+| `--import` | string | yes | none | Path to the `agent-marketplace.io/target-import/v1` manifest. |
+| `--destination` | string | no | not requested | Existing profile-admitted target root to check for conflicts and predicted ownership changes. |
+
+The command always writes a versioned JSON report. It validates the selected files and reports display files, other unselected files, advisory prerequisites, and pending manual setup. With `--destination`, it applies the place collision rules and reports predicted claims without writing files or ownership state. This local-only command does not load consumer configuration or acquisition locks, contact registries, request approval, probe a host, or run package code.
+
 ### `target approve`
 
 ```text

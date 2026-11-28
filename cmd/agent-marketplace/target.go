@@ -37,7 +37,14 @@ type targetApprovalResult struct {
 
 func newTargetCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "target", Short: "Manage target-profile selection and approval"}
-	cmd.AddCommand(newTargetApproveCmd(), newTargetToggleCmd("enable"), newTargetToggleCmd("disable"), newTargetVerifyCmd(), newTargetRetireCmd())
+	cmd.AddCommand(
+		newTargetApproveCmd(),
+		newTargetToggleCmd("enable"),
+		newTargetToggleCmd("disable"),
+		newTargetVerifyCmd(),
+		newTargetRetireCmd(),
+		newTargetDryRunCmd(),
+	)
 	return cmd
 }
 
