@@ -25,6 +25,7 @@ export interface FixtureOptions {
   //    The initial fixture sync is skipped to keep the TUI's first load cold.
   //  - "published-lock" publishes the same exact lock alongside the config.
   organization?: OrganizationFixtureMode;
+  marketplaceCollectionInspection?: boolean;
   userMarketplaceDrift?: boolean;
   userMarketplaceRemoved?: boolean;
   // The stub serves placeholder archives that do not hash to their digest.
@@ -147,6 +148,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
         searchableInstall: Boolean(options.marketplaceDiscovery),
+        searchableCollection: Boolean(options.marketplaceCollectionInspection),
         installFindings: options.marketplaceDiscovery === "findings",
         startupBrowse: options.marketplaceDiscovery === "startup-browse"
       });

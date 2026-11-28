@@ -108,6 +108,28 @@ const inspectionSearchItem = {
   description: "Uninstalled inspection fixture",
   availability: "available"
 };
+const collectionName = "retained-suite";
+const collectionMemberName = "snapshot-member";
+const collectionManifestBase = {
+  schema_version: "v1",
+  name: collectionName,
+  members: [{ kind: "skill", name: collectionMemberName, registry_id: registryID, revision: inspectionRevision }],
+  content_digest: "",
+  provenance: { generator: "" },
+  supported_schema_versions: ["v1"]
+};
+const collectionDigest = sha256(JSON.stringify(collectionManifestBase));
+const collectionManifestPayload = JSON.stringify({ ...collectionManifestBase, content_digest: collectionDigest });
+const collectionSearchItem = {
+  registry_id: registryID,
+  registry_slug: registrySlug,
+  kind: "collection",
+  name: collectionName,
+  revision: collectionDigest,
+  content_digest: collectionDigest,
+  description: "Verified collection refresh fixture",
+  availability: "available"
+};
 const artifactMediaType = "application/vnd.agent-marketplace.artifact.v1.tar+gzip";
 const archiveDigestPlaceholder = `sha256:${"0".repeat(64)}`;
 
@@ -127,6 +149,7 @@ export interface MarketplaceStubOptions {
   mismatchedPlaceholderArchive?: boolean;
   // Answer a query matching the installable skill with its exact revision.
   searchableInstall?: boolean;
+  searchableCollection?: boolean;
   startupBrowse?: boolean;
   // Assess the installable skill with one warning finding, so installing it
   // requires consent.
@@ -383,7 +406,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
       }
       const candidates = options.startupBrowse
         ? startupBrowseItems
-        : [inspectionSearchItem, ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : [])];
+        : [
+            inspectionSearchItem,
+            ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : []),
+            ...(options.searchableCollection ? [collectionSearchItem] : [])
+          ];
       const matches = candidates.filter((item) => {
         const matchesKind = !kind || item.kind === kind;
         const text = `${item.name} ${item.description}`.toLowerCase();
@@ -391,6 +418,11 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
         return matchesKind && matchesQuery;
       });
       response.end(JSON.stringify({ items: matches.slice(offset, offset + limit), total: matches.length, offset, limit }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === `/api/v1/manifests/${collectionDigest}`) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(collectionManifestPayload);
       return;
     }
     if (request.method === "GET" && url.pathname.includes(`/skill/${inspectionSkillName}`)) {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -248,6 +249,102 @@ func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.
 					options.ExactMarketplaceLocator.Name != "code-review" || options.ExactMarketplaceLocator.Revision != "sha256:"+strings.Repeat("c", 64) {
 					t.Fatalf("Marketplace member locator = %#v", options.ExactMarketplaceLocator)
 				}
+
+				verifiedCollection, ok := current.Artifact.Resource.(*ir.Collection)
+				if !ok {
+					t.Fatalf("verified collection resource = %#v", current.Artifact.Resource)
+				}
+				m.browseDiscoveryRows = []row{cloneMarketplaceDiscoveryRow(discovered)}
+				m.applySnapshotData(snapshotLoadedMsg{})
+				current, found = m.rowByKey(m.detailKey)
+				if !found || current.Artifact.Resource != verifiedCollection {
+					t.Fatalf("verified collection was not retained across snapshot replacement: row=%#v found=%t", current.Artifact.Resource, found)
+				}
+				if out := ansi.Strip(m.detailViewport.View()); !strings.Contains(out, "Contains (2):") || !strings.Contains(out, "skill: code-review") {
+					t.Fatalf("snapshot replacement lost verified collection detail:\n%s", out)
+				}
+
+				m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
+					Endpoint: discovered.MarketplaceDiscovery.Endpoint,
+					Items:    []mpapi.ResourceListItem{discovered.MarketplaceDiscovery.Item},
+					Total:    1,
+				}})
+				current, found = m.rowByKey(m.detailKey)
+				if !found || current.Artifact.Resource != verifiedCollection {
+					t.Fatalf("verified collection was not retained across discovery refresh: row=%#v found=%t", current.Artifact.Resource, found)
+				}
+				if out := ansi.Strip(m.detailViewport.View()); !strings.Contains(out, "Contains (2):") || !strings.Contains(out, "skill: code-review") {
+					t.Fatalf("discovery refresh lost verified collection detail:\n%s", out)
+				}
+
+				for _, refresh := range []struct {
+					name     string
+					mutate   func(*row)
+					vanished bool
+				}{
+					{
+						name: "changed endpoint",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Endpoint.URL = "https://other.example"
+						},
+					},
+					{
+						name: "changed digest",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.ContentDigest = "sha256:" + strings.Repeat("d", 64)
+						},
+					},
+					{
+						name: "changed revision",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.Revision = "sha256:" + strings.Repeat("e", 64)
+						},
+					},
+					{
+						name: "no longer installable",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.Availability = mpapi.AvailabilityRevoked
+						},
+					},
+					{name: "vanished", vanished: true},
+				} {
+					t.Run("refresh does not reuse inspection/"+refresh.name, func(t *testing.T) {
+						previous := cloneMarketplaceDiscoveryRow(discovered)
+						previous.Artifact.Resource = verifiedCollection
+						refreshed := cloneMarketplaceDiscoveryRow(discovered)
+						if refresh.mutate != nil {
+							refresh.mutate(&refreshed)
+						}
+						refreshModel := inspectionModelDirs(t, previous, repoRoot, homeDir)
+						refreshModel.pane = paneDetail
+						refreshModel.detailKey = rowKey(previous)
+						refreshModel.detailViewport.SetContent(renderMarketplaceDetailContent(refreshModel.currentTheme(), previous))
+						if before := ansi.Strip(refreshModel.detailViewport.View()); !strings.Contains(before, "Contains (2):") {
+							t.Fatalf("control did not start with verified collection detail:\n%s", before)
+						}
+						if !refresh.vanished {
+							refreshModel.browseDiscoveryRows = []row{refreshed}
+						}
+						refreshModel.mergeDiscoveryRows()
+
+						if refresh.vanished {
+							if _, found := refreshModel.rowByKey(rowKey(previous)); found {
+								t.Fatal("vanished collection remained after discovery refresh")
+							}
+						} else {
+							current, found := refreshModel.rowByKey(rowKey(refreshed))
+							if !found {
+								t.Fatal("refreshed collection row disappeared")
+							}
+							if current.Artifact.Resource != nil {
+								t.Fatalf("stale verified collection was attached to refreshed row: %#v", current.Artifact.Resource)
+							}
+						}
+						if out := ansi.Strip(refreshModel.detailViewport.View()); strings.Contains(out, "Contains (2):") || strings.Contains(out, "skill: code-review") {
+							t.Fatalf("stale verified collection summary remained visible after %s:\n%s", refresh.name, out)
+						}
+					})
+				}
 			}
 			if len(requests) != 2 || requests[0] != "GET /.well-known/agent-marketplace.json" || requests[1] != "GET /api/v1/manifests/"+digest {
 				t.Fatalf("collection inspection requests = %v", requests)
@@ -351,6 +448,15 @@ func TestMarketplaceSyntheticMemberDoesNotInheritCollectionSelection(t *testing.
 		member.MarketplaceDiscovery.Item.ContentDigest != revision {
 		t.Fatalf("synthetic member locator = %#v", member.MarketplaceDiscovery)
 	}
+}
+
+func cloneMarketplaceDiscoveryRow(r row) row {
+	clone := r
+	if r.MarketplaceDiscovery != nil {
+		discovery := *r.MarketplaceDiscovery
+		clone.MarketplaceDiscovery = &discovery
+	}
+	return clone
 }
 
 func marketplaceCollectionManifest(t *testing.T) (hccartifact.CollectionManifest, []byte, string) {

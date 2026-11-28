@@ -363,14 +363,13 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	}
 	m.authoritativeRows = msg.rows
 	m.provisionalRows = nil
-	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
 	m.resolved = msg.resolved
 	m.localExcludes = msg.localExcludes
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
-	m.mergeDiscoveryRows()
+	m.replaceDiscoveryRows()
 	// The rebuild may have scrolled to where a toggled row moved (for example
 	// a disabled row now in Available); keep the previous viewport and scroll
 	// only as far as the final selection needs.
