@@ -38,7 +38,7 @@ func (m *Model) currentFoldState() map[string]bool {
 // state. Search folds live in a per-query map, so the user's persisted fold
 // state is untouched and restored as soon as the filter clears.
 func (m *Model) rebuildFlatItems() {
-	m.flatItems = buildGroupedTree(m.filteredRows, m.viewSettings, m.currentFoldState())
+	m.flatItems = buildGroupedTreeWithRows(m.filteredRows, m.rows, m.viewSettings, m.currentFoldState())
 	m.listHeightPrefix = m.listHeightPrefix[:0]
 }
 
@@ -133,7 +133,7 @@ func (m *Model) toggleFoldAtCursor() {
 	}
 	fs := m.currentFoldState()
 	item := m.flatItems[m.cursor]
-	if item.Kind == flatSection || item.PluginParent {
+	if item.Kind == flatSection || item.PluginParent || item.CollectionParent {
 		fs[item.SectionPath] = !fs[item.SectionPath]
 	}
 }
@@ -150,14 +150,17 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 	case flatSection:
 		fs[it.SectionPath] = collapsed
 	case flatArtifact:
-		if it.PluginParent {
+		if it.PluginParent || it.CollectionParent {
 			fs[it.SectionPath] = collapsed
 			return
 		}
 		// Walk backward to find the nearest enclosing section header.
 		for i := m.cursor - 1; i >= 0; i-- {
 			prev := m.flatItems[i]
-			if prev.PluginParent {
+			if prev.PluginParent || prev.CollectionParent {
+				if prev.CollectionParent && prev.Depth >= it.Depth {
+					continue
+				}
 				if collapsed {
 					fs[prev.SectionPath] = true
 					m.cursor = i
@@ -186,7 +189,7 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 func (m *Model) collapseAllSections() {
 	fs := m.currentFoldState()
 	for _, it := range m.flatItems {
-		if it.Kind == flatSection || it.PluginParent {
+		if it.Kind == flatSection || it.PluginParent || it.CollectionParent {
 			fs[it.SectionPath] = true
 		}
 	}
@@ -221,10 +224,14 @@ func (m Model) rowByKey(key string) (row, bool) {
 			return resource, true
 		}
 		plugin, ok := resource.Artifact.Resource.(*ir.Plugin)
-		if !ok {
-			continue
+		if ok {
+			for _, member := range pluginMemberRows(resource, plugin) {
+				if rowKey(member) == key {
+					return member, true
+				}
+			}
 		}
-		for _, member := range pluginMemberRows(resource, plugin) {
+		for _, member := range collectionMemberRows(resource, m.rows) {
 			if rowKey(member) == key {
 				return member, true
 			}

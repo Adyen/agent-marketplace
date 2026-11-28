@@ -9,6 +9,7 @@ import { readRegularFile } from "./process-helpers.js";
 import {
   clipboardWrites,
   defineFixture,
+  expectSearchOpen,
   findTextRun,
   locate,
   sgr,
@@ -18,7 +19,10 @@ import {
   waitForInverse
 } from "./helpers.js";
 
-const journey = defineFixture("marketplace-full-view", ["tui"], 80, 24, { organization: "published-lock" });
+const journey = defineFixture("marketplace-full-view", ["tui"], 80, 24, {
+  organization: "published-lock",
+  marketplaceCollectionInspection: true
+});
 before(journey.setup);
 after(journey.cleanup);
 
@@ -141,5 +145,64 @@ journey.test("marketplace full view browses inspection content, selects preview 
       `inspection mutated fixture files under ${root}`
     );
     assert.deepEqual(removed, [], `inspection removed fixture files under ${root}`);
+  }
+});
+
+// spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
+journey.test("verified Marketplace collection detail survives reload", async (terminal) => {
+  const fixture = journey.current();
+  const controlledPaths = [
+    path.join(fixture.home, ".agents"),
+    path.join(fixture.home, ".factory"),
+    path.join(fixture.home, ".claude"),
+    fixture.repo,
+    path.dirname(fixture.orgConfigPath!)
+  ];
+  const baseline = new Map(controlledPaths.map((root) => [root, treeDigest(root)]));
+
+  await step("settled in-sync without the searchable collection", () => {}, async () => {
+    await locate(terminal, "org-review").expect();
+    await locate(terminal, "retained-suite").expect({ not: true });
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+
+  await step("open search", () => terminal.write("/"), async () => {
+    await expectSearchOpen(terminal);
+  });
+  await step("type the collection query", () => terminal.write("retained-suite"), async () => {
+    await locate(terminal, "/ retained-suite").unique().expect();
+  });
+  await step("apply the collection search", () => terminal.write("\r"), async () => {
+    await locate(terminal, "org-market/tools/retained-suite").unique().expect();
+    await locate(terminal, /available via Marketplace/).unique().expect();
+  });
+  await step("open the collection's verified detail", () => terminal.write("\r"), async () => {
+    await locate(terminal, "Collection manifest verified.").unique().expect();
+    await locate(terminal, /Contains \(1\):/).unique().expect();
+    await locate(terminal, /skill:\s+snapshot-member/).unique().expect();
+  });
+  await step("return to the collection row", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "org-market/tools/retained-suite").unique().expect();
+    await locate(terminal, /Contains \(1\):/).unique().expect();
+    await locate(terminal, /skill:\s+snapshot-member/).unique().expect();
+  });
+  await step("reload completes", () => terminal.write("r"), async () => {
+    await locate(terminal, "Reloaded").unique().expect({ timeout: 30_000 });
+  });
+  await step("verified member remains visible without reopening detail", () => {}, async () => {
+    await locate(terminal, "org-market/tools/retained-suite").unique().expect();
+    await locate(terminal, /Contains \(1\):/).unique().expect();
+    await locate(terminal, /skill:\s+snapshot-member/).unique().expect();
+  });
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+
+  for (const [root, snapshot] of baseline) {
+    const current = treeDigest(root);
+    const diff = [...current.entries()].filter(([file, digest]) => snapshot.get(file) !== digest);
+    const removed = [...snapshot.keys()].filter((file) => !current.has(file));
+    assert.deepEqual(diff.map(([file]) => file), [], `collection inspection mutated fixture files under ${root}`);
+    assert.deepEqual(removed, [], `collection inspection removed fixture files under ${root}`);
   }
 });

@@ -291,6 +291,12 @@ func renderDetail(m Model) string {
 		// Word-wrap the description
 		writeLine(value(safe(r.Artifact.Description)))
 	}
+	if collection, ok := r.Artifact.Resource.(*ir.Collection); ok {
+		if summary := collectionDetailSummary(collection); summary != "" {
+			b.WriteString("\n")
+			writeLine(summary)
+		}
+	}
 
 	if r.IsMalformed {
 		b.WriteString("\n")
@@ -625,18 +631,39 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 	if r.Artifact.Description != "" {
 		b.WriteString("\n" + value(safe(r.Artifact.Description)) + "\n")
 	}
+	if collection, ok := r.Artifact.Resource.(*ir.Collection); ok {
+		if summary := collectionDetailSummary(collection); summary != "" {
+			b.WriteString("\n" + value(summary) + "\n")
+		}
+	}
 	b.WriteString("\n")
 	switch {
 	case r.MarketplaceDiscovery == nil:
 		b.WriteString(value("Verified content is not available locally; run sync to restore it."))
 	case r.MarketplaceDiscovery.Item.Availability == mpapi.AvailabilityAvailable:
-		b.WriteString(value("Discovery metadata only — content is verified during install.\nPress space to install this exact revision."))
+		message := "Discovery metadata only — content is verified during install."
+		if _, ok := r.Artifact.Resource.(*ir.Collection); ok {
+			message = "Collection manifest verified."
+		}
+		b.WriteString(value(message + "\nPress space to install this exact revision."))
 	case r.MarketplaceDiscovery.Item.Availability == mpapi.AvailabilityOperatorExposed:
 		b.WriteString(value("Operator-exposed rejection — the assessment remains rejected, but Marketplace policy permits installation.\nPress space to install this exact revision."))
 	default:
 		b.WriteString(value("This Marketplace resource is not currently installable."))
 	}
 	return b.String()
+}
+
+func collectionDetailSummary(collection *ir.Collection) string {
+	members := collectionEntries(collection)
+	if len(members) == 0 {
+		return ""
+	}
+	lines := []string{fmt.Sprintf("Contains (%d):", len(members))}
+	for _, member := range members {
+		lines = append(lines, "  • "+member.Kind.String()+": "+sanitizeTerminalData(member.Name, terminalSingleLine))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderBundleEntry renders one selected bundle member. Archive-backed trees
@@ -659,7 +686,17 @@ func renderBundleEntry(ctx context.Context, t theme, tr *bundleTree, relative st
 	if data, ok := tr.virtual[relative]; ok {
 		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
 	}
-	return renderBundleFile(t.dark, tr.root, relative, width)
+	sourcePath := relative
+	if tr.sourcePrefix != "" {
+		sourcePath = filepath.ToSlash(filepath.Join(filepath.FromSlash(tr.sourcePrefix), filepath.FromSlash(relative)))
+	}
+	content := renderBundleFile(t.dark, tr.root, sourcePath, width)
+	if tr.collection != nil && relative == tr.onlyFile {
+		if summary := collectionDetailSummary(tr.collection); summary != "" {
+			return boundRenderedDetail(summary + "\n\n" + content)
+		}
+	}
+	return content
 }
 
 // renderBundleFile reads exactly one selected bundle file. The relative path

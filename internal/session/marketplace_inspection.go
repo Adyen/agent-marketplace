@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -26,6 +27,50 @@ func MarketplaceInspectableSkill(row Row) bool {
 		row.Artifact.Kind == ir.KindSkill &&
 		row.MarketplaceDiscovery != nil &&
 		MarketplaceDiscoveryInstallable(row)
+}
+
+func MarketplaceInspectableCollection(row Row) bool {
+	return row.Artifact.IsMarketplace &&
+		row.Artifact.Kind == ir.KindCollection &&
+		row.Artifact.Path == "" &&
+		row.MarketplaceDiscovery != nil &&
+		MarketplaceDiscoveryInstallable(row)
+}
+
+func OpenMarketplaceCollectionInspection(ctx context.Context, row Row) (hccartifact.CollectionManifest, error) {
+	if !MarketplaceInspectableCollection(row) {
+		return hccartifact.CollectionManifest{}, errors.New("resource is not an inspectable uninstalled Marketplace collection")
+	}
+	discovery := row.MarketplaceDiscovery
+	item := discovery.Item
+	if item.RegistryID == "" || item.Kind != ir.KindCollection.String() || item.Name == "" ||
+		item.Revision == "" || item.ContentDigest == "" || item.Revision != item.ContentDigest {
+		return hccartifact.CollectionManifest{}, errors.New("marketplace collection discovery did not provide an exact manifest digest")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, marketplace.DefaultSearchTimeout)
+	defer cancel()
+	client, err := marketplace.NewClient(discovery.Endpoint.URL)
+	if err != nil {
+		return hccartifact.CollectionManifest{}, err
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		return hccartifact.CollectionManifest{}, err
+	}
+	if discovery.Endpoint.InstanceID == "" || wellKnown.InstanceID != discovery.Endpoint.InstanceID {
+		return hccartifact.CollectionManifest{}, fmt.Errorf("marketplace instance %q does not match discovery endpoint %q", wellKnown.InstanceID, discovery.Endpoint.InstanceID)
+	}
+	manifest, _, err := client.GetCollectionManifest(ctx, item.ContentDigest)
+	if err != nil {
+		return hccartifact.CollectionManifest{}, err
+	}
+	if manifest.Name != item.Name || manifest.ContentDigest != item.ContentDigest {
+		return hccartifact.CollectionManifest{}, errors.New("collection manifest identity does not match the discovery item")
+	}
+	return manifest, nil
 }
 
 func OpenMarketplaceInspection(ctx context.Context, row Row) (*MarketplaceInspection, error) {

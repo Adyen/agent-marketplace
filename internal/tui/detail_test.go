@@ -115,6 +115,21 @@ func TestRenderDetailShowsResourceKindAndName(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/expanding-a-collection-shows-its-mcp-servers-and-skills
+func TestRenderDetailListsCollectionMembersAndIncludedCollections(t *testing.T) {
+	out := ansi.Strip(renderDetail(modelWithSelectedRow(t, collectionTestRow())))
+	for _, want := range []string{
+		"Contains (3):",
+		"mcpserver: genai-psx",
+		"skill: code-review",
+		"collection: genai-base",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("collection detail missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // spec: tui-rendering/optional-organization-default-and-collection-selected-resource-show-provenance
 func TestRenderDetailShowsSelectionLayerProvenance(t *testing.T) {
 	cases := []struct {

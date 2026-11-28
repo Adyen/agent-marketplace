@@ -519,6 +519,53 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 	}
 }
 
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestMarketplaceCollectionMemberInstallUsesDirectPinPipeline(t *testing.T) {
+	const revision = "sha256:member"
+	parent := marketplaceDiscoveryRow("collection", "suite", mpapi.AvailabilityAvailable)
+	parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{
+		{Name: "review", Kind: ir.KindSkill, Registry: "leaf-registry", Ref: revision},
+	}, nil, nil, ir.SourceRef{})
+	members := collectionMemberRows(parent, nil)
+	if len(members) != 1 {
+		t.Fatalf("collection members = %#v", members)
+	}
+
+	oldPrepare := session.PrepareDiscoveryMarketplaceInstall
+	t.Cleanup(func() { session.PrepareDiscoveryMarketplaceInstall = oldPrepare })
+	var got pipeline.InstallOptions
+	session.PrepareDiscoveryMarketplaceInstall = func(_ context.Context, options pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+		got = options
+		return &pipeline.PreparedMarketplaceInstall{}, nil
+	}
+	m := newTestModel()
+	m.repoRoot = t.TempDir()
+	_, cmd := m.startDiscoveryInstall(members[0], scopeProject)
+	if cmd == nil {
+		t.Fatal("collection member did not start the Marketplace install pipeline")
+	}
+	var prepared bool
+	for _, run := range batchCmds(cmd) {
+		if _, ok := run().(discoveryInstallMsg); ok {
+			prepared = true
+			break
+		}
+	}
+	if !prepared {
+		t.Fatal("collection member did not reach Marketplace install preparation")
+	}
+	if got.Scope != "repo" || !got.ScopeSpecified || got.Marketplace != "public" ||
+		got.ExactMarketplaceLocator == nil || got.ExactMarketplaceLocator.URL != parent.MarketplaceDiscovery.Endpoint.URL ||
+		got.ExactMarketplaceLocator.Registry != "leaf-registry" || got.ExactMarketplaceLocator.Kind != "skill" ||
+		got.ExactMarketplaceLocator.Name != "review" || got.ExactMarketplaceLocator.Revision != revision ||
+		got.ExactMarketplaceLocator.Digest != revision {
+		t.Fatalf("direct member install options = %#v", got)
+	}
+	if len(got.Args) != 1 || got.Args[0] != "public:leaf-registry/skill/review@"+revision {
+		t.Fatalf("direct member locator args = %v", got.Args)
+	}
+}
+
 // spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
 func TestMarketplaceDiscoveryInstallSyncsThroughTheDependencyReconciler(t *testing.T) {
 	oldPrepare := session.PrepareDiscoveryMarketplaceInstall

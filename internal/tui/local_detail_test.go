@@ -40,14 +40,17 @@ func writeLocalDetailFixture(t *testing.T, consumerRoot, harness, suffix string)
 	fx.relPaths["skill"] = prefix + "skills/" + fx.skillName + "/SKILL.md"
 	fx.relPaths["support"] = prefix + "skills/" + fx.skillName + "/support.txt"
 	fx.relPaths["command"] = prefix + "commands/" + fx.commandName + ".md"
+	fx.relPaths["collection"] = "collections/local-collection/COLLECTION.yaml"
 	fx.markers["skill"] = "SOURCE-SKILL-MARKER-" + suffix
 	fx.markers["support"] = "SOURCE-SUPPORT-MARKER-" + suffix
 	fx.markers["command"] = "SOURCE-COMMAND-MARKER-" + suffix
+	fx.markers["collection"] = "COLL-MARKER-" + suffix
 
 	files := map[string]string{
-		fx.relPaths["skill"]:   "---\nname: " + fx.skillName + "\ndescription: local fixture\n---\n\n" + fx.markers["skill"] + "\n",
-		fx.relPaths["support"]: fx.markers["support"] + "\n",
-		fx.relPaths["command"]: "---\nname: " + fx.commandName + "\ndescription: local fixture\n---\n\n" + fx.markers["command"] + "\n",
+		fx.relPaths["skill"]:      "---\nname: " + fx.skillName + "\ndescription: local fixture\n---\n\n" + fx.markers["skill"] + "\n",
+		fx.relPaths["support"]:    fx.markers["support"] + "\n",
+		fx.relPaths["command"]:    "---\nname: " + fx.commandName + "\ndescription: local fixture\n---\n\n" + fx.markers["command"] + "\n",
+		fx.relPaths["collection"]: "name: local-collection\ndescription: " + fx.markers["collection"] + "\nresources:\n  - name: " + fx.skillName + "\n",
 	}
 	for rel, content := range files {
 		path := filepath.Join(fx.registryRoot, filepath.FromSlash(rel))
@@ -153,7 +156,7 @@ func loadLocalCatalog(t *testing.T, consumerRoot, url, harness string) (catalog.
 			entries[entry.Kind] = entry
 		}
 	}
-	for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand} {
+	for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindCollection} {
 		if _, ok := entries[kind]; !ok {
 			t.Fatalf("missing %s entry in %+v", kind, loaded.Catalogs)
 		}
@@ -186,8 +189,18 @@ func TestLocalRegistryDetailBrowsingIsSourceAnchored(t *testing.T) {
 			}
 			loaded, entries := loadLocalCatalog(t, consumerRoot, url, tc.harness)
 
-			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand} {
+			for _, kind := range []ir.ResourceKind{ir.KindSkill, ir.KindCommand, ir.KindCollection} {
 				entry := entries[kind]
+				if kind == ir.KindCollection {
+					wantSourcePath := filepath.Join(fx.registryRoot, filepath.FromSlash(fx.relPaths["collection"]))
+					if entry.Path != fx.relPaths["collection"] || entry.PrimarySourcePath != wantSourcePath || entry.SourceRoot != fx.registryRoot {
+						t.Fatalf("collection source paths = logical %q, primary %q, root %q", entry.Path, entry.PrimarySourcePath, entry.SourceRoot)
+					}
+					collectionResource, ok := entry.Resource.(*ir.Collection)
+					if !ok || collectionResource.Source.File != fx.relPaths["collection"] {
+						t.Fatalf("collection IR source file = %#v, want portable path %q", entry.Resource, fx.relPaths["collection"])
+					}
+				}
 				r := row{Artifact: resolver.ResolvedArtifact{Entry: entry}}
 				m := modelWithSelectedRow(t, r)
 				m.width = 100
@@ -203,10 +216,16 @@ func TestLocalRegistryDetailBrowsingIsSourceAnchored(t *testing.T) {
 				if kind == ir.KindCommand && selected != filepath.Base(fx.relPaths["command"]) {
 					t.Fatalf("command selected %q, want %s", selected, filepath.Base(fx.relPaths["command"]))
 				}
+				if kind == ir.KindCollection && selected != filepath.Base(fx.relPaths["collection"]) {
+					t.Fatalf("collection selected %q, want %s", selected, filepath.Base(fx.relPaths["collection"]))
+				}
 
 				marker := fx.markers["skill"]
-				if kind == ir.KindCommand {
+				switch kind {
+				case ir.KindCommand:
 					marker = fx.markers["command"]
+				case ir.KindCollection:
+					marker = fx.markers["collection"]
 				}
 				preview := renderBundleEntry(context.Background(), newTheme(true), m.bundle, selected, 80)
 				if !strings.Contains(preview, marker) {
@@ -214,6 +233,13 @@ func TestLocalRegistryDetailBrowsingIsSourceAnchored(t *testing.T) {
 				}
 				if strings.Contains(preview, fx.markers["decoy"]) {
 					t.Fatalf("%s primary preview showed consumer decoy:\n%s", kind, preview)
+				}
+				if kind == ir.KindCollection {
+					for _, want := range []string{"Contains (1):", "skill: " + fx.skillName, "resources:"} {
+						if !strings.Contains(preview, want) {
+							t.Fatalf("collection preview missing %q:\n%s", want, preview)
+						}
+					}
 				}
 
 				if kind == ir.KindSkill {
@@ -342,5 +368,38 @@ func TestLocalRegistryDetailFailsReadOnlyAfterDiscovery(t *testing.T) {
 			}
 			assertTreeUnchanged(t, consumerRoot, before)
 		})
+	}
+}
+
+// spec: tui-navigation/missing-or-unsafe-local-content-fails-read-only
+func TestCollectionManifestPreviewRejectsSymlinkedAncestorAfterDiscovery(t *testing.T) {
+	consumerRoot := t.TempDir()
+	fx := writeLocalDetailFixture(t, consumerRoot, "claude", "collection-symlink")
+	t.Chdir(consumerRoot)
+
+	_, entries := loadLocalCatalog(t, consumerRoot, fx.registryRoot, "claude")
+	entry := entries[ir.KindCollection]
+	if entry.PrimarySourcePath == "" || entry.SourceRoot == "" {
+		t.Fatalf("collection source paths = primary %q root %q, want anchored paths", entry.PrimarySourcePath, entry.SourceRoot)
+	}
+	m := modelWithSelectedRow(t, row{Artifact: resolver.ResolvedArtifact{Entry: entry}})
+	m.width = 100
+	m.height = 30
+	m.enterDetailPane()
+	if m.bundle == nil {
+		t.Fatalf("collection did not open a source bundle:\n%s", m.detailViewport.View())
+	}
+
+	collectionDir := filepath.Dir(entry.PrimarySourcePath)
+	outsideDir := filepath.Join(t.TempDir(), "collection")
+	if err := os.Rename(collectionDir, outsideDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, collectionDir); err != nil {
+		t.Fatal(err)
+	}
+	preview := renderBundleEntry(context.Background(), newTheme(true), m.bundle, m.detailSelectedPath, 80)
+	if !strings.Contains(preview, "Error reading file") || strings.Contains(preview, fx.markers["collection"]) {
+		t.Fatalf("symlinked manifest ancestor did not fail closed:\n%s", preview)
 	}
 }

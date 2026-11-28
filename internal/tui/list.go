@@ -183,7 +183,7 @@ func formatFlatItem(it flatItem, width int, compact bool) string {
 		g := statusSymbol(r)
 		badge := scopeBadgeColumn(r)
 		name := resourceLabel(r)
-		if it.PluginParent {
+		if it.PluginParent || it.CollectionParent {
 			glyph := "▼"
 			if it.Collapsed {
 				glyph = "▶"
@@ -216,7 +216,7 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 		r := it.Row
 		g := statusSymbol(r)
 		name := resourceLabel(r)
-		if it.PluginParent {
+		if it.PluginParent || it.CollectionParent {
 			glyph := "▼"
 			if it.Collapsed {
 				glyph = "▶"

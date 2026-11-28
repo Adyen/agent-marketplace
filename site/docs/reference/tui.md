@@ -17,6 +17,8 @@ Resource toggles, Marketplace installs, and the harness dialog (`H`) edit v4 con
 
 The list groups resources by status (**Required**, **Enabled**, **Pending sync**, **Stale**, **Broken**, **Available**, **Malformed**) and hides empty groups. Each row shows a scope letter (`G` user, `O` optional organization default, `P` project, `L` local, their combinations, `R` required, `P-` a project selection overridden by a local exclusion, blank for available or malformed rows), the resource kind, and `registry/name` (the source's repository name, or `(local)`). The right-hand detail pane lists the selecting configuration layers as `Source layer:` (for example `organization default (optional)`, `organization (required)`, `user`, `project`, `local`) and, for resources selected through collections, the collection name(s) as `Included via:`. `/` searches and `esc` clears; search also matches kind and source labels in every grouping.
 
+A collection with known members is an expandable parent row (`▼`/`▶`) in every grouping, like a plugin row. Expanding it shows indented member rows beneath it, and the detail pane lists them as `Contains (N):` with their kinds. A member that does not resolve to a known resource still appears under the name in the collection definition, but cannot be toggled. Included sub-collections appear as `collection` member rows; the list shows them but does not expand them recursively. A member that is selected only through an installed collection cannot be toggled on its own; the footer toast says to toggle the collection instead.
+
 `v` opens **View settings** to group by **Source** or **Kind** instead, optionally with a second grouping inside each section. `tab` or `↑`/`↓` move between the two fields, `←`/`→` (or `h`/`l`) change a field, `enter` accepts, and `esc` restores the previous grouping. Folds and the selected resource are kept. Outside the status grouping, rows that need attention appear once, in a pinned **Needs attention** section at the top, and not in their own section. A confirmed grouping is saved to `$XDG_STATE_HOME/agent-marketplace/tui.json` (default `~/.local/state/agent-marketplace/tui.json`) and restored on the next launch. It never touches a config or lockfile. A missing file silently falls back to the status grouping; a malformed, unreadable, or unsupported file falls back with a footer warning and is left alone until you confirm a change.
 
 ## Inspection
@@ -26,6 +28,7 @@ The list groups resources by status (**Required**, **Enabled**, **Pending sync**
 - Local resources open a file browser.
 - An installable Marketplace skill loads the verified inspection of its exact revision in the background, showing `SKILL.md` first and fetching supporting text files when you select them. Browsing installs nothing and changes no config or lock.
 - Binary files show identity details. Unavailable, corrupt, or mismatched content shows an error.
+- An uninstalled Marketplace collection listed by endpoint discovery loads and verifies its exact published manifest in the background, then lists its members read-only. Browsing writes no config, lock, or harness files, and a fetch or digest-verification failure reports an inspection error without showing unverified members.
 - Other uninstalled Marketplace rows show metadata without downloading content.
 - Installed resources show their verified cached files, including a synthesized `SKILL.md` when supporting files are cached apart from the definition. Sync restores missing cached files.
 
@@ -36,6 +39,8 @@ The list groups resources by status (**Required**, **Enabled**, **Pending sync**
 A new Marketplace resource has its exact revision verified before it is installed. If the revision has security findings, the TUI shows the verified preview and asks for confirmation; without findings it installs with no prompt. Capability metadata alone never triggers a prompt. Blocked and revoked rows can be inspected but not installed.
 
 A new Git, GitHub/GitLab web, or directory source can be previewed and installed with `i`. Previewing does not write configuration or locks; blocked sources and invalid paths are refused before network access. Pick resources by kind (including collections), review the user, project, or local configuration file, and confirm. Git installs are bound to the previewed commit: if the ref moves before confirmation, the install is refused, the modal returns to Pick, and surviving picks are retained after re-preview. If the chosen scope's lock keeps the source at an older commit than the preview, the modal stays on Review with the picks and scope kept and shows the `agent-marketplace update` command that advances it, or lets you choose another scope, without previewing again. On the Source step, `tab` and `shift+tab` (or `↓` and `↑`) move between URL, Ref, and Path; the arrows stop at the first and last field. `→` moves from Pick to Review and never installs from Review; `←` returns one step. On Review, `↑`/`↓` (or `k`/`j`) choose the scope in the same order as `g`/`p`/`l`. Confirming the Source step with the URL, ref, and path of the shown preview returns to Pick without previewing again, and a changed field previews again. `esc` cancels from any step without writing.
+
+`space` on an available member row beneath an expanded collection installs that single member as a direct selection in the chosen writable scope, without installing the parent collection or its sibling members. Members already installed through the collection itself stay protected: toggling them requires toggling the collection, and removing one member of an installed Git collection is a CLI [`remove`](./collections.md#removal) exclude, not a TUI toggle.
 
 A selection change is saved to config as soon as you accept it, and stays saved if you quit without syncing. "Pending" means the harness folders still need a sync to match the config.
 
@@ -81,7 +86,7 @@ When sync, update, or a Marketplace install changes owned hooks, diagnostics ope
 | Open the resource's scope dialog, or the section bulk-toggle dialog on a section header | `space` |
 | Open View settings (grouping) | `v` |
 | View resource details or cached files | `enter` |
-| Collapse / expand a section | `h` / `l` or left / right |
+| Collapse / expand a section or a collection/plugin parent row | `h` / `l` or left / right |
 | Toggle the current fold / collapse all / expand all | `za` / `zM` / `zR` |
 | Open the command palette | `ctrl+k` or `:` |
 | Sync pending changes | `s` |

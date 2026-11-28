@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -14,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 func installedCollectionFixtures() (*config.Config, map[string]catalogInfo, resolver.ResolvedArtifact, config.MarketplaceEntry, config.MarketplaceResourcePin) {
@@ -50,6 +52,95 @@ func collectionRowsNamed(rows []row, name string) []row {
 		}
 	}
 	return out
+}
+
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestAvailableCollectionMemberUsesItsOwnToggleAction(t *testing.T) {
+	parent := collectionTestRow()
+	member := collectionCatalogMember("code-review", ir.KindSkill, parent.RegistryURL, parent.RegistryRef, parent.RegistryPath, parent.Artifact.CatalogKey, false)
+
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.rows = []row{parent, member}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "code-review" {
+			m.cursor = i
+			break
+		}
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = updated.(Model)
+	if m.pane != paneToggleModal || m.modalSkill.Artifact.Kind != ir.KindSkill || m.modalSkill.Artifact.Name != "code-review" {
+		t.Fatalf("member toggle opened pane %v for %s %q", m.pane, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name)
+	}
+	action := scopedToggleAction(m.modalSkill, scopeProject)
+	if !action.enable || action.kind != ir.KindSkill || action.skillName != "code-review" || action.registryURL != parent.RegistryURL {
+		t.Fatalf("member toggle action = %+v, want only code-review from its source", action)
+	}
+}
+
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestCollectionOnlyMarketplaceMemberCannotToggleIndividually(t *testing.T) {
+	parent := marketplaceDiscoveryRow("collection", "suite", mpapi.AvailabilityAvailable)
+	parent.RegistryURL = "https://market.example"
+	parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{
+		{Name: "review", Kind: ir.KindSkill},
+	}, nil, nil, ir.SourceRef{})
+	member := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
+	member.MarketplaceDiscovery = nil
+	member.Artifact.IsMarketplace = true
+	member.RegistryURL = parent.RegistryURL
+	member.EnabledProject = true
+	member.MarketplaceCollectionOnly = true
+
+	m := newViewModel(t, []row{parent, member})
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "review" && item.Depth > 0 {
+			m.cursor = i
+			break
+		}
+	}
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = updated.(Model)
+	if m.pane == paneToggleModal || cmd == nil {
+		t.Fatalf("collection-only member opened toggle modal or omitted its guard: pane=%v cmd=%v", m.pane, cmd)
+	}
+	if toast, ok := cmd().(toastMsg); !ok || !strings.Contains(toast.text, "collection") {
+		t.Fatalf("collection-only member guard = %#v", toast)
+	}
+}
+
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestSelectedGitCollectionMemberCannotToggleIndividually(t *testing.T) {
+	parent := collectionTestRow()
+	parent.IsAvailable = false
+	parent.EnabledProject = true
+	parent.RegistryURL = "file:///registry"
+	parent.RegistryRef = "main"
+	parent.Artifact.CatalogKey = "registry"
+	member := mkRow("code-review", withProject, withKind(ir.KindSkill), withRegistry(parent.RegistryURL, parent.Artifact.CatalogKey))
+	member.RegistryRef = parent.RegistryRef
+	member.Artifact.CatalogKey = parent.Artifact.CatalogKey
+	member.Artifact.Via = "collection:genai-suite@1"
+
+	m := newViewModel(t, []row{parent, member})
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "code-review" && item.Depth > 0 {
+			m.cursor = i
+			break
+		}
+	}
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m = updated.(Model)
+	if m.pane == paneToggleModal || cmd == nil {
+		t.Fatalf("collection-only Git member opened toggle modal or omitted its guard: pane=%v cmd=%v", m.pane, cmd)
+	}
+	if toast, ok := cmd().(toastMsg); !ok || !strings.Contains(toast.text, "collection") {
+		t.Fatalf("collection-only Git member guard = %#v", toast)
+	}
 }
 
 // spec: tui-startup/verified-selected-collection-row-is-installed
@@ -222,6 +313,16 @@ func TestDisablingInstalledRegistryCollectionRemovesSelection(t *testing.T) {
 			}
 			m := newViewModel(t, snap.rows)
 			m.workspace = f.workspace
+			if tc.name == "git" {
+				m.bulkModal = bulkModalState{sectionPath: "status:pending", scope: scopeProject, scopeSet: true, direction: bulkDirDisable}
+				_, skipReasons, err := m.evaluateBulkActions(m.bulkModal)
+				if err != nil {
+					t.Fatalf("evaluate collection-member bulk section: %v", err)
+				}
+				if skipReasons["collection-selected"] != 1 {
+					t.Fatalf("Git collection member must be counted once as skipped, reasons=%v", skipReasons)
+				}
+			}
 			m.bulkModal = bulkModalState{sectionPath: "status:enabled", scope: scopeProject, scopeSet: true, direction: bulkDirDisable}
 			acts, reasons, err := m.evaluateBulkActions(m.bulkModal)
 			if err != nil {

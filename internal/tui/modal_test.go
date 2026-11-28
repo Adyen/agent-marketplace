@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // helperFlatCursorOnSkill returns a model with cursor on a known skill row.
@@ -508,15 +509,39 @@ func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *
 		t.Fatalf("v4 seeded Marketplace selection = %#v, %v", seeded, err)
 	}
 	r := row{
-		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true},
+		Artifact: resolver.ResolvedArtifact{
+			Entry:                   catalog.Entry{Kind: ir.KindSkill, Name: "team-review"},
+			IsMarketplace:           true,
+			MarketplaceURL:          entry.URL,
+			MarketplaceInstanceID:   entry.InstanceID,
+			MarketplaceRegistryID:   pin.RegistryID,
+			MarketplaceResourceName: pin.Name,
+			MarketplaceDigest:       pin.Digest,
+		},
 		EnabledProject: true,
 		RegistryURL:    entry.URL,
 		MarketplaceSelections: map[config.Source]marketplaceSelection{
 			config.RepoCommitted: {Entry: entry, Pin: pin},
 		},
+		MarketplaceDiscovery: &marketplaceDiscovery{
+			Endpoint: entry,
+			Item: mpapi.ResourceListItem{
+				RegistryID: pin.RegistryID, Kind: pin.Kind, Name: pin.Name,
+				Revision: pin.Revision, ContentDigest: pin.Digest, Availability: mpapi.AvailabilityAvailable,
+			},
+		},
+	}
+	parent := marketplaceDiscoveryRow("collection", "bundle", mpapi.AvailabilityAvailable)
+	parent.MarketplaceDiscovery.Endpoint = entry
+	parent.Artifact.Resource = ir.NewCollection("bundle", "", "", []ir.CollectionMember{
+		{Name: pin.Name, Kind: ir.KindSkill, Registry: pin.RegistryID, Ref: pin.Digest},
+	}, nil, nil, ir.SourceRef{})
+	members := collectionMemberRows(parent, []row{r})
+	if len(members) != 1 || len(members[0].MarketplaceSelections) == 0 {
+		t.Fatalf("collection member did not retain its direct pin data: %#v", members)
 	}
 
-	msg := runScopedToggle(repoRoot, scopedToggleAction(r, scopeProject))()
+	msg := runScopedToggle(repoRoot, scopedToggleAction(members[0], scopeProject))()
 
 	if written, ok := msg.(configWrittenMsg); !ok || written.err != nil {
 		t.Fatalf("Marketplace toggle = %#v", msg)

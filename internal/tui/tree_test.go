@@ -9,10 +9,48 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+func collectionTestRow() row {
+	collection := ir.NewCollection("genai-suite", "", "A verified toolkit",
+		[]ir.CollectionMember{
+			{Name: "genai-psx", Kind: ir.KindMcpServer},
+			{Name: "code-review", Kind: ir.KindSkill},
+		},
+		[]string{"genai-base"}, nil, ir.SourceRef{})
+	parent := mkRow(collection.Name(), withAvailable, withKind(ir.KindCollection))
+	parent.Artifact.Description = collection.Description
+	parent.Artifact.Resource = collection
+	parent.Artifact.RegistryURL = "file:///registries/team.git"
+	parent.Artifact.RegistryPath = "skills"
+	parent.Artifact.Ref = "main"
+	parent.Artifact.Source = config.RepoPersonal
+	parent.Artifact.CatalogKey = "team"
+	parent.RegistryURL = parent.Artifact.RegistryURL
+	parent.RegistryPath = parent.Artifact.RegistryPath
+	parent.RegistryRef = parent.Artifact.Ref
+	return parent
+}
+
+func collectionCatalogMember(name string, kind ir.ResourceKind, url, ref, path, catalogKey string, excluded bool) row {
+	member := mkRow(name, withAvailable, withKind(kind))
+	member.Artifact.Path = "/catalog/" + catalogKey + "/" + name
+	member.Artifact.RegistryURL = url
+	member.Artifact.RegistryPath = path
+	member.Artifact.Ref = ref
+	member.Artifact.Source = config.RepoPersonal
+	member.Artifact.CatalogKey = catalogKey
+	member.RegistryURL = url
+	member.RegistryRef = ref
+	member.RegistryPath = path
+	member.ExcludedLocally = excluded
+	member.IsExcluded = excluded
+	return member
+}
 
 // mkRow creates a row populated with the given skill name + scope flags for tests.
 func mkRow(name string, opts ...func(*row)) row {
@@ -118,6 +156,155 @@ func TestBuildStatusTreeGroupsByStatus(t *testing.T) {
 		if len(got) != 1 || got[0] != wantName {
 			t.Fatalf("%s should contain %s, got %v", path, wantName, got)
 		}
+	}
+}
+
+// spec: tui-navigation/expanding-a-collection-shows-its-mcp-servers-and-skills
+func TestCollectionMembersAppearUnderParentAcrossStatusAndKind(t *testing.T) {
+	parent := collectionTestRow()
+	knownRows := []row{
+		collectionCatalogMember("genai-psx", ir.KindMcpServer, parent.RegistryURL, parent.RegistryRef, parent.RegistryPath, parent.Artifact.CatalogKey, false),
+		collectionCatalogMember("code-review", ir.KindSkill, parent.RegistryURL, parent.RegistryRef, parent.RegistryPath, parent.Artifact.CatalogKey, false),
+	}
+	want := []string{"genai-suite", "genai-psx", "code-review", "genai-base"}
+	for _, settings := range []viewSettings{
+		{GroupBy: axisStatus},
+		{GroupBy: axisSource},
+		{GroupBy: axisKind},
+	} {
+		items := buildGroupedTreeWithRows([]row{parent}, knownRows, settings, nil)
+		var rows []flatItem
+		for _, item := range items {
+			if item.Kind == flatArtifact {
+				rows = append(rows, item)
+			}
+		}
+		if len(rows) != len(want) {
+			t.Fatalf("%s grouping rows = %d, want %d: %#v", settings.GroupBy, len(rows), len(want), rows)
+		}
+		for i, name := range want {
+			if rows[i].Row.Artifact.Name != name {
+				t.Fatalf("%s grouping row %d = %q, want %q", settings.GroupBy, i, rows[i].Row.Artifact.Name, name)
+			}
+		}
+		if rows[1].Row.Artifact.Kind != ir.KindMcpServer || rows[2].Row.Artifact.Kind != ir.KindSkill || rows[3].Row.Artifact.Kind != ir.KindCollection {
+			t.Fatalf("%s grouping member kinds = %v, %v, %v", settings.GroupBy, rows[1].Row.Artifact.Kind, rows[2].Row.Artifact.Kind, rows[3].Row.Artifact.Kind)
+		}
+		for _, child := range rows[1:] {
+			if child.Depth != rows[0].Depth+1 {
+				t.Errorf("%s grouping child %q depth = %d, want %d", settings.GroupBy, child.Row.Artifact.Name, child.Depth, rows[0].Depth+1)
+			}
+		}
+	}
+}
+
+// spec: tui-navigation/expanding-a-collection-shows-its-mcp-servers-and-skills
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestGitCollectionMemberRequiresEligibleCatalogBinding(t *testing.T) {
+	const (
+		ownerURL  = "file:///registries/owner.git"
+		memberURL = "file:///registries/member.git"
+	)
+	tests := []struct {
+		name     string
+		member   ir.CollectionMember
+		rows     []row
+		eligible bool
+		wantURL  string
+		wantPath string
+		wantKey  string
+	}{
+		{
+			name: "missing catalog member",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill, Registry: memberURL, Path: "tools",
+			},
+		},
+		{
+			name: "path mismatch",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill, Registry: memberURL, Path: "tools",
+			},
+			rows: []row{collectionCatalogMember("review", ir.KindSkill, memberURL, "main", "skills", "member-skills", false)},
+		},
+		{
+			name: "excluded catalog member",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill, Registry: memberURL, Path: "tools",
+			},
+			rows: []row{collectionCatalogMember("review", ir.KindSkill, memberURL, "main", "tools", "member-tools", true)},
+		},
+		{
+			name: "ambiguous pathless member",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill, Registry: memberURL,
+			},
+			rows: []row{
+				collectionCatalogMember("review", ir.KindSkill, memberURL, "main", "tools/a", "member-a", false),
+				collectionCatalogMember("review", ir.KindSkill, memberURL, "main", "tools/b", "member-b", false),
+			},
+		},
+		{
+			name: "same owner",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill,
+			},
+			rows:     []row{collectionCatalogMember("review", ir.KindSkill, ownerURL, "main", "collections", "owner", false)},
+			eligible: true,
+			wantURL:  ownerURL,
+			wantPath: "collections",
+			wantKey:  "owner",
+		},
+		{
+			name: "configured cross registry",
+			member: ir.CollectionMember{
+				Name: "review", Kind: ir.KindSkill, Registry: memberURL, Ref: "main", Path: "./tools/",
+			},
+			rows:     []row{collectionCatalogMember("review", ir.KindSkill, "file:///registries/member", "main", "tools", "member-tools", false)},
+			eligible: true,
+			wantURL:  "file:///registries/member",
+			wantPath: "tools",
+			wantKey:  "member-tools",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := mkRow("suite", withAvailable, withKind(ir.KindCollection))
+			parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{tt.member}, nil, nil, ir.SourceRef{})
+			parent.Artifact.RegistryURL = ownerURL
+			parent.Artifact.RegistryPath = "collections"
+			parent.Artifact.Ref = "main"
+			parent.Artifact.Source = config.RepoPersonal
+			parent.Artifact.CatalogKey = "owner"
+			parent.RegistryURL = ownerURL
+			parent.RegistryPath = "collections"
+			parent.RegistryRef = "main"
+
+			var got *row
+			for _, item := range buildGroupedTreeWithRows([]row{parent}, tt.rows, viewSettings{GroupBy: axisStatus}, nil) {
+				if item.Kind == flatArtifact && item.Row.Artifact.Name == "review" {
+					got = &item.Row
+					break
+				}
+			}
+			if got == nil {
+				t.Fatal("collection member was not displayed")
+			}
+			if !tt.eligible {
+				if got.IsAvailable || !got.PendingVerification ||
+					got.RegistryURL != "" || got.RegistryPath != "" || got.Artifact.CatalogKey != "" {
+					t.Fatalf("ineligible member = %#v, want display-only row without a source", got)
+				}
+				if denial := session.RowToggleDenialFor(*got); denial != session.RowTogglePendingVerification {
+					t.Fatalf("ineligible member toggle denial = %v, want pending verification", denial)
+				}
+				return
+			}
+			if !got.IsAvailable || got.RegistryURL != tt.wantURL || got.RegistryPath != tt.wantPath ||
+				got.Artifact.CatalogKey != tt.wantKey || got.Artifact.Path == "" {
+				t.Fatalf("eligible member = %#v, want configured catalog row %s/%s (%s)", got, tt.wantURL, tt.wantPath, tt.wantKey)
+			}
+		})
 	}
 }
 

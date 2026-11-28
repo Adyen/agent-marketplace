@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"encoding/base64"
 	"fmt"
 	"path/filepath"
@@ -8,10 +9,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // groupingAxis names one list grouping dimension. The zero/unknown values
@@ -74,9 +78,11 @@ type flatItem struct {
 	Collapsed    bool   // true when the fold state hides this section's children
 
 	// For skill rows.
-	Row          row
-	Depth        int // indentation depth; matches SectionDepth+1 of the owning section
-	PluginParent bool
+	Row              row
+	Depth            int // indentation depth; matches SectionDepth+1 of the owning section
+	PluginParent     bool
+	CollectionParent bool
+	CollectionMember bool
 }
 
 // statusBucket groups skills by their sync/lifecycle status.
@@ -306,7 +312,7 @@ func resourceKindSectionTitle(kind ir.ResourceKind) string {
 
 // emitSection appends a section header and, unless folded, its children —
 // nested sections for a secondary axis or sorted leaf rows.
-func emitSection(out []flatItem, sec groupedSection, depth int, foldState map[string]bool) []flatItem {
+func emitSection(out []flatItem, sec groupedSection, depth int, foldState map[string]bool, knownRows []row) []flatItem {
 	sortLeafRows(sec.members)
 	collapsed := foldState[sec.path]
 	out = append(out, flatItem{
@@ -321,15 +327,34 @@ func emitSection(out []flatItem, sec groupedSection, depth int, foldState map[st
 		return out
 	}
 	for _, r := range sec.members {
-		out = emitResourceRow(out, r, depth+1, foldState)
+		out = emitResourceRow(out, r, depth+1, foldState, knownRows)
 	}
 	return out
 }
 
-func emitResourceRow(out []flatItem, resource row, depth int, foldState map[string]bool) []flatItem {
+func emitResourceRow(out []flatItem, resource row, depth int, foldState map[string]bool, knownRows []row) []flatItem {
 	plugin, ok := resource.Artifact.Resource.(*ir.Plugin)
 	if !ok {
-		return append(out, flatItem{Kind: flatArtifact, Row: resource, Depth: depth})
+		collection, ok := resource.Artifact.Resource.(*ir.Collection)
+		if !ok || len(collectionEntries(collection)) == 0 {
+			return append(out, flatItem{Kind: flatArtifact, Row: resource, Depth: depth})
+		}
+		key := "collection:" + rowKey(resource)
+		collapsed := foldState[key]
+		out = append(out, flatItem{
+			Kind:             flatArtifact,
+			Row:              resource,
+			Depth:            depth,
+			CollectionParent: true,
+			SectionPath:      key,
+			Collapsed:        collapsed,
+		})
+		if !collapsed {
+			for _, member := range collectionMemberRows(resource, knownRows) {
+				out = append(out, flatItem{Kind: flatArtifact, Row: member, Depth: depth + 1, CollectionMember: true})
+			}
+		}
+		return out
 	}
 	key := "plugin:" + rowKey(resource)
 	collapsed := foldState[key]
@@ -341,11 +366,10 @@ func emitResourceRow(out []flatItem, resource row, depth int, foldState map[stri
 		SectionPath:  key,
 		Collapsed:    collapsed,
 	})
-	if collapsed {
-		return out
-	}
-	for _, member := range pluginMemberRows(resource, plugin) {
-		out = append(out, flatItem{Kind: flatArtifact, Row: member, Depth: depth + 1})
+	if !collapsed {
+		for _, member := range pluginMemberRows(resource, plugin) {
+			out = append(out, flatItem{Kind: flatArtifact, Row: member, Depth: depth + 1})
+		}
 	}
 	return out
 }
@@ -400,7 +424,162 @@ func pluginMemberRows(parent row, plugin *ir.Plugin) []row {
 	return children
 }
 
-func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis groupingAxis, prefix string, depth int, foldState map[string]bool) []flatItem {
+func collectionEntries(collection *ir.Collection) []ir.CollectionMember {
+	if collection == nil {
+		return nil
+	}
+	entries := slices.Clone(collection.Members)
+	for _, name := range collection.Includes {
+		entries = append(entries, ir.CollectionMember{Kind: ir.KindCollection, Name: name})
+	}
+	seen := make(map[string]bool, len(entries))
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.Kind == 0 {
+			entry.Kind = ir.KindSkill
+		}
+		key := entry.Kind.String() + "\x00" + entry.Name
+		if entry.Name == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
+func collectionMemberRows(parent row, knownRows []row) []row {
+	collection, ok := parent.Artifact.Resource.(*ir.Collection)
+	if !ok {
+		return nil
+	}
+	members := collectionEntries(collection)
+	children := make([]row, 0, len(members))
+	for _, member := range members {
+		child, found := collectionMemberRow(parent, member, knownRows)
+		if !found {
+			child = row{
+				Artifact: resolver.ResolvedArtifact{
+					Entry: catalog.Entry{Kind: member.Kind, Name: member.Name},
+				},
+				PendingVerification: true,
+			}
+			if parent.Artifact.IsMarketplace {
+				child.Artifact.IsMarketplace = true
+				child.IsAvailable = false
+				child.PendingVerification = true
+				child.MarketplaceCollectionOnly = !parent.IsAvailable
+				if discovery := parent.MarketplaceDiscovery; discovery != nil {
+					child.Artifact.MarketplaceURL = discovery.Endpoint.URL
+					child.Artifact.MarketplaceInstanceID = discovery.Endpoint.InstanceID
+					child.Artifact.MarketplaceAlias = discovery.Endpoint.Alias
+					child.Artifact.MarketplaceRegistryID = member.Registry
+					child.Artifact.MarketplaceResourceName = member.Name
+					child.Artifact.MarketplaceDigest = member.Ref
+					child.RegistryURL = discovery.Endpoint.URL
+					child.Artifact.RegistryURL = discovery.Endpoint.URL
+					if member.Registry != "" && member.Ref != "" && parent.IsAvailable {
+						child.IsAvailable = true
+						child.PendingVerification = false
+						child.MarketplaceDiscovery = &session.MarketplaceDiscovery{
+							Endpoint: config.MarketplaceEntry{
+								URL: discovery.Endpoint.URL, InstanceID: discovery.Endpoint.InstanceID, Alias: discovery.Endpoint.Alias,
+							},
+							Item: mpapi.ResourceListItem{
+								RegistryID: member.Registry, Kind: member.Kind.String(), Name: member.Name,
+								Revision: member.Ref, ContentDigest: member.Ref, Availability: mpapi.AvailabilityAvailable,
+							},
+						}
+					}
+				}
+			}
+		}
+		children = append(children, child)
+	}
+	return children
+}
+
+func collectionMemberRow(parent row, member ir.CollectionMember, knownRows []row) (row, bool) {
+	var chosen row
+	var chosenLocation string
+	found, ambiguous := false, false
+	registry, ref := strings.TrimSpace(member.Registry), strings.TrimSpace(member.Ref)
+	memberPath, pathPinned := config.NormalizeRegistryPath(member.Path), strings.TrimSpace(member.Path) != ""
+	var parentLocation string
+	if registry == "" && parent.Artifact.CatalogKey == "" {
+		parentLocation = sourceIdentity(parent)
+	}
+	for _, candidate := range knownRows {
+		if parent.Artifact.IsMarketplace {
+			if member.Registry == "" || member.Ref == "" {
+				continue
+			}
+			endpointURL := parent.Artifact.MarketplaceURL
+			instanceID := parent.Artifact.MarketplaceInstanceID
+			if parent.MarketplaceDiscovery != nil {
+				endpointURL = parent.MarketplaceDiscovery.Endpoint.URL
+				instanceID = parent.MarketplaceDiscovery.Endpoint.InstanceID
+			}
+			if candidate.MarketplaceDiscovery != nil {
+				discovery := candidate.MarketplaceDiscovery
+				if discovery.Endpoint.URL == endpointURL && discovery.Endpoint.InstanceID == instanceID &&
+					discovery.Item.RegistryID == member.Registry &&
+					discovery.Item.Kind == member.Kind.String() && discovery.Item.Name == member.Name &&
+					discovery.Item.Revision == member.Ref && discovery.Item.ContentDigest == member.Ref {
+					return candidate, true
+				}
+			}
+			if candidate.Artifact.MarketplaceURL == endpointURL &&
+				candidate.Artifact.Kind == member.Kind &&
+				candidate.Artifact.MarketplaceInstanceID == instanceID &&
+				candidate.Artifact.MarketplaceRegistryID == member.Registry &&
+				candidate.Artifact.MarketplaceDigest == member.Ref &&
+				cmp.Or(candidate.Artifact.MarketplaceResourceName, candidate.Artifact.Name) == member.Name {
+				return candidate, true
+			}
+			continue
+		}
+		if candidate.Artifact.Kind != member.Kind || candidate.Artifact.Name != member.Name ||
+			candidate.Artifact.IsMarketplace || candidate.IsMalformed || candidate.Artifact.Unresolved ||
+			candidate.UnavailableReason != "" || candidate.PendingVerification || candidate.IsExcluded ||
+			candidate.ExcludedLocally {
+			continue
+		}
+		if registry != "" {
+			if config.NormalizeGitURL(strings.TrimSpace(candidate.RegistryURL)) != config.NormalizeGitURL(registry) ||
+				(ref != "" && strings.TrimSpace(candidate.RegistryRef) != "" && strings.TrimSpace(candidate.RegistryRef) != ref) ||
+				(pathPinned && config.NormalizeRegistryPath(candidate.RegistryPath) != memberPath) {
+				continue
+			}
+		} else if parent.Artifact.CatalogKey != "" {
+			if candidate.Artifact.CatalogKey != parent.Artifact.CatalogKey {
+				continue
+			}
+		} else if sourceIdentity(candidate) != parentLocation {
+			continue
+		}
+		location := sourceIdentity(candidate)
+		if !found {
+			chosen, chosenLocation, found = candidate, location, true
+			continue
+		}
+		if location != chosenLocation {
+			ambiguous = true
+		}
+		if candidate.Artifact.Required && !chosen.Artifact.Required {
+			chosen = candidate
+		} else if candidate.Artifact.Required == chosen.Artifact.Required &&
+			config.CompareEntryPrecedence(candidate.Artifact.Source, candidate.Artifact.FilePrecedence, chosen.Artifact.Source, chosen.Artifact.FilePrecedence) > 0 {
+			chosen = candidate
+		}
+	}
+	if !found || (ambiguous && (!pathPinned || ref == "")) {
+		return row{}, false
+	}
+	return chosen, true
+}
+
+func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis groupingAxis, prefix string, depth int, foldState map[string]bool, knownRows []row) []flatItem {
 	for _, sec := range groupByAxis(rows, axis, prefix) {
 		if depth == 0 && settings.ThenBy != axisNone {
 			collapsed := foldState[sec.path]
@@ -413,11 +592,11 @@ func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis gr
 				Collapsed:    collapsed,
 			})
 			if !collapsed {
-				out = emitAxisSections(out, sec.members, settings, settings.ThenBy, sec.path, depth+1, foldState)
+				out = emitAxisSections(out, sec.members, settings, settings.ThenBy, sec.path, depth+1, foldState, knownRows)
 			}
 			continue
 		}
-		out = emitSection(out, sec, depth, foldState)
+		out = emitSection(out, sec, depth, foldState, knownRows)
 	}
 	return out
 }
@@ -426,6 +605,10 @@ func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis gr
 // grouping combination. When the primary axis is not status, attention rows
 // move into one pinned "Needs attention" section at the top.
 func buildGroupedTree(rows []row, settings viewSettings, foldState map[string]bool) []flatItem {
+	return buildGroupedTreeWithRows(rows, rows, settings, foldState)
+}
+
+func buildGroupedTreeWithRows(rows, knownRows []row, settings viewSettings, foldState map[string]bool) []flatItem {
 	settings = settings.normalized()
 	if foldState == nil {
 		foldState = map[string]bool{}
@@ -464,13 +647,13 @@ func buildGroupedTree(rows []row, settings viewSettings, foldState map[string]bo
 			})
 			if !collapsed {
 				for _, r := range attention {
-					out = emitResourceRow(out, r, 1, foldState)
+					out = emitResourceRow(out, r, 1, foldState, knownRows)
 				}
 			}
 		}
 		remaining = rest
 	}
-	out = emitAxisSections(out, remaining, settings, settings.GroupBy, "", 0, foldState)
+	out = emitAxisSections(out, remaining, settings, settings.GroupBy, "", 0, foldState, knownRows)
 	return out
 }
 

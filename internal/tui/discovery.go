@@ -506,12 +506,69 @@ func (m *Model) setProvisionalRows(rows []row) {
 }
 
 func (m *Model) mergeDiscoveryRows() {
+	var previousCollection row
+	hadPreviousCollection := false
+	if m.pane == paneDetail && m.detailKey != "" {
+		previousCollection, hadPreviousCollection = m.rowByKey(m.detailKey)
+		if !hadPreviousCollection || !marketplaceInspectableCollection(previousCollection) {
+			hadPreviousCollection = false
+		}
+	}
+
+	m.replaceDiscoveryRows()
+	if !hadPreviousCollection {
+		return
+	}
+	current, found := m.rowByKey(m.detailKey)
+	if !found || !marketplaceInspectableCollection(current) ||
+		rowKey(previousCollection) != rowKey(current) ||
+		marketplaceEndpointIdentity(previousCollection.MarketplaceDiscovery.Endpoint) != marketplaceEndpointIdentity(current.MarketplaceDiscovery.Endpoint) ||
+		!sameInspectedCollection(previousCollection, current) {
+		m.rebuildOpenBundle(previousCollection, true)
+	}
+}
+
+func (m *Model) replaceDiscoveryRows() {
 	selection := m.captureRebuildAnchor()
 	discoveryRows := m.displayDiscoveryRows()
-	m.rows = session.MergeDiscoveryRows(m.authoritativeRows, m.provisionalRows, discoveryRows)
+	rows := session.MergeDiscoveryRows(m.authoritativeRows, m.provisionalRows, discoveryRows)
+	retainInspectedCollections(m.rows, rows)
+	m.rows = rows
 
 	m.recomputeView()
 	m.restoreSelectionAfterRebuild(selection)
+}
+
+func retainInspectedCollections(previous, current []row) {
+	key := func(r row) [2]string {
+		return [2]string{rowKey(r), marketplaceEndpointIdentity(r.MarketplaceDiscovery.Endpoint)}
+	}
+	var verified map[[2]string]*ir.Collection
+	for _, r := range previous {
+		if collection, ok := r.Artifact.Resource.(*ir.Collection); ok && marketplaceInspectableCollection(r) {
+			if verified == nil {
+				verified = make(map[[2]string]*ir.Collection)
+			}
+			verified[key(r)] = collection
+		}
+	}
+	if len(verified) == 0 {
+		return
+	}
+	for i := range current {
+		if current[i].Artifact.Resource == nil && marketplaceInspectableCollection(current[i]) {
+			if collection := verified[key(current[i])]; collection != nil {
+				current[i].Artifact.Resource = collection
+			}
+		}
+	}
+}
+
+func sameInspectedCollection(previous, current row) bool {
+	previousCollection, previousVerified := previous.Artifact.Resource.(*ir.Collection)
+	currentCollection, currentVerified := current.Artifact.Resource.(*ir.Collection)
+	return previous.Artifact.Resource == nil && current.Artifact.Resource == nil ||
+		previousVerified && currentVerified && previousCollection == currentCollection
 }
 
 func marketplaceRowCoordinate(r row) string {

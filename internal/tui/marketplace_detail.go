@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
 )
 
@@ -20,6 +22,14 @@ type marketplaceDetailMsg struct {
 	err        error
 }
 
+type marketplaceCollectionDetailMsg struct {
+	generation requestGeneration
+	key        string
+	endpoint   string
+	collection *ir.Collection
+	err        error
+}
+
 type marketplaceInspection struct {
 	source   *session.MarketplaceInspection
 	manifest inspection.Manifest
@@ -27,6 +37,10 @@ type marketplaceInspection struct {
 
 func marketplaceInspectableSkill(r row) bool {
 	return session.MarketplaceInspectableSkill(r)
+}
+
+func marketplaceInspectableCollection(r row) bool {
+	return session.MarketplaceInspectableCollection(r)
 }
 
 func loadMarketplaceSkillDetail(ctx context.Context, t theme, r row, generation requestGeneration, width int) tea.Cmd {
@@ -55,6 +69,36 @@ func loadMarketplaceSkillDetail(ctx context.Context, t theme, r row, generation 
 			width:      width,
 		}
 	}
+}
+
+func loadMarketplaceCollectionDetail(ctx context.Context, r row, generation requestGeneration) tea.Cmd {
+	key := rowKey(r)
+	endpoint := marketplaceEndpointIdentity(r.MarketplaceDiscovery.Endpoint)
+	return func() tea.Msg {
+		result := marketplaceCollectionDetailMsg{generation: generation, key: key, endpoint: endpoint}
+		manifest, err := session.OpenMarketplaceCollectionInspection(ctxOrBackground(ctx), r)
+		if err != nil {
+			result.err = err
+			return result
+		}
+		members := make([]ir.CollectionMember, 0, len(manifest.Members))
+		for _, member := range manifest.Members {
+			kind, ok := skill.ParseKind(member.Kind)
+			if !ok {
+				continue
+			}
+			members = append(members, ir.CollectionMember{
+				Name: member.Name, Kind: kind, Registry: member.RegistryID, Ref: member.Revision,
+			})
+		}
+		result.collection = ir.NewCollection(manifest.Name, manifest.Version, manifest.Description, members, manifest.Includes, nil, ir.SourceRef{})
+		return result
+	}
+}
+
+func marketplaceCollectionInspectionError(err error) string {
+	return "Marketplace collection inspection unavailable: " + sanitizeTerminalData(err.Error(), terminalSingleLine) +
+		"\n\nNo verified members were loaded. Press space to install this exact revision, or esc to go back."
 }
 
 func newInspectionTree(inspectionSource *session.MarketplaceInspection, manifest inspection.Manifest, primary []byte) *bundleTree {

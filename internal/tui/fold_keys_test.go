@@ -117,6 +117,31 @@ func TestHandLCollapseAndExpandCurrentSection(t *testing.T) {
 	}
 }
 
+// spec: tui-navigation/expanding-a-collection-shows-its-mcp-servers-and-skills
+func TestHOnCollectionSiblingFoldsItsSection(t *testing.T) {
+	const (
+		sectionPath    = "status:available"
+		collectionPath = "collection:genai-suite"
+	)
+	m := NewModel("/repo", "/home")
+	m.flatItems = []flatItem{
+		{Kind: flatSection, SectionPath: sectionPath},
+		{Kind: flatArtifact, Row: collectionTestRow(), Depth: 1, CollectionParent: true, SectionPath: collectionPath},
+		{Kind: flatArtifact, Row: mkRow("member"), Depth: 2, CollectionMember: true},
+		{Kind: flatArtifact, Row: mkRow("sibling"), Depth: 1},
+	}
+	m.cursor = 3
+
+	updated, _ := m.Update(keyPress('h'))
+	m = updated.(Model)
+	if !m.currentFoldState()[sectionPath] {
+		t.Fatalf("h on an ordinary sibling should fold its section")
+	}
+	if m.currentFoldState()[collectionPath] {
+		t.Fatalf("h on an ordinary sibling folded the preceding collection")
+	}
+}
+
 func TestEnterOnSectionHeaderTogglesFold(t *testing.T) {
 	m := newTestModel()
 	m.cursor = 0 // status:enabled

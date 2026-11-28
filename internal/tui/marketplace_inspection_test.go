@@ -3,7 +3,10 @@ package tui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +16,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	inspectiontest "github.com/Adyen/agent-marketplace/internal/testutil/marketplace/inspection"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -72,6 +79,402 @@ func inspectionModelDirs(t *testing.T, r row, repoRoot, homeDir string, opts ...
 	m.width = 100
 	m.height = 30
 	return m
+}
+
+// spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
+func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		tamper          bool
+		fetchFailure    bool
+		changedEndpoint bool
+	}{
+		{name: "verified"},
+		{name: "digest mismatch", tamper: true},
+		{name: "manifest 404", fetchFailure: true},
+		{name: "changed endpoint", changedEndpoint: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest, payload, digest := marketplaceCollectionManifest(t)
+			if tc.name == "verified" {
+				manifest.Members[0].Name = "genai-psx\u202e"
+				var err error
+				payload, digest, err = hccartifact.EncodeCollectionManifest(manifest)
+				if err != nil {
+					t.Fatalf("encode hostile collection member: %v", err)
+				}
+			}
+			if tc.tamper {
+				payload = append(append([]byte(nil), payload...), ' ')
+			}
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method+" "+r.URL.Path)
+				switch r.URL.Path {
+				case "/.well-known/agent-marketplace.json":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("instance-1", "https://market.example"))
+				case "/api/v1/manifests/" + digest:
+					if tc.fetchFailure {
+						http.Error(w, "manifest unavailable", http.StatusNotFound)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(payload)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			repoRoot, homeDir := t.TempDir(), t.TempDir()
+			controlled := map[string][]byte{
+				filepath.Join(repoRoot, ".agents", "config.yaml"):                     []byte("apiVersion: agent-marketplace/v4\n"),
+				filepath.Join(repoRoot, ".agents", "lock.yaml"):                       []byte("apiVersion: v4\nresources: []\n"),
+				filepath.Join(repoRoot, ".factory", "skills", "retained", "SKILL.md"): []byte("# Retained\n"),
+				filepath.Join(homeDir, ".agents", "config.yaml"):                      []byte("apiVersion: agent-marketplace/v4\n"),
+			}
+			for path, data := range controlled {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			discovered := marketplaceDiscoveryRow("collection", manifest.Name, mpapi.AvailabilityAvailable)
+			discovered.MarketplaceDiscovery.Endpoint.URL = server.URL
+			discovered.MarketplaceDiscovery.Item.Revision = digest
+			discovered.MarketplaceDiscovery.Item.ContentDigest = digest
+			m := inspectionModelDirs(t, discovered, repoRoot, homeDir)
+			m, cmd := enterDetail(t, m)
+			if cmd == nil {
+				t.Fatal("opening a collection did not schedule its verified manifest inspection")
+			}
+			m.browseDiscoveryRows = []row{discovered}
+			m.applySnapshotData(snapshotLoadedMsg{})
+			result := cmd()
+			changedKey := ""
+			if tc.changedEndpoint {
+				m.rows[0].MarketplaceDiscovery.Endpoint.URL = "https://other.example"
+				changedKey = rowKey(m.rows[0])
+			}
+			updated, _ := m.Update(result)
+			m = updated.(Model)
+			out := ansi.Strip(m.detailViewport.View())
+			if tc.changedEndpoint {
+				current, found := m.rowByKey(changedKey)
+				if !found {
+					t.Fatal("collection row disappeared after its endpoint changed")
+				}
+				if current.Artifact.Resource != nil {
+					t.Fatalf("verified members from a different endpoint were attached: %#v", current.Artifact.Resource)
+				}
+			} else if tc.tamper || tc.fetchFailure {
+				for _, want := range []string{"unavailable", "No verified members", "space to install"} {
+					if !strings.Contains(out, want) {
+						t.Fatalf("unverified collection detail missing %q:\n%s", want, out)
+					}
+				}
+				if !strings.Contains(out, "Marketplace collection inspection unavailable:") {
+					t.Fatalf("failed inspection omitted its actionable error:\n%s", out)
+				}
+				if !strings.Contains(out, "No verified members were loaded. Press space to install this exact revision, or esc to go back.") {
+					t.Fatalf("failed inspection error was not actionable:\n%s", out)
+				}
+				if tc.fetchFailure && !strings.Contains(out, "404") {
+					t.Fatalf("fetch failure omitted its HTTP status:\n%s", out)
+				}
+				for _, want := range []string{"genai-suite", "Revision:", "Digest:", digest} {
+					if !strings.Contains(out, want) {
+						t.Fatalf("failed inspection hid collection metadata %q:\n%s", want, out)
+					}
+				}
+				if got := strings.Count(out, digest); got != 2 {
+					t.Fatalf("failed inspection digest count = %d, want complete revision and digest:\n%s", got, out)
+				}
+				for _, forbidden := range []string{"mcpserver:", "skill:", "genai-psx", "code-review"} {
+					if strings.Contains(out, forbidden) {
+						t.Fatalf("failed inspection exposed unverified member %q:\n%s", forbidden, out)
+					}
+				}
+			} else {
+				if !strings.Contains(out, "Collection manifest verified.") || strings.Contains(out, "Discovery metadata only") {
+					t.Fatalf("verified collection detail has incorrect verification status:\n%s", out)
+				}
+				lines := strings.Split(out, "\n")
+				memberLines := []string{
+					"Contains (2):",
+					"  • mcpserver: genai-psx\\u202E",
+					"  • skill: code-review",
+				}
+				foundMembers := false
+				for i, line := range lines {
+					if strings.TrimRight(line, " ") != memberLines[0] || i+len(memberLines) > len(lines) {
+						continue
+					}
+					foundMembers = true
+					for j, want := range memberLines[1:] {
+						if got := strings.TrimRight(lines[i+j+1], " "); got != want {
+							foundMembers = false
+							break
+						}
+					}
+					if foundMembers {
+						break
+					}
+				}
+				if !foundMembers {
+					t.Fatalf("verified collection members were not rendered on separate lines:\n%s", out)
+				}
+				if strings.Contains(out, `\x0A`) || strings.ContainsRune(out, '\u202e') {
+					t.Fatalf("verified collection member summary was not safely rendered:\n%s", out)
+				}
+				current, found := m.rowByKey(m.detailKey)
+				if !found {
+					t.Fatal("verified collection row disappeared after manifest inspection")
+				}
+				var member row
+				for _, candidate := range collectionMemberRows(current, m.rows) {
+					if candidate.Artifact.Kind == ir.KindSkill && candidate.Artifact.Name == "code-review" {
+						member = candidate
+					}
+				}
+				options, err := discoveryInstallOptions(homeDir, member, scopeGlobal)
+				if err != nil {
+					t.Fatalf("Marketplace member install options: %v", err)
+				}
+				if options.ExactMarketplaceLocator == nil || options.ExactMarketplaceLocator.Registry != "registry-1" ||
+					options.ExactMarketplaceLocator.Name != "code-review" || options.ExactMarketplaceLocator.Revision != "sha256:"+strings.Repeat("c", 64) {
+					t.Fatalf("Marketplace member locator = %#v", options.ExactMarketplaceLocator)
+				}
+
+				verifiedCollection, ok := current.Artifact.Resource.(*ir.Collection)
+				if !ok {
+					t.Fatalf("verified collection resource = %#v", current.Artifact.Resource)
+				}
+				m.browseDiscoveryRows = []row{cloneMarketplaceDiscoveryRow(discovered)}
+				m.applySnapshotData(snapshotLoadedMsg{})
+				current, found = m.rowByKey(m.detailKey)
+				if !found || current.Artifact.Resource != verifiedCollection {
+					t.Fatalf("verified collection was not retained across snapshot replacement: row=%#v found=%t", current.Artifact.Resource, found)
+				}
+				if out := ansi.Strip(m.detailViewport.View()); !strings.Contains(out, "Contains (2):") || !strings.Contains(out, "skill: code-review") {
+					t.Fatalf("snapshot replacement lost verified collection detail:\n%s", out)
+				}
+
+				m.applyBrowseDiscovery([]marketplace.DiscoveryOutcome{{
+					Endpoint: discovered.MarketplaceDiscovery.Endpoint,
+					Items:    []mpapi.ResourceListItem{discovered.MarketplaceDiscovery.Item},
+					Total:    1,
+				}})
+				current, found = m.rowByKey(m.detailKey)
+				if !found || current.Artifact.Resource != verifiedCollection {
+					t.Fatalf("verified collection was not retained across discovery refresh: row=%#v found=%t", current.Artifact.Resource, found)
+				}
+				if out := ansi.Strip(m.detailViewport.View()); !strings.Contains(out, "Contains (2):") || !strings.Contains(out, "skill: code-review") {
+					t.Fatalf("discovery refresh lost verified collection detail:\n%s", out)
+				}
+
+				for _, refresh := range []struct {
+					name     string
+					mutate   func(*row)
+					vanished bool
+				}{
+					{
+						name: "changed endpoint",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Endpoint.URL = "https://other.example"
+						},
+					},
+					{
+						name: "changed digest",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.ContentDigest = "sha256:" + strings.Repeat("d", 64)
+						},
+					},
+					{
+						name: "changed revision",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.Revision = "sha256:" + strings.Repeat("e", 64)
+						},
+					},
+					{
+						name: "no longer installable",
+						mutate: func(r *row) {
+							r.MarketplaceDiscovery.Item.Availability = mpapi.AvailabilityRevoked
+						},
+					},
+					{name: "vanished", vanished: true},
+				} {
+					t.Run("refresh does not reuse inspection/"+refresh.name, func(t *testing.T) {
+						previous := cloneMarketplaceDiscoveryRow(discovered)
+						previous.Artifact.Resource = verifiedCollection
+						refreshed := cloneMarketplaceDiscoveryRow(discovered)
+						if refresh.mutate != nil {
+							refresh.mutate(&refreshed)
+						}
+						refreshModel := inspectionModelDirs(t, previous, repoRoot, homeDir)
+						refreshModel.pane = paneDetail
+						refreshModel.detailKey = rowKey(previous)
+						refreshModel.detailViewport.SetContent(renderMarketplaceDetailContent(refreshModel.currentTheme(), previous))
+						if before := ansi.Strip(refreshModel.detailViewport.View()); !strings.Contains(before, "Contains (2):") {
+							t.Fatalf("control did not start with verified collection detail:\n%s", before)
+						}
+						if !refresh.vanished {
+							refreshModel.browseDiscoveryRows = []row{refreshed}
+						}
+						refreshModel.mergeDiscoveryRows()
+
+						if refresh.vanished {
+							if _, found := refreshModel.rowByKey(rowKey(previous)); found {
+								t.Fatal("vanished collection remained after discovery refresh")
+							}
+						} else {
+							current, found := refreshModel.rowByKey(rowKey(refreshed))
+							if !found {
+								t.Fatal("refreshed collection row disappeared")
+							}
+							if current.Artifact.Resource != nil {
+								t.Fatalf("stale verified collection was attached to refreshed row: %#v", current.Artifact.Resource)
+							}
+						}
+						if out := ansi.Strip(refreshModel.detailViewport.View()); strings.Contains(out, "Contains (2):") || strings.Contains(out, "skill: code-review") {
+							t.Fatalf("stale verified collection summary remained visible after %s:\n%s", refresh.name, out)
+						}
+					})
+				}
+			}
+			if len(requests) != 2 || requests[0] != "GET /.well-known/agent-marketplace.json" || requests[1] != "GET /api/v1/manifests/"+digest {
+				t.Fatalf("collection inspection requests = %v", requests)
+			}
+			for path, want := range controlled {
+				if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("inspection mutated %s (err=%v)", path, err)
+				}
+			}
+		})
+	}
+}
+
+// spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestMarketplaceCollectionMemberMatchesExactEndpointAndRevision(t *testing.T) {
+	const endpoint = "https://market.example"
+	const revision = "sha256:target"
+	parent := marketplaceDiscoveryRow("collection", "suite", mpapi.AvailabilityAvailable)
+	parent.MarketplaceDiscovery.Endpoint.URL = endpoint
+	parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{
+		{Name: "review", Kind: ir.KindSkill, Registry: "leaf-registry", Ref: revision},
+	}, nil, nil, ir.SourceRef{})
+	candidate := func(url, ref string) row {
+		r := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
+		r.MarketplaceDiscovery.Endpoint.URL = url
+		r.MarketplaceDiscovery.Item.RegistryID = "leaf-registry"
+		r.MarketplaceDiscovery.Item.Revision = ref
+		r.MarketplaceDiscovery.Item.ContentDigest = ref
+		return r
+	}
+	wrongRevision := candidate(endpoint, "sha256:other")
+	wrongEndpoint := candidate("https://other.example", revision)
+	wrongKind := marketplaceDiscoveryRow("mcpserver", "review", mpapi.AvailabilityAvailable)
+	wrongKind.MarketplaceDiscovery.Endpoint.URL = endpoint
+	wrongKind.MarketplaceDiscovery.Item.RegistryID = "leaf-registry"
+	wrongKind.MarketplaceDiscovery.Item.Revision = revision
+	wrongKind.MarketplaceDiscovery.Item.ContentDigest = revision
+	wrongKind.Artifact.MarketplaceRegistryID = "leaf-registry"
+	wrongKind.Artifact.MarketplaceResourceName = "review"
+	wrongKind.Artifact.MarketplaceDigest = revision
+	exact := candidate(endpoint, revision)
+
+	members := collectionMemberRows(parent, []row{wrongKind, wrongRevision, wrongEndpoint, exact})
+	if len(members) != 1 || members[0].MarketplaceDiscovery == nil {
+		t.Fatalf("matched Marketplace members = %#v, want the exact discovered row", members)
+	}
+	if members[0].Artifact.Kind != ir.KindSkill {
+		t.Fatalf("matched Marketplace member kind = %s, want %s", members[0].Artifact.Kind, ir.KindSkill)
+	}
+	got := members[0].MarketplaceDiscovery
+	if got.Endpoint.URL != endpoint || got.Item.Revision != revision || got.Item.ContentDigest != revision {
+		t.Fatalf("member identity = endpoint %q revision %q digest %q", got.Endpoint.URL, got.Item.Revision, got.Item.ContentDigest)
+	}
+}
+
+// spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestMarketplaceCollectionBareMemberDoesNotBorrowDiscoveryLocator(t *testing.T) {
+	parent := marketplaceDiscoveryRow("collection", "suite", mpapi.AvailabilityAvailable)
+	parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{
+		{Name: "review", Kind: ir.KindSkill},
+	}, nil, nil, ir.SourceRef{})
+	candidate := marketplaceDiscoveryRow("skill", "review", mpapi.AvailabilityAvailable)
+
+	members := collectionMemberRows(parent, []row{candidate})
+	if len(members) != 1 || members[0].MarketplaceDiscovery != nil || !members[0].PendingVerification {
+		t.Fatalf("bare Marketplace member = %#v, want a non-installable pending row", members)
+	}
+	if got := session.RowToggleDenialFor(members[0]); got != session.RowTogglePendingVerification {
+		t.Fatalf("bare Marketplace member toggle denial = %v, want pending verification", got)
+	}
+}
+
+// spec: tui-interactions/installing-a-single-member-from-an-available-collection
+func TestMarketplaceSyntheticMemberDoesNotInheritCollectionSelection(t *testing.T) {
+	const revision = "sha256:member"
+	parent := marketplaceDiscoveryRow("collection", "suite", mpapi.AvailabilityAvailable)
+	parent.EnabledProject = true
+	parent.MarketplaceSelections = map[config.Source]marketplaceSelection{
+		config.RepoCommitted: {Entry: parent.MarketplaceDiscovery.Endpoint, Pin: config.MarketplaceResourcePin{
+			RegistryID: "collection-registry", Kind: "collection", Name: "suite", Revision: revision, Digest: revision, Direct: true,
+		}},
+	}
+	parent.Artifact.Resource = ir.NewCollection("suite", "", "", []ir.CollectionMember{
+		{Name: "review", Kind: ir.KindSkill, Registry: "leaf-registry", Ref: revision},
+	}, nil, nil, ir.SourceRef{})
+
+	members := collectionMemberRows(parent, nil)
+	if len(members) != 1 {
+		t.Fatalf("synthetic Marketplace members = %#v", members)
+	}
+	member := members[0]
+	if !member.IsAvailable || member.EnabledProject || len(member.MarketplaceSelections) != 0 {
+		t.Fatalf("synthetic member inherited collection state: %#v", member)
+	}
+	if member.MarketplaceDiscovery == nil || member.MarketplaceDiscovery.Endpoint.URL != parent.MarketplaceDiscovery.Endpoint.URL ||
+		member.MarketplaceDiscovery.Item.RegistryID != "leaf-registry" ||
+		member.MarketplaceDiscovery.Item.Name != "review" ||
+		member.MarketplaceDiscovery.Item.Revision != revision ||
+		member.MarketplaceDiscovery.Item.ContentDigest != revision {
+		t.Fatalf("synthetic member locator = %#v", member.MarketplaceDiscovery)
+	}
+}
+
+func cloneMarketplaceDiscoveryRow(r row) row {
+	clone := r
+	if r.MarketplaceDiscovery != nil {
+		discovery := *r.MarketplaceDiscovery
+		clone.MarketplaceDiscovery = &discovery
+	}
+	return clone
+}
+
+func marketplaceCollectionManifest(t *testing.T) (hccartifact.CollectionManifest, []byte, string) {
+	t.Helper()
+	manifest := hccartifact.CollectionManifest{
+		SchemaVersion: hccartifact.CollectionSchemaV1,
+		Name:          "genai-suite",
+		Members: []hccartifact.CollectionMemberEntry{
+			{Kind: "mcpserver", Name: "genai-psx", RegistryID: "registry-1", Revision: "sha256:" + strings.Repeat("b", 64)},
+			{Kind: "skill", Name: "code-review", RegistryID: "registry-1", Revision: "sha256:" + strings.Repeat("c", 64)},
+		},
+		SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+	}
+	payload, digest, err := hccartifact.EncodeCollectionManifest(manifest)
+	if err != nil {
+		t.Fatalf("encode collection manifest: %v", err)
+	}
+	return manifest, payload, digest
 }
 
 // spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes

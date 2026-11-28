@@ -363,14 +363,13 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	}
 	m.authoritativeRows = msg.rows
 	m.provisionalRows = nil
-	m.rows = msg.rows
 	m.driftReport = msg.driftReport
 	m.mergedCfg = msg.mergedCfg
 	m.resolved = msg.resolved
 	m.localExcludes = msg.localExcludes
 	m.globalHarnesses = msg.globalHarnesses
 	m.projectHarnesses = msg.projectHarnesses
-	m.mergeDiscoveryRows()
+	m.replaceDiscoveryRows()
 	// The rebuild may have scrolled to where a toggled row moved (for example
 	// a disabled row now in Available); keep the previous viewport and scroll
 	// only as far as the final selection needs.
@@ -958,6 +957,38 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailViewport.GotoTop()
 		return m, nil
 
+	case marketplaceCollectionDetailMsg:
+		if m.pane != paneDetail || msg.key == "" || msg.key != m.detailKey || !m.acceptsRequest(requestDetail, msg.generation) {
+			return m, nil
+		}
+		current, found := m.rowByKey(msg.key)
+		if !found || !marketplaceInspectableCollection(current) ||
+			marketplaceEndpointIdentity(current.MarketplaceDiscovery.Endpoint) != msg.endpoint {
+			return m, nil
+		}
+		m.previewSel = previewSelection{}
+		if msg.err != nil {
+			content := renderMarketplaceDetailContent(m.currentTheme(), current) + "\n\n" + marketplaceCollectionInspectionError(msg.err)
+			m.detailViewport.SetContent(content)
+			m.detailViewport.GotoTop()
+			return m, nil
+		}
+		for i := range m.rows {
+			candidate := m.rows[i]
+			if rowKey(candidate) == msg.key && marketplaceInspectableCollection(candidate) &&
+				marketplaceEndpointIdentity(candidate.MarketplaceDiscovery.Endpoint) == msg.endpoint {
+				m.rows[i].Artifact.Resource = msg.collection
+			}
+		}
+		m.filteredRows = m.applyFilter()
+		m.rebuildFlatItems()
+		m.restoreSelectionKey("row\x00" + msg.key)
+		if current, found := m.rowByKey(msg.key); found {
+			m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), current))
+		}
+		m.detailViewport.GotoTop()
+		return m, nil
+
 	case detailContentMsg:
 		if m.pane != paneDetail || (msg.path != "" && msg.path != m.detailSelectedPath) || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
@@ -1369,6 +1400,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 			if marketplaceInspectableSkill(r) {
 				return m, loadMarketplaceSkillDetail(m.observedContext(ctxOrBackground(m.ctx)), m.currentTheme(), r, generation, m.previewWidth())
 			}
+			if marketplaceInspectableCollection(r) && r.Artifact.Resource == nil {
+				return m, loadMarketplaceCollectionDetail(m.observedContext(ctxOrBackground(m.ctx)), r, generation)
+			}
 			return m, nil
 		}
 		return m, nil
@@ -1616,6 +1650,13 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 		if marketplaceInspectableSkill(current) && m.requests.Active(requestDetail) != 0 {
 			return
 		}
+		if marketplaceInspectableCollection(current) && current.Artifact.Resource == nil &&
+			hadPrevious && marketplaceInspectableCollection(previous) && previous.Artifact.Resource == nil &&
+			rowKey(previous) == rowKey(current) &&
+			marketplaceEndpointIdentity(previous.MarketplaceDiscovery.Endpoint) == marketplaceEndpointIdentity(current.MarketplaceDiscovery.Endpoint) &&
+			m.requests.Active(requestDetail) != 0 {
+			return
+		}
 		m.bundle = nil
 		m.detailSelectedPath = ""
 		m.cancelRequest(requestDetail)
@@ -1680,7 +1721,10 @@ func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
 	case toggleRequired:
 		return m, toast("required items cannot be toggled")
 	case toggleCollectionOnly:
-		return m, toast("collection-selected Marketplace items must be toggled through their collection")
+		if r.Artifact.IsMarketplace {
+			return m, toast("collection-selected Marketplace items must be toggled through their collection")
+		}
+		return m, toast("collection-selected resources must be toggled through their collection")
 	}
 	m.pane = paneToggleModal
 	m.modalSkill = r
@@ -1833,6 +1877,8 @@ func (m *Model) enterDetailPane() {
 			m.bundle = nil
 			if marketplaceInspectableSkill(r) {
 				m.detailViewport.SetContent("Loading verified Marketplace preview…")
+			} else if marketplaceInspectableCollection(r) && r.Artifact.Resource == nil {
+				m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r) + "\n\nLoading verified Marketplace collection members…")
 			} else {
 				m.detailViewport.SetContent(renderMarketplaceDetailContent(m.currentTheme(), r))
 			}

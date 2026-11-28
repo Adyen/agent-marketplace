@@ -101,7 +101,7 @@ func (m Model) sectionMembersIn(rows []row, sectionPath string) []row {
 			}
 			continue
 		}
-		if depth >= 0 {
+		if depth >= 0 && !it.CollectionMember {
 			out = append(out, it.Row)
 		}
 	}
