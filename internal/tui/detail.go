@@ -686,7 +686,17 @@ func renderBundleEntry(ctx context.Context, t theme, tr *bundleTree, relative st
 	if data, ok := tr.virtual[relative]; ok {
 		return renderBundleContent(t.dark, relative, data, len(data) > maxDetailSourceBytes, width)
 	}
-	return renderBundleFile(t.dark, tr.root, relative, width)
+	sourcePath := relative
+	if tr.sourcePrefix != "" {
+		sourcePath = filepath.ToSlash(filepath.Join(filepath.FromSlash(tr.sourcePrefix), filepath.FromSlash(relative)))
+	}
+	content := renderBundleFile(t.dark, tr.root, sourcePath, width)
+	if tr.collection != nil && relative == tr.onlyFile {
+		if summary := collectionDetailSummary(tr.collection); summary != "" {
+			return boundRenderedDetail(summary + "\n\n" + content)
+		}
+	}
+	return content
 }
 
 // renderBundleFile reads exactly one selected bundle file. The relative path

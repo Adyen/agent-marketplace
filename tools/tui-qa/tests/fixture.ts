@@ -202,7 +202,9 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     if (options.transparentCollection) {
       write(path.join(source, ".mcp.json"), `{"mcpServers":{"genai-psx":{"command":"node","args":["mcp.js"]}}}`);
       write(path.join(source, "collections", "suite", "COLLECTION.yaml"),
-        "name: suite\nresources:\n  - name: alpha-skill\n    kind: skill\n  - name: genai-psx\n    kind: mcpserver\n");
+        "name: suite\nresources:\n  - name: alpha-skill\n  - name: genai-psx\n    kind: mcpserver\n");
+      write(path.join(repo, "collections", "suite", "COLLECTION.yaml"),
+        "name: consumer-decoy\nresources:\n  - name: CONSUMER-COLLECTION-DECOY\n");
     } else if (options.collection) {
       write(path.join(source, "skills", "collections", "starter", "COLLECTION.yaml"), "name: starter\nversion: 1.0.0\nresources:\n  - name: alpha-skill\n    kind: skill\n");
     }

@@ -96,7 +96,7 @@ the pre-selected harness into the v4 user configuration.
 66. `tests/marketplace-removed-update.spec.ts` keeps a removed Marketplace pin when its exact revision remains usable, shows the warning in the update toast and diagnostics without changing the lock, then shows the remove-and-install error when the endpoint returns 404 for the exact revision and the verified cache is empty.
 67. `tests/quit-sync-unresolved.spec.ts` holds a sync at a Marketplace acquisition handshake, releases it, then changes the project selection when the deselected skill is removed and before the authoritative reload. The authoritative snapshot must keep the TUI open, show the two remaining installs and a warning diagnostic, and let the user quit without starting another sync.
 68. `tests/tui-selection-provenance.spec.ts` selects an optional organization default through a real Git collection, and verifies its `O` badge, `Source layer:` and `Included via:` detail fields.
-69. `tests/transparent-collections.spec.ts` expands a Git collection under View → Kind, checks its MCP server and skill in the detail pane and indented list, then installs only the selected MCP server directly in the project.
+69. `tests/transparent-collections.spec.ts` opens a Git collection's source browser, verifies its normalized members alongside the original manifest, and proves a same-path consumer decoy is not shown; it then returns to the collection sidebar, expands it under View → Kind, checks its MCP server and skill in the indented list, and installs only the selected MCP server directly in the project.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

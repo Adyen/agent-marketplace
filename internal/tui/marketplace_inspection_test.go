@@ -83,13 +83,15 @@ func inspectionModelDirs(t *testing.T, r row, repoRoot, homeDir string, opts ...
 // spec: tui-navigation/discovery-only-marketplace-collection-inspection-stays-read-only-and-fails-closed
 func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		tamper       bool
-		fetchFailure bool
+		name            string
+		tamper          bool
+		fetchFailure    bool
+		changedEndpoint bool
 	}{
 		{name: "verified"},
 		{name: "digest mismatch", tamper: true},
 		{name: "manifest 404", fetchFailure: true},
+		{name: "changed endpoint", changedEndpoint: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest, payload, digest := marketplaceCollectionManifest(t)
@@ -149,10 +151,26 @@ func TestMarketplaceCollectionInspectionLoadsVerifiedMembersReadOnly(t *testing.
 			if cmd == nil {
 				t.Fatal("opening a collection did not schedule its verified manifest inspection")
 			}
-			updated, _ := m.Update(cmd())
+			m.browseDiscoveryRows = []row{discovered}
+			m.applySnapshotData(snapshotLoadedMsg{})
+			result := cmd()
+			changedKey := ""
+			if tc.changedEndpoint {
+				m.rows[0].MarketplaceDiscovery.Endpoint.URL = "https://other.example"
+				changedKey = rowKey(m.rows[0])
+			}
+			updated, _ := m.Update(result)
 			m = updated.(Model)
 			out := ansi.Strip(m.detailViewport.View())
-			if tc.tamper || tc.fetchFailure {
+			if tc.changedEndpoint {
+				current, found := m.rowByKey(changedKey)
+				if !found {
+					t.Fatal("collection row disappeared after its endpoint changed")
+				}
+				if current.Artifact.Resource != nil {
+					t.Fatalf("verified members from a different endpoint were attached: %#v", current.Artifact.Resource)
+				}
+			} else if tc.tamper || tc.fetchFailure {
 				for _, want := range []string{"unavailable", "No verified members", "space to install"} {
 					if !strings.Contains(out, want) {
 						t.Fatalf("unverified collection detail missing %q:\n%s", want, out)

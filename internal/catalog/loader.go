@@ -80,6 +80,15 @@ func EntriesByKey(catalogs map[string]LoadedCatalog) map[string][]Entry {
 	return entries
 }
 
+func collectionEntriesAtRoot(root string, cols []collection.Collection) ([]Entry, error) {
+	entries, err := EntriesFromCollections(cols)
+	for i := range entries {
+		entries[i].PrimarySourcePath = filepath.Join(root, filepath.FromSlash(entries[i].Path))
+		entries[i].SourceRoot = root
+	}
+	return entries, err
+}
+
 // MalformedByKey extracts the per-registry malformed sets from a LoadedCatalog
 // map. Resolve needs it keyed the same way as the entries so a selection that is
 // absent from one registry's entries can be correlated with that registry's
@@ -1480,7 +1489,7 @@ func discoverAll(result *LoadResult, requests []loadRequest, discover DiscoverFu
 
 		// Add collection catalog entries so they are visible to the resolver,
 		// collision detector, and disambiguation logic.
-		collectionEntries, colEntryErr := EntriesFromCollections(collections)
+		collectionEntries, colEntryErr := collectionEntriesAtRoot(skillDir, collections)
 		if colEntryErr != nil {
 			result.Errors = append(result.Errors, colEntryErr)
 		}
@@ -1654,7 +1663,7 @@ func processSubBundles(result *LoadResult, discoveredByKey map[string]LoadedCata
 		subCat.Collections = subCollections
 
 		// Add collection catalog entries for sub-bundles.
-		subCollectionEntries, subColEntryErr := EntriesFromCollections(subCollections)
+		subCollectionEntries, subColEntryErr := collectionEntriesAtRoot(subDir, subCollections)
 		if subColEntryErr != nil {
 			result.Errors = append(result.Errors, subColEntryErr)
 		}

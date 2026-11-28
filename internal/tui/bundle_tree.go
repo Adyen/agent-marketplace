@@ -63,8 +63,10 @@ type bundleTree struct {
 	// browsable directory.
 	files map[string][]byte
 
-	virtual    map[string][]byte
-	inspection *marketplaceInspection
+	virtual      map[string][]byte
+	inspection   *marketplaceInspection
+	collection   *ir.Collection
+	sourcePrefix string
 }
 
 // marketplaceArtifactName is the canonical archive filename produced by the
@@ -90,7 +92,51 @@ func isMarketplaceArtifactPath(path string) bool {
 	return filepath.Base(path) == marketplaceArtifactName
 }
 
-func bundleRootForRow(r row) (root, onlyFile string, err error) {
+func bundleRootForRow(r row) (root, onlyFile, sourcePrefix string, err error) {
+	if !r.Artifact.IsMarketplace && r.Artifact.Kind == ir.KindCollection {
+		sourceRoot := r.Artifact.SourceRoot
+		sourcePath := catalog.SourcePath(r.Artifact.Entry)
+		if sourceRoot == "" {
+			return "", "", "", fmt.Errorf("collection source has no discovery root")
+		}
+		if !filepath.IsAbs(sourceRoot) || !filepath.IsAbs(sourcePath) {
+			return "", "", "", fmt.Errorf("collection source path is not absolute")
+		}
+		sourceRoot = filepath.Clean(sourceRoot)
+		sourcePath = filepath.Clean(sourcePath)
+		relative, err := filepath.Rel(sourceRoot, sourcePath)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return "", "", "", fmt.Errorf("collection source path escapes its discovery root")
+		}
+		root, err = filepath.EvalSymlinks(sourceRoot)
+		if err != nil {
+			return "", "", "", fmt.Errorf("resolve collection discovery root: %w", err)
+		}
+		rootInfo, err := os.Lstat(root)
+		if err != nil {
+			return "", "", "", err
+		}
+		if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+			return "", "", "", fmt.Errorf("collection discovery root is not a directory")
+		}
+		manifestPath, err := safeBundlePath(root, filepath.ToSlash(relative))
+		if err != nil {
+			return "", "", "", err
+		}
+		info, err := os.Lstat(manifestPath)
+		if err != nil {
+			return "", "", "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return "", "", "", fmt.Errorf("collection source is not a regular file")
+		}
+		sourcePrefix = filepath.ToSlash(filepath.Dir(relative))
+		if sourcePrefix == "." {
+			sourcePrefix = ""
+		}
+		return root, filepath.Base(relative), sourcePrefix, nil
+	}
+
 	path := catalog.SourcePath(r.Artifact.Entry)
 	if r.Artifact.IsMarketplace {
 		// Marketplace rows have no registry-checkout source path; the
@@ -103,18 +149,18 @@ func bundleRootForRow(r row) (root, onlyFile string, err error) {
 		path = r.Artifact.Path
 	}
 	if path == "" {
-		return "", "", fmt.Errorf("resource has no source path")
+		return "", "", "", fmt.Errorf("resource has no source path")
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", "", fmt.Errorf("resource source is a symlink")
+		return "", "", "", fmt.Errorf("resource source is a symlink")
 	}
 	if r.Artifact.Kind != ir.KindSkill {
 		if !info.Mode().IsRegular() {
-			return "", "", fmt.Errorf("resource source is not a regular file")
+			return "", "", "", fmt.Errorf("resource source is not a regular file")
 		}
 		root = filepath.Dir(path)
 		onlyFile = filepath.Base(path)
@@ -123,24 +169,24 @@ func bundleRootForRow(r row) (root, onlyFile string, err error) {
 	} else if info.Mode().IsRegular() {
 		root = filepath.Dir(path)
 	} else {
-		return "", "", fmt.Errorf("resource source is not a directory or regular file")
+		return "", "", "", fmt.Errorf("resource source is not a directory or regular file")
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve resource root: %w", err)
+		return "", "", "", fmt.Errorf("resolve resource root: %w", err)
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve resource root: %w", err)
+		return "", "", "", fmt.Errorf("resolve resource root: %w", err)
 	}
 	rootInfo, err := os.Lstat(root)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
-		return "", "", fmt.Errorf("resource root is not a directory")
+		return "", "", "", fmt.Errorf("resource root is not a directory")
 	}
-	return root, onlyFile, nil
+	return root, onlyFile, "", nil
 }
 
 // newBundleTree initializes the root and its first level. onlyFile is used by
@@ -155,6 +201,23 @@ func newBundleTree(root, onlyFile string) *bundleTree {
 	} else {
 		t.selectInitial()
 	}
+	t.rebuild()
+	return t
+}
+
+func newBundleTreeWithSingleFile(root, sourcePrefix, onlyFile string) *bundleTree {
+	browseRoot := filepath.Join(root, filepath.FromSlash(sourcePrefix))
+	t := &bundleTree{
+		root:         root,
+		onlyFile:     filepath.ToSlash(onlyFile),
+		sourcePrefix: filepath.ToSlash(sourcePrefix),
+	}
+	t.rootNode = &bundleNode{name: filepath.Base(browseRoot), path: browseRoot, expanded: true, loaded: true}
+	t.rootNode.children = []*bundleNode{{
+		name: onlyFile, relPath: filepath.ToSlash(onlyFile),
+		path: filepath.Join(browseRoot, filepath.FromSlash(onlyFile)), parent: t.rootNode,
+	}}
+	t.selectInitial()
 	t.rebuild()
 	return t
 }
@@ -435,11 +498,19 @@ func bundleTreeForRow(r row) (*bundleTree, error) {
 			return newMarketplaceArtifactTree(r.Artifact.Path)
 		}
 	}
-	root, only, err := bundleRootForRow(r)
+	root, only, sourcePrefix, err := bundleRootForRow(r)
 	if err != nil {
 		return nil, err
 	}
-	tree := newBundleTree(root, only)
+	var tree *bundleTree
+	if sourcePrefix != "" && r.Artifact.Kind == ir.KindCollection && !r.Artifact.IsMarketplace {
+		tree = newBundleTreeWithSingleFile(root, sourcePrefix, only)
+	} else {
+		tree = newBundleTree(root, only)
+	}
+	if !r.Artifact.IsMarketplace {
+		tree.collection, _ = r.Artifact.Resource.(*ir.Collection)
+	}
 	if err := tree.addMarketplaceVirtualPrimary(r); err != nil {
 		return nil, err
 	}

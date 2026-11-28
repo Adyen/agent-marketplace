@@ -962,18 +962,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pane != paneDetail || msg.key == "" || msg.key != m.detailKey || !m.acceptsRequest(requestDetail, msg.generation) {
 			return m, nil
 		}
+		current, found := m.rowByKey(msg.key)
+		if !found || !marketplaceInspectableCollection(current) ||
+			marketplaceEndpointIdentity(current.MarketplaceDiscovery.Endpoint) != msg.endpoint {
+			return m, nil
+		}
 		m.previewSel = previewSelection{}
 		if msg.err != nil {
-			content := marketplaceCollectionInspectionError(msg.err)
-			if current, found := m.rowByKey(msg.key); found {
-				content = renderMarketplaceDetailContent(m.currentTheme(), current) + "\n\n" + content
-			}
+			content := renderMarketplaceDetailContent(m.currentTheme(), current) + "\n\n" + marketplaceCollectionInspectionError(msg.err)
 			m.detailViewport.SetContent(content)
 			m.detailViewport.GotoTop()
 			return m, nil
 		}
 		for i := range m.rows {
-			if rowKey(m.rows[i]) == msg.key {
+			candidate := m.rows[i]
+			if rowKey(candidate) == msg.key && marketplaceInspectableCollection(candidate) &&
+				marketplaceEndpointIdentity(candidate.MarketplaceDiscovery.Endpoint) == msg.endpoint {
 				m.rows[i].Artifact.Resource = msg.collection
 			}
 		}
@@ -1645,6 +1649,13 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			return
 		}
 		if marketplaceInspectableSkill(current) && m.requests.Active(requestDetail) != 0 {
+			return
+		}
+		if marketplaceInspectableCollection(current) && current.Artifact.Resource == nil &&
+			hadPrevious && marketplaceInspectableCollection(previous) && previous.Artifact.Resource == nil &&
+			rowKey(previous) == rowKey(current) &&
+			marketplaceEndpointIdentity(previous.MarketplaceDiscovery.Endpoint) == marketplaceEndpointIdentity(current.MarketplaceDiscovery.Endpoint) &&
+			m.requests.Active(requestDetail) != 0 {
 			return
 		}
 		m.bundle = nil

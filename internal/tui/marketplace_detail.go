@@ -25,6 +25,7 @@ type marketplaceDetailMsg struct {
 type marketplaceCollectionDetailMsg struct {
 	generation requestGeneration
 	key        string
+	endpoint   string
 	collection *ir.Collection
 	err        error
 }
@@ -72,10 +73,13 @@ func loadMarketplaceSkillDetail(ctx context.Context, t theme, r row, generation 
 
 func loadMarketplaceCollectionDetail(ctx context.Context, r row, generation requestGeneration) tea.Cmd {
 	key := rowKey(r)
+	endpoint := marketplaceEndpointIdentity(r.MarketplaceDiscovery.Endpoint)
 	return func() tea.Msg {
+		result := marketplaceCollectionDetailMsg{generation: generation, key: key, endpoint: endpoint}
 		manifest, err := session.OpenMarketplaceCollectionInspection(ctxOrBackground(ctx), r)
 		if err != nil {
-			return marketplaceCollectionDetailMsg{generation: generation, key: key, err: err}
+			result.err = err
+			return result
 		}
 		members := make([]ir.CollectionMember, 0, len(manifest.Members))
 		for _, member := range manifest.Members {
@@ -87,11 +91,8 @@ func loadMarketplaceCollectionDetail(ctx context.Context, r row, generation requ
 				Name: member.Name, Kind: kind, Registry: member.RegistryID, Ref: member.Revision,
 			})
 		}
-		return marketplaceCollectionDetailMsg{
-			generation: generation,
-			key:        key,
-			collection: ir.NewCollection(manifest.Name, manifest.Version, manifest.Description, members, manifest.Includes, nil, ir.SourceRef{}),
-		}
+		result.collection = ir.NewCollection(manifest.Name, manifest.Version, manifest.Description, members, manifest.Includes, nil, ir.SourceRef{})
+		return result
 	}
 }
 
