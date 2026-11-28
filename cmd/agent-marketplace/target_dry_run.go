@@ -111,7 +111,14 @@ func newTargetDryRunCmd() *cobra.Command {
 			if err != nil {
 				return refuse("target.import.manifest-invalid", importPath, err.Error())
 			}
-			imported, err := targetprofile.ImportLocalPackage(profileBytes, sourcePath, manifestBytes, targetprofile.PackageLimits{
+			sourceRoot := sourcePath
+			if sourceRoot != "" {
+				sourceRoot, err = filepath.Abs(sourceRoot)
+				if err != nil {
+					return refuse("target.import.source-invalid", sourcePath, err.Error())
+				}
+			}
+			imported, err := targetprofile.ImportLocalPackage(profileBytes, sourceRoot, manifestBytes, targetprofile.PackageLimits{
 				FileCount: 1024, FileBytes: 2 << 20, TotalBytes: 100 << 20,
 			})
 			if err != nil {

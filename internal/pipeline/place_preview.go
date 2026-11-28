@@ -73,11 +73,20 @@ func PreviewLocalPlaceImport(rootPath, stateRoot string, imported targetprofile.
 	for _, file := range files {
 		paths[file.Path] = struct{}{}
 	}
+	installed := placeProjectionPackages(projection)
+	for _, pkg := range installed {
+		if pkg.ID != packageID {
+			continue
+		}
+		for _, file := range pkg.Files {
+			paths[file.Path] = struct{}{}
+		}
+	}
 	observed, err := observePlacePaths(root, paths)
 	if err != nil {
 		return preview, fmt.Errorf("observe target destination: %w", err)
 	}
-	plan, err := place.BuildPlan(placeProjectionPackages(projection), desired, observed)
+	plan, err := place.BuildPlan(installed, desired, observed)
 	if err != nil {
 		return preview, fmt.Errorf("plan target destination: %w", err)
 	}

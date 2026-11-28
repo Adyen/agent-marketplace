@@ -63,6 +63,15 @@ func TestTargetDryRunReportsLocalImport(t *testing.T) {
 		1,
 	)
 	fixture := newTargetDryRunFixture(t, []byte(targetApproveProfileYAML), manifest)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	relativeSource, err := filepath.Rel(cwd, fixture.source)
+	if err != nil {
+		t.Fatalf("make source path relative: %v", err)
+	}
+	fixture.source = relativeSource
 	stdout, stderr, err := executeTargetDryRun(fixture, false)
 	if err != nil {
 		t.Fatalf("target dry-run failed: %v\nstderr:\n%s", err, stderr)
@@ -193,6 +202,14 @@ func TestTargetDryRunRefusesInvalidImports(t *testing.T) {
 			assertTargetDryRunFixtureUnchanged(t, fixture)
 		})
 	}
+	t.Run("empty source refuses", func(t *testing.T) {
+		fixture := newTargetDryRunFixture(t, []byte(targetApproveProfileYAML), valid)
+		fixture.source = ""
+		report := assertTargetDryRunRefused(t, fixture, false, "")
+		if len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != "target.import.source-invalid" {
+			t.Fatalf("empty source diagnostics = %#v", report.Diagnostics)
+		}
+	})
 }
 
 // spec: target-profile-import/refusal-returns-diagnostics-and-a-nonzero-exit
@@ -402,7 +419,13 @@ func TestTargetDryRunDestinationPreview(t *testing.T) {
 		if err := targetprofile.RecordApproval(binding); err != nil {
 			t.Fatal(err)
 		}
-		files, pkg := resolvedTargetApprovalPackage(t, owned)
+		files, pkg := resolvedTargetApprovalPackageWithFiles(t, owned, []targetprofile.PackageFile{{
+			SourcePath: "payload/guide.md", DestinationPath: "mods/sample/guide.md",
+			Mode: 0o644, Bytes: []byte("owned place package\n"),
+		}, {
+			SourcePath: "payload/extra.md", DestinationPath: "mods/sample/extra.md",
+			Mode: 0o644, Bytes: []byte("second owned file\n"),
+		}})
 		if _, err := pipeline.CommitPlaceUpserts(
 			context.Background(), binding, owned.profileBytes, targetApprovalEnvironment(t, owned),
 			[]marketplace.ResolvedPlacePackage{pkg},
@@ -458,6 +481,29 @@ mappings:
 		assertTargetDryRunFixtureUnchanged(t, fixture)
 		if targetAfter := snapshotTargetDryRunTree(t, owned.targetRoot); !reflect.DeepEqual(targetAfter, targetBefore) {
 			t.Fatalf("dry-run changed owned target:\nbefore: %#v\nafter: %#v", targetBefore, targetAfter)
+		}
+		if stateAfter := snapshotTargetDryRunTree(t, owned.stateRoot); !reflect.DeepEqual(stateAfter, stateBefore) {
+			t.Fatalf("dry-run changed ownership or approval state:\nbefore: %#v\nafter: %#v", stateBefore, stateAfter)
+		}
+		extraPath := filepath.Join(owned.targetRoot, "mods", "sample", "extra.md")
+		if err := os.Remove(extraPath); err != nil {
+			t.Fatal(err)
+		}
+		targetBeforeMissing := snapshotTargetDryRunTree(t, owned.targetRoot)
+		stdout, _, err = executeTargetDryRun(fixture, true)
+		if err == nil {
+			t.Fatalf("target dry-run accepted a missing previously owned file:\n%s", stdout)
+		}
+		if err := json.Unmarshal(stdout, &report); err != nil {
+			t.Fatalf("decode missing-owned-file report: %v\nstdout:\n%s", err, stdout)
+		}
+		if report.Status != "refused" || len(report.DestinationCheck.Conflicts) != 1 ||
+			report.DestinationCheck.Conflicts[0].DestinationPath != "mods/sample/extra.md" ||
+			len(report.DestinationCheck.OwnershipChanges) != 0 {
+			t.Fatalf("missing-owned-file report = %#v", report.DestinationCheck)
+		}
+		if targetAfter := snapshotTargetDryRunTree(t, owned.targetRoot); !reflect.DeepEqual(targetAfter, targetBeforeMissing) {
+			t.Fatalf("dry-run changed target with missing owned file:\nbefore: %#v\nafter: %#v", targetBeforeMissing, targetAfter)
 		}
 		if stateAfter := snapshotTargetDryRunTree(t, owned.stateRoot); !reflect.DeepEqual(stateAfter, stateBefore) {
 			t.Fatalf("dry-run changed ownership or approval state:\nbefore: %#v\nafter: %#v", stateBefore, stateAfter)
