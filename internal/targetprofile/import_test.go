@@ -57,7 +57,14 @@ func newImportTestSource(t *testing.T) string {
 func TestImportLocalPackagePreservesMappingsAndNormalizesForLoadPackage(t *testing.T) {
 	profileBytes := []byte(validProfileYAML)
 	source := newImportTestSource(t)
-	imported, err := ImportLocalPackage(profileBytes, source, []byte(validTargetImportYAML), importTestLimits())
+	if err := os.MkdirAll(filepath.Join(source, "payload"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(source, "README.md"), filepath.Join(source, "payload", "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := strings.Replace(validTargetImportYAML, "display_files: [README.md]", "display_files: [payload/README.md]", 1)
+	imported, err := ImportLocalPackage(profileBytes, source, []byte(manifest), importTestLimits())
 	if err != nil {
 		t.Fatalf("ImportLocalPackage() error = %v", err)
 	}
@@ -80,7 +87,7 @@ func TestImportLocalPackagePreservesMappingsAndNormalizesForLoadPackage(t *testi
 		excluded[file.SourcePath] = file.Reason
 	}
 	for path, reason := range map[string]string{
-		"README.md":                "display",
+		"payload/README.md":        "display",
 		"notes/idea.md":            "not-selected",
 		"mods/sample-tabs/main.js": "not-selected",
 	} {
@@ -179,6 +186,25 @@ func TestImportLocalPackageListsUnselectedFilesBeyondPackageLimit(t *testing.T) 
 	}
 }
 
+func TestImportExclusions(t *testing.T) {
+	inventory := []string{"selected.js", "inventory-only.md", "display-both.md"}
+	selected := map[string]struct{}{"selected.js": {}}
+	displays := map[string]struct{}{
+		"display-both.md":    {},
+		"missing-display.md": {},
+	}
+
+	got := importExclusions(inventory, selected, displays)
+	want := []ImportExcludedFile{
+		{SourcePath: "display-both.md", Reason: "display"},
+		{SourcePath: "inventory-only.md", Reason: "not-selected"},
+		{SourcePath: "missing-display.md", Reason: "display"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("importExclusions() = %#v, want %#v", got, want)
+	}
+}
+
 func TestImportLocalPackageRejectsStrictManifestAndIdentityViolations(t *testing.T) {
 	valid := validTargetImportYAML
 	tests := []struct {
@@ -199,6 +225,8 @@ func TestImportLocalPackageRejectsStrictManifestAndIdentityViolations(t *testing
 		{"profile target mismatch", strings.Replace(valid, "target_id: invented-app", "target_id: other-app", 1), "target_id"},
 		{"kind target mismatch", strings.Replace(valid, "kind: invented-app/mod", "kind: other-app/mod", 1), "kind"},
 		{"invalid name", strings.Replace(valid, "name: sample-links", "name: ../sample-links", 1), "name"},
+		{"duplicate display", strings.Replace(valid, "display_files: [README.md]", "display_files: [README.md, README.md]", 1), "manifest.display_files"},
+		{"display traversal", strings.Replace(valid, "display_files: [README.md]", "display_files: [../README.md]", 1), "manifest.display_files"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

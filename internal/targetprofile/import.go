@@ -22,9 +22,10 @@ import (
 const importManifestVersion = "agent-marketplace.io/target-import/v1"
 
 type ImportError struct {
-	Code string
-	Path string
-	err  error
+	Code        string
+	Path        string
+	LiteralPath bool
+	err         error
 }
 
 func (e *ImportError) Error() string {
@@ -118,24 +119,21 @@ func ImportLocalPackage(profileBytes []byte, sourcePath string, manifestBytes []
 	if err := validateImportMetadata(manifest.Metadata); err != nil {
 		return ImportedPackage{}, err
 	}
-	if err := validatePackageDisplayFiles(manifest.DisplayFiles); err != nil {
-		return ImportedPackage{}, importFailure("target.import.manifest-invalid", "manifest.display_files", err)
-	}
 
 	files := make([]PackageFile, 0, len(manifest.Mappings))
 	sources, destinations := make(map[string]struct{}, len(manifest.Mappings)), make(map[string]struct{}, len(manifest.Mappings))
 	for _, mapping := range manifest.Mappings {
 		if !validImportPath(mapping.SourcePath) {
-			return ImportedPackage{}, importFailure("target.import.path-invalid", mapping.SourcePath, nil)
+			return ImportedPackage{}, importPathFailure("target.import.path-invalid", mapping.SourcePath, nil)
 		}
 		if !validImportPath(mapping.DestinationPath) {
-			return ImportedPackage{}, importFailure("target.import.path-invalid", mapping.DestinationPath, nil)
+			return ImportedPackage{}, importPathFailure("target.import.path-invalid", mapping.DestinationPath, nil)
 		}
 		if _, exists := sources[mapping.SourcePath]; exists {
-			return ImportedPackage{}, importFailure("target.import.duplicate-mapping", mapping.SourcePath, nil)
+			return ImportedPackage{}, importPathFailure("target.import.duplicate-mapping", mapping.SourcePath, nil)
 		}
 		if _, exists := destinations[mapping.DestinationPath]; exists {
-			return ImportedPackage{}, importFailure("target.import.duplicate-mapping", mapping.DestinationPath, nil)
+			return ImportedPackage{}, importPathFailure("target.import.duplicate-mapping", mapping.DestinationPath, nil)
 		}
 		sources[mapping.SourcePath] = struct{}{}
 		destinations[mapping.DestinationPath] = struct{}{}
@@ -143,9 +141,18 @@ func ImportLocalPackage(profileBytes []byte, sourcePath string, manifestBytes []
 			SourcePath: mapping.SourcePath, DestinationPath: mapping.DestinationPath,
 		})
 	}
+	displaySet := make(map[string]struct{}, len(manifest.DisplayFiles))
 	for _, display := range manifest.DisplayFiles {
+		_, duplicate := displaySet[display]
+		if !validImportPath(display) || duplicate {
+			return ImportedPackage{}, importFailure(
+				"target.import.manifest-invalid", "manifest.display_files",
+				errors.New("display paths must be unique and source-relative"),
+			)
+		}
+		displaySet[display] = struct{}{}
 		if _, selected := sources[display]; selected {
-			return ImportedPackage{}, importFailure("target.import.path-invalid", display, errors.New("a source path cannot be both payload and display"))
+			return ImportedPackage{}, importPathFailure("target.import.path-invalid", display, errors.New("a source path cannot be both payload and display"))
 		}
 	}
 	if err := ValidatePackageDestinations(profile, manifest.Kind, nil); err != nil {
@@ -153,69 +160,44 @@ func ImportLocalPackage(profileBytes []byte, sourcePath string, manifestBytes []
 	}
 	for _, file := range files {
 		if err := ValidatePackageDestinations(profile, manifest.Kind, []PackageFile{file}); err != nil {
-			return ImportedPackage{}, importFailure("target.import.destination-invalid", file.DestinationPath, err)
+			return ImportedPackage{}, importPathFailure("target.import.destination-invalid", file.DestinationPath, err)
 		}
 	}
 
 	source, err := fsboundary.OpenDir(sourcePath)
 	if err != nil {
-		return ImportedPackage{}, importFailure("target.import.source-invalid", sourcePath, err)
+		return ImportedPackage{}, importPathFailure("target.import.source-invalid", sourcePath, err)
 	}
 	defer func() { _ = source.Close() }()
 	sourceFiles, err := listImportSourceFiles(source)
 	if err != nil {
-		return ImportedPackage{}, importFailure("target.import.source-invalid", sourcePath, err)
+		return ImportedPackage{}, importPathFailure("target.import.source-invalid", sourcePath, err)
 	}
 	packageIdentity := manifest.Kind + "/" + manifest.Name
 	remaining := limits.TotalBytes
 	for i := range files {
-		fileBytes, identity, err := source.ReadFile(files[i].SourcePath, min(limits.FileBytes, remaining))
+		fileBytes, fileIdentity, err := readPackageFile(source, files[i].SourcePath, limits, &remaining)
 		if err != nil {
-			return ImportedPackage{}, importFailure(
+			return ImportedPackage{}, importPathFailure(
 				"target.import.mapped-file-invalid", files[i].SourcePath,
 				fmt.Errorf("package %q: %w", packageIdentity, err),
 			)
 		}
-		if !identity.Mode.IsRegular() {
-			return ImportedPackage{}, importFailure(
-				"target.import.mapped-file-invalid", files[i].SourcePath,
-				fmt.Errorf("package %q: %w", packageIdentity, fs.ErrInvalid),
-			)
-		}
-		mode := identity.Mode & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
+		mode := fileIdentity.Mode & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 		if mode != 0o644 && mode != 0o755 {
-			return ImportedPackage{}, importFailure("target.import.file-mode-invalid", files[i].SourcePath, nil)
+			return ImportedPackage{}, importPathFailure("target.import.file-mode-invalid", files[i].SourcePath, nil)
 		}
-		remaining -= int64(len(fileBytes))
 		files[i].Mode = mode
 		files[i].Bytes = fileBytes
 	}
 	for _, display := range manifest.DisplayFiles {
-		fileBytes, identity, err := source.ReadFile(display, min(limits.FileBytes, remaining))
+		_, _, err := readPackageFile(source, display, limits, &remaining)
 		if err != nil {
-			return ImportedPackage{}, importFailure("target.import.display-file-invalid", display, err)
+			return ImportedPackage{}, importPathFailure("target.import.display-file-invalid", display, err)
 		}
-		if !identity.Mode.IsRegular() {
-			return ImportedPackage{}, importFailure("target.import.display-file-invalid", display, fs.ErrInvalid)
-		}
-		remaining -= int64(len(fileBytes))
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].SourcePath < files[j].SourcePath })
-	excluded := make([]ImportExcludedFile, 0, len(sourceFiles))
-	displaySet := make(map[string]struct{}, len(manifest.DisplayFiles))
-	for _, display := range manifest.DisplayFiles {
-		displaySet[display] = struct{}{}
-	}
-	for _, name := range sourceFiles {
-		if _, selected := sources[name]; selected {
-			continue
-		}
-		reason := "not-selected"
-		if _, isDisplay := displaySet[name]; isDisplay {
-			reason = "display"
-		}
-		excluded = append(excluded, ImportExcludedFile{SourcePath: name, Reason: reason})
-	}
+	excluded := importExclusions(sourceFiles, sources, displaySet)
 	binding, err := BuildBinding(identity, files)
 	if err != nil {
 		return ImportedPackage{}, importFailure("target.import.binding-invalid", "manifest.mappings", err)
@@ -226,6 +208,28 @@ func ImportLocalPackage(profileBytes []byte, sourcePath string, manifestBytes []
 		Files: files, DisplayFiles: append([]string(nil), manifest.DisplayFiles...),
 		Metadata: manifest.Metadata, ExcludedFiles: excluded, Binding: binding,
 	}, nil
+}
+
+func importExclusions(inventory []string, selected, displays map[string]struct{}) []ImportExcludedFile {
+	excluded := make([]ImportExcludedFile, 0, len(inventory)+len(displays))
+	for display := range displays {
+		if _, isSelected := selected[display]; !isSelected {
+			excluded = append(excluded, ImportExcludedFile{SourcePath: display, Reason: "display"})
+		}
+	}
+	for _, name := range inventory {
+		if _, isSelected := selected[name]; isSelected {
+			continue
+		}
+		if _, isDisplay := displays[name]; isDisplay {
+			continue
+		}
+		excluded = append(excluded, ImportExcludedFile{SourcePath: name, Reason: "not-selected"})
+	}
+	sort.Slice(excluded, func(i, j int) bool {
+		return excluded[i].SourcePath < excluded[j].SourcePath
+	})
+	return excluded
 }
 
 func decodeImportManifest(data []byte) (importManifest, error) {
@@ -381,7 +385,9 @@ func validateImportMetadata(metadata PackageMetadata) error {
 		}
 	}
 	for _, note := range metadata.ManualSetup {
-		if strings.TrimSpace(note) == "" || strings.ContainsFunc(note, unicode.IsControl) {
+		if strings.TrimSpace(note) == "" || strings.ContainsFunc(note, func(r rune) bool {
+			return r != '\n' && r != '\r' && unicode.IsControl(r)
+		}) {
 			return importFailure("target.import.manifest-invalid", "manifest.metadata.manual_setup", errors.New("setup notes must be non-empty text"))
 		}
 	}
@@ -423,10 +429,13 @@ func listImportSourceFiles(source *fsboundary.Dir) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(files)
 	return files, nil
 }
 
 func importFailure(code, path string, err error) error {
 	return &ImportError{Code: code, Path: path, err: err}
+}
+
+func importPathFailure(code, path string, err error) error {
+	return &ImportError{Code: code, Path: path, err: err, LiteralPath: true}
 }

@@ -19,17 +19,17 @@ func TestTargetDryRunRelativeXDGConfigUsesPlaceFallback(t *testing.T) {
 		return
 	}
 	profile := strings.Replace(targetApproveProfileYAML, "override: INVENTED_APP_HOME, ", "", 1)
-	profile = strings.Replace(
+	profile = strings.ReplaceAll(
 		profile,
-		"macos: {base: home, path: .config/invented-app}",
-		"macos: {base: xdg-config, path: invented-app}",
-		1,
+		"{base: home, path: .config/invented-app}",
+		"{base: xdg-config, path: invented-app}",
 	)
-	profile = strings.Replace(profile, "allowed_bases: [home]", "allowed_bases: [home, xdg-config]", 1)
-	if !strings.Contains(profile, "macos: {base: xdg-config, path: invented-app}") ||
-		!strings.Contains(profile, "allowed_bases: [home, xdg-config]") ||
+	profile = strings.Replace(profile, "allowed_bases: [home]", "allowed_bases: [xdg-config]", 1)
+	if strings.Count(profile, "{base: xdg-config, path: invented-app}") != 2 ||
+		!strings.Contains(profile, "allowed_bases: [xdg-config]") ||
+		strings.Contains(profile, "allowed_bases: [home]") ||
 		strings.Contains(profile, "override: INVENTED_APP_HOME") {
-		t.Fatalf("profile does not use the allowed xdg-config base without an override:\n%s", profile)
+		t.Fatalf("profile does not use both allowed xdg-config bases without an override:\n%s", profile)
 	}
 
 	fixture := newTargetDryRunFixture(t, []byte(profile), targetDryRunManifestYAML)

@@ -62,6 +62,12 @@ func TestTargetDryRunReportsLocalImport(t *testing.T) {
     - {kind: other-app/mod, name: sample-tabs, registry: sample-registry, path: profiles/shared}`,
 		1,
 	)
+	manifest = strings.Replace(
+		manifest,
+		"manual_setup: [Bind the test key in Invented App settings.]",
+		"manual_setup:\n    - |\n      Bind the test key in Invented App settings.\n      Preserve this second setup line.",
+		1,
+	)
 	fixture := newTargetDryRunFixture(t, []byte(targetApproveProfileYAML), manifest)
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -123,7 +129,7 @@ func TestTargetDryRunReportsLocalImport(t *testing.T) {
 	}
 	if len(report.ManualSetup) != 1 ||
 		report.ManualSetup[0].Status != "pending" ||
-		report.ManualSetup[0].Text != "Bind the test key in Invented App settings." {
+		report.ManualSetup[0].Text != "Bind the test key in Invented App settings.\nPreserve this second setup line.\n" {
 		t.Fatalf("manual setup = %#v", report.ManualSetup)
 	}
 	assertTargetDryRunFixtureUnchanged(t, fixture)
@@ -218,6 +224,29 @@ func TestTargetDryRunRefusesInvalidImports(t *testing.T) {
 func TestTargetDryRunDiagnosticsNamePackageAndDestination(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
+	}
+	for _, sourcePath := range []string{"profile", "manifest", "manifest.kind"} {
+		t.Run("duplicate source "+sourcePath, func(t *testing.T) {
+			manifest := strings.Replace(
+				targetDryRunManifestYAML,
+				"source_path: mods/sample-links/main.js",
+				"source_path: "+sourcePath,
+				1,
+			)
+			manifest = strings.Replace(
+				manifest,
+				"source_path: mods/sample-links/mod.json",
+				"source_path: "+sourcePath,
+				1,
+			)
+			fixture := newTargetDryRunFixture(t, []byte(targetApproveProfileYAML), manifest)
+			report := assertTargetDryRunRefused(t, fixture, false, sourcePath)
+			if len(report.Diagnostics) != 1 ||
+				report.Diagnostics[0].Code != "target.import.duplicate-mapping" ||
+				report.Diagnostics[0].Path != sourcePath {
+				t.Fatalf("duplicate-source diagnostic = %#v, want exact literal path %q", report.Diagnostics, sourcePath)
+			}
+		})
 	}
 	t.Run("missing mapped file names package and source path", func(t *testing.T) {
 		manifest := strings.Replace(
@@ -373,25 +402,13 @@ func TestTargetDryRunDestinationPreview(t *testing.T) {
 		want := []byte("export const value = 1;\n")
 		writeTargetDryRunFile(t, path, want, 0o644)
 		refreshTargetDryRunSnapshot(t, &fixture)
-		before, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
 		report := assertTargetDryRunRefused(t, fixture, true, "mods/sample-links/main.js")
 		if report.DestinationCheck.Status != "checked" ||
 			len(report.DestinationCheck.Conflicts) == 0 ||
 			len(report.DestinationCheck.OwnershipChanges) != 0 {
 			t.Fatalf("refused destination report = %#v", report.DestinationCheck)
 		}
-		after, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(got, want) || after.Mode() != before.Mode() ||
-			!after.ModTime().Equal(before.ModTime()) {
-			t.Fatalf("unowned collision changed: bytes=%q mode=%v mtime=%v err=%v", got, after.Mode(), after.ModTime(), err)
-		}
+		assertTargetDryRunFixtureUnchanged(t, fixture)
 	})
 	t.Run("destination outside admitted root refuses", func(t *testing.T) {
 		fixture := newTargetDryRunFixture(t, []byte(targetApproveProfileYAML), targetDryRunManifestYAML)

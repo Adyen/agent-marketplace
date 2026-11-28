@@ -123,11 +123,13 @@ func newTargetDryRunCmd() *cobra.Command {
 				var importErr *targetprofile.ImportError
 				if errors.As(err, &importErr) {
 					path := importErr.Path
-					switch {
-					case path == "profile":
-						path = profilePath
-					case path == "manifest" || strings.HasPrefix(path, "manifest."):
-						path = importPath
+					if !importErr.LiteralPath {
+						switch {
+						case path == "profile":
+							path = profilePath
+						case path == "manifest" || strings.HasPrefix(path, "manifest."):
+							path = importPath
+						}
 					}
 					return refuse(importErr.Code, path, importErr.Error())
 				}
