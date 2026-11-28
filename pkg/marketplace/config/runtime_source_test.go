@@ -198,6 +198,82 @@ func TestRuntimeSourceReportsAndClearsRestartRequiredFields(t *testing.T) {
 	stop()
 }
 
+func TestRunClaudeDeliveryReloadsOnlyDeliveryConfig(t *testing.T) {
+	logs := captureRuntimeLogs(t)
+	startup := validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+  plugin_name_prefix: am
+  api_key_id: apikey_AbC123
+  api_key:
+    env: CLAUDE_ADMIN_KEY
+`
+	path := writeConfig(t, startup)
+	source, err := LoadRuntimeSource(path)
+	if err != nil {
+		t.Fatalf("LoadRuntimeSource: %v", err)
+	}
+	runner, ok := any(source).(interface {
+		RunClaudeDelivery(context.Context, time.Duration) error
+	})
+	if !ok {
+		t.Fatal("RuntimeSource does not support delivery-scoped polling")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.RunClaudeDelivery(ctx, 5*time.Millisecond) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("RunClaudeDelivery: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("RunClaudeDelivery did not stop after cancellation")
+		}
+	})
+
+	candidate := strings.Replace(startup, "CLAUDE_ADMIN_KEY", "CLAUDE_DELIVERY_NEXT", 1)
+	candidate = strings.Replace(candidate, "interval: 30m", "interval: 45m", 1)
+	replacement := path + ".replacement"
+	if err := os.WriteFile(replacement, []byte(candidate), 0o600); err != nil {
+		t.Fatalf("write replacement: %v", err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatalf("replace config: %v", err)
+	}
+	awaitRuntimeCondition(t, func() bool {
+		current := source.Current()
+		return current.Version == 1 && current.Config.ClaudeEnterprise != nil &&
+			current.Config.ClaudeEnterprise.APIKey.Env == "CLAUDE_DELIVERY_NEXT"
+	})
+	current := source.Current()
+	if current.Config.Refresh.Interval.Duration() != 30*time.Minute ||
+		current.Config.ClaudeEnterprise.PluginNamePrefix == nil ||
+		*current.Config.ClaudeEnterprise.PluginNamePrefix != "am" {
+		t.Fatalf("delivery reload changed unrelated configuration: %+v", current.Config)
+	}
+
+	invalid := strings.Replace(candidate, "CLAUDE_DELIVERY_NEXT", "CLAUDE_INVALID_KEY", 1)
+	invalid = strings.Replace(invalid, "plugin_name_prefix: am", "plugin_name_prefix: invalid_prefix", 1)
+	if err := os.WriteFile(replacement, []byte(invalid), 0o600); err != nil {
+		t.Fatalf("write invalid replacement: %v", err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatalf("replace config with invalid candidate: %v", err)
+	}
+	awaitRuntimeCondition(t, func() bool {
+		return strings.Contains(logs.String(), "claude_enterprise.plugin-name-prefix")
+	})
+	current = source.Current()
+	target := current.Config.ClaudeEnterprise
+	if current.Version != 1 || target == nil || target.APIKey.Env != "CLAUDE_DELIVERY_NEXT" ||
+		current.Config.Refresh.Interval.Duration() != 30*time.Minute {
+		t.Fatalf("invalid candidate changed current configuration: %+v", current)
+	}
+}
+
 func startRuntimeSource(t *testing.T, source *RuntimeSource, apply func(context.Context, Snapshot, Config, Classification) error) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

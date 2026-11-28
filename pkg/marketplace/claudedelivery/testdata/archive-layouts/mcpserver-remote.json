@@ -1,0 +1,17 @@
+[
+  {
+    "Path": ".claude-plugin/plugin.json",
+    "Mode": "0644",
+    "Content": "{\"author\":{\"name\":\"Example Publisher\"},\"description\":\"\",\"displayName\":\"knowledge\",\"homepage\":\"https://publisher.example\",\"name\":\"am-acme-mcpserver-knowledge\"}"
+  },
+  {
+    "Path": ".mcp.json",
+    "Mode": "0644",
+    "Content": "{\"mcpServers\":{\"knowledge\":{\"type\":\"http\",\"url\":\"https://example.invalid/mcp\"}}}"
+  },
+  {
+    "Path": "licenses/LICENSE",
+    "Mode": "0644",
+    "Content": "MIT"
+  }
+]

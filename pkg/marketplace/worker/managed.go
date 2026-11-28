@@ -428,6 +428,7 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 		}
 		return err
 	}
+	enqueueClaudeDeliveryAfterChange(ctx, deps, "publication-"+string(publication.PublicationID))
 	slog.InfoContext(ctx, "managed registry published", "registry", r.ID, "generation", r.Generation, "job", j.ID, "publication", publication.PublicationID)
 	return nil
 }

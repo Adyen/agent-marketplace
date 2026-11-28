@@ -141,6 +141,8 @@ func (s *Server) handleAdminRead(w http.ResponseWriter, r *http.Request, service
 		writeAdminJSON(w, r, http.StatusOK, view)
 	case "attempts":
 		s.handleAdminAttempts(w, r)
+	case "claude-delivery":
+		s.handleAdminClaudeDelivery(w, r)
 	case "activity":
 		before, limit := int64(0), int64(50)
 		var err error

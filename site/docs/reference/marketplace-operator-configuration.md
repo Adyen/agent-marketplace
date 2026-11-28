@@ -22,6 +22,7 @@ Changes that apply while the server runs:
 - Changing only a registry's `slug`, `aliases`, or `publisher` updates its metadata without acquisition; prior slugs are kept as aliases.
 - Removing a registry unlists it. It is no longer observed or refreshed, and its indexed revisions, assessments, and blobs are preserved. Adding it back relists it.
 - `refresh.interval` takes effect at each registry's next scheduled observation; by itself it requests no refresh.
+- Changes to `claude_enterprise`, including enabling and disabling delivery, take effect for subsequent delivery work without restarting. Changing the target after plugins have been recorded stops delivery with `marketplace.target-changed`; it does not migrate plugins.
 
 Rewrites that do not change worker-relevant meaning cause no registry work. That includes comments, whitespace, mapping order, and an explicit value equal to its default. An edit that leaves the file missing, unreadable, truncated, malformed, or failing validation is rejected as a whole and logged once per distinct content as `config candidate rejected` with a bounded reason that contains no credential value; the last valid configuration keeps running and no registry is added, unlisted, or refreshed. Secret values are never part of the comparison, so rotating the file or environment value behind an unchanged credential reference causes no reindex.
 
@@ -129,6 +130,7 @@ admin:
 | `revocations` | mapping | no | empty lists | Registry, coordinate, and exact-revision revocations. |
 | `catalog_projection` | mapping | no | disabled | Turns on the optional `GET /api/v1/catalog` route. |
 | `installation_metrics` | mapping | no | disabled | Optional Prometheus-compatible metrics endpoint used to rank search results by reported installations. |
+| `claude_enterprise` | mapping | no | disabled | Optional mirroring of published resources into a Claude Enterprise organization through the Claude Plugins API. |
 | `management` | mapping | no | mode `file` | Where catalog settings live, allowed Git origins, and credential profiles. |
 | `admin` | mapping | no | disabled | Browser administration settings (native OIDC or trusted-proxy identity). |
 
@@ -300,6 +302,36 @@ Each API process refreshes the aggregate in the background: once at startup, the
 All timing values must be positive, except `refresh.jitter`, which may be an explicit `0s`. An explicit `max_stale` must not be shorter than `max_age`. The sum `refresh.interval` + `refresh.jitter` + `timeout` must stay strictly below `max_age`, and unknown fields are rejected. Refresh health is exposed on the operations endpoint as `agent_marketplace_installation_metrics_refresh_total` with a bounded `outcome` label (`success`, `unavailable`, `invalid-response`), `agent_marketplace_installation_metrics_refresh_duration_seconds`, and `agent_marketplace_installation_metrics_last_success_timestamp_seconds`; each failed attempt logs one warning without identifiers or credentials.
 
 Queries are bounded: a POST to `<url>/api/v1/query` with the configured timeout, an 8 MiB response cap, and no redirect following, so credentials never leave the configured endpoint. Credentials and per-installation IDs are never exposed through the API. If metrics are disabled or no usable aggregate remains, search keeps the existing relevance ordering and omits counts instead of reporting false zeros.
+
+## `claude_enterprise`
+
+Optional mirroring of policy-allowed, unrevoked published Marketplace resources into a Claude Enterprise organization through the Claude Plugins API. Collections are not mirrored. When the block is absent or `enabled` is `false`, no Plugins API request is made and no delivery state is recorded. See the [Claude Enterprise delivery operator guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/marketplace-operator.md#mirror-published-resources-to-claude-enterprise) for prerequisites and operation.
+
+```yaml
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_ADMIN_KEY
+  api_key_id: apikey_0123456789abcdef
+  marketplace_id: marketplace_0123456789abcdef
+  plugin_name_prefix: am
+  default_installation_preference: available
+  interval: 24h
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `enabled` | boolean | no | `false` | Runs the leased `claude-delivery` reconcile job after publication, on revocation changes, on the repair interval, and on operator demand. |
+| `api_key` | mapping | yes, when enabled | none | Claude Admin API key reference with both `read:plugins` and `write:plugins` scopes. Exactly one of `file` (path to a file holding the secret) or `env` (environment variable name). An inline `value` is rejected with `claude_enterprise.api-key-inline`; the secret never appears in logs, errors, metrics, or responses. |
+| `api_key_id` | string | yes, when enabled | none | The key's stable non-secret `apikey_…` identifier, matching `^apikey_[A-Za-z0-9]+$`. Delivery adopts an existing plugin only when its `created_by` API actor carries this ID, so it must be updated together with a rotated key's secret reference. |
+| `marketplace_id` | string | no | resolved | Target plugin marketplace ID. When omitted, delivery requires exactly one organization-owned `manual` marketplace and uses it; ambiguous or missing targets fail the pass. |
+| `plugin_name_prefix` | string | no | `am` | Prefix for derived plugin names: 1–16 characters matching `^[a-z][a-z0-9]*(-[a-z0-9]+)*$`. Changing it does not rename plugins already recorded under a derived name. |
+| `default_installation_preference` | string | no | `available` | Organization-wide installation setting written for each newly created plugin: `required`, `auto_install`, `available`, or `not_available`. No marketplace-level default is ever written. |
+| `interval` | duration | no | `24h` | Repair interval between scheduled reconcile passes. Must be positive. |
+
+Changing the target marketplace after plugins have been recorded stops delivery with `marketplace.target-changed`. Keep the existing target; this service does not migrate plugins between marketplaces.
+
+Invalid values that parse successfully fail validation with a coded `claude_enterprise.*` error naming the field. Invalid YAML or duration syntax can fail earlier during decoding. Both prevent startup.
 
 ## `management`
 

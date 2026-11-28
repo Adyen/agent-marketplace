@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/acquire"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
@@ -24,6 +26,47 @@ type publicationRaceBlobs struct {
 	beforePut func()
 }
 
+type deliveryEnqueueAttempts struct {
+	outsideTransaction int
+	insideTransaction  int
+}
+
+type failingClaudeDeliveryEnqueueStore struct {
+	store.MetadataStore
+	store.PublicationStore
+	store.ManagedConfigurationStore
+	store.ManagedRefreshAttemptStore
+	store.BlobOwnerStore
+	store.BlobOwnerMaintenanceStore
+	attempts          *deliveryEnqueueAttempts
+	insideTransaction bool
+}
+
+func (s *failingClaudeDeliveryEnqueueStore) EnqueueJob(ctx context.Context, job store.Job) error {
+	if job.Kind == store.ClaudeDeliveryJobKind {
+		if s.insideTransaction {
+			s.attempts.insideTransaction++
+		} else {
+			s.attempts.outsideTransaction++
+		}
+		return errors.New("Claude delivery enqueue unavailable")
+	}
+	return s.MetadataStore.EnqueueJob(ctx, job)
+}
+
+func (s *failingClaudeDeliveryEnqueueStore) WithTx(ctx context.Context, fn func(context.Context, store.MetadataStore) error) error {
+	return s.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		return fn(txCtx, &failingClaudeDeliveryEnqueueStore{
+			MetadataStore: tx, PublicationStore: tx.(store.PublicationStore),
+			ManagedConfigurationStore:  tx.(store.ManagedConfigurationStore),
+			ManagedRefreshAttemptStore: tx.(store.ManagedRefreshAttemptStore),
+			BlobOwnerStore:             tx.(store.BlobOwnerStore),
+			BlobOwnerMaintenanceStore:  tx.(store.BlobOwnerMaintenanceStore),
+			attempts:                   s.attempts, insideTransaction: true,
+		})
+	})
+}
+
 func (s *publicationRaceBlobs) Put(ctx context.Context, d store.ArchiveDigest, b []byte) error {
 	if s.beforePut != nil {
 		hook := s.beforePut
@@ -33,6 +76,7 @@ func (s *publicationRaceBlobs) Put(ctx context.Context, d store.ArchiveDigest, b
 	return s.BlobStore.Put(ctx, d, b)
 }
 
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
 func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 	for _, scenario := range []string{"success", "pause", "lease"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -64,6 +108,13 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 				}
 				return &acquire.Result{Dir: repo, Commit: commit}, nil
 			}
+			if scenario == "success" {
+				deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+					Enabled:  true,
+					APIKey:   config.ClaudeEnterpriseAPIKeyReference{Env: "CLAUDE_ENTERPRISE_TEST_KEY"},
+					APIKeyID: "apikey_test",
+				}
+			}
 			hookRan := false
 			deps.BlobStore = &publicationRaceBlobs{BlobStore: deps.BlobStore, beforePut: func() {
 				hookRan = true
@@ -87,6 +138,9 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 			if scenario == "success" {
 				if err != nil || pubErr != nil || pub.ID == "" || pub.PolicyRevision != 1 || pub.RegistryGeneration != 1 || pub.Occurrence.Commit != commit {
 					t.Fatalf("publication=%+v err=%v/%v", pub, err, pubErr)
+				}
+				if _, err := metadata.LeaseJob(ctx, "claude-delivery", "delivery-worker", time.Minute); err != nil {
+					t.Fatalf("publication did not enqueue Claude delivery: %v", err)
 				}
 				events, err := metadata.ListManagedRefreshAttempts(ctx, store.ManagedRefreshAttemptQuery{Marketplace: "test-mp", JobID: j.ID, Limit: 10})
 				if err != nil || len(events) != 2 || events[0].Outcome != "succeeded" || events[0].PublicationID != pub.ID || events[1].Outcome != "started" {
@@ -145,6 +199,145 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 				t.Fatalf("worker rewrote registry status/config: %v\nbefore=%+v\nafter=%+v", readErr, original, after)
 			}
 		})
+	}
+}
+
+func TestManagedPublicationSurvivesClaudeDeliveryEnqueueFailure(t *testing.T) {
+	ctx := context.Background()
+	deps, _ := managedFixture(t)
+	metadata := deps.MetadataStore
+	repo, cleanup := createTestRepo(t)
+	defer cleanup()
+	commit, err := testCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduleManaged(ctx, deps, "enqueue-failure"); err != nil {
+		t.Fatal(err)
+	}
+	refreshJob, err := metadata.LeaseJob(ctx, "managed-refresh", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+		Enabled: true,
+		APIKey: config.ClaudeEnterpriseAPIKeyReference{
+			Env: "CLAUDE_ENTERPRISE_TEST_KEY",
+		},
+		APIKeyID: "apikey_test",
+	}
+	attempts := &deliveryEnqueueAttempts{}
+	deps.MetadataStore = &failingClaudeDeliveryEnqueueStore{
+		MetadataStore: metadata, PublicationStore: metadata.(store.PublicationStore),
+		ManagedConfigurationStore:  metadata.(store.ManagedConfigurationStore),
+		ManagedRefreshAttemptStore: metadata.(store.ManagedRefreshAttemptStore),
+		BlobOwnerStore:             metadata.(store.BlobOwnerStore),
+		BlobOwnerMaintenanceStore:  metadata.(store.BlobOwnerMaintenanceStore),
+		attempts:                   attempts,
+	}
+	clone := func(context.Context, string, string, acquire.Credentials, acquire.Limits, time.Duration, ...string) (*acquire.Result, error) {
+		return &acquire.Result{Dir: repo, Commit: commit}, nil
+	}
+
+	if err := processManagedRefresh(ctx, deps, refreshJob, "worker", clone); err != nil {
+		t.Fatalf("managed refresh: %v", err)
+	}
+	publication, err := metadata.(store.PublicationStore).CurrentRegistryPublication(ctx, "src-test")
+	if err != nil || publication.ID == "" || publication.Occurrence.Commit != commit {
+		t.Fatalf("publication head = %+v, %v", publication, err)
+	}
+	completed, err := metadata.GetJob(ctx, refreshJob.ID)
+	if err != nil || completed.Status != store.JobStatusCompleted {
+		t.Fatalf("refresh job = %+v, %v", completed, err)
+	}
+	recorded, err := metadata.(store.ManagedRefreshAttemptStore).ListManagedRefreshAttempts(ctx,
+		store.ManagedRefreshAttemptQuery{Marketplace: "test-mp", JobID: refreshJob.ID, Limit: 10})
+	if err != nil || len(recorded) != 2 || recorded[0].Outcome != "succeeded" ||
+		recorded[0].PublicationID != publication.ID {
+		t.Fatalf("refresh attempts = %+v, %v", recorded, err)
+	}
+	if attempts.outsideTransaction+attempts.insideTransaction == 0 {
+		t.Fatal("Claude delivery enqueue was not attempted")
+	}
+}
+
+type claudeDeliverySchedulingStore struct {
+	store.MetadataStore
+	enqueued chan store.Job
+}
+
+func (s *claudeDeliverySchedulingStore) EnqueueJob(ctx context.Context, job store.Job) error {
+	if err := s.MetadataStore.EnqueueJob(ctx, job); err != nil {
+		return err
+	}
+	if job.Kind == "claude-delivery" {
+		select {
+		case s.enqueued <- job:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (s *claudeDeliverySchedulingStore) LeaseClaudeDeliveryJob(context.Context, store.MarketplaceID, store.JobID, string, time.Duration) (store.Job, error) {
+	return store.Job{}, store.ErrNotFound
+}
+
+func TestClaudeDeliveryRepairIntervalEnqueuesRepair(t *testing.T) {
+	deps, _ := managedFixture(t)
+	interval := config.Duration(10 * time.Millisecond)
+	deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+		Enabled: true,
+		APIKey: config.ClaudeEnterpriseAPIKeyReference{
+			Env: "CLAUDE_ENTERPRISE_TEST_KEY",
+		},
+		APIKeyID: "apikey_test",
+		Interval: &interval,
+	}
+	tracker := &claudeDeliverySchedulingStore{
+		MetadataStore: deps.MetadataStore,
+		enqueued:      make(chan store.Job, 4),
+	}
+	deps.MetadataStore = tracker
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		runClaudeDeliveryWorker(ctx, deps)
+		close(done)
+	}()
+	stopped := false
+	stop := func() {
+		if stopped {
+			return
+		}
+		cancel()
+		<-done
+		stopped = true
+	}
+	defer stop()
+
+	jobs := make([]store.Job, 0, 2)
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	for len(jobs) < 2 {
+		select {
+		case job := <-tracker.enqueued:
+			jobs = append(jobs, job)
+		case <-timeout.C:
+			t.Fatalf("enqueued %d Claude delivery jobs, want configuration and one repair job", len(jobs))
+		}
+	}
+	stop()
+	if !strings.Contains(jobs[0].IdempotencyKey, ":configuration-") ||
+		!strings.Contains(jobs[1].IdempotencyKey, ":repair-") {
+		t.Fatalf("first Claude delivery jobs = %+v, want configuration then repair", jobs)
+	}
+	for _, job := range jobs {
+		stored, err := deps.MetadataStore.GetJob(context.Background(), job.ID)
+		if err != nil || stored.Kind != "claude-delivery" {
+			t.Fatalf("Claude delivery job %s was not persisted: %+v, %v", job.ID, stored, err)
+		}
 	}
 }
 
