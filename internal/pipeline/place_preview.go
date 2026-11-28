@@ -3,7 +3,9 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/place"
 	"github.com/Adyen/agent-marketplace/internal/targetprofile"
@@ -19,14 +21,41 @@ type PlaceImportPreview struct {
 	OwnershipChanges []PlaceImportOwnershipChange
 }
 
-func PreviewLocalPlaceImport(rootPath, stateRoot string, imported targetprofile.ImportedPackage) (preview PlaceImportPreview, retErr error) {
-	root, err := openCanonicalPlaceSyncRoot(rootPath)
+func PreviewLocalPlaceImport(destination string, imported targetprofile.ImportedPackage) (preview PlaceImportPreview, retErr error) {
+	if !filepath.IsAbs(destination) || filepath.Clean(destination) != destination {
+		return preview, errors.New("destination must be an absolute clean path")
+	}
+	environment, err := currentPlaceApprovalEnvironment()
+	if err != nil {
+		return preview, err
+	}
+	stateDir, err := dependencytxn.StateDir()
+	if err != nil {
+		return preview, err
+	}
+	if filepath.Dir(stateDir) != environment.CanonicalStateRoot {
+		return preview, errors.New("ownership state root differs from current environment")
+	}
+	if err := dependencytxn.CheckPending(stateDir); err != nil {
+		return preview, err
+	}
+	admitted, _, err := targetprofile.ResolvePlaceRoot(
+		imported.Profile, imported.Identity, placeProfileEnvironment(imported.Profile, environment),
+	)
+	if err != nil {
+		return preview, err
+	}
+	root, err := openCanonicalPlaceSyncRoot(destination)
 	if err != nil {
 		return preview, fmt.Errorf("open target destination: %w", err)
 	}
 	defer func() { retErr = errors.Join(retErr, root.Close()) }()
+	rootPath := root.Path()
+	if rootPath != admitted {
+		return preview, errors.New("destination is not the profile's admitted root")
+	}
 
-	ownerStore, err := ownership.Open(rootPath, ownership.WithStateRoot(stateRoot))
+	ownerStore, err := ownership.Open(rootPath, ownership.WithStateRoot(environment.CanonicalStateRoot))
 	if err != nil {
 		return preview, fmt.Errorf("open target ownership state: %w", err)
 	}

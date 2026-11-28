@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -158,13 +156,13 @@ func newTargetDryRunCmd() *cobra.Command {
 				})
 			}
 			if destinationRequested {
-				root, stateRoot, err := admitTargetDryRunDestination(destinationPath, imported)
+				preview, err := pipeline.PreviewLocalPlaceImport(destinationPath, imported)
 				if err != nil {
-					return refuse("target.import.destination-invalid", destinationPath, err.Error())
-				}
-				preview, err := pipeline.PreviewLocalPlaceImport(root, stateRoot, imported)
-				if err != nil {
-					return refuse("target.import.destination-invalid", destinationPath, err.Error())
+					code := "target.import.destination-invalid"
+					if errors.Is(err, dependencytxn.ErrRecoveryRequired) {
+						code = "dependency.recovery-required"
+					}
+					return refuse(code, destinationPath, err.Error())
 				}
 				report.DestinationCheck.Status = "checked"
 				for _, conflict := range preview.Conflicts {
@@ -244,48 +242,4 @@ func targetDryRunRequirementRef(requirement yaml.Node) string {
 		ref += " [" + strings.Join(qualifiers, ", ") + "]"
 	}
 	return ref
-}
-
-func admitTargetDryRunDestination(destination string, imported targetprofile.ImportedPackage) (string, string, error) {
-	if !filepath.IsAbs(destination) || filepath.Clean(destination) != destination {
-		return "", "", errors.New("destination must be an absolute clean path")
-	}
-	platform := ""
-	switch runtime.GOOS {
-	case "darwin":
-		platform = "macos"
-	case "linux":
-		platform = "linux"
-	default:
-		return "", "", errors.New("unsupported host platform")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", "", err
-	}
-	stateDir, err := dependencytxn.StateDir()
-	if err != nil {
-		return "", "", err
-	}
-	stateRoot := filepath.Dir(stateDir)
-	environment := targetprofile.ApprovalEnvironment{
-		Platform: platform, Home: home, XDGConfig: os.Getenv("XDG_CONFIG_HOME"),
-		CanonicalStateRoot: stateRoot,
-	}
-	if override, ok := os.LookupEnv(imported.Profile.Roots.User.Override); ok {
-		environment.Override = &override
-	}
-	admitted, _, err := targetprofile.ResolvePlaceRoot(imported.Profile, imported.Identity, environment)
-	if err != nil {
-		return "", "", err
-	}
-	root, err := fsboundary.OpenCanonicalDir(destination)
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = root.Close() }()
-	if root.Path() != admitted {
-		return "", "", errors.New("destination is not the profile's admitted root")
-	}
-	return root.Path(), stateRoot, nil
 }
