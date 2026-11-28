@@ -2,7 +2,7 @@
 
 The [quick start](./quick-start.md) installs `agent-marketplace` with the install script. This page covers other ways to install it.
 
-`agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
+`agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. Windows support is in progress and no Windows binaries are published yet.
 
 Pick a method below, then [check that it works](#verify). You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check.
 

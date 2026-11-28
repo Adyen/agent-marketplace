@@ -4,9 +4,9 @@ Read this document for every code change. It defines the review criteria and imp
 
 ## Platform scope
 
-- Support Unix-like systems only: macOS and Linux. Windows build or runtime compatibility is not a requirement.
-- Do not add Windows-specific branches, build tags, path handling, abstractions, or tests unless the project's supported-platform decision changes.
-- Remain portable across macOS and Linux. Use `filepath` for host filesystem paths and `path` for slash-separated artifact or `fs.FS` paths.
+- Support macOS, Linux, and Windows. Keep `GOOS=windows` builds passing and verify Windows behavior in CI.
+- Isolate genuine platform differences (locking, process control, file ownership, symlinks, home and state directories) in `_unix.go` / `_windows.go` or equivalent build-tagged helpers, one policy per concern. Do not scatter `runtime.GOOS` checks.
+- Use `filepath` for host paths and `path` for slash-separated artifact or `fs.FS` paths. Do not assume POSIX permission bits, `/` separators, case-sensitive names, or symlink availability.
 
 ## Design
 

@@ -1,3 +1,14 @@
+# GNU make on Windows runs recipes with cmd.exe unless it finds a POSIX shell.
+# Every recipe in this file is POSIX shell, so use the sh.exe that Git for
+# Windows ships. Run make from Git Bash, or put Git's usr\bin on PATH. This
+# must come first: later lines run $(shell ...) commands.
+ifeq ($(OS),Windows_NT)
+ifeq ($(strip $(shell where sh.exe)),)
+$(error GNU make on Windows needs a POSIX shell: install Git for Windows and run make from Git Bash, or add its usr\bin directory to PATH)
+endif
+SHELL := sh.exe
+endif
+
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BINARY := agent-marketplace
 RELEASE_BINARY := $(BINARY)-$(VERSION)
@@ -31,11 +42,18 @@ DOCS_CONTAINER_IMAGE ?= agent-marketplace-docs:$(VERSION)
 export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE NODE_RUNTIME_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_NGINX_IMAGE
 
 # Platform targets
-PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
-RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
+UNIX_PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
+WINDOWS_PLATFORMS := windows-amd64 windows-arm64
+# The Windows targets always exist (make windows-amd64), but join `release` only
+# when WINDOWS_RELEASE is set. The CLI does not compile for Windows yet, and a
+# failing prerequisite would stop `make release` before it writes the macOS and
+# Linux assets and SHA256SUMS. Set it by default once the CLI builds on Windows.
+PLATFORMS := $(UNIX_PLATFORMS) $(if $(WINDOWS_RELEASE),$(WINDOWS_PLATFORMS))
+# Windows release assets carry an .exe suffix; every other platform has none.
+RELEASE_ASSETS := $(foreach p,$(PLATFORMS),$(RELEASE_BINARY)-$(p)$(if $(filter windows-%,$(p)),.exe))
 DIST_DIR := dist
 
-.PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build site-screenshots gui-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build site-screenshots gui-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(UNIX_PLATFORMS) $(WINDOWS_PLATFORMS)
 .PHONY: gui-build-frontend gui-build-binary gui-package-macos gui-package-linux
 LINT_BASE ?= origin/main
 
@@ -312,10 +330,22 @@ linux-arm64:
 	@mkdir -p $(DIST_DIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
+windows-amd64:
+	@mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-windows-amd64.exe $(CMD)
+
+windows-arm64:
+	@mkdir -p $(DIST_DIR)
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-windows-arm64.exe $(CMD)
+
+# Git for Windows' sha256sum marks entries as binary ("hash *name"); the
+# release format is the bare name ("hash  name"). GNU sha256sum on Linux prints
+# no marker, so the sed below changes nothing there.
 release: $(PLATFORMS)
 	@cd $(DIST_DIR) && { \
 		if command -v sha256sum >/dev/null 2>&1; then \
-			sha256sum $(RELEASE_ASSETS); \
+			sums=$$(sha256sum $(RELEASE_ASSETS)) || exit 1; \
+			printf '%s\n' "$$sums" | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /'; \
 		elif command -v shasum >/dev/null 2>&1; then \
 			shasum -a 256 $(RELEASE_ASSETS); \
 		else \

@@ -1,3 +1,10 @@
+//go:build unix
+
+// This integration test links pkg/harness-compilation, whose Unix-only
+// descriptor code moves onto shared primitives in a later stage (see
+// openspec/changes/add-windows-platform-support tasks 3.5). It becomes
+// portable with that work.
+
 package fsboundary_test
 
 import (

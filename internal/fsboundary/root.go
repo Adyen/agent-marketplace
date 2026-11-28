@@ -1,5 +1,3 @@
-//go:build unix
-
 package fsboundary
 
 import (
@@ -8,8 +6,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 func (d *Dir) OpenRoot(rel string) (*Dir, error) {
@@ -57,15 +53,14 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 	for i, name := range parts {
 		next, err := openComponent(current, name)
 		if errors.Is(err, fs.ErrNotExist) && create {
-			if mkdirErr := unix.Mkdirat(int(current.Fd()), name, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
+			if mkdirErr := mkdirAt(current, name, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, fs.ErrExist) {
 				return nil, fmt.Errorf("create output directory %s: %w", filepath.Join(path, name), mkdirErr)
 			}
 			next, err = openComponent(current, name)
 		}
 		if err != nil && rootLink && (strictScope || i == len(parts)-1) && errors.Is(err, ErrUnsafePath) {
 			linkPath := filepath.Join(path, name)
-			var stat unix.Stat_t
-			if statErr := unix.Fstatat(int(current.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); statErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFLNK {
+			if !isSymlinkAt(current, name) {
 				return nil, err
 			}
 			text, err := readLink(current, name)

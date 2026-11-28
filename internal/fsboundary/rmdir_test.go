@@ -7,6 +7,7 @@ import (
 )
 
 func TestRmdirPreservesFilesLinksAndNonemptyDirectories(t *testing.T) {
+	skipWhereLinksAreNotHonored(t)
 	path := t.TempDir()
 	if err := os.WriteFile(filepath.Join(path, "file"), []byte("inert user bytes"), 0o640); err != nil {
 		t.Fatal(err)

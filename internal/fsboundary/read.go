@@ -1,5 +1,3 @@
-//go:build unix
-
 package fsboundary
 
 import (
@@ -7,8 +5,6 @@ import (
 	"io"
 	"math"
 	"os"
-
-	"golang.org/x/sys/unix"
 )
 
 // ReadFile reads an opened file with a limit+1 bound and a post-read
@@ -40,7 +36,7 @@ func readBounded(file *os.File, limit int64, barrier func(file *os.File)) ([]byt
 	if barrier != nil {
 		barrier(file)
 	}
-	if err := unix.SetNonblock(int(file.Fd()), false); err != nil {
+	if err := restoreBlocking(file); err != nil {
 		return nil, Identity{}, fmt.Errorf("restore blocking reads on %s: %w", file.Name(), err)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))

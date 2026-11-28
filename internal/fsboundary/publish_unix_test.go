@@ -23,15 +23,6 @@ func stageFile(t *testing.T, dir, name string, data []byte) *Dir {
 	return staged
 }
 
-func mustRead(t *testing.T, path string) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
-}
-
 func TestPublishDirectDestination(t *testing.T) {
 	t.Run("publish creates an absent destination", func(t *testing.T) {
 		root, rootPath := tempRoot(t)

@@ -29,5 +29,27 @@
 // ErrDurabilityUncertain: namespace mutation occurred, but durable persistence
 // is uncertain. Callers must inspect or recover that state, not assume refusal.
 //
-// Supported platforms are macOS and Linux only.
+// # Platforms
+//
+// macOS and Linux bind to descriptors with openat(2), renameat(2), and
+// unlinkat(2). Windows binds to directory handles: every open is NtCreateFile
+// relative to a captured handle, one component at a time, with
+// FILE_OPEN_REPARSE_POINT so that a reparse point is opened as itself and then
+// refused. Both implementations expose the same API and the same refusal
+// identities; the shared logic lives in the portable files and the platform
+// primitives live in os_unix.go and os_windows.go.
+//
+// Windows differs in these ways, all fail-closed:
+//
+//   - Symlinks, junctions, mount points, and every other reparse point are
+//     refused as [ErrUnsafePath]. The link policies that honor links on Unix
+//     refuse on Windows.
+//   - Components that Windows treats specially (device names, alternate data
+//     stream syntax, trailing dot or space) are refused as [ErrUnsafePath].
+//   - A directory cannot be flushed, so [Dir.Sync] succeeds without flushing.
+//   - [FileInfoIdentity] cannot see a file ID, change time, or link count,
+//     because a Windows os.FileInfo does not carry them; it is weaker than an
+//     identity taken from a handle and the two are not comparable.
+//   - [Dir.NativeRoot] opens the captured directory by its final path and
+//     verifies the captured identity; a replacement is detected, not prevented.
 package fsboundary
