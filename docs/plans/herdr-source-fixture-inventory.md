@@ -7,7 +7,7 @@ guide, or proof of runtime readiness.
 
 - The approved design is pinned at `29bf7a6b4e7cd33c673765e5417a033170765720`; [Decision 4, lines 706-972](2026-11-13-target-profiles-design.md#L706-L972) covers import boundaries and source findings, including the table at lines 950-972.
 - From a clean checkout, inspect that section with `git show 29bf7a6b4e7cd33c673765e5417a033170765720:docs/plans/2026-11-13-target-profiles-design.md | sed -n '706,972p'`.
-- The feasibility spike is `4797afd88e7d2c75f07349272749c43e7e670921`, under `internal/prototype/targetprofile/`. Its profile is `internal/prototype/targetprofile/profiles/herdr-app.yaml`, and its scenario driver is `internal/prototype/targetprofile/run-scenarios.sh`. The spike branch is not on origin; these citations use its pinned commit and paths.
+- The feasibility spike is `4797afd88e7d2c75f07349272749c43e7e670921`, under `internal/prototype/targetprofile/`. Its profile is `internal/prototype/targetprofile/profiles/herdr-app.yaml`, and its scenario driver is `internal/prototype/targetprofile/run-scenarios.sh`.
 - These commits pin the design and spike evidence, not upstream source checkouts. The declarations give source origins, but no upstream commit IDs or payload digests.
 - The spike profile is `agent-marketplace.io/target-profile/v1`, `herdr-app`, with a claimed host range `>=0.1.15 <0.2.0` dated 2026-11-13. The README says the existing host must be 0.1.15 or newer. Neither reference records the exact binary used by each scenario.
 
@@ -48,6 +48,8 @@ guide, or proof of runtime readiness.
 - Evidence state: the spike placed it and `herdr-app check` passed, but the separate Python import of the placed helper failed with `ModuleNotFoundError: file_link`. Chris's bundled helper imported successfully. The spike's host check did not test this runtime dependency.
 
 ## Evidence limits and I4 handoff
+
+A fresh clone cannot fetch the pinned spike commit from origin. Decision 4 records findings for all four sources, but checking the declarations, the README, and the per-source observations that rely on them requires a copy of the spike commit.
 
 The README at `4797afd88e7d2c75f07349272749c43e7e670921:internal/prototype/targetprofile/README.md` reports 11 placements in a clean scratch home, 9 placements and 2 unowned collisions in a seeded home, and passing initial-load checks for mods. It says the scenario log is disposable and the runner is not an assertion suite. The design records false positives for links and queue; these observations are not runtime tests or proof about current upstream sources.
 
